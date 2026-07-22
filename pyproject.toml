@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nekmeshpy"
+version = "0.1.0"
+description = "Object-oriented all-hex O-grid mesher for bifurcating vessels, with Nek5000/NekRS export"
+readme = "nekmeshpy/README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "NekMeshPy contributors" }]
+keywords = ["mesh", "hexahedral", "cfd", "nek5000", "nekrs", "o-grid"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Intended Audience :: Science/Research",
+]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.4"]
+io = ["meshio>=5.0"]
+yaml = ["PyYAML>=5.4"]
+test = ["pytest>=7.0"]
+dev = ["ruff>=0.5", "mypy>=1.0", "pytest>=7.0"]
+all = ["matplotlib>=3.4", "meshio>=5.0", "PyYAML>=5.4", "pytest>=7.0"]
+
+[project.scripts]
+nekmesh = "nekmeshpy.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/nekmeshpy/nekmeshpy"
+
+[tool.setuptools.packages.find]
+include = ["nekmeshpy*"]
+
+[tool.setuptools.package-data]
+nekmeshpy = ["data/*.vtx", "data/*.tri", "templates/*.rea", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = ["matlab", "tests/golden"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E741",   # ambiguous variable names (l, I) -- used for meshing math
+    "E501",   # line length handled by the formatter, not enforced hard
+    "B905",   # zip(..., strict=) not available on py39
+]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = false
+# fully-typed public API modules are type-checked in CI; the numeric internals
+# (hexmesh, trimesh, ...) are only partially annotated for now.
+files = [
+    "nekmeshpy/algorithms/registry.py",
+    "nekmeshpy/config.py",
+    "nekmeshpy/model/fields.py",
+    "nekmeshpy/model/physical.py",
+    "nekmeshpy/model/quality.py",
+    "nekmeshpy/algorithms/pipes.py",
+]
+
+# third-party packages ship no (or version-mismatched) stubs; don't analyse them
+[[tool.mypy.overrides]]
+module = ["numpy.*", "scipy.*", "meshio.*", "matplotlib.*", "yaml"]
+ignore_missing_imports = true
+follow_imports = "skip"

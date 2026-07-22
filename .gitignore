@@ -1,0 +1,50 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Generated mesh outputs (byte-identity references live under tests/golden/)
+/*.re2
+/*.rea
+/*.vtk
+/*.vtu
+/*.msh
+/*.png
+examples/*.re2
+examples/*.rea
+examples/*.vtk
+examples/*.vtu
+examples/*.msh
+examples/*.png
