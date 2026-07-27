@@ -15,10 +15,7 @@ the ``.re2`` bytes identical to the validated reference.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable, Iterator
-
-if TYPE_CHECKING:
-    from ..config import Config
+from typing import Iterable, Iterator
 
 
 @dataclass(frozen=True)
@@ -106,14 +103,26 @@ class PhysicalGroups:
         ])
 
     @classmethod
-    def from_config(cls, cfg: "Config") -> "PhysicalGroups":
-        """Build a registry from a :class:`~nekmeshpy.config.Config`'s tag
-        fields, preserving the byte-compatible Nek codes."""
+    def duct(cls, wall: int = 1, inlet: int = 2, outlet: int = 3) -> "PhysicalGroups":
+        """Wall / inlet / outlet registry for a simple duct or pipe, with the Nek
+        BC codes ``W`` / ``v`` / ``O``."""
         return cls([
-            PhysicalGroup("wall",         cfg.tag_wall,  2, "W  "),
-            PhysicalGroup("trunk_outlet", cfg.tag_trunk, 2, "v  "),
-            PhysicalGroup("top_outlet_1", cfg.tag_top1,  2, "int"),
-            PhysicalGroup("top_outlet_2", cfg.tag_top2,  2, "O  "),
-            PhysicalGroup("flux_1",       cfg.tag_f1,    2, "f1 "),
-            PhysicalGroup("flux_2",       cfg.tag_f2,    2, "f2 "),
+            PhysicalGroup("wall",   wall,   2, "W  "),
+            PhysicalGroup("inlet",  inlet,  2, "v  "),
+            PhysicalGroup("outlet", outlet, 2, "O  "),
+        ])
+
+    @classmethod
+    def from_tags(cls, tag_wall: int = 1, tag_trunk: int = 2, tag_top1: int = 3,
+                  tag_top2: int = 4, tag_f1: int = 5, tag_f2: int = 6
+                  ) -> "PhysicalGroups":
+        """Build the bifurcation registry from explicit boundary tags,
+        preserving the byte-compatible Nek codes."""
+        return cls([
+            PhysicalGroup("wall",         tag_wall,  2, "W  "),
+            PhysicalGroup("trunk_outlet", tag_trunk, 2, "v  "),
+            PhysicalGroup("top_outlet_1", tag_top1,  2, "int"),
+            PhysicalGroup("top_outlet_2", tag_top2,  2, "O  "),
+            PhysicalGroup("flux_1",       tag_f1,    2, "f1 "),
+            PhysicalGroup("flux_2",       tag_f2,    2, "f2 "),
         ])

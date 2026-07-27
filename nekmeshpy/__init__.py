@@ -1,68 +1,50 @@
-"""NekMeshPy -- object-oriented port of the SURFACE pipeline of the bifurcation
-hex-mesh generator.
+"""NekMeshPy -- an object-oriented, all-hex meshing toolkit with Nek5000/NekRS export.
 
-The pipeline is built up through mesh objects:
+The package is a library of composable primitives, not a collection of
+geometry-specific meshers:
 
-    tri surface (TriMesh)
-        -> seam fields + cut into legs (CutSurface)
-        -> per-leg cross-section rings (Ring) + O-grid slices (QuadMesh via OGridLeg)
-        -> assembled all-hex mesh (HexMesh): interior, smoothing, export, plot
+* **geometry** -- :class:`~nekmeshpy.geometry.curve.Curve` / ``CurveLoop``
+  (an ``(N,3)`` coordinate array with open/closed semantics),
+  :class:`~nekmeshpy.geometry.trimesh.TriMesh`,
+  :class:`~nekmeshpy.geometry.quadmesh.QuadMesh`,
+  :class:`~nekmeshpy.geometry.hexmesh.HexMesh` (built with the ``extrude`` /
+  ``merge`` / ``from_grid`` factories), and the shared-point
+  :class:`~nekmeshpy.model.mesh.Mesh`;
+* **model** -- physical groups, scaled-Jacobian :mod:`quality`, watertight /
+  conformal :mod:`topology`, and sizing :mod:`fields`;
+* **ops** -- interior repositioning, smoothing, and surface algorithms
+  (:mod:`~nekmeshpy.ops.trisurf`);
+* **io** -- :mod:`~nekmeshpy.io.export` (``.re2`` / ``.rea`` / meshio) and
+  :mod:`~nekmeshpy.io.viz`.
 
-Entry point::
-
-    from nekmeshpy import Config, BifurcationMesher
-    hexmesh = BifurcationMesher(Config()).run()
-
-or ``python -m nekmeshpy``.
+Concrete geometry meshers (bifurcation, pipes, transfinite block) are built on
+top of these primitives and live in ``examples/``.
 """
 
-from .algorithms.bifurcation import BifurcationMesher
-from .algorithms.blocks import TransfiniteBlock
-from .algorithms.cutsurface import CutSurface
-from .algorithms.ogrid import OGridLeg
-from .algorithms.pipes import (
-    CircularPipe,
-    RectangularPipe,
-    circular_section,
-    rectangular_section,
-)
-from .algorithms.registry import (
-    ALGORITHMS,
-    HexAlgorithm,
-    available,
-    make,
-    register_algorithm,
-)
-from .config import Config
+from .geometry.curve import Curve, CurveLoop
 from .geometry.hexmesh import HexMesh
-from .geometry.polyline import Arc, Polyline, Ring
-from .geometry.quadmesh import QuadMesh
+from .geometry.quadmesh import NO_BOUNDARY, QuadMesh
 from .geometry.trimesh import TriMesh
 from .io import export, viz
-from .model import fields, quality
+from .model import fields, quality, topology
 from .model.fields import AxisLinearField, ConstantField, DistanceField, Field, MinField
 from .model.mesh import Mesh
 from .model.physical import PhysicalGroup, PhysicalGroups
 from .ops import smoothing, trisurf
-from .ops.interior import INTERIOR_METHODS, register_interior, set_interior
+from .ops.interior import SECTION_METHODS, register_section_interior, set_section_interior
 
 __all__ = [
-    "Config",
-    "Polyline", "Arc", "Ring",
+    "Curve", "CurveLoop",
     "TriMesh",
     "QuadMesh",
-    "OGridLeg",
-    "CutSurface",
+    "HexMesh",
+    "NO_BOUNDARY",
     "Mesh",
     "PhysicalGroup", "PhysicalGroups",
     "quality",
+    "topology",
     "fields",
     "export", "trisurf", "smoothing", "viz",
     "Field", "ConstantField", "AxisLinearField", "DistanceField", "MinField",
-    "register_interior", "INTERIOR_METHODS", "set_interior",
-    "HexAlgorithm", "register_algorithm", "ALGORITHMS", "available", "make",
-    "HexMesh",
-    "TransfiniteBlock",
-    "CircularPipe", "RectangularPipe", "circular_section", "rectangular_section",
-    "BifurcationMesher",
+    "register_section_interior", "SECTION_METHODS", "set_section_interior",
 ]

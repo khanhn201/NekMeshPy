@@ -1,37 +1,45 @@
 """Shared fixtures for the NekMeshPy regression suite.
 
-The ``built_mesh`` fixture runs the full default surface pipeline exactly once
-per test session (into a temp dir, plotting disabled) and hands the resulting
-:class:`~nekmeshpy.geometry.hexmesh.HexMesh` plus its written ``.re2``/``.rea``/``.vtk``
-paths to every test.  Golden reference outputs live in ``tests/golden/`` (a
-frozen snapshot of the validated MATLAB/Octave results).
+The concrete geometry meshers are flat scripts in ``examples/``; the tests run
+them with :func:`runpy.run_path` and read the resulting ``mesh`` global.  The
+``built_mesh`` fixture runs ``examples/bifurcation.py`` once per session (into a
+temp dir), returning the assembled :class:`~nekmeshpy.geometry.hexmesh.HexMesh`
+plus its written ``.re2``/``.rea``/``.vtk`` paths.  Golden reference outputs live
+in ``tests/golden/`` (a frozen snapshot of the validated results).
 """
 
 import os
+import runpy
 
 import numpy as np
 import pytest
 
-from nekmeshpy import BifurcationMesher, Config
+_HERE = os.path.dirname(__file__)
+_EXAMPLES = os.path.join(_HERE, "..", "examples")
+GOLDEN = os.path.join(_HERE, "golden")
 
-GOLDEN = os.path.join(os.path.dirname(__file__), "golden")
+# bundled ``car`` surface used by the bifurcation example
+CAR_VTX = os.path.join(_EXAMPLES, "data", "car.vtx")
+CAR_TRI = os.path.join(_EXAMPLES, "data", "car.tri")
+
+
+def run_example(name, tmp_path):
+    """Execute the flat example script ``examples/<name>`` in ``tmp_path`` and
+    return its module namespace (``ns["mesh"]`` is the built HexMesh)."""
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        return runpy.run_path(os.path.join(_EXAMPLES, name), run_name="__main__")
+    finally:
+        os.chdir(cwd)
 
 
 @pytest.fixture(scope="session")
 def built_mesh(tmp_path_factory):
     out = tmp_path_factory.mktemp("mesh")
-    cwd = os.getcwd()
-    os.chdir(out)
-    try:
-        cfg = Config()
-        cfg.plot = False
-        cfg.out_name = "bifurcation"
-        mesh = BifurcationMesher(cfg).run()
-    finally:
-        os.chdir(cwd)
+    ns = run_example("bifurcation.py", out)
     return {
-        "mesh": mesh,
-        "cfg": cfg,
+        "mesh": ns["mesh"],
         "re2": os.path.join(out, "bifurcation.re2"),
         "rea": os.path.join(out, "bifurcation.rea"),
         "vtk": os.path.join(out, "bifurcation.vtk"),

@@ -5,15 +5,29 @@
 :class:`HexMesh` carries no plotting dependency.
 """
 
+from __future__ import annotations
+
 import logging
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..geometry.hexmesh import HexMesh
 
 _log = logging.getLogger("nekmeshpy")
 
 
-def plot(mesh, cfg, panes=False, grid=True, save_path=None):
-    """Draw the tagged boundary (walls grey, three outlets coloured).
-    The 3D axis panes are transparent unless ``panes=True``."""
-    mesh.finalize()
+def plot(
+    mesh: HexMesh,
+    names: Sequence[str] = ("wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"),
+    out_name: str = "bifurcation",
+    panes: bool = False,
+    grid: bool = True,
+    save_path: str | None = None,
+) -> HexMesh:
+    """Draw the named boundary faces (walls grey, the three outlets coloured).
+    ``names`` selects which boundary names to draw, in colour order.  The 3D axis
+    panes are transparent unless ``panes=True``."""
     import matplotlib
     try:
         import matplotlib.pyplot as plt
@@ -21,26 +35,27 @@ def plot(mesh, cfg, panes=False, grid=True, save_path=None):
     except Exception as exc:                     # pragma: no cover
         _log.warning("plot skipped (matplotlib unavailable): %s", exc)
         return mesh
-    elements = mesh.elements
+    elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
-    tags = [cfg.tag_wall, cfg.tag_trunk, cfg.tag_top1, cfg.tag_top2]
-    names = ["wall", "trunk outlet", "top outlet 1", "top outlet 2"]
+    bnames = mesh.boundary_names
+    names = list(names)
     colors = [(0.80, 0.80, 0.82), (0.85, 0.20, 0.20),
               (0.20, 0.70, 0.25), (0.20, 0.35, 0.90)]
     alphas = [0.5, 1, 1, 1]
     fig = plt.figure(figsize=(7.8, 8.8))
     ax = fig.add_subplot(111, projection="3d")
     handles = []
-    for ti, tag in enumerate(tags):
-        rows = boundaries[boundaries[:, 2] == tag, :]
+    for ti, name in enumerate(names):
+        rows = boundaries[bnames == name, :]
         if rows.shape[0] == 0:
             continue
-        polys = [elements[rows[r, 0], mesh.FACE_NODES[rows[r, 1] - 1, :], :]
+        polys = [elements[rows[r, 0], mesh.FACE_POINTS[rows[r, 1] - 1, :], :]
                  for r in range(rows.shape[0])]
-        pc = Poly3DCollection(polys, facecolor=colors[ti], edgecolor=(0.15, 0.15, 0.15),
-                              linewidths=0.2, alpha=alphas[ti])
+        pc = Poly3DCollection(polys, facecolor=colors[ti % len(colors)],
+                              edgecolor=(0.15, 0.15, 0.15),
+                              linewidths=0.2, alpha=alphas[ti % len(alphas)])
         ax.add_collection3d(pc)
-        handles.append((plt.Rectangle((0, 0), 1, 1, fc=colors[ti]), names[ti]))
+        handles.append((plt.Rectangle((0, 0), 1, 1, fc=colors[ti % len(colors)]), name))
     allP = elements.reshape(-1, 3)
     mn = allP.min(axis=0)
     mx = allP.max(axis=0)
@@ -63,7 +78,7 @@ def plot(mesh, cfg, panes=False, grid=True, save_path=None):
         ax.legend([h for h, _ in handles], [n for _, n in handles], loc="upper left")
     ax.set_title("Bifurcation hex mesh: tagged boundary")
     if save_path is None and matplotlib.get_backend().lower() == "agg":
-        save_path = "%s_mesh.png" % cfg.out_name
+        save_path = "%s_mesh.png" % out_name
     if save_path is not None:
         fig.savefig(save_path, dpi=120)
         _log.info("wrote %s", save_path)

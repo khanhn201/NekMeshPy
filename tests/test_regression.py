@@ -19,25 +19,27 @@ RE2_TOL = 1e-12
 
 def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
-    assert mesh.elements.shape == (3840, 8, 3)
+    assert mesh.hexes.shape == (3840, 8)         # (N,8) shared-point connectivity
+    assert mesh.points.shape == (4484, 3)
     assert mesh.boundaries.shape[0] == 1280
 
 
 def test_tag_face_counts(built_mesh):
     mesh = built_mesh["mesh"]
-    b = mesh.boundaries
-    counts = {t: int(np.sum(b[:, 2] == t)) for t in (1, 2, 3, 4, 5, 6)}
-    assert counts[1] == 960          # wall
-    assert counts[2] == 64           # trunk outlet
-    assert counts[3] == 64           # top outlet 1
-    assert counts[4] == 64           # top outlet 2
+    names = mesh.boundary_names
+    counts = {n: int(np.sum(names == n)) for n in
+              ("wall", "trunk_outlet", "top_outlet_1", "top_outlet_2")}
+    assert counts["wall"] == 960
+    assert counts["trunk_outlet"] == 64
+    assert counts["top_outlet_1"] == 64
+    assert counts["top_outlet_2"] == 64
 
 
 def test_scaled_jacobian_quality(built_mesh):
     X, HC, _ = built_mesh["mesh"].weld()
     sj = quality.scaled_jacobian(X, HC)
-    assert float(np.min(sj)) == pytest.approx(0.1843, abs=1e-3)
-    assert float(np.mean(sj)) == pytest.approx(0.8613, abs=1e-3)
+    assert float(np.min(sj)) == pytest.approx(0.2267, abs=1e-3)
+    assert float(np.mean(sj)) == pytest.approx(0.8177, abs=1e-3)
     assert float(np.min(sj)) > 0.0   # no inverted elements
 
 

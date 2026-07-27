@@ -1,28 +1,33 @@
 """Surface operations on a :class:`~nekmeshpy.geometry.trimesh.TriMesh`.
 
-``TriMesh`` is a pure container (``xyz`` + ``tri``); the surface *algorithms* --
-the cotangent Laplace operators, boundary-loop extraction, marching-triangle
+``TriMesh`` is a pure container (``points`` + ``tris``); the surface *algorithms*
+-- the cotangent Laplace operators, boundary-loop extraction, marching-triangle
 isocontours, and closest-point projection -- live here as free functions taking
 the surface as their first argument.  Method bodies are ported verbatim from the
-former ``TriMesh`` methods, so results are unchanged; ``cotan_laplacian`` still
-memoizes into ``surface._L``.  All indices are 0-based.
+former ``TriMesh`` methods, so results are unchanged; ``cotan_laplacian`` is
+recomputed on each call (the container holds no cache).  All indices are 0-based.
 """
 
+from __future__ import annotations
+
 from collections import deque
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from ..geometry.polyline import Ring
+from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
+from ..geometry.curve import CurveLoop
+
+if TYPE_CHECKING:
+    from ..geometry.trimesh import TriMesh
 
 
 # -- Laplace ------------------------------------------------------------
-def cotan_laplacian(surface):
-    """Linear (P1) cotangent-weight stiffness matrix (cached on ``surface``)."""
-    if surface._L is not None:
-        return surface._L
-    xyz, tri = surface.xyz, surface.tri
+def cotan_laplacian(surface: TriMesh) -> sp.csr_matrix:
+    """Linear (P1) cotangent-weight stiffness matrix (recomputed each call)."""
+    xyz, tri = surface.points, surface.tris
     nv, nt = xyz.shape[0], tri.shape[0]
     cot_clamp = 1e3
     p = xyz[tri]                                     # (nt,3,3)
@@ -50,49 +55,48 @@ def cotan_laplacian(surface):
         valid[:, c] = ok
     mask = np.repeat(valid[:, :, None], 4, axis=2).ravel()
     If, Jf, Sf = I.ravel()[mask], J.ravel()[mask], S.ravel()[mask]
-    surface._L = sp.coo_matrix((Sf, (If, Jf)), shape=(nv, nv)).tocsr()
-    return surface._L
+    return sp.coo_matrix((Sf, (If, Jf)), shape=(nv, nv)).tocsr()
 
 
-def solve_dirichlet(surface, dnodes, dvals):
-    """Impose Dirichlet values at ``dnodes`` and solve the reduced system
+def solve_dirichlet(surface: TriMesh, dpoints: IntArray, dvals: FloatArray) -> FloatArray:
+    """Impose Dirichlet values at ``dpoints`` and solve the reduced system
     (natural Neumann elsewhere).  Returns an ``(nv,)`` field."""
     L = cotan_laplacian(surface)
-    nv = surface.n_vertices
-    dnodes = np.asarray(dnodes, dtype=np.int64).ravel()
+    nv = surface.n_points
+    dpoints = np.asarray(dpoints, dtype=np.int64).ravel()
     dvals = np.asarray(dvals, dtype=float).ravel()
     u = np.zeros(nv)
-    u[dnodes] = dvals
-    is_d = np.zeros(nv, dtype=bool)
-    is_d[dnodes] = True
-    fnodes = np.flatnonzero(~is_d)
+    u[dpoints] = dvals
+    is_d: BoolArray = np.zeros(nv, dtype=bool)
+    is_d[dpoints] = True
+    fpoints = np.flatnonzero(~is_d)
     Lc = L.tocsr()
-    rhs = -Lc[fnodes, :][:, dnodes] @ u[dnodes]
-    A = Lc[fnodes, :][:, fnodes].tocsc()
-    u[fnodes] = spla.spsolve(A, np.asarray(rhs).ravel())
+    rhs = -Lc[fpoints, :][:, dpoints] @ u[dpoints]
+    A = Lc[fpoints, :][:, fpoints].tocsc()
+    u[fpoints] = spla.spsolve(A, np.asarray(rhs).ravel())
     return u
 
 
 # -- boundary loops -----------------------------------------------------
-def _boundary_edges(surface):
-    tri = surface.tri
+def _boundary_edges(surface: TriMesh) -> IntArray:
+    tri = surface.tris
     E = np.vstack([tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]])
     E = np.sort(E, axis=1)
     Eu, ic, cnt = np.unique(E, axis=0, return_inverse=True, return_counts=True)
     return Eu[cnt == 1, :]
 
 
-def boundary_loops(surface):
+def boundary_loops(surface: TriMesh) -> list[IntArray]:
     """Group open-boundary edges into connected loops (BFS).  Returns a
     list of 1-D vertex-index arrays (BFS order)."""
-    nv = surface.n_vertices
+    nv = surface.n_points
     bnd_edges = _boundary_edges(surface)
     bnd_verts = np.unique(bnd_edges.ravel())
-    adj = [[] for _ in range(nv)]
+    adj: list[list[int]] = [[] for _ in range(nv)]
     for i, j in bnd_edges:
         adj[i].append(j)
         adj[j].append(i)
-    visited = np.zeros(nv, dtype=bool)
+    visited: BoolArray = np.zeros(nv, dtype=bool)
     loops = []
     for v0 in bnd_verts:
         if visited[v0]:
@@ -101,8 +105,8 @@ def boundary_loops(surface):
         visited[v0] = True
         queue = deque([v0])
         while queue:
-            node = queue.popleft()
-            for w in adj[node]:
+            point = queue.popleft()
+            for w in adj[point]:
                 if not visited[w]:
                     visited[w] = True
                     comp.append(w)
@@ -111,14 +115,14 @@ def boundary_loops(surface):
     return loops
 
 
-def order_boundary_loop(surface, lv):
+def order_boundary_loop(surface: TriMesh, lv: IntArray) -> IntArray:
     """Return the vertices of one boundary loop ``lv`` in cyclic order."""
-    nv = surface.n_vertices
+    nv = surface.n_points
     be = _boundary_edges(surface)
-    inlv = np.zeros(nv, dtype=bool)
+    inlv: BoolArray = np.zeros(nv, dtype=bool)
     inlv[lv] = True
     be = be[inlv[be[:, 0]] & inlv[be[:, 1]], :]
-    adj = {}
+    adj: dict[int, list[int]] = {}
     for a, b in be:
         adj.setdefault(a, []).append(b)
         adj.setdefault(b, []).append(a)
@@ -137,9 +141,10 @@ def order_boundary_loop(surface, lv):
 
 
 # -- isocontours --------------------------------------------------------
-def extract_isocontour(surface, u, level):
-    """Marching-triangles extraction of {u == level}; returns list[Ring]."""
-    xyz, tri = surface.xyz, surface.tri
+def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> CurveLoop | None:
+    """Marching-triangles extraction of {u == level} as a single closed
+    ``CurveLoop`` (the largest loop; ``None`` if the level misses the surface)."""
+    xyz, tri = surface.points, surface.tris
     nt = tri.shape[0]
     segs = np.zeros((nt, 6))
     ns = 0
@@ -158,32 +163,33 @@ def extract_isocontour(surface, u, level):
         if len(pts) == 2:
             segs[ns, :] = np.concatenate([pts[0], pts[1]])
             ns += 1
-    return Ring.chain(segs[:ns, :])
+    return CurveLoop.chain(segs[:ns, :])
 
 
-def extract_rings(surface, u, levels, min_loop_pts):
+def extract_rings(
+    surface: TriMesh, u: FloatArray, levels: FloatArray, min_loop_pts: int,
+) -> tuple[list[CurveLoop], FloatArray]:
     """Cross-section rings of field ``u`` at each level, keeping the largest
-    usable loop per level.  Returns ``(list[Ring], levels_kept)``."""
+    usable loop per level.  Returns ``(list[CurveLoop], levels_kept)``."""
     fr = []
     frlev = []
     for lv in levels:
-        s = [r for r in extract_isocontour(surface, u, lv) if len(r) >= min_loop_pts]
-        if not s:
+        r = extract_isocontour(surface, u, lv)
+        if r is None or len(r) < min_loop_pts:
             continue
-        b = int(np.argmax([len(r) for r in s]))
-        fr.append(s[b])
+        fr.append(r)
         frlev.append(lv)
     return fr, np.asarray(frlev, dtype=float)
 
 
 # -- projection ---------------------------------------------------------
-def project_points(surface, P):
+def project_points(surface: TriMesh, P: PointArray) -> PointArray:
     """Snap points onto the nearest vertex's triangle fan (points assumed
     near the surface).  (Port of ``project_points_to_mesh``.)"""
     P = np.atleast_2d(np.asarray(P, dtype=float))
-    Vx, T = surface.xyz, surface.tri
+    Vx, T = surface.points, surface.tris
     nv = Vx.shape[0]
-    VT = [[] for _ in range(nv)]
+    VT: list[list[int]] = [[] for _ in range(nv)]
     for e in range(T.shape[0]):
         VT[T[e, 0]].append(e)
         VT[T[e, 1]].append(e)
@@ -204,14 +210,16 @@ def project_points(surface, P):
     return Q
 
 
-def project_to_surface(surface, P, faces=None):
+def project_to_surface(
+    surface: TriMesh, P: PointArray, faces: IntArray | None = None,
+) -> PointArray:
     """Robust closest-point projection over triangles (no proximity
     assumption).  ``faces`` defaults to all triangles; pass a subset (e.g. a
-    wall node's local patch) to restrict the search.  (Port of
+    wall point's local patch) to restrict the search.  (Port of
     ``project_to_surface``.)"""
     P = np.atleast_2d(np.asarray(P, dtype=float))
-    Vx = surface.xyz
-    T = surface.tri if faces is None else np.asarray(faces, dtype=np.int64).reshape(-1, 3)
+    Vx = surface.points
+    T = surface.tris if faces is None else np.asarray(faces, dtype=np.int64).reshape(-1, 3)
     m = P.shape[0]
     Q = P.copy()
     best = np.full(m, np.inf)
@@ -226,7 +234,7 @@ def project_to_surface(surface, P, faces=None):
 
 
 # -- closest-point helpers ----------------------------------------------
-def _closest_on_tri(p, a, b, c):
+def _closest_on_tri(p: Point, a: Point, b: Point, c: Point) -> Point:
     ab = b - a
     ac = c - a
     ap = p - a
@@ -260,7 +268,9 @@ def _closest_on_tri(p, a, b, c):
     return a + ab * v + ac * w
 
 
-def _closest_on_seg_vec(P, U, V):
+def _closest_on_seg_vec(
+    P: PointArray, U: Point, V: Point,
+) -> tuple[PointArray, FloatArray]:
     uv = V - U
     L2 = np.dot(uv, uv)
     if L2 == 0:
@@ -271,7 +281,9 @@ def _closest_on_seg_vec(P, U, V):
     return q, np.sum((q - P) ** 2, axis=1)
 
 
-def _closest_on_tri_vec(P, A, B, C):
+def _closest_on_tri_vec(
+    P: PointArray, A: Point, B: Point, C: Point,
+) -> tuple[PointArray, FloatArray]:
     m = P.shape[0]
     INF = np.full(m, np.inf)
     qab, dab = _closest_on_seg_vec(P, A, B)

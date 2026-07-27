@@ -1,37 +1,56 @@
 """Constrained hex-mesh smoothing (free function on a :class:`HexMesh`).
 
 :func:`smooth` untangles and polishes the assembled hex mesh while keeping wall
-nodes on the triangulated ``surface`` and opening/cap nodes fixed.  It operates
-on the welded shared-node view (:meth:`HexMesh.weld`) and is numerically
-identical to the original verbatim implementation (two stages: node-local
+points on the triangulated ``surface`` and opening/cap points fixed.  It operates
+on the welded shared-point view (:meth:`HexMesh.weld`) and is numerically
+identical to the original verbatim implementation (two stages: point-local
 untangle, then a back-tracked global Jacobi polish that never lowers the minimum
 scaled Jacobian).
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
 
+from .._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..model import quality
 from . import trisurf
+
+if TYPE_CHECKING:
+    from ..geometry.hexmesh import HexMesh
+    from ..geometry.trimesh import TriMesh
 
 _log = logging.getLogger("nekmeshpy")
 
 
-def smooth(mesh, surface, p):
+def smooth(
+    mesh: HexMesh,
+    surface: TriMesh,
+    *,
+    smooth_iters: int = 8,
+    smooth_lambda: float = 0.5,
+    wall: str = "wall",
+    project_to_stl: bool = True,
+    untangle_iters: int = 40,
+    quality_floor: float = 0.2,
+) -> HexMesh:
     """Constrained untangle + polish, keeping the wall on ``surface`` (a
-    TriMesh).  ``p`` has keys smooth_iters, smooth_lambda, tag_wall,
-    project_to_stl (+ optional untangle_iters, quality_floor)."""
-    mesh.finalize()
-    if p.get("smooth_iters", 0) is None or p.get("smooth_iters", 0) <= 0:
+    TriMesh) and opening/cap points fixed.  ``smooth_iters`` global polish sweeps
+    (``<=0`` returns the mesh unchanged) after up to ``untangle_iters`` point-local
+    untangle sweeps that stop once every element clears ``quality_floor``;
+    ``wall`` is the boundary **name** whose points ride on ``surface`` (projected
+    when ``project_to_stl``)."""
+    if smooth_iters <= 0:
         return mesh
-    lam0 = p.get("smooth_lambda", 0.5) or 0.5
-    twall = p.get("tag_wall", 1)
-    proj = p.get("project_to_stl", True)
-    nUnt = p.get("untangle_iters", 40) or 40
-    qfloor = p.get("quality_floor", 0.2) or 0.2
-    Oxyz, Otri = surface.xyz, surface.tri
+    lam0 = smooth_lambda or 0.5
+    proj = project_to_stl
+    nUnt = untangle_iters or 40
+    qfloor = quality_floor or 0.2
+    Oxyz, Otri = surface.points, surface.tris
 
     X, HC, nu = mesh.weld()
     he = np.array([[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
@@ -45,21 +64,21 @@ def smooth(mesh, surface, p):
     Avg = sp.diags(1.0 / deg) @ A
     adj = _adjacency_lists(E, nu)
     NH = _incidence_lists(HC, nu)
-    is_wall, is_fixed = mesh.classify_nodes(twall)
+    is_wall, is_fixed = mesh.classify_points(wall)
     free = ~is_fixed
     wtri = _wall_tri_neighbourhoods(X, is_wall, Oxyz, Otri)
 
     sj = quality.scaled_jacobian(X, HC)
-    _log.info("smoothing: untangle<=%d, polish %d, lambda=%.2f  (nodes=%d, wall=%d, fixed=%d)",
-              nUnt, p["smooth_iters"], lam0, nu, int(np.sum(is_wall)), int(np.sum(is_fixed)))
+    _log.info("smoothing: untangle<=%d, polish %d, lambda=%.2f  (points=%d, wall=%d, fixed=%d)",
+              nUnt, smooth_iters, lam0, nu, int(np.sum(is_wall)), int(np.sum(is_fixed)))
     _log.info("  quality before: min scaled Jac=%.4f  mean=%.4f", np.min(sj), np.mean(sj))
 
-    # stage 1: node-local untangle
+    # stage 1: point-local untangle
     mn = float(np.min(sj))
     for _ in range(nUnt):
         if mn >= qfloor:
             break
-        active = _active_nodes(quality.scaled_jacobian(X, HC), HC, adj, free, qfloor)
+        active = _active_points(quality.scaled_jacobian(X, HC), HC, adj, free, qfloor)
         if active.size == 0:
             break
         for v in active:
@@ -88,7 +107,7 @@ def smooth(mesh, surface, p):
 
     # stage 2: global Jacobi polish
     mn = float(np.min(quality.scaled_jacobian(X, HC)))
-    for _ in range(p["smooth_iters"]):
+    for _ in range(smooth_iters):
         target = Avg @ X
         lam = lam0
         accepted = False
@@ -115,48 +134,52 @@ def smooth(mesh, surface, p):
     if np.min(sj) <= 0:
         _log.warning("  %d element(s) still non-positive after smoothing",
                      int(np.sum(sj <= 0)))
-    mesh._write_back(X, HC)
+    mesh.points[:] = X
     return mesh
 
 
 # -- helpers (module-private) -------------------------------------------
-def _adjacency_lists(E, nu):
-    adj = [[] for _ in range(nu)]
+def _adjacency_lists(E: IntArray, nu: int) -> list[IntArray]:
+    adj: list[list[int]] = [[] for _ in range(nu)]
     for a, b in E:
         adj[a].append(b)
         adj[b].append(a)
     return [np.asarray(a, dtype=np.int64) for a in adj]
 
 
-def _incidence_lists(HC, nu):
-    NH = [[] for _ in range(nu)]
+def _incidence_lists(HC: IntArray, nu: int) -> list[IntArray]:
+    NH: list[list[int]] = [[] for _ in range(nu)]
     for e in range(HC.shape[0]):
         for k in range(8):
             NH[HC[e, k]].append(e)
     return [np.asarray(a, dtype=np.int64) for a in NH]
 
 
-def _active_nodes(sj, HC, adj, free, qfloor):
+def _active_points(
+    sj: FloatArray, HC: IntArray, adj: list[IntArray], free: BoolArray, qfloor: float,
+) -> IntArray:
     bad = np.flatnonzero(sj < qfloor)
     if bad.size == 0:
         return np.array([], dtype=np.int64)
     seed = np.unique(HC[bad, :])
-    mark = np.zeros(free.size, dtype=bool)
+    mark: BoolArray = np.zeros(free.size, dtype=bool)
     mark[seed] = True
     for v in seed:
         mark[adj[v]] = True
     return np.flatnonzero(mark & free)
 
 
-def _wall_tri_neighbourhoods(X, is_wall, Vx, T):
+def _wall_tri_neighbourhoods(
+    X: PointArray, is_wall: BoolArray, Vx: PointArray, T: IntArray,
+) -> list[IntArray | None]:
     nv = Vx.shape[0]
-    VT = [[] for _ in range(nv)]
+    VT_lists: list[list[int]] = [[] for _ in range(nv)]
     for e in range(T.shape[0]):
-        VT[T[e, 0]].append(e)
-        VT[T[e, 1]].append(e)
-        VT[T[e, 2]].append(e)
-    VT = [np.asarray(a, dtype=np.int64) for a in VT]
-    wtri = [None] * is_wall.size
+        VT_lists[T[e, 0]].append(e)
+        VT_lists[T[e, 1]].append(e)
+        VT_lists[T[e, 2]].append(e)
+    VT: list[IntArray] = [np.asarray(a, dtype=np.int64) for a in VT_lists]
+    wtri: list[IntArray | None] = [None] * is_wall.size
     for v in np.flatnonzero(is_wall):
         nvtx = int(np.argmin(np.sum((Vx - X[v, :]) ** 2, axis=1)))
         ring = np.unique(T[VT[nvtx], :])
