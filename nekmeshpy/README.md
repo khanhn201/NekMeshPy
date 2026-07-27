@@ -143,7 +143,7 @@ spanned by the fixed boundary ring:
 | `QuadMesh.structured(edges, boundary_names=…)` | transfinite (Coons) grid over a surface bounded by 4 edge curves; resolution and node distribution come **from the edges' own points** (no resampling — opposite edges must match counts), so graded edges (`Curve.resample` at clustered fractions) give a graded/near-wall grid; `boundary_names={"bottom"/"right"/"top"/"left": name}` tags outer sides at build time |
 | `QuadMesh.ogrid(loop, n_side, radial, wall_name=…)` | butterfly O-grid inside a closed loop (built in 3-D, no collapsed centre; the wall ring is the loop resampled by arc length to `4*n_side` points, so a curvy loop keeps its shape); `wall_name` tags the outer ring at build time |
 | `QuadMesh.half_ogrid(arc, spine, radial, wall_name=…)` | half-disc O-grid split along a spine; `wall_name` tags the arc wall at build time |
-| `QuadMesh.annulus(inner, outer, radial, inner_name=…, outer_name=…)` | ring O-grid between an inner and an outer closed loop (a body inside a far-field box), blended in 3-D and paired **by index** (equal point counts — align a coarse box loop first with `outer.radial_match(inner)`); `inner_name` tags the body, `outer_name` a string (round far field) or `{"x_min"/…/"z_max": name}` world-box-side split |
+| `QuadMesh.annulus(inner, outer, radial, inner_name=…, outer_name=…)` | ring O-grid between an inner and an outer closed loop (a body inside a far-field box), blended in 3-D and paired **by index** (equal point counts — align a coarse box loop first with `outer.radial_match(inner)`); `inner_name` tags the body, `outer_name` tags the whole outer ring (a single string). To split a far field into distinct named sides, merge one structured patch per side (cf. `examples/flow_past_cylinder.py`) rather than tagging in the primitive |
 
 Layer counts are set by a **normalized-position array**, not a count + grading
 pair — a single **explicit-initial** convention shared by every layered factory:
@@ -182,7 +182,7 @@ outside the library (edit the constants at the top and re-run):
 | `examples/rectangular_pipe.py` | a structured rectangular duct |
 | `examples/transfinite_block.py` | eight corners → trilinear grid → `HexMesh.from_grid` |
 | `examples/backward_facing_step.py` | external flow: merged structured rectangles (sides named at build time) swept along the span |
-| `examples/flow_past_{cylinder,plate}.py` | external flow: `QuadMesh.annulus` ring around a body (circle / thin ellipse), body + far-field box named at build time, swept along the span |
+| `examples/flow_past_{cylinder,plate}.py` | external flow: four `from_grid` wedge patches around a body (circle / thin ellipse) welded with `merge`, body + each far-field box side named at build time, swept along the span |
 | `examples/flow_past_half_cylinder.py` | external flow: structured section with a semicircular-bump floor, sides named at build time, swept along the span |
 | `examples/flow_past_{sphere,hemisphere}.py` | external flow: cubed-sphere (half-)shell of `from_grid` patches (per-patch `face_tags`) welded with `merge` |
 

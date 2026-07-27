@@ -33,8 +33,8 @@ Each writes native Nek5000/NekRS `.re2`/`.rea` plus a `.vtk` for ParaView.
 | `rectangular_pipe.py` | `QuadMesh.structured` duct extruded along an axis (`HexMesh.extrude`) |
 | `transfinite_block.py` | eight corners → trilinear grid → `HexMesh.from_grid` |
 | `backward_facing_step.py` | three `QuadMesh.structured(boundary_names=…)` rectangles → `merge` → span-`loft` (caps `front`/`back`) |
-| `flow_past_cylinder.py` | `QuadMesh.annulus(inner_name="cylinder", outer_name={…})` (circle → square ring) → span-`loft` (caps `front`/`back`) |
-| `flow_past_plate.py` | `QuadMesh.annulus(inner_name="plate", outer_name={…})` around a thin ellipse → span-`loft` (caps `front`/`back`) |
+| `flow_past_cylinder.py` | four `HexMesh.from_grid` wedge patches (circle → square-box side) → `HexMesh.merge` (body → `cylinder`, sides `inlet`/`outlet`/`top`/`bottom`, caps `front`/`back`) |
+| `flow_past_plate.py` | four `HexMesh.from_grid` wedge patches around a thin ellipse → `HexMesh.merge` (body → `plate`, box sides + caps named at build time) |
 | `flow_past_half_cylinder.py` | `QuadMesh.structured(boundary_names=…)` with a semicircular-bump bottom edge → span-`loft` (caps `front`/`back`) |
 | `flow_past_sphere.py` | six-patch cubed-sphere shell, each `from_grid(face_tags=…)` → `HexMesh.merge` (body → `sphere`) |
 | `flow_past_hemisphere.py` | five-patch half cubed-sphere on the ground, each `from_grid(face_tags=…)` → `merge` (body → `hemisphere`) |
@@ -43,10 +43,12 @@ The 2-D cross-section meshers (`QuadMesh.ogrid` / `structured` / `half_ogrid` /
 `annulus`) are toolkit primitives; the scripts just supply a boundary and
 sweep/stack them. The external-flow cases name their boundaries **as the mesh is
 built** — the section tags its own outer edges (`QuadMesh.structured(boundary_names=…)` /
-`QuadMesh.annulus(inner_name=…, outer_name=…)`), those propagate onto the swept side
-faces, the sweep names its end caps (`loft(first_cap=…, last_cap=…)`), and structured
-patches are tagged in place (`from_grid(face_tags=…)`). Faces welded away by `merge`
-are left untagged so no stale interior tag survives.
+`QuadMesh.annulus(inner_name=…, outer_name=…)`, the latter tagging the outer ring as a
+whole), those propagate onto the swept side faces, the sweep names its end caps
+(`loft(first_cap=…, last_cap=…)`), and structured patches are tagged in place
+(`from_grid(face_tags=…)`). Splitting a far field into distinct named sides is done by
+merging one structured patch per side (`flow_past_cylinder.py`), not by the primitive.
+Faces welded away by `merge` are left untagged so no stale interior tag survives.
 
 ## Tested via the toolkit
 

@@ -509,7 +509,7 @@ class QuadMesh:
     @classmethod
     def annulus(cls, inner: CurveLoop, outer: CurveLoop, radial: FloatArray, *,
                 interior_method: str | None = None,
-                inner_name: str = "", outer_name: str | Mapping[str, str] = "",
+                inner_name: str = "", outer_name: str = "",
                 ) -> QuadMesh:
         """Ring O-grid filling the region *between* an inner and an outer closed
         loop (both :class:`~nekmeshpy.geometry.curve.CurveLoop`) -- e.g. a circular
@@ -542,15 +542,17 @@ class QuadMesh:
         keeps its true shape and an ``interior_method`` (e.g. ``conduction``)
         relaxes the ring interior onto the resulting curved surface.
 
-        ``inner_name`` names the whole inner ring (the embedded body) at build
-        time; ``outer_name`` names the outer ring -- a single string tags it
-        uniformly (a round far field), or a ``{"x_min"/"x_max"/"y_min"/"y_max"/
-        "z_min"/"z_max": name}`` mapping tags each outer edge by which side of the
-        outer loop's **world** bounding box its midpoint lies on (a rectangular far
-        field split into inlet / outlet / top / bottom, in whichever world plane
-        the section lies).  The names ride through
+        ``inner_name`` and ``outer_name`` name the whole inner and outer rings at
+        build time -- each a single string (e.g. an embedded body and a uniform,
+        round far field).  The names ride through
         :meth:`~nekmeshpy.geometry.hexmesh.HexMesh.loft` / ``extrude`` onto the
-        swept side faces (see :meth:`structured`).
+        swept side faces (see :meth:`structured`).  ``annulus`` deliberately has
+        **no per-side outer tagging**: to split a far field into distinct sides
+        (inlet / outlet / top / bottom), build it from several
+        :meth:`structured` patches and stitch them with
+        :meth:`~nekmeshpy.geometry.hexmesh.HexMesh.merge`, as
+        ``examples/flow_past_cylinder.py`` does (the 2-D analogue of the
+        cubed-sphere shell in ``examples/flow_past_sphere.py``).
 
         Gives ``N x (radial.size - 1)`` quads wound CCW.  ``radial`` here sets the
         ring layers and is not interchangeable with the ``nx``/``ny`` of
@@ -595,34 +597,8 @@ class QuadMesh:
         if inner_name:
             for edge in inner_ring:
                 enames[edge] = inner_name
-        if isinstance(outer_name, str):
-            if outer_name:
-                for edge in outer_ring:
-                    enames[edge] = outer_name
-        else:
-            # name each outer edge by the outer bbox side its midpoint lies on,
-            # in world coordinates -- so a section in any world plane names its
-            # sides via the six world axes x_min/x_max/y_min/y_max/z_min/z_max.
-            mn = opts.min(axis=0)
-            mx = opts.max(axis=0)
-            ext = float(np.max(mx - mn))
-            side_tol = 1e-6 * ext if ext > 0 else 1e-9
-            specs = [("x_min", 0, mn[0]), ("x_max", 0, mx[0]),
-                     ("y_min", 1, mn[1]), ("y_max", 1, mx[1]),
-                     ("z_min", 2, mn[2]), ("z_max", 2, mx[2])]
-            for m in range(N):
-                mid = 0.5 * (opts[m] + opts[(m + 1) % N])
-                best: str | None = None
-                best_d = np.inf
-                for side, axis, plane in specs:
-                    nm = outer_name.get(side)
-                    if nm is None:
-                        continue
-                    d = abs(float(mid[axis] - plane))
-                    if d < best_d and d <= side_tol:
-                        best_d = d
-                        best = nm
-                if best is not None:
-                    enames[outer_ring[m]] = best
+        if outer_name:
+            for edge in outer_ring:
+                enames[edge] = outer_name
         qm = cls(pts3d, quads, boundaries=wall, boundary_names=enames)
         return _apply_interior(qm, interior_method)
