@@ -24,13 +24,9 @@ dependencies = [
 [project.optional-dependencies]
 plot = ["matplotlib>=3.4"]
 io = ["meshio>=5.0"]
-yaml = ["PyYAML>=5.4"]
 test = ["pytest>=7.0"]
 dev = ["ruff>=0.5", "mypy>=1.0", "pytest>=7.0"]
-all = ["matplotlib>=3.4", "meshio>=5.0", "PyYAML>=5.4", "pytest>=7.0"]
-
-[project.scripts]
-nekmesh = "nekmeshpy.cli:main"
+all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0"]
 
 [project.urls]
 Homepage = "https://github.com/nekmeshpy/nekmeshpy"
@@ -39,7 +35,7 @@ Homepage = "https://github.com/nekmeshpy/nekmeshpy"
 include = ["nekmeshpy*"]
 
 [tool.setuptools.package-data]
-nekmeshpy = ["data/*.vtx", "data/*.tri", "templates/*.rea", "py.typed"]
+nekmeshpy = ["templates/*.rea", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -62,20 +58,16 @@ ignore = [
 python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = false
-check_untyped_defs = false
-# fully-typed public API modules are type-checked in CI; the numeric internals
-# (hexmesh, trimesh, ...) are only partially annotated for now.
-files = [
-    "nekmeshpy/algorithms/registry.py",
-    "nekmeshpy/config.py",
-    "nekmeshpy/model/fields.py",
-    "nekmeshpy/model/physical.py",
-    "nekmeshpy/model/quality.py",
-    "nekmeshpy/algorithms/pipes.py",
-]
+check_untyped_defs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+# the whole package is fully annotated and type-checked; array-valued data uses
+# the dtype-parametrized aliases in ``nekmeshpy._typing`` (FloatArray / IntArray
+# / BoolArray) -- a bare ``np.ndarray`` is a disallow_any_generics error.
+files = ["nekmeshpy"]
 
 # third-party packages ship no (or version-mismatched) stubs; don't analyse them
 [[tool.mypy.overrides]]
-module = ["numpy.*", "scipy.*", "meshio.*", "matplotlib.*", "yaml"]
+module = ["numpy.*", "scipy.*", "meshio.*", "matplotlib.*"]
 ignore_missing_imports = true
 follow_imports = "skip"

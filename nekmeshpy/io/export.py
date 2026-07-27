@@ -1,88 +1,135 @@
 """Export / generic-view free functions for a :class:`HexMesh`.
 
-:class:`HexMesh` is a pure hex container (``elements`` (N,8,3) + ``boundaries``);
-turning it into a shared-node :class:`~nekmeshpy.model.mesh.Mesh`, a meshio mesh, an
-arbitrary meshio file, or the native Nek ``.re2``/``.rea`` and ASCII ``.vtk``
-lives here.  The byte layout is ported verbatim, so the exported files stay
-byte-identical to the reference.
+:class:`HexMesh` is a pure hex container (``hexes`` (N,8,3) + ``boundaries`` with
+parallel ``boundary_names``); turning it into a shared-point
+:class:`~nekmeshpy.model.mesh.Mesh`, a meshio mesh, an arbitrary meshio file, or
+the native Nek ``.re2``/``.rea`` and ASCII ``.vtk`` lives here.  The byte layout
+is ported verbatim, so the exported files stay byte-identical to the reference.
+
+Boundaries are named at build time; the mapping of each **name** to a Nek BC code
+and integer id is supplied *here*, at export, via the ``groups`` parameter -- a
+:class:`~nekmeshpy.model.physical.PhysicalGroups` (use a preset for exact codes),
+a plain ``{name: nek_code}`` mapping (tags assigned in insertion order), or
+``None`` to auto-number the mesh's distinct names.
 """
+
+from __future__ import annotations
 
 import logging
 import os
 import struct
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Union
 
 import numpy as np
 
+from .._typing import FloatArray, IntArray
+from ..model import topology
 from ..model.mesh import Mesh
+from ..model.physical import PhysicalGroup, PhysicalGroups
+
+if TYPE_CHECKING:
+    from ..geometry.hexmesh import HexMesh
 
 # package root (one level up from this io/ subpackage), holding templates/
 _PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _log = logging.getLogger("nekmeshpy")
 
+# what the ``groups`` export parameter accepts
+GroupsArg = Union[PhysicalGroups, Mapping[str, str], None]
+
+
+def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
+    """Normalise the ``groups`` export argument to a :class:`PhysicalGroups`.
+
+    * a :class:`PhysicalGroups` is returned unchanged (use a preset such as
+      :meth:`PhysicalGroups.nek_default` for byte-exact codes/tags);
+    * a ``{name: nek_code}`` mapping becomes a registry with 1-based tags in
+      insertion order and the given codes;
+    * ``None`` auto-numbers the mesh's distinct boundary names (sorted, 1-based
+      tags, generic ``"E  "`` code).
+    """
+    if isinstance(groups, PhysicalGroups):
+        return groups
+    if groups is None:
+        names = mesh.boundary_group_names
+        return PhysicalGroups(
+            PhysicalGroup(name, i + 1) for i, name in enumerate(names))
+    return PhysicalGroups(
+        PhysicalGroup(name, i + 1, 2, code)
+        for i, (name, code) in enumerate(groups.items()))
+
 
 # -- generic mesh view --------------------------------------------------
-def to_mesh(mesh):
-    """Return a shared-node :class:`~nekmeshpy.model.mesh.Mesh`: welded points,
+def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
+    """Return a shared-point :class:`~nekmeshpy.model.mesh.Mesh`: welded points,
     ``hexahedron`` volume cells, plus one ``quad`` boundary cell per tagged
-    face grouped into named ``cell_sets`` (and ``point_sets``) taken from
-    ``mesh.physical_groups``."""
-    mesh.finalize()
+    face grouped into named ``cell_sets`` (and ``point_sets``) taken from the
+    mesh's boundary names.  ``groups`` maps those names to Nek codes / tags
+    (see :func:`_as_groups`)."""
     X, HC, _ = mesh.weld()
-    groups = mesh.physical_groups
+    g = _as_groups(mesh, groups)
     b = mesh.boundaries
+    bnames = mesh.boundary_names
 
-    quad_conn = []           # welded node ids of each boundary face
-    quad_tag = []            # tag of each boundary face
+    conn_rows = []           # welded point ids of each boundary face
+    name_rows = []           # name of each boundary face
     for r in range(b.shape[0]):
-        elem, face, tag = int(b[r, 0]), int(b[r, 1]), int(b[r, 2])
-        quad_conn.append(HC[elem, mesh.FACE_NODES[face - 1, :]])
-        quad_tag.append(tag)
-    quad_conn = (np.array(quad_conn, dtype=np.int64) if quad_conn
+        elem, face = int(b[r, 0]), int(b[r, 1])
+        conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
+        name_rows.append(str(bnames[r]))
+    quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
                  else np.zeros((0, 4), np.int64))
-    quad_tag = np.array(quad_tag, dtype=np.int64)
+    quad_name = np.array(name_rows, dtype=np.str_)
 
     cells = {"hexahedron": HC}
     if quad_conn.shape[0]:
         cells["quad"] = quad_conn
 
-    cell_sets, point_sets, field_data = {}, {}, {}
-    for g in groups:
-        sel = np.flatnonzero(quad_tag == g.tag)
+    cell_sets: dict[str, dict[str, IntArray]] = {}
+    point_sets: dict[str, IntArray] = {}
+    field_data: dict[str, IntArray] = {}
+    for grp in g:
+        sel = np.flatnonzero(quad_name == grp.name)
         if sel.size == 0:
             continue
-        cell_sets[g.name] = {"quad": sel}
-        point_sets[g.name] = np.unique(quad_conn[sel].ravel())
-        field_data[g.name] = np.array([g.tag, g.dim], dtype=np.int64)
+        cell_sets[grp.name] = {"quad": sel}
+        point_sets[grp.name] = np.unique(quad_conn[sel].ravel())
+        field_data[grp.name] = np.array([grp.tag, grp.dim], dtype=np.int64)
 
     return Mesh(points=X, cells=cells, point_sets=point_sets,
                 cell_sets=cell_sets, field_data=field_data)
 
 
-def to_meshio(mesh):
+def to_meshio(mesh: HexMesh, groups: GroupsArg = None) -> Any:
     """Return a :class:`meshio.Mesh` view (requires ``meshio``)."""
-    return to_mesh(mesh).to_meshio()
+    return to_mesh(mesh, groups).to_meshio()
 
 
-def write(mesh, path, file_format=None):
+def write(mesh: HexMesh, path: str, file_format: str | None = None,
+          *, groups: GroupsArg = None) -> str:
     """Write through :mod:`meshio` to any supported format
     (``.vtu``, ``.msh``, ``.xdmf``, ``.exo`` ...).  For the native Nek
     formats use :func:`to_re2`."""
-    return to_mesh(mesh).write(path, file_format=file_format)
+    return to_mesh(mesh, groups).write(path, file_format=file_format)
 
 
 # -- native Nek export --------------------------------------------------
-def _str_to_double(s):
+def _str_to_double(s: str) -> float:
     b = bytearray(8)
     for i, ch in enumerate(s):
         b[i] = ord(ch)
     return struct.unpack("<d", bytes(b))[0]
 
 
-def to_re2(mesh, filename):
-    """Write ``<filename>.re2`` (binary) and ``<filename>.rea`` (ASCII)."""
-    mesh.finalize()
-    elements = mesh.elements
+def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
+    """Write ``<filename>.re2`` (binary) and ``<filename>.rea`` (ASCII).
+    ``groups`` maps each boundary name to its Nek BC code (see
+    :func:`_as_groups`)."""
+    g = _as_groups(mesh, groups)
+    elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
+    bnames = mesh.boundary_names
     num_elem = elements.shape[0]
     with open(filename + ".rea", "w") as fh:
         with open(os.path.join(_PKG, "templates", "header.rea"), "r") as hf:
@@ -103,28 +150,29 @@ def to_re2(mesh, filename):
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
         fid.write(struct.pack("<d", float(boundaries.shape[0])))
-        groups = mesh.physical_groups
         for b in range(boundaries.shape[0]):
             elem = int(boundaries[b, 0]) + 1
             face = int(boundaries[b, 1])
-            tag = int(boundaries[b, 2])
-            buf2 = np.zeros(8, dtype="<f8")
+            name = str(bnames[b])
+            buf2: FloatArray = np.zeros(8, dtype="<f8")
             buf2[0] = float(elem)
             buf2[1] = float(face)
-            code = groups.code_for(tag)
-            if code is not None:
-                buf2[7] = _str_to_double(code)
+            grp = g.get(name)
+            if grp is not None:
+                buf2[7] = _str_to_double(grp.code)
             else:
-                _log.warning("unknown tag: %s", tag)
+                _log.warning("unknown boundary name: %s", name)
             fid.write(buf2.tobytes())
     return mesh
 
 
-def to_vtk(mesh, fname):
-    """Write an ASCII VTK unstructured grid with per-node ``bc_id``."""
-    mesh.finalize()
-    elements = mesh.elements
+def to_vtk(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
+    """Write an ASCII VTK unstructured grid with per-point ``bc_id`` (the integer
+    tag each boundary name maps to; see :func:`_as_groups`)."""
+    g = _as_groups(mesh, groups)
+    elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
+    bnames = mesh.boundary_names
     N = elements.shape[0]
     X = elements.reshape(N * 8, 3)
     nX = X.shape[0]
@@ -147,14 +195,18 @@ def to_vtk(mesh, fname):
         for _ in range(N):
             fid.write("12\n")
         fid.write("\n")
-        iftoiv = mesh.FACE_NODES + 1
+        iftoiv = mesh.FACE_POINTS + 1
         tmp = np.zeros((8, N), dtype=np.int64)
         for i in range(boundaries.shape[0]):
             face = int(boundaries[i, 1])
             elem = int(boundaries[i, 0])
-            tag = int(boundaries[i, 2])
+            name = str(bnames[i])
+            grp = g.get(name)
+            if grp is None:
+                _log.warning("unknown boundary name: %s", name)
+                continue
             for j in iftoiv[face - 1, :]:
-                tmp[j - 1, elem] = tag
+                tmp[j - 1, elem] = grp.tag
         fid.write("POINT_DATA %d\n" % (N * 8))
         fid.write("SCALARS bc_id int 1\n")
         fid.write("LOOKUP_TABLE default\n")
@@ -165,14 +217,16 @@ def to_vtk(mesh, fname):
 
 
 # -- reporting ----------------------------------------------------------
-def summary(mesh, cfg):
-    """Log the element/boundary counts and the per-tag face totals for the
-    bifurcation physical groups defined in ``cfg``."""
-    mesh.finalize()
+def summary(mesh: HexMesh) -> None:
+    """Log the element/boundary counts, the per-name face totals (using the
+    mesh's own boundary names), and the topology report."""
     _log.info("mesh: %d hex elements, %d boundary faces",
-              mesh.elements.shape[0], mesh.boundaries.shape[0])
-    labels = ["wall", "trunk outlet", "top outlet 1", "top outlet 2"]
-    tags = [cfg.tag_wall, cfg.tag_trunk, cfg.tag_top1, cfg.tag_top2]
-    for t in range(4):
-        _log.info("  tag %d (%-12s): %d faces",
-                  tags[t], labels[t], int(np.sum(mesh.boundaries[:, 2] == tags[t])))
+              mesh.hexes.shape[0], mesh.boundaries.shape[0])
+    for name in mesh.boundary_group_names:
+        _log.info("  %-14s: %d faces",
+                  name, int(np.sum(mesh.boundary_names == name)))
+    rep = topology.hex_report(*mesh.weld()[:2])
+    _log.info("  watertight=%s  conformal=%s  components=%d  "
+              "non-manifold faces=%d  hanging points=%d",
+              rep["watertight"], rep["conformal"], rep["n_components"],
+              rep["n_nonmanifold_faces"], rep["n_hanging_points"])

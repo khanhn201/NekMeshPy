@@ -1,6 +1,6 @@
 """Hex-element quality metrics, decoupled from :class:`HexMesh`.
 
-All metrics operate on a shared-node representation ``(points, hexes)`` where
+All metrics operate on a shared-point representation ``(points, hexes)`` where
 ``points`` is ``(P,3)`` and ``hexes`` is ``(N,8)`` in Nek corner order, so they
 work equally on a welded :class:`HexMesh` or a :class:`~nekmeshpy.model.mesh.Mesh`.
 
@@ -15,13 +15,15 @@ from typing import Any
 
 import numpy as np
 
-# corner -> [corner, +xi, +eta, +zeta] neighbour node positions
+from .._typing import FloatArray, IntArray, PointArray
+
+# corner -> [corner, +xi, +eta, +zeta] neighbour point positions
 _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
                 [4, 7, 5, 0], [5, 4, 6, 1], [6, 5, 7, 2], [7, 6, 4, 3]],
                dtype=np.int64)
 
 
-def scaled_jacobian(points: np.ndarray, hexes: np.ndarray) -> np.ndarray:
+def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
     """Per-hex minimum corner scaled Jacobian, shape ``(N,)``.
 
     1 is a perfect cube corner; <= 0 is degenerate / inverted.
@@ -44,7 +46,7 @@ def scaled_jacobian(points: np.ndarray, hexes: np.ndarray) -> np.ndarray:
     return sj
 
 
-def summary(points: np.ndarray, hexes: np.ndarray) -> dict[str, Any]:
+def summary(points: PointArray, hexes: IntArray) -> dict[str, Any]:
     """Dict of aggregate quality statistics for a hex mesh."""
     sj = scaled_jacobian(points, hexes)
     return {
@@ -58,14 +60,15 @@ def summary(points: np.ndarray, hexes: np.ndarray) -> dict[str, Any]:
     }
 
 
-def histogram(points: np.ndarray, hexes: np.ndarray, bins: int = 10,
-              lo: float = 0.0, hi: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+def histogram(points: PointArray, hexes: IntArray, bins: int = 10,
+              lo: float = 0.0, hi: float = 1.0) -> tuple[IntArray, FloatArray]:
     """``(counts, edges)`` histogram of the scaled Jacobian distribution."""
     sj = scaled_jacobian(points, hexes)
     return np.histogram(sj, bins=bins, range=(lo, hi))
 
 
-def format_report(stats: dict[str, Any], hist: tuple | None = None) -> str:
+def format_report(stats: dict[str, Any],
+                  hist: tuple[IntArray, FloatArray] | None = None) -> str:
     """Human-readable multi-line quality report from :func:`summary` output."""
     lines = [
         "elements     : %d" % stats["n_elements"],

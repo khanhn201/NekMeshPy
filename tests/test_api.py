@@ -1,59 +1,19 @@
-"""Tests for the generalization layer: config (de)serialization + validation,
-physical groups, the shared-node Mesh view, and the interior-method registry."""
+"""Tests for the toolkit generalization layer: physical groups, the shared-point
+Mesh view, quality, and the section interior-method registry (exercised on the
+mesh the bifurcation example builds)."""
 
 import numpy as np
-import pytest
 
 from nekmeshpy import (
-    INTERIOR_METHODS,
-    Config,
+    SECTION_METHODS,
+    Curve,
     PhysicalGroups,
+    QuadMesh,
     export,
     quality,
-    register_interior,
-    set_interior,
+    register_section_interior,
+    set_section_interior,
 )
-
-
-def test_config_roundtrip_dict():
-    cfg = Config()
-    cfg.interior_method = "winslow"
-    cfg2 = Config.from_dict(cfg.to_dict())
-    assert cfg2.interior_method == "winslow"
-    assert cfg2.radial == cfg.radial
-
-
-def test_config_from_dict_rejects_unknown():
-    with pytest.raises(ValueError):
-        Config.from_dict({"not_a_field": 1})
-
-
-def test_config_file_roundtrip(tmp_path):
-    cfg = Config()
-    cfg.n_slices = 12
-    for ext in ("yaml", "json"):
-        p = tmp_path / ("c." + ext)
-        cfg.save(str(p))
-        back = Config.from_file(str(p))
-        assert back.n_slices == 12
-
-
-@pytest.mark.parametrize("mutate,msg", [
-    (lambda c: setattr(c, "n_half", 6), "n_half"),
-    (lambda c: setattr(c, "radial", [0.4, 0.8, 0.9]), "radial"),
-    (lambda c: setattr(c, "radial", [0.8, 0.4, 1.0]), "increasing"),
-    (lambda c: setattr(c, "center_scale", 1.5), "center_scale"),
-])
-def test_config_validation_catches(mutate, msg):
-    cfg = Config()
-    mutate(cfg)
-    with pytest.raises(ValueError) as e:
-        cfg.validate()
-    assert msg in str(e.value)
-
-
-def test_default_config_valid():
-    Config().validate()
 
 
 def test_physical_groups_default_codes():
@@ -78,24 +38,28 @@ def test_to_mesh_groups(built_mesh):
     assert m.cell_sets["wall"]["quad"].size == 960
 
 
-def test_interior_registry_extensible(built_mesh):
+def test_section_interior_registry_extensible():
     calls = {}
 
-    @register_interior("noop_test")
-    def _noop(mesh, twall, **opts):
+    @register_section_interior("noop_test")
+    def _noop(qm, **opts):
         calls["hit"] = True
-        return mesh
+        return qm
 
-    assert "noop_test" in INTERIOR_METHODS
-    set_interior(built_mesh["mesh"], "noop_test", 1)
+    assert "noop_test" in SECTION_METHODS
+    qm = QuadMesh.structured(
+        [Curve([(0, 0, 0), (1, 0, 0)]), Curve([(1, 0, 0), (1, 1, 0)]),
+         Curve([(1, 1, 0), (0, 1, 0)]), Curve([(0, 1, 0), (0, 0, 0)])])
+    set_section_interior(qm, "noop_test")
     assert calls.get("hit") is True
-    del INTERIOR_METHODS["noop_test"]
+    del SECTION_METHODS["noop_test"]
 
 
 def test_quality_module_matches_mesh(built_mesh):
     mesh = built_mesh["mesh"]
     X, HC, _ = mesh.weld()
     sj = quality.scaled_jacobian(X, HC)
-    assert np.allclose(sj, quality.scaled_jacobian(*mesh.weld()[:2]))
+    assert np.allclose(sj, mesh.scaled_jacobian())
     stats = quality.summary(X, HC)
     assert stats["n_inverted"] == 0
+    assert mesh.quality_summary() == stats
