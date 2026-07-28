@@ -1,16 +1,7 @@
-"""Export / generic-view free functions for a :class:`~nekmeshpy.hexmesh.HexMesh`.
+"""Export / generic-view free functions for a ``HexMesh``.
 
-:class:`~nekmeshpy.hexmesh.HexMesh` is a pure hex container (``hexes`` (N,8,3) + ``boundaries`` with
-parallel ``boundary_tags``); turning it into a shared-point
-:class:`~nekmeshpy.model.mesh.Mesh`, a meshio mesh, an arbitrary meshio file, or
-the native Nek ``.re2``/``.rea`` and ASCII ``.vtk`` lives here.  The byte layout
-is ported verbatim, so the exported files stay byte-identical to the reference.
-
-Boundaries are named at build time; the mapping of each **name** to a Nek BC code
-and integer id is supplied *here*, at export, via the ``groups`` parameter -- a
-:class:`~nekmeshpy.model.physical.PhysicalGroups` (use a preset for exact codes),
-a plain ``{name: nek_code}`` mapping (tags assigned in insertion order), or
-``None`` to auto-number the mesh's distinct names.
+Exports to a shared-point ``Mesh``, meshio, or native Nek ``.re2``/``.rea`` and
+``.vtk``. The ``groups`` parameter maps each boundary name to a Nek BC code and tag.
 """
 
 from __future__ import annotations
@@ -31,23 +22,20 @@ from ..model.physical import PhysicalGroup, PhysicalGroups
 if TYPE_CHECKING:
     from ..hexmesh import HexMesh
 
-# .rea header/footer templates live beside this module, in io/templates/
+# .rea header/footer templates
 _TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 _log = logging.getLogger("nekmeshpy")
 
-# what the ``groups`` export parameter accepts
+# accepted types for the ``groups`` export parameter
 GroupsArg = Union[PhysicalGroups, Mapping[str, str], None]
 
 
 def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
-    """Normalise the ``groups`` export argument to a :class:`PhysicalGroups`.
+    """Normalise the ``groups`` argument to a ``PhysicalGroups``.
 
-    * a :class:`PhysicalGroups` is returned unchanged (use a preset such as
-      :meth:`PhysicalGroups.nek_default` for byte-exact codes/tags);
-    * a ``{name: nek_code}`` mapping becomes a registry with 1-based tags in
-      insertion order and the given codes;
-    * ``None`` auto-numbers the mesh's distinct boundary names (sorted, 1-based
-      tags, generic ``"E  "`` code).
+    A ``PhysicalGroups`` passes through; a ``{name: nek_code}`` mapping becomes a
+    registry with 1-based tags in insertion order; ``None`` auto-numbers the mesh's
+    distinct boundary names.
     """
     if isinstance(groups, PhysicalGroups):
         return groups
@@ -62,11 +50,8 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
 
 # -- generic mesh view --------------------------------------------------
 def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
-    """Return a shared-point :class:`~nekmeshpy.model.mesh.Mesh`: welded points,
-    ``hexahedron`` volume cells, plus one ``quad`` boundary cell per tagged
-    face grouped into named ``cell_sets`` (and ``point_sets``) taken from the
-    mesh's boundary names.  ``groups`` maps those names to Nek codes / tags
-    (see ``_as_groups``)."""
+    """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
+    ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
     X, HC, _ = mesh.weld()
     g = _as_groups(mesh, groups)
     b = mesh.boundaries
@@ -102,15 +87,13 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
 
 
 def to_meshio(mesh: HexMesh, groups: GroupsArg = None) -> Any:
-    """Return a :class:`meshio.Mesh` view (requires ``meshio``)."""
+    """Return a meshio mesh view (requires ``meshio``)."""
     return to_mesh(mesh, groups).to_meshio()
 
 
 def write(mesh: HexMesh, path: str, file_format: str | None = None,
           *, groups: GroupsArg = None) -> str:
-    """Write through :mod:`meshio` to any supported format
-    (``.vtu``, ``.msh``, ``.xdmf``, ``.exo`` ...).  For the native Nek
-    formats use :func:`to_re2`."""
+    """Write through meshio to any supported format; for native Nek use ``to_re2``."""
     return to_mesh(mesh, groups).write(path, file_format=file_format)
 
 
@@ -123,9 +106,7 @@ def _str_to_double(s: str) -> float:
 
 
 def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
-    """Write ``<filename>.re2`` (binary) and ``<filename>.rea`` (ASCII).
-    ``groups`` maps each boundary name to its Nek BC code (see
-    ``_as_groups``)."""
+    """Write ``<filename>.re2`` (binary) and ``<filename>.rea`` (ASCII)."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
@@ -167,8 +148,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
 
 
 def to_vtk(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
-    """Write an ASCII VTK unstructured grid with per-point ``bc_id`` (the integer
-    tag each boundary name maps to; see ``_as_groups``)."""
+    """Write an ASCII VTK unstructured grid with per-point ``bc_id`` tags."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
@@ -218,8 +198,7 @@ def to_vtk(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
 
 # -- reporting ----------------------------------------------------------
 def summary(mesh: HexMesh) -> None:
-    """Log the element/boundary counts, the per-name face totals (using the
-    mesh's own boundary names), and the topology report."""
+    """Log element/boundary counts, per-name face totals, and the topology report."""
     _log.info("mesh: %d hex elements, %d boundary faces",
               mesh.hexes.shape[0], mesh.boundaries.shape[0])
     for name in mesh.boundary_group_tags:

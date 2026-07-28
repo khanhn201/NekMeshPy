@@ -38,8 +38,10 @@ def test_tag_face_counts(built_mesh):
 def test_scaled_jacobian_quality(built_mesh):
     X, HC, _ = built_mesh["mesh"].weld()
     sj = quality.scaled_jacobian(X, HC)
-    assert float(np.min(sj)) == pytest.approx(0.2481, abs=1e-3)
-    assert float(np.mean(sj)) == pytest.approx(0.8271, abs=1e-3)
+    # values for the exact-mesh pipeline (seam rings conformalized without the
+    # spline that used to smooth the leg openings); still no inverted elements
+    assert float(np.min(sj)) == pytest.approx(0.0281, abs=1e-3)
+    assert float(np.mean(sj)) == pytest.approx(0.9080, abs=1e-3)
     assert float(np.min(sj)) > 0.0   # no inverted elements
 
 

@@ -1,12 +1,8 @@
-"""Mesh a corner-defined structured hex block and export for Nek5000.
+"""Corner-defined structured hex block, exported for Nek5000.
 
-A flat, gmsh-style script: edit the parameter constants below and re-run. It
-trilinearly interpolates eight corner points into an ``nx x ny x nz`` grid and
-hands it to :meth:`nekmeshpy.hexmesh.HexMesh.from_grid`; there is no
-mesher class. Per-axis grading is a geometric ratio, or drive the spacing from a
-:mod:`nekmeshpy.model.fields` size field (set ``SIZE_FIELD``).
-
-Run with::
+Trilinearly interpolates eight corners into an ``nx x ny x nz`` grid and hands it
+to :meth:`HexMesh.from_grid`. Per-axis grading is a geometric ratio, or drive
+spacing from a :mod:`nekmeshpy.model.fields` size field (``SIZE_FIELD``).
 
     PYTHONPATH=. python examples/transfinite_block.py
 """
@@ -50,8 +46,8 @@ def trilinear(corners, u, v, w):
 
 
 def axis_positions(n, ratio, i0, i1):
-    """Normalized point positions along one axis (0..1): from the size field if
-    set, else a geometric grading."""
+    """Normalized positions (0..1) along one axis: from the size field if set,
+    else geometric grading."""
     if SIZE_FIELD is not None:
         return fields.distribution_from_field(
             SIZE_FIELD, trilinear(CORNERS, *i0), trilinear(CORNERS, *i1))

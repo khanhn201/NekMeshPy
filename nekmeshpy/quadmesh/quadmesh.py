@@ -1,30 +1,10 @@
 """Quad mesh of a single cross-section slice.
 
-``QuadMesh`` is a pure container and the quad sibling of
-:class:`~nekmeshpy.trimesh.TriMesh`: point coordinates ``points`` (nn,3)
-and quad connectivity ``quads`` (nq,4), with matching ``n_points`` / ``n_quads``
-size properties.  It carries the two tag systems used throughout the toolkit: a
-dense per-quad ``element_tags`` ``(nq,)`` (region/material, ``""`` = untagged), and
-tagged boundary edges recorded exactly as
-:class:`~nekmeshpy.hexmesh.HexMesh` records faces: ``boundaries`` is an
-``(Nbc,2)`` array of ``[quad id (0-based), side (1-4)]`` with a parallel
-``boundary_tags`` ``(Nbc,)`` naming each tagged edge.  Side ``s`` spans the local
-edge ``EDGE_POINTS[s-1]`` -- side 1 = pt1-2, 2 = pt2-3,
-3 = pt3-4, 4 = pt4-1.  Untagged boundary edges are not stored; recover the full
-topological outline with :meth:`~QuadMesh.boundary_edges`.
-
-Besides the array constructor, four factory classmethods fill a bounded region
-with quads (mirroring the :class:`~nekmeshpy.hexmesh.HexMesh` factories):
-:meth:`structured` (transfinite grid over four edge lines), :meth:`ogrid` (butterfly
-O-grid inside a closed loop), :meth:`half_ogrid` (half-disc O-grid split along a
-spine), and :meth:`annulus` (ring O-grid).  A stack of these slices (sharing
-connectivity) is recombined into hexes by
-:meth:`~nekmeshpy.hexmesh.HexMesh.loft`, or a single section is swept along
-a straight axis by :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`.  One
-dimension down, :meth:`extrude` / :meth:`loft` sweep a
-:class:`~nekmeshpy.linemesh.LineMesh` into this quad section, carrying the
-line's ``element_tags`` onto the swept quads and its tagged boundary **points** onto
-the swept side-wall **edges**.
+``QuadMesh`` is a pure container: ``points`` ``(nn,3)`` and quad connectivity
+``quads`` ``(nq,4)``, plus a dense per-quad ``element_tags`` and a sparse tagged
+boundary-edge list ``boundaries`` ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a
+parallel ``boundary_tags``.  Factory classmethods fill a bounded region with quads;
+``extrude``/``loft`` sweep a ``LineMesh`` into a quad section.
 """
 
 from __future__ import annotations
@@ -38,21 +18,15 @@ from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray, StrArr
 from ..linemesh import LineMesh
 from ..model.fields import validate_layers
 
-#: Boundary-name sentinel meaning "this face is *not* a boundary": a section edge
-#: (or swept face / grid side) carrying this name emits **no** boundary row, so it
-#: is left as a raw topological surface -- or, when two blocks are stitched, as the
-#: welded-away seam.  Marking the touching faces ``NO_BOUNDARY`` before
-#: :meth:`~nekmeshpy.hexmesh.HexMesh.merge` lets merge stay a plain concatenate: there is simply no
-#: stale tag on the face that becomes interior.  Equal to ``""`` so it also reads
-#: as "unnamed" everywhere an empty name is already skipped.
+#: Boundary-name sentinel meaning "not a boundary": a side carrying this name emits
+#: no boundary row.  Equal to ``""`` so it reads as "unnamed" everywhere.
 NO_BOUNDARY: str = ""
 
 # default sweep axis / origin for extrude (module-level singletons; read-only)
 _Z_AXIS = np.array([0.0, 0.0, 1.0])
 _ORIGIN = np.array([0.0, 0.0, 0.0])
 
-# grid side name -> (quad edge side 1-4, axis, which end) for from_grid; mirrors
-# HexMesh._GRID_SIDES one dimension down (edge sides match QuadMesh.EDGE_POINTS).
+# grid side name -> (quad edge side 1-4, axis, which end) for from_grid.
 _GRID_EDGES = {
     "x_min": (4, 0, 0), "x_max": (2, 0, -1),
     "y_min": (1, 1, 0), "y_max": (3, 1, -1),
@@ -60,9 +34,7 @@ _GRID_EDGES = {
 
 
 def _apply_smoothing(qm: QuadMesh, smoothing_method: str | None) -> QuadMesh:
-    """Reposition ``qm``'s interior points in place via the sibling
-    :mod:`~nekmeshpy.quadmesh.smoothing` module (``None`` leaves the raw
-    algebraic fill).  Imported lazily to avoid an import cycle."""
+    """Reposition ``qm``'s interior points in place (``None`` = no smoothing)."""
     if smoothing_method is not None:
         from . import smoothing
         smoothing.set_section_smoothing(qm, smoothing_method)
@@ -71,10 +43,8 @@ def _apply_smoothing(qm: QuadMesh, smoothing_method: str | None) -> QuadMesh:
 
 def _check_boundary(obj: LineMesh, name: str,
                     closed: bool, min_pts: int) -> PointArray:
-    """Validate a :class:`~nekmeshpy.linemesh.LineMesh` factory argument,
-    returning its ``(N,3)`` points.  Enforces the required open/closed topology (so
-    the distinction holds at runtime, not just for the type checker), a minimum point
-    count, and finite coordinates."""
+    """Validate a ``LineMesh`` factory argument (open/closed topology, minimum
+    point count, finite coordinates), returning its ``(N,3)`` points."""
     if not isinstance(obj, LineMesh):
         raise TypeError("%s must be a LineMesh, got %s"
                         % (name, type(obj).__name__))
@@ -95,12 +65,7 @@ class QuadMesh:
 
     Stores ``points`` ``(P,3)`` and ``quads`` ``(Q,4)`` CCW connectivity, a dense
     per-quad ``element_tags``, and a sparse tagged-boundary list ``boundaries``
-    ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a parallel ``boundary_tags`` --
-    mirroring :class:`~nekmeshpy.hexmesh.HexMesh` one dimension down.  Build a
-    section with the factory classmethods (:meth:`structured` / :meth:`ogrid` /
-    :meth:`half_ogrid` / :meth:`annulus` / :meth:`from_grid`), or sweep a
-    :class:`~nekmeshpy.linemesh.LineMesh` with :meth:`extrude` / :meth:`loft`;
-    both tag systems then ride up onto the swept hex faces."""
+    ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a parallel ``boundary_tags``."""
 
     def __init__(
         self,
@@ -110,21 +75,13 @@ class QuadMesh:
         boundary_tags: StrArray | Sequence[str] | None = None,
         element_tags: StrArray | Sequence[str] | None = None,
     ) -> None:
-        """Construct from arrays: ``points`` ``(P,3)``, ``quads`` ``(Q,4)`` indices
-        (CCW), an optional dense per-quad ``element_tags`` ``(Q,)`` (``""`` =
-        untagged; length must equal ``len(quads)``), and an optional tagged-boundary
-        list mirroring :class:`~nekmeshpy.hexmesh.HexMesh`: ``boundaries``
-        ``(Nbc,2)`` = ``[quad id (0-based), side (1-4)]`` with a parallel
-        ``boundary_tags`` ``(Nbc,)`` naming each tagged edge.  Side ``s`` spans the
-        local edge ``EDGE_POINTS[s-1]`` (side 1 = pt1-2, 2 = pt2-3,
-        3 = pt3-4, 4 = pt4-1).  Untagged boundary edges are *not* stored here; recover
-        the full topological outline with :meth:`boundary_edges`.  Use the factory
-        classmethods (:meth:`structured` / :meth:`ogrid` / :meth:`half_ogrid` /
-        :meth:`annulus`) for the usual build paths."""
+        """Construct from arrays: ``points`` ``(P,3)``, ``quads`` ``(Q,4)`` CCW
+        indices, an optional dense per-quad ``element_tags`` ``(Q,)``, and an
+        optional tagged-boundary list ``boundaries`` ``(Nbc,2)`` = ``[quad id,
+        side 1-4]`` with a parallel ``boundary_tags``."""
         self.points = np.asarray(points, dtype=float).reshape(-1, 3)
         self.quads = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
-        # dense per-quad region/material tag ("" = untagged), carried onto the swept
-        # hexes by HexMesh.loft / extrude (the element-tag chain, one level up).
+        # dense per-quad region/material tag ("" = untagged)
         if element_tags is None:
             self.element_tags: StrArray = np.full(
                 self.quads.shape[0], "", dtype=np.str_)
@@ -134,9 +91,7 @@ class QuadMesh:
                 raise ValueError("element_tags length (%d) must match quads (%d)"
                                  % (et.shape[0], self.quads.shape[0]))
             self.element_tags = et
-        # tagged boundary edges [quad id, side 1-4] parallel with boundary_tags,
-        # carried to the swept side faces by HexMesh.loft.  A NO_BOUNDARY tag marks
-        # an edge that should stay untagged (e.g. one welded away by merge).
+        # tagged boundary edges [quad id, side 1-4] parallel with boundary_tags
         self.boundaries: IntArray = (
             np.zeros((0, 2), np.int64) if boundaries is None
             else np.asarray(boundaries, np.int64).reshape(-1, 2))
@@ -167,8 +122,7 @@ class QuadMesh:
 
     @property
     def boundary_group_tags(self) -> list[str]:
-        """Sorted unique tags of the tagged boundary edges present on the section
-        (a Nek BC code / id is assigned only at export)."""
+        """Sorted unique tags of the tagged boundary edges."""
         return sorted(set(self.boundary_tags.tolist()))
 
     @property
@@ -178,14 +132,12 @@ class QuadMesh:
 
     # -- quality ---------------------------------------------------------
     def scaled_jacobian(self) -> FloatArray:
-        """Per-quad minimum corner scaled Jacobian ``(n_quads,)`` (see
-        :func:`nekmeshpy.quadmesh.quality.scaled_jacobian`)."""
+        """Per-quad minimum corner scaled Jacobian ``(n_quads,)``."""
         from . import quality
         return quality.scaled_jacobian(self.points, self.quads)
 
     def quality_summary(self) -> dict[str, Any]:
-        """Aggregate scaled-Jacobian statistics (see
-        :func:`nekmeshpy.quadmesh.quality.summary`)."""
+        """Aggregate scaled-Jacobian statistics."""
         from . import quality
         return quality.summary(self.points, self.quads)
 
@@ -194,9 +146,8 @@ class QuadMesh:
         bnd: Sequence[Sequence[int]] | IntArray,
         names: Sequence[str] | StrArray,
     ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(quad id, side)`` so a section is
-        independent of insertion order, applying the same permutation to the
-        parallel tags array (mirrors :meth:`HexMesh._order_bnd`)."""
+        """Stably order boundary rows by ``(quad id, side)``, permuting the
+        parallel tags array to match."""
         b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
         nm: StrArray = np.asarray(names, dtype=np.str_).reshape(-1)
         if b.shape[0]:
@@ -208,9 +159,8 @@ class QuadMesh:
     # -- boundary queries (topological section outline) -----------------
     @staticmethod
     def _boundary_mask(quads: IntArray) -> tuple[IntArray, BoolArray]:
-        """``(edges, is_boundary)``: every quad edge ``(4M,2)`` in CCW order,
-        element-major (row ``4q+e`` is quad ``q``, local edge ``e``), and a mask
-        of those borne by a single quad (the section boundary)."""
+        """``(edges, is_boundary)``: every quad edge ``(4M,2)`` element-major
+        (row ``4q+e``), and a mask of those borne by a single quad."""
         Q = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         edges: IntArray = Q[:, QuadMesh.EDGE_POINTS].reshape(-1, 2)
         keys = np.sort(edges, axis=1)
@@ -220,10 +170,7 @@ class QuadMesh:
 
     def boundary_edges(self) -> IntArray:
         """``(K,2)`` array of ``[quad id, local edge (1-4)]`` for every edge on
-        the section boundary (an edge borne by a single quad).  Distinct from
-        ``boundaries`` (the wall subset -- a half-disk section's boundary is
-        the wall arc *plus* the flat spine).  An edge's point ids are
-        ``self.quads[q, self.EDGE_POINTS[e - 1]]``."""
+        the section boundary (borne by a single quad)."""
         _, mask = self._boundary_mask(self.quads)
         rows = np.flatnonzero(mask)
         return np.column_stack([rows // 4, rows % 4 + 1]).astype(np.int64)
@@ -241,16 +188,10 @@ class QuadMesh:
     # -- assembly --------------------------------------------------------
     @classmethod
     def merge(cls, meshes: list[QuadMesh], *, tol: float | None = None) -> QuadMesh:
-        """Merge quad sections into one, welding coincident **boundary** points in
-        a single pass (interior points are exclusive to their section).  ``tol`` is
-        the absolute coincidence distance (default ``1e-7`` x the extent).
-
-        Mirrors :meth:`~nekmeshpy.hexmesh.HexMesh.merge`: connectivity welds by point, but the tagged
-        ``boundaries`` are ``[quad id, side]`` rows, so they simply concatenate with
-        each block's quad ids offset -- ``boundary_tags`` rides along, and the dense
-        ``element_tags`` concatenate one per quad.  A face that becomes an interior
-        seam is *not* auto-dropped; leave the touching edges untagged (or
-        ``NO_BOUNDARY``) so no stale tag lands on the weld."""
+        """Merge quad sections into one, welding coincident boundary points.
+        ``tol`` is the absolute coincidence distance (default ``1e-7`` x the extent).
+        Tagged ``boundaries`` and dense ``element_tags`` concatenate with each
+        block's quad ids offset; an interior seam is not auto-dropped."""
         meshes = list(meshes)
         pos = [np.asarray(m.points, dtype=float).reshape(-1, 3) for m in meshes]
         counts = [p.shape[0] for p in pos]
@@ -282,11 +223,11 @@ class QuadMesh:
         quad_list, bnd_list, name_list, etag_list = [], [], [], []
         noff = qoff = 0
         for m, c in zip(meshes, counts):
-            quad_list.append(point_id[m.quads + noff])   # local -> concat -> welded id
+            quad_list.append(point_id[m.quads + noff])   # local -> welded id
             etag_list.append(m.element_tags)
             if m.boundaries.shape[0]:
                 b: IntArray = m.boundaries.copy()
-                b[:, 0] += qoff                          # quad ids shift; sides are local
+                b[:, 0] += qoff                          # shift quad ids; sides local
                 bnd_list.append(b)
                 name_list.append(m.boundary_tags)
             noff += c
@@ -307,16 +248,11 @@ class QuadMesh:
         edge_tags: Mapping[str, str] | None = None,
         element_tag: str = "",
     ) -> QuadMesh:
-        """Build quads from a structured point grid ``P`` ``(ni+1,nj+1,3)`` (the
-        sibling of :meth:`~nekmeshpy.hexmesh.HexMesh.from_grid` one dimension
-        down).  ``edge_tags`` maps side names (``x_min`` / ``x_max`` / ``y_min`` /
-        ``y_max``) to boundary **tags** on the four outer edges; a side left out (or
-        mapped to ``NO_BOUNDARY``) emits no boundary row -- use that for an edge
-        that will be welded away by :meth:`merge`, so merge stays a plain concatenate
-        with no stale tag.  ``element_tag`` (default untagged) is written to every
-        quad's dense ``element_tags`` (e.g. tag a whole cube-face patch with the
-        far-field side it forms, then :meth:`~nekmeshpy.hexmesh.HexMesh.annulus`
-        turns it into a wall face)."""
+        """Build quads from a structured point grid ``P`` ``(ni+1,nj+1,3)``.
+        ``edge_tags`` maps side names (``x_min`` / ``x_max`` / ``y_min`` / ``y_max``)
+        to boundary tags on the four outer edges; a side left out (or mapped to
+        ``NO_BOUNDARY``) emits no boundary row.  ``element_tag`` is written to every
+        quad's dense ``element_tags``."""
         P = np.asarray(P, dtype=float)
         ni1, nj1, _ = P.shape
         ni, nj = ni1 - 1, nj1 - 1
@@ -348,11 +284,8 @@ class QuadMesh:
     # -- line -> quad sweep (LineMesh one dimension down) ---------------
     @staticmethod
     def _cap_tags(cap: str | Sequence[str] | StrArray, L: int) -> list[str]:
-        """Normalize a cap tag to one tag per section line (length ``L``).  A scalar
-        ``str`` tags the whole cap (``""`` = untagged everywhere); an array-like is a
-        per-line tag (``""`` entries stay untagged), used by :meth:`annulus` to tag a
-        cap from a ring loop's per-segment ``element_tags`` (mirrors
-        :meth:`~nekmeshpy.hexmesh.HexMesh._cap_tags` one dimension down)."""
+        """Normalize a cap tag to one tag per section line (length ``L``): a scalar
+        ``str`` tags the whole cap, an array-like is a per-line tag."""
         if isinstance(cap, str):
             return [cap] * L
         arr = np.asarray(cap, dtype=np.str_).reshape(-1)
@@ -373,22 +306,15 @@ class QuadMesh:
         first_tag: str | Sequence[str] | StrArray = "",
         last_tag: str | Sequence[str] | StrArray = "",
     ) -> QuadMesh:
-        """Sweep a :class:`~nekmeshpy.linemesh.LineMesh` a distance
-        ``length`` along ``axis`` into a quad section (the line sibling of
-        :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`, one dimension down).
+        """Sweep a ``LineMesh`` a distance ``length`` along ``axis`` into a quad
+        section (the straight special case of :meth:`loft`).
 
-        The ``line`` is taken as a real curve in 3-D and translated **rigidly** along
-        ``axis``; ``origin`` shifts the whole section by a constant offset.  ``layers``
-        are the normalized copy-line positions along ``axis`` as fractions of
-        ``length`` -- strictly increasing values in ``[0, 1]`` with the last ``1`` --
-        so ``layers.size - 1`` quad layers span ``layers[0]..1`` (same convention as
-        :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`).
-
-        The line's dense ``element_tags`` ride onto the swept quads (each line sweeps
-        into a column of quads), its tagged boundary **points** ride onto the swept
-        side-wall **edges** (vertex-0 point -> quad side 4, vertex-1 point -> side 2),
-        and ``first_tag`` / ``last_tag`` name the near / far cap edges (sides 1 / 3).
-        The straight special case of :meth:`loft`."""
+        The ``line`` is translated rigidly along ``axis``; ``origin`` shifts the whole
+        section.  ``layers`` are normalized positions along ``axis`` (strictly
+        increasing in ``[0, 1]`` with the last ``1``), giving ``layers.size - 1``
+        layers.  The line's ``element_tags`` ride onto the swept quads and its tagged
+        boundary points onto the side-wall edges; ``first_tag`` / ``last_tag`` name
+        the near / far cap edges."""
         base = np.asarray(line.points, dtype=float).reshape(-1, 3) \
             + np.asarray(origin, dtype=float)
         axis_u: Vec3 = np.asarray(axis, dtype=float)
@@ -410,24 +336,16 @@ class QuadMesh:
         first_tag: str | Sequence[str] | StrArray = "",
         last_tag: str | Sequence[str] | StrArray = "",
     ) -> QuadMesh:
-        """Loft a stack of conformal :class:`~nekmeshpy.linemesh.LineMesh`
-        profiles into a quad section (the general primitive behind :meth:`extrude`,
-        one dimension down from :meth:`~nekmeshpy.hexmesh.HexMesh.loft`).
+        """Loft a stack of conformal ``LineMesh`` profiles into a quad section
+        (the general primitive behind :meth:`extrude`).
 
-        ``slices`` is ``nz+1`` line profiles sharing the same ``lines`` connectivity,
-        ``element_tags``, and tagged ``boundaries``; consecutive profiles form ``nz``
-        quad layers.  For line ``(a, b)`` at layer ``i`` the column quad is
-        ``[a_i, b_i, b_{i+1}, a_{i+1}]`` (side 1 = line@i, 2 = vertex-b wall, 3 =
-        line@{i+1}, 4 = vertex-a wall), so the construction is topologically uniform
-        for every line and layer -- no winding flip is needed.  The line's
-        ``element_tags`` ride onto every quad in its column; a tagged boundary point
-        (side 1 -> local vertex 0, side 2 -> vertex 1) rides onto the swept wall edge
-        (vertex 0 -> quad side 4, vertex 1 -> side 2), skipping the
-        ``NO_BOUNDARY`` sentinel; ``first_tag`` / ``last_tag`` name the near / far
-        cap edges (side 1 of the layer-0 quads / side 3 of the last-layer quads) --
-        each a scalar ``str`` tagging the whole cap, or a per-line array (one tag per
-        section line, ``""`` = untagged) so a cap can be tagged from a ring loop's own
-        per-segment ``element_tags`` (see :meth:`annulus`)."""
+        ``slices`` is ``nz+1`` line profiles sharing the same ``lines``,
+        ``element_tags``, and ``boundaries``; consecutive profiles form ``nz`` quad
+        layers.  For line ``(a, b)`` at layer ``i`` the column quad is
+        ``[a_i, b_i, b_{i+1}, a_{i+1}]``.  The line's ``element_tags`` ride onto every
+        quad in its column and tagged boundary points onto the swept wall edges;
+        ``first_tag`` / ``last_tag`` name the near / far cap edges (scalar or per-line
+        array)."""
         slices = list(slices)
         lines = np.asarray(slices[0].lines, dtype=np.int64).reshape(-1, 2)
         L = lines.shape[0]
@@ -448,8 +366,7 @@ class QuadMesh:
                           (i_idx + 1) * nn + bv, (i_idx + 1) * nn + av], axis=1)
         etags: StrArray = np.asarray(slices[0].element_tags, dtype=np.str_)[l_idx]
 
-        # tagged boundary point -> swept wall edge (per layer); vertex 0 (side 1) ->
-        # quad side 4, vertex 1 (side 2) -> quad side 2.
+        # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
         sec_b = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
         sec_t = slices[0].boundary_tags
         bnd: list[list[int]] = []
@@ -463,7 +380,7 @@ class QuadMesh:
             for ii in range(nz):
                 bnd.append([ii * L + l0, qside])
                 names.append(tag)
-        # caps: scalar tags the whole cap, an array tags per section line l0.
+        # caps: scalar tags the whole cap, an array tags per section line.
         first_caps = cls._cap_tags(first_tag, L)
         last_caps = cls._cap_tags(last_tag, L)
         for l0 in range(L):
@@ -479,45 +396,52 @@ class QuadMesh:
         return cls(points, quads, b_ord, n_ord, element_tags=etags)
 
     # -- factories (2-D section meshers) --------------------------------
-    # Each fills a bounded region with quads and returns a QuadMesh whose
-    # ``boundaries`` is the outer boundary.  The topology is chosen by *which*
-    # factory you call -- structured and o-grid are different topologies -- and an
-    # optional ``smoothing_method`` (``"conduction"`` / ``"winslow"`` /
-    # ``"bilinear"``; ``None`` = raw algebraic fill) repositions the interior
-    # points via :func:`nekmeshpy.quadmesh.smoothing.set_section_smoothing`.
+    # Each fills a bounded region with quads.  An optional ``smoothing_method``
+    # ("conduction" / "winslow" / "bilinear"; None = raw fill) repositions the
+    # interior points.
+    @classmethod
+    def rectangle(cls, corners: PointArray | Sequence[Point], nx: int, ny: int, *,
+                  x_frac: FloatArray | None = None,
+                  y_frac: FloatArray | None = None,
+                  side_tags: Mapping[str, str] | None = None,
+                  smoothing_method: str | None = None) -> QuadMesh:
+        """Structured quad grid over the rectangle with four CCW corners
+        ``corners = [c0, c1, c2, c3]``: ``nx`` cells along ``c0->c1`` (bottom/top),
+        ``ny`` along ``c1->c2`` (left/right).  ``x_frac`` / ``y_frac`` are optional
+        node fractions in ``[0,1]`` (length ``nx+1`` / ``ny+1``) for grading, else
+        uniform.  ``side_tags`` (keyed ``bottom`` / ``right`` / ``top`` / ``left``)
+        names the outer sides; an absent side stays untagged."""
+        c = np.asarray(corners, dtype=float).reshape(-1, 3)
+        if c.shape[0] != 4:
+            raise ValueError("rectangle needs exactly 4 corners")
+        xf = (np.linspace(0.0, 1.0, nx + 1) if x_frac is None
+              else np.asarray(x_frac, dtype=float).ravel())
+        yf = (np.linspace(0.0, 1.0, ny + 1) if y_frac is None
+              else np.asarray(y_frac, dtype=float).ravel())
+        st = side_tags or {}
+        specs = (("bottom", c[0], c[1], xf), ("right", c[1], c[2], yf),
+                 ("top", c[2], c[3], xf), ("left", c[3], c[0], yf))
+        edges = [LineMesh.line(a, b, frac, element_tag=st.get(side, ""))
+                 for side, a, b, frac in specs]
+        return cls.structured(edges, smoothing_method=smoothing_method)
+
     @classmethod
     def structured(cls, edges: list[LineMesh], *,
                    boundary_tags: Mapping[str, str] | None = None,
                    smoothing_method: str | None = None) -> QuadMesh:
         """Transfinite (Coons-patch) quad grid over the surface bounded by four
-        edge lines ``edges = [bottom, right, top, left]`` given in CCW loop order
-        (each an open :class:`~nekmeshpy.linemesh.LineMesh` of 3-D points;
-        the Coons blend runs directly on the 3-D edges, so the section may lie in any
-        plane).  The lines must share corners, i.e. form a closed loop: ``bottom``
-        ends where ``right`` begins, ``right`` where ``top`` begins, and so on.
+        open edge lines ``edges = [bottom, right, top, left]`` in CCW loop order.
+        The lines must share corners (form a closed loop).
 
-        The grid resolution and node distribution come **directly from the edge
-        lines' own points** -- there is no resampling.  ``bottom`` and ``top``
-        must carry the same number of points (``nx+1``, the u-direction) and
-        ``left`` and ``right`` the same number (``ny+1``, the v-direction); the
-        interior is filled by bilinearly-blended transfinite (Coons) interpolation,
-        giving ``nx`` x ``ny`` cells.  Because the caller supplies the sampling, a
-        graded edge (e.g. built with
-        :meth:`~nekmeshpy.linemesh.LineMesh.resample` at clustered
-        fractions) yields a graded grid -- thinner cells near a wall -- directly.
-        Straight, uniformly-sampled edges reduce this exactly to a uniform bilinear
-        grid.
+        Resolution and node distribution come directly from the edge lines' own
+        points (no resampling): ``bottom``/``top`` must share a point count
+        (``nx+1``) and ``left``/``right`` another (``ny+1``), giving ``nx`` x ``ny``
+        cells.
 
-        Each side is named at the **lowest level** from its own edge line's uniform
-        ``element_tags`` (a single non-empty tag shared by every segment of that
-        edge), so the tag rides through
-        :meth:`~nekmeshpy.hexmesh.HexMesh.loft` / ``extrude`` onto the swept side
-        faces.  ``boundary_tags`` (keyed by side -- ``"bottom"`` / ``"right"`` /
-        ``"top"`` / ``"left"``, matching the ``edges`` order) is the **override**: a
-        non-empty entry replaces that side's edge tag, and a present-but-empty entry
-        (the ``NO_BOUNDARY`` sentinel or ``""``) suppresses the side, naming it
-        but emitting no boundary row (e.g. an edge welded away by :meth:`merge`).  A
-        side with neither an override nor a uniform edge tag stays untagged.
+        Each side is named from its own edge line's uniform ``element_tags``;
+        ``boundary_tags`` (keyed by ``"bottom"`` / ``"right"`` / ``"top"`` /
+        ``"left"``) overrides that -- a non-empty entry replaces the side's tag, a
+        present-but-empty entry suppresses the side.
         """
         if len(edges) != 4:
             raise ValueError("structured needs exactly 4 edge lines "
@@ -526,8 +450,7 @@ class QuadMesh:
         for nm, e in (("bottom", bottom), ("right", right),
                       ("top", top), ("left", left)):
             _check_boundary(e, "structured " + nm + " edge", False, 2)
-        # resolution comes from the edges' own point counts (no resampling): the
-        # opposite edges of each family must be sampled to matching counts.
+        # resolution comes from the edges' own point counts (no resampling)
         if bottom.points.shape[0] != top.points.shape[0]:
             raise ValueError(
                 "structured: bottom and top edges must have equal point counts "
@@ -554,8 +477,7 @@ class QuadMesh:
                     "structured: edges must form a closed loop in CCW order "
                     "[bottom, right, top, left] with shared corners; "
                     "gap %.3g at %s" % (gap, lbl))
-        # orient the two edge families so both run corner c0->c1 (u) / c0->c3 (v);
-        # the caller's node distribution is used verbatim (no resampling):
+        # orient the two edge families so both run c0->c1 (u) / c0->c3 (v)
         cb = bottom.points                                     # c0 -> c1
         ct = top.points[::-1]                                  # c3 -> c2
         cl = left.points[::-1]                                 # c0 -> c3
@@ -594,10 +516,8 @@ class QuadMesh:
                                  "bottom/right/top/left, got %r" % side)
         bnd: list[list[int]] = []
         names: list[str] = []
-        # each side is named by its own edge line's uniform element tag (the
-        # lowest-level place to declare it); a non-empty boundary_tags[side]
-        # OVERRIDES that, and a present-but-empty entry (NO_BOUNDARY / "")
-        # suppresses the side entirely.
+        # each side is named by its edge's uniform element tag; a non-empty
+        # boundary_tags[side] overrides, a present-but-empty entry suppresses it.
         for side, rows in side_rows.items():
             if side in bt:
                 nm = bt[side]
@@ -617,59 +537,39 @@ class QuadMesh:
     def ogrid(cls, boundary: LineMesh, n_side: int, radial: FloatArray, *,
               center_scale: float = 0.5,
               wall_tag: str = "", smoothing_method: str | None = None) -> QuadMesh:
-        """Butterfly O-grid filling the closed ``boundary``
-        (a closed :class:`~nekmeshpy.linemesh.LineMesh`, e.g. from
-        ``LineMesh.circle``): a central
-        ``n_side x n_side`` block at the loop centroid, surrounded by O-ring
-        layers blending its perimeter out to the boundary (no collapsed cell at the
-        centre).  ``center_scale`` sizes the block (fraction of the mean radius).
+        """O-grid filling the closed ``boundary``: a central ``n_side x n_side``
+        block at the loop centroid, surrounded by O-ring layers blending its
+        perimeter out to the boundary.  ``center_scale`` sizes the block (fraction
+        of the mean radius).
 
-        The whole grid is built in 3-D with **no projection to a plane**, so a
-        curvy / non-planar boundary keeps its true shape (the wall ring sits exactly
-        on the boundary, resampled by arc length to ``4*n_side`` points).  The
-        block-and-ring construction is only an initial guess; pass
-        ``smoothing_method="conduction"`` to relax the interior harmonically onto the
-        curved surface spanned by the fixed boundary ring.  For a planar boundary the
-        result stays coplanar with it.
+        Built in 3-D with no projection, so a curvy / non-planar boundary keeps its
+        true shape; the block-and-ring build is only an initial guess, relaxed by
+        ``smoothing_method="conduction"``.
 
-        ``radial`` are the O-ring layer positions with the **initial position
-        explicit** (the same convention as :meth:`half_ogrid`,
-        :meth:`annulus`, and :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`'s
-        ``layers``): strictly increasing values in ``[0, 1]`` -- ``radial[0]`` is the
-        central block perimeter (``0``) and the last is ``1`` (the wall) -- so
-        ``radial.size - 1`` rings blend the block perimeter out to the boundary.
-        Pass ``geometric_spacing(k, ratio)`` to cluster rings toward the wall.
+        ``radial`` are the O-ring layer positions with the initial position explicit:
+        strictly increasing in ``[0, 1]`` (``radial[0]`` = block perimeter, last =
+        ``1`` = wall), giving ``radial.size - 1`` rings.
 
-        The outer ring (the section's single wall) is named at the **lowest level**
-        from ``boundary``'s own per-line ``element_tags`` (see
-        :class:`~nekmeshpy.linemesh.LineMesh`), resampled per segment to the
-        ``4*n_side`` wall points, so the tag rides through
-        :meth:`~nekmeshpy.hexmesh.HexMesh.loft` / ``extrude`` onto the swept side
-        faces (see :meth:`structured`).  A non-empty scalar ``wall_tag`` is the
-        **override** -- it replaces the loop tags and names the whole wall; left
-        empty with an untagged boundary the wall stays untagged.
-
-        ``n_side`` counts the central block cells per side and ``radial`` the ring
-        layers of the butterfly topology; they are not interchangeable with the
-        ``nx``/``ny`` of :meth:`structured`."""
+        The outer ring (wall) is named from ``boundary``'s per-line ``element_tags``;
+        a non-empty scalar ``wall_tag`` overrides that for the whole wall."""
         if n_side < 1:
             raise ValueError("ogrid needs n_side >= 1")
         if not 0.0 < center_scale < 1.0:
             raise ValueError("ogrid needs center_scale in (0, 1)")
         radial = validate_layers(radial, "ogrid radial")
         n_radial = radial.size - 1
-        _check_boundary(boundary, "ogrid boundary", True, 3)
-        # The butterfly is built entirely in 3-D -- nothing is projected to a plane,
-        # so a curvy / non-planar boundary keeps its true shape.  The wall ring is
-        # the boundary resampled (by 3-D arc length) to the P = 4*n_side ring points;
-        # the central block corners are 4 of those points pulled toward the centroid,
-        # bilinearly filled; the rings are straight-chord blends between the block
-        # perimeter and the wall.  This is only an initial guess -- pass
-        # ``smoothing_method="conduction"`` to relax the interior harmonically onto
-        # the (possibly curved) surface spanned by the fixed boundary ring.
+        bpts = _check_boundary(boundary, "ogrid boundary", True, 3)
+        # wall ring = the boundary loop itself, meshed exactly: it must already carry
+        # P = 4*n_side points (the caller sizes it, e.g. circle(R, 4*n_side)).  Block
+        # corners are 4 of those pulled toward the centroid and bilinearly filled;
+        # rings are straight-chord blends (an initial guess for smoothing).
         P = 4 * n_side
-        wall_loop = boundary.resample(np.linspace(0.0, 1.0, P, endpoint=False))
-        outer_pos: PointArray = wall_loop.points                    # (P,3) true wall
+        if bpts.shape[0] != P:
+            raise ValueError(
+                "ogrid boundary must have exactly 4*n_side = %d points to be meshed "
+                "exactly (got %d); size the loop to match, e.g. circle(R, %d)"
+                % (P, bpts.shape[0], P))
+        outer_pos: PointArray = bpts                                # (P,3) true wall
         centroid = outer_pos.mean(axis=0)
         rad = float(np.mean(np.linalg.norm(outer_pos - centroid, axis=1)))
         if rad <= 0.0:
@@ -679,8 +579,8 @@ class QuadMesh:
         def cid(i: int, j: int) -> int:
             return i * row + j
 
-        # central block: 4 corners are the boundary points at arc-length quarters,
-        # scaled toward the centroid, then bilinearly interpolated into a 3-D patch.
+        # central block: 4 corners at arc-length quarters, scaled toward the
+        # centroid, bilinearly interpolated into a 3-D patch.
         C00 = centroid + center_scale * (outer_pos[0] - centroid)
         C10 = centroid + center_scale * (outer_pos[n_side] - centroid)
         C11 = centroid + center_scale * (outer_pos[2 * n_side] - centroid)
@@ -702,10 +602,9 @@ class QuadMesh:
                             + [cid(i, n_side) for i in range(n_side - 1, -1, -1)]
                             + [cid(0, j) for j in range(n_side - 1, 0, -1)],
                             dtype=np.int64)
-        peri_pos = block[peri_ids, :]                                # (P,3), index-aligned
-                                                                     # with outer_pos
-        # n_radial O-ring layers blending the block perimeter out to the boundary;
-        # radial[0] (== 0) is the block perimeter itself, so skip it
+        peri_pos = block[peri_ids, :]                                # (P,3)
+        # O-ring layers blending block perimeter out to boundary; radial[0]==0 is
+        # the perimeter itself, so skip it
         fracs = radial[1:]
         layers = [block]
         ring = [peri_ids]
@@ -722,14 +621,12 @@ class QuadMesh:
                       for a, b in zip(ring[:-1], ring[1:])]
         quads = np.vstack([cquads, *ring_quads])
 
-        # wall edges = side 1 of the outermost ring's quads (built as
-        # [outer[k], outer[kn], inner[kn], inner[k]] so side 1 = outer[k]-outer[kn]);
-        # the outermost ring occupies quad rows n_side^2 + (n_radial-1)*P onward.
+        # wall edges = side 1 of the outermost ring's quads (rows n_side^2 +
+        # (n_radial-1)*P onward).
         wall_q0 = n_side * n_side + (n_radial - 1) * P
-        # the wall is named at the lowest level from the boundary loop's per-line
-        # element tags (wall edge m tracks resampled wall segment m); a non-empty
-        # scalar wall_tag OVERRIDES that and tags the whole wall; else untagged.
-        wall_seg = wall_loop._seg_tags()
+        # wall named from the boundary loop's per-segment tags; a non-empty scalar
+        # wall_tag overrides that for the whole wall.
+        wall_seg = boundary._seg_tags()
         bnd: list[list[int]] = []
         names: list[str] = []
         for m in range(P):
@@ -740,28 +637,52 @@ class QuadMesh:
         qm = cls(points, quads, *cls._order_bnd(bnd, names))
         return _apply_smoothing(qm, smoothing_method)
 
+    @staticmethod
+    def half_ogrid_spine_fractions(arc: LineMesh, center_scale: float,
+                                   radial: FloatArray) -> FloatArray:
+        """Canonical arc-length fractions along the spine that :meth:`half_ogrid`
+        indexes, in order ``[fan (2*Ntheta+1), north caps (Nradial), south caps
+        (Nradial)]``.  Sample the spine at these fractions (analytically for a
+        straight spine, or ``trimesh.ops.resample_polyline`` for a curved one) so the
+        spine handed to ``half_ogrid`` is meshed exactly and can't drift.
+
+        With ``sN = (1-cs)/2``, ``sS = (1+cs)/2``: the fan is
+        ``linspace(sN, sS, 2*Ntheta+1)``; north cap ``r`` (``r = 1..Nradial``) is
+        ``(1-radial[r])*sN`` and south cap ``r`` is ``sS + radial[r]*(1-sS)``."""
+        na = np.asarray(arc.points, dtype=float).reshape(-1, 3).shape[0]
+        if (na - 1) % 4 != 0:
+            raise ValueError("half_ogrid: arc must have 4*Ntheta+1 points (Ntheta >= 1)")
+        Nt = (na - 1) // 4
+        if not 0.0 < center_scale < 1.0:
+            raise ValueError("half_ogrid needs center_scale in (0, 1)")
+        rad = validate_layers(radial, "half_ogrid radial")
+        cs = center_scale
+        sN = (1 - cs) / 2
+        sS = (1 + cs) / 2
+        fan = np.linspace(sN, sS, 2 * Nt + 1)
+        north = (1.0 - rad[1:]) * sN
+        south = sS + rad[1:] * (1.0 - sS)
+        return np.concatenate([fan, north, south])
+
     @classmethod
     def half_ogrid(cls, arc: LineMesh, spine: LineMesh,
                    radial: FloatArray, *, center_scale: float = 0.5,
                    wall_tag: str = "",
                    smoothing_method: str | None = None) -> QuadMesh:
-        """Structured HALF-circle O-grid over a half-disk split along the ``spine``
-        line (A1..A2); the wall ``arc`` (``(4*Ntheta+1, 3)``, arc[0]=A1,
-        arc[-1]=A2) is the open boundary, recorded as ``boundaries`` (both open
-        :class:`~nekmeshpy.linemesh.LineMesh`).  ``radial``
-        are the O-ring layer positions with the **initial position explicit** (the
-        same convention as :meth:`ogrid` / :meth:`annulus`): strictly increasing
-        values in ``[0, 1]`` -- ``radial[0]`` is the inner block perimeter (``0``)
-        and the last is ``1`` (the wall) -- so ``radial.size - 1`` rings are laid
-        out; ``center_scale`` is the inner block extent as a fraction of the spine.
-        The ``arc`` wall is named at the **lowest level** from the arc's own
-        per-segment ``element_tags`` (wall edge ``k`` tracks arc segment ``k``), so
-        the tag rides through :meth:`~nekmeshpy.hexmesh.HexMesh.loft` / ``extrude``
-        onto the swept side faces (see :meth:`structured`).  A non-empty scalar
-        ``wall_tag`` is the **override** -- it replaces the arc tags and names the
-        whole wall; left empty with an untagged arc the wall stays untagged."""
+        """Structured half-circle O-grid over a half-disk split along the ``spine``
+        line (A1..A2); the wall ``arc`` (``(4*Ntheta+1, 3)``, arc[0]=A1, arc[-1]=A2)
+        is the open boundary.  ``radial`` are the O-ring layer positions with the
+        initial position explicit (strictly increasing in ``[0, 1]``, ``radial[0]`` =
+        inner block perimeter, last = ``1`` = wall); ``center_scale`` is the inner
+        block extent as a fraction of the spine.
+
+        The ``spine`` is meshed exactly: its points must be the canonical samples this
+        method indexes, ``2*Ntheta+1 + 2*Nradial`` of them in the order ``[fan, north
+        caps, south caps]`` -- build them with :meth:`half_ogrid_spine_fractions` and
+        sample the spine curve at those fractions.  The ``arc`` wall is named from the
+        arc's per-segment ``element_tags``; a non-empty scalar ``wall_tag`` overrides
+        that for the whole wall."""
         apts = _check_boundary(arc, "half_ogrid arc", False, 5)   # (na,3) backing array
-        _check_boundary(spine, "half_ogrid spine", False, 2)
         na = apts.shape[0]
         if (na - 1) % 4 != 0:
             raise ValueError("half_ogrid: arc must have 4*Ntheta+1 points (Ntheta >= 1)")
@@ -772,11 +693,21 @@ class QuadMesh:
         Nr = radial.size - 1
         cs = center_scale
 
-        O = spine.resample(0.5).points[0]
-        sN = (1 - cs) / 2
-        sS = (1 + cs) / 2
+        # spine is meshed exactly: its points must be the canonical samples half_ogrid
+        # indexes, in order [fan (2Nt+1), north caps (Nr), south caps (Nr)] -- build
+        # them with half_ogrid_spine_fractions so the caller can't drift.
+        sp = _check_boundary(spine, "half_ogrid spine", False, 2)
+        n_spine = 2 * Nt + 1 + 2 * Nr
+        if sp.shape[0] != n_spine:
+            raise ValueError(
+                "half_ogrid spine must have exactly 2*Ntheta+1 + 2*Nradial = %d points "
+                "(got %d); build it with QuadMesh.half_ogrid_spine_fractions"
+                % (n_spine, sp.shape[0]))
 
-        fe = spine.resample(np.linspace(sN, sS, 2 * Nt + 1)).points
+        fe = sp[0:2 * Nt + 1]                       # the fan, sN..sS
+        O = fe[Nt]                                  # spine midpoint (fan is symmetric)
+        north = sp[2 * Nt + 1:2 * Nt + 1 + Nr]      # north caps, per radial layer
+        south = sp[2 * Nt + 1 + Nr:]                # south caps, per radial layer
         Q_N = O + cs * (apts[Nt, :] - O)
         Q_S = O + cs * (apts[3 * Nt, :] - O)
         ae = Q_N + (np.arange(2 * Nt + 1)[:, None] / (2 * Nt)) * (Q_S - Q_N)
@@ -814,8 +745,8 @@ class QuadMesh:
         for r in range(Nr):
             tau = radial[r + 1]                 # radial[0] == 0 is the block perimeter
             pts = (1 - tau) * peripts + tau * apts
-            pts[0, :] = spine.resample((1 - tau) * sN).points[0]
-            pts[-1, :] = spine.resample(sS + tau * (1 - sS)).points[0]
+            pts[0, :] = north[r]                # spine sample at (1-tau)*sN
+            pts[-1, :] = south[r]              # spine sample at sS + tau*(1-sS)
             base = points.shape[0]
             points = np.vstack([points, pts])
             lid.append(base + np.arange(pts.shape[0]))
@@ -826,13 +757,11 @@ class QuadMesh:
             for k in range(4 * Nt):
                 quads.append([a[k], a[k + 1], b[k + 1], b[k]])
 
-        # wall arc edges = side 3 of the outermost ring's quads (appended as
-        # [a[k], a[k+1], arc[k+1], arc[k]] so side 3 = arc[k+1]-arc[k]); the outer
-        # ring occupies quad rows (ni*nj) + (Nr-1)*(4*Nt) onward.  Wall edge k
-        # tracks arc segment k (1:1).
+        # wall arc edges = side 3 of the outermost ring's quads (rows (ni*nj) +
+        # (Nr-1)*(4*Nt) onward); wall edge k tracks arc segment k.
         wall_q0 = ni * nj + (Nr - 1) * (4 * Nt)
-        # the wall is named at the lowest level from the arc's per-segment element
-        # tags; a non-empty scalar wall_tag OVERRIDES that for the whole wall.
+        # wall named from the arc's per-segment tags; a non-empty scalar wall_tag
+        # overrides that for the whole wall.
         wall_seg = arc._seg_tags()
         bnd: list[list[int]] = []
         names: list[str] = []
@@ -850,86 +779,43 @@ class QuadMesh:
                 smoothing_method: str | None = None,
                 inner_tag: str = "", outer_tag: str = "",
                 ) -> QuadMesh:
-        """Ring O-grid filling the region *between* an inner and an outer closed
-        loop (both closed :class:`~nekmeshpy.linemesh.LineMesh`) -- e.g. a
-        circular body inside a square far-field box for a flow-past-cylinder section.
+        """Ring O-grid filling the region between an inner and an outer closed loop
+        -- e.g. a circular body inside a square far-field box.
 
-        The two loops are paired **by index**: they must carry the same number of
-        points ``N`` (the azimuthal resolution), and point ``i`` of ``inner`` is
-        joined radially to point ``i`` of ``outer``.  The caller is responsible for
-        supplying a correctly sized and oriented outer loop -- there is no
-        resampling here.  To align a coarse far-field box loop to a finer body loop
-        so the radial lines do not skew, project it first with
-        :meth:`~nekmeshpy.linemesh.LineMesh.radial_match`::
+        The two loops are paired by index: they must carry the same number of points
+        ``N``, and point ``i`` of ``inner`` joins radially to point ``i`` of
+        ``outer`` (no resampling; build the outer loop index-aligned to the inner,
+        e.g. ``LineMesh.far_field_box(inner, ...)``).  ``radial`` are the ring positions with
+        the initial position explicit (strictly increasing in ``[0, 1]``,
+        ``radial[0]`` = inner ring, last = ``1`` = outer loop), giving
+        ``radial.size - 1`` ring layers.  ``smoothing_method`` relaxes the ring
+        interior with the inner/outer rings held fixed.
 
-            outer = LineMesh.loop([...box corners...]).radial_match(inner)
+        Boundary tags come from the loops' per-line ``element_tags`` (each ring edge
+        tagged from the matching loop segment, so a named box splits the outer ring
+        into distinct sides).  A non-empty scalar ``inner_tag`` / ``outer_tag``
+        overrides that for the whole inner / outer ring.
 
-        ``radial`` are the ring positions with the **initial position explicit**
-        (the same convention as :meth:`ogrid` / :meth:`half_ogrid` and
-        :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`'s ``layers``): strictly
-        increasing values in ``[0, 1]`` -- ``radial[0]`` is the inner ring (``0`` for
-        a ring flush with the body, or e.g. ``0.5`` to start the mesh halfway out)
-        and the last is ``1`` (the outer loop) -- so ``radial.size - 1`` ring layers
-        blend ``radial[0]`` -> outer.  Pass
-        ``geometric_spacing(k, ratio)`` to cluster rings toward the inner body for a
-        boundary layer, or ``uniform_spacing(k)`` / ``numpy.linspace(a, 1, k + 1)``.
-        An ``smoothing_method`` holds the section's topological boundary (the inner
-        and outer rings) fixed while relaxing the ring interior.
-
-        The ring blend runs directly in 3-D (no projection to a plane), so the two
-        loops need not be planar or coplanar: a curvy / non-planar inner-outer pair
-        keeps its true shape and an ``smoothing_method`` (e.g. ``conduction``)
-        relaxes the ring interior onto the resulting curved surface.
-
-        Boundary tags come from **the lowest level -- the loops themselves**: if a
-        loop carries per-line ``element_tags`` (see
-        :class:`~nekmeshpy.linemesh.LineMesh`), each ring edge is tagged from
-        the corresponding loop segment (they pair by index), so a named far-field box
-        splits the outer ring into distinct sides (inlet / outlet / top / bottom)
-        automatically -- tag once on the loop, e.g.::
-
-            outer = LineMesh.loop([...4 corners...],
-                                  element_tags=["bottom", "outlet", "top", "inlet"]
-                                  ).radial_match(inner)   # tags ride through the match
-
-        as ``examples/flow_past_cylinder.py`` does.  A non-empty scalar ``inner_tag``
-        / ``outer_tag`` is the **override** -- it replaces that loop's per-line tags
-        and names the whole inner / outer ring (an embedded body and a uniform, round
-        far field).  Either way the tags ride on through
-        :meth:`~nekmeshpy.hexmesh.HexMesh.loft` / ``extrude`` onto the swept side
-        faces (see :meth:`structured`).
-
-        Built by :meth:`loft`-ing ``radial.size`` blended rings (the ring layers) --
-        the periodic ring topology rides in the loops' wrapping ``lines``, exactly as
-        :meth:`~nekmeshpy.hexmesh.HexMesh.annulus` rides on a closed surface's
-        ``quads`` one dimension up; the inner / outer rings are the loft's near /
-        far caps (quad sides 1 / 3).  Gives ``N x (radial.size - 1)`` quads.
-        ``radial`` here sets the ring layers and is not interchangeable with the
-        ``nx``/``ny`` of :meth:`structured` or the ``n_side`` of :meth:`ogrid`."""
+        Built by :meth:`loft`-ing the blended rings; the inner / outer rings are the
+        loft's near / far caps.  Gives ``N x (radial.size - 1)`` quads."""
         radial = validate_layers(radial, "annulus radial")
         A: FloatArray = _check_boundary(inner, "annulus inner", True, 3)   # (N,3)
         B: FloatArray = _check_boundary(outer, "annulus outer", True, 3)   # (N,3)
         if A.shape[0] != B.shape[0]:
             raise ValueError(
                 "annulus: inner and outer loops must have equal point counts "
-                "(got %d, %d); align the outer loop to the inner first, e.g. "
-                "outer.radial_match(inner)" % (A.shape[0], B.shape[0]))
+                "(got %d, %d); build the outer loop index-aligned to the inner, "
+                "e.g. LineMesh.far_field_box(inner, ...)" % (A.shape[0], B.shape[0]))
         if float(np.min(np.linalg.norm(B - A, axis=1))) <= 0.0:
             raise ValueError("annulus: inner and outer loops touch or cross")
 
-        # ring k is the straight-chord blend inner(radial[0]) -> outer(radial[-1]=1),
-        # all sharing inner's (wrapping) line connectivity; consecutive rings loft
-        # into quad layers.  The periodic ring topology rides in inner.lines' closing
-        # segment [N-1, 0] -- no modular arithmetic here (mirrors HexMesh.annulus,
-        # whose wrap rides in the closed surface's quads).  The rings carry no
-        # element_tags -> the quads stay region-untagged; the loops' per-segment tags
-        # become the inner (near, side 1) / outer (far, side 3) loft caps.
+        # ring k is the straight-chord blend inner -> outer, all sharing inner's
+        # wrapping line connectivity; consecutive rings loft into quad layers.  The
+        # loops' per-segment tags become the inner (side 1) / outer (side 3) caps.
         rings = [LineMesh((1.0 - t) * A + t * B, inner.lines, closed=True)
                  for t in radial]
-        # tags come from the lowest level: each loop's per-segment element_tags name
-        # its ring (a named far-field box tags each side).  A non-empty scalar
-        # inner_tag / outer_tag OVERRIDES that and tags the whole ring (an embedded
-        # body / a uniform round far field); an empty ("") tag leaves it untagged.
+        # tags from each loop's per-segment element_tags; a non-empty scalar
+        # inner_tag / outer_tag overrides that for the whole ring.
         inner_caps: str | StrArray = (
             inner_tag if inner_tag
             else (inner.element_tags if inner.element_group_tags else ""))
@@ -938,3 +824,64 @@ class QuadMesh:
             else (outer.element_tags if outer.element_group_tags else ""))
         qm = cls.loft(rings, first_tag=inner_caps, last_tag=outer_caps)
         return _apply_smoothing(qm, smoothing_method)
+
+    # -- factories (closed 3-D surfaces) --------------------------------
+    # the six box faces: outward normal n with right-handed tangents (u x v = n),
+    # each mapped to its {x,y,z}_{min,max} side key.
+    _BOX_FACES = [
+        ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), "x_max"),
+        ((-1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0), "x_min"),
+        ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0), "y_max"),
+        ((0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0), "y_min"),
+        ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), "z_max"),
+        ((0.0, 0.0, -1.0), (0.0, 1.0, 0.0), (1.0, 0.0, 0.0), "z_min"),
+    ]
+
+    @classmethod
+    def box(cls, half_sizes: float | Sequence[float] | FloatArray,
+            n: int | Sequence[int] | IntArray, *,
+            face_tags: Mapping[str, str] | None = None) -> QuadMesh:
+        """Closed box surface centred at the origin: six quad patches welded with
+        :meth:`merge`.  ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n``
+        is a scalar or ``(nx, ny, nz)`` cells per axis.  ``face_tags`` (keyed
+        ``x_min`` / ``x_max`` / ... / ``z_max``) writes each face's dense per-quad
+        ``element_tags`` -- e.g. the far-field side it forms; an absent face stays
+        untagged so ``merge`` welds shared edges cleanly."""
+        hs: FloatArray = np.asarray(half_sizes, dtype=float).ravel()
+        if hs.size == 1:
+            hs = np.full(3, float(hs[0]))
+        elif hs.size != 3:
+            raise ValueError("half_sizes must be a scalar or 3 values (sx, sy, sz)")
+        na: IntArray = np.asarray(n, dtype=np.int64).ravel()
+        if na.size == 1:
+            n_axis = (int(na[0]), int(na[0]), int(na[0]))
+        elif na.size == 3:
+            n_axis = (int(na[0]), int(na[1]), int(na[2]))
+        else:
+            raise ValueError("n must be a scalar or 3 counts (nx, ny, nz)")
+        ft = face_tags or {}
+        patches: list[QuadMesh] = []
+        for nrm, u, v, key in cls._BOX_FACES:
+            nv: FloatArray = np.asarray(nrm, dtype=float)
+            uv: FloatArray = np.asarray(u, dtype=float)
+            vv: FloatArray = np.asarray(v, dtype=float)
+            au = np.linspace(-1.0, 1.0, n_axis[int(np.argmax(np.abs(uv)))] + 1)
+            av = np.linspace(-1.0, 1.0, n_axis[int(np.argmax(np.abs(vv)))] + 1)
+            A: FloatArray
+            B: FloatArray
+            A, B = np.meshgrid(au, av, indexing="ij")
+            face = hs * (nv + A[..., None] * uv + B[..., None] * vv)
+            patches.append(cls.from_grid(face, element_tag=ft.get(key, "")))
+        return cls.merge(patches)
+
+    @classmethod
+    def sphere(cls, radius: float, n: int | Sequence[int] | IntArray, *,
+               element_tag: str = "sphere") -> QuadMesh:
+        """Closed cubed-sphere surface of ``radius`` about the origin: a unit
+        :meth:`box` projected radially onto the sphere (same connectivity, so it
+        pairs by index with a same-``n`` box for :meth:`HexMesh.annulus`).  Every
+        quad carries ``element_tag`` (default ``sphere``)."""
+        cube = cls.box(1.0, n)
+        pts = radius * cube.points / np.linalg.norm(cube.points, axis=1, keepdims=True)
+        return cls(pts, cube.quads,
+                   element_tags=np.full(cube.n_quads, element_tag))

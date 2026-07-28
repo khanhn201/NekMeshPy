@@ -1,12 +1,7 @@
-"""Hex-element quality metrics, decoupled from :class:`~nekmeshpy.hexmesh.HexMesh`.
+"""Hex-element quality metrics.
 
 All metrics operate on a shared-point representation ``(points, hexes)`` where
-``points`` is ``(P,3)`` and ``hexes`` is ``(N,8)`` in Nek corner order, so they
-work equally on a welded :class:`~nekmeshpy.hexmesh.HexMesh` or a :class:`~nekmeshpy.model.mesh.Mesh`.
-
-:func:`scaled_jacobian` is the same computation previously inlined in
-``HexMesh.scaled_jacobian`` (per-corner min over the eight trilinear corners),
-kept numerically identical.
+``points`` is ``(P,3)`` and ``hexes`` is ``(N,8)`` in Nek corner order.
 """
 
 from __future__ import annotations

@@ -1,25 +1,17 @@
-"""Mesh the flow past a hemisphere sitting on the ground (external flow).
+"""Flow past a hemisphere on the ground (external flow).
 
-A flat, gmsh-style script: edit the constants below and re-run.  Same idea as
-``flow_past_sphere.py`` -- a cubed-sphere shell between the body and a box far
-field -- but only the **upper half**: a hemisphere of radius ``R`` resting on the
-floor ``z=0``, with the domain filling the half-box ``[-S,S] x [-S,S] x [0,S]``.
+Like ``flow_past_sphere.py`` -- a cubed-sphere shell between body and box -- but
+only the **upper half**: a hemisphere of radius ``R`` on the floor ``z=0``, domain
+filling the half-box ``[-S,S] x [-S,S] x [0,S]``.
 
-Five structured hex patches make the shell: the four vertical side patches (each a
-cube face ``+/-x`` / ``+/-y`` with the vertical tangent ``v=+z`` restricted to
-``b in [0,1]``, so their bottom edge lies exactly on ``z=0``) plus the top patch
-``+z``.  Dropping the ``-z`` patch of the full sphere leaves the hemisphere open at
-the bottom; the side patches' ``z=0`` faces form the flat **ground annulus** between
-the equator circle and the square floor.  Each patch is tagged **as it is built**:
-its inner (radial-in) face is ``hemisphere``, its outer face is the cube side it
-forms (``inlet`` / ``outlet`` / ``front`` / ``back`` / ``top``), each side patch's
-``z=0`` face is ``ground``, and the lateral faces shared between patches are left
-untagged so :meth:`nekmeshpy.HexMesh.merge` welds the shell along the gnomonic
-edges with no stale interior tags.
+Five structured hex patches: four vertical side patches (cube faces ``+/-x`` /
+``+/-y`` with tangent ``v=+z`` restricted to ``b in [0,1]``, so their bottom edge
+sits on ``z=0``) plus the top patch ``+z``. Dropping the ``-z`` patch opens the
+hemisphere at the bottom; the side patches' ``z=0`` faces form the ground annulus.
 
-The ceiling sits at ``z=S`` so the body stays a true hemisphere (cube geometry).
-
-Run with::
+Each patch is tagged at build: inner face ``hemisphere``, outer face the cube side
+it forms, each side patch's ``z=0`` face ``ground``, shared lateral faces untagged
+so :meth:`HexMesh.merge` welds them. The ceiling sits at ``z=S``.
 
     PYTHONPATH=. python examples/flow_past_hemisphere.py
 
@@ -68,9 +60,8 @@ t = geometric_spacing(N_RADIAL, RADIAL_GRADING)            # 0 (sphere) .. 1 (cu
 
 def patch(cube: np.ndarray, face_tags: dict[str, str]) -> HexMesh:
     """Radial blend of a gnomonic cube-face grid ``cube`` (Ni+1, Nj+1, 3) from the
-    sphere (R*normalize) out to the cube, as a positively-oriented hex block, with
-    the given build-time boundary ``face_tags``.  The k-axis (z_min/z_max) is
-    radial: z_min = sphere surface, z_max = the cube (flow-box) side."""
+    sphere (R*normalize) out to the cube, with build-time ``face_tags``. The k-axis
+    is radial: z_min = sphere surface, z_max = the cube (flow-box) side."""
     sphere = R * cube / np.linalg.norm(cube, axis=-1, keepdims=True)
     P = ((1.0 - t)[None, None, :, None] * sphere[:, :, None, :]
          + t[None, None, :, None] * cube[:, :, None, :])   # (Ni+1, Nj+1, Nr+1, 3)
@@ -85,8 +76,8 @@ for nrm, u in SIDES:
     n = np.asarray(nrm, float)
     u = np.asarray(u, float)
     cube = S * (n + A_s[..., None] * u + B_s[..., None] * VZ)
-    # b-axis (y_min) is the b=0 edge -> the z=0 ground annulus; z_min = hemisphere,
-    # z_max = this cube side.  i (a) and j-max (b=1, shared with top) stay untagged.
+    # b=0 edge (y_min) -> the z=0 ground annulus; z_min = hemisphere, z_max = this
+    # cube side. a-axis and b=1 (shared with top) stay untagged.
     patches.append(patch(cube, {"z_min": "hemisphere", "z_max": WORLD_SIDE[nrm],
                                 "y_min": "ground"}))
 

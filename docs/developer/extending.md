@@ -1,13 +1,13 @@
 # Extending NekMeshPy
 
-The toolkit is designed to be extended at a few well-defined seams. In every case,
-prefer adding a **free function** or a **factory classmethod** over adding methods
-to the pure-data containers (see {doc}`architecture`).
+Extend at a few well-defined seams. In every case prefer a **free function** or
+**factory classmethod** over methods on the pure-data containers (see
+{doc}`architecture`).
 
 ## A new smoothing strategy
 
-Register a `fn(qm, **opts)` that repositions one `QuadMesh` cross-section's
-interior points in place:
+Register a `fn(qm, **opts)` that repositions one section's interior points in
+place:
 
 ```python
 from nekmeshpy import register_section_smoothing
@@ -18,21 +18,21 @@ def _smooth(qm, **opts):
     return qm
 ```
 
-It is then available anywhere via `smoothing_method="my_method"` and appears in
-the `SECTION_METHODS` registry.
+It is then available via `smoothing_method="my_method"` and appears in the
+`SECTION_METHODS` registry.
 
 ## A new cross-section factory
 
 Add a `QuadMesh` classmethod that fills a boundary loop with quads and returns a
-`QuadMesh` carrying `boundaries` / `boundary_tags`. Follow the existing factories
-(`structured` / `ogrid` / `half_ogrid` / `annulus`): read wall tags from the input
-`LineMesh` at the lowest level, and accept a scalar override arg (upper overrides
-lower). Build **natively in 3-D** — never flatten to `xy`.
+`QuadMesh` carrying `boundaries` / `boundary_tags`. Follow the existing factories:
+read wall tags from the input `LineMesh` at the lowest level, accept a scalar
+override arg (upper overrides lower), and build **natively in 3-D** — never flatten
+to `xy`.
 
 ## A new geometry mesher
 
-Write a script (like those in `examples/`) that builds `QuadMesh` cross-sections
-and composes the `HexMesh` factories:
+Write a script (like those in `examples/`) that builds `QuadMesh` sections and
+composes the `HexMesh` factories:
 
 - `extrude(section, axis=…, length=…, layers=…, …)` — sweep one section along a
   straight axis,
@@ -44,29 +44,26 @@ Assign the result to a `mesh` global and export; the test harness picks it up.
 
 ## External-flow domains
 
-Name the boundaries **as you build, at the lowest level**, so the tags ride up the
-ladder through construction (no post-hoc boundary detection):
+Name boundaries **as you build, at the lowest level**, so tags ride up the ladder
+(no post-hoc detection):
 
 - tag the `LineMesh` inputs with `element_tags=` (e.g.
-  `LineMesh.circle(r, n, element_tags=["cylinder"]*n)`, or a per-edge tag for
-  `structured`); the section factories read them onto the section outer edges,
-  which then propagate onto the swept side faces via `loft` / `extrude`;
+  `LineMesh.circle(r, n, element_tags=["cylinder"]*n)`, or per-edge for
+  `structured`); the factories read them onto the outer edges, which propagate onto
+  the swept side faces via `loft` / `extrude`;
 - the section-factory tag args (`structured(boundary_tags=…)`, `ogrid(wall_tag=…)`,
-  `half_ogrid(wall_tag=…)`, `annulus(inner_tag=…, outer_tag=…)`) are **overrides**
-  — a non-empty value replaces the line-level tag for that side/wall;
-- name the sweep end caps with `loft(…, first_tag=…, last_tag=…)` (hex level);
-- leave a face welded away by `merge` **untagged** (`NO_BOUNDARY` / an omitted
-  side) so merge stays a plain concatenate with no stale interior tag.
+  `half_ogrid(wall_tag=…)`, `annulus(inner_tag=…, outer_tag=…)`) are **overrides**;
+- name sweep end caps with `loft(…, first_tag=…, last_tag=…)` (hex level);
+- leave a welded-away face **untagged** (`NO_BOUNDARY` / omitted side).
 
 See the `examples/flow_past_*.py` scripts.
 
 ## Physical groups
 
-Build with plain boundary **names**, then pass `groups=` to the exporters
-(`to_re2` / `to_vtk` / `to_mesh` / …) to map each name to a Nek BC code / integer
-id: a `{name: nek_code}` dict, a `PhysicalGroups` (use a preset such as
-`PhysicalGroups.nek_default()` for byte-exact codes), or `None` to auto-number the
-mesh's distinct names.
+Build with plain boundary **names**, then pass `groups=` to the exporters to map
+each name to a Nek BC code / integer id: a `{name: nek_code}` dict, a
+`PhysicalGroups` (e.g. the `PhysicalGroups.nek_default()` preset), or `None` to
+auto-number.
 
 ## Sizing fields
 

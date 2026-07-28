@@ -3,7 +3,7 @@
 Build locally with::
 
     pip install -e ".[docs]"
-    MPLBACKEND=Agg sphinx-build -b html -n --keep-going docs docs/_build/html
+    sphinx-build -b html -n --keep-going docs docs/_build/html
 """
 
 import os
@@ -12,7 +12,9 @@ from importlib import metadata
 
 # autodoc imports nekmeshpy.io.viz, which imports matplotlib -- force a headless
 # backend so the build works in CI without a display.
-os.environ.setdefault("MPLBACKEND", "Agg")
+import matplotlib  # noqa: E402
+
+matplotlib.use("Agg")
 
 # make the package importable from a source checkout (editable install also works)
 sys.path.insert(0, os.path.abspath(".."))

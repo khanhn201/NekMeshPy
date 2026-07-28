@@ -1,9 +1,7 @@
 """
-Loads a triangulated vessel surface, solves three intrinsic-Laplacian seam
-fields, cuts it into legs A/B/C, builds conformal seam rings + a central spine,
-extrudes each leg's O-grid cross-sections into hexes, welds the legs, smooths,
-and exports.  Everything is composed from the ``nekmeshpy`` toolkit here -- there
-is no mesher class; edit the constants below and re-run::
+Bifurcation vessel mesher: load a triangulated surface, solve three Laplacian
+seam fields, cut into legs A/B/C, build conformal seam rings + a central spine,
+extrude each leg's O-grid sections into hexes, weld, smooth, export::
 
     PYTHONPATH=. python examples/bifurcation.py
 
@@ -23,7 +21,7 @@ from nekmeshpy import (
     TriMesh,
     export,
     smoothing,
-    trisurf,
+    trimesh,
     viz,
 )
 
@@ -39,7 +37,6 @@ N_SLICES = 20                 # cross-sections per leg (hex layers = n_slices)
 MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
 CENTER_SCALE = 0.5            # inner square-core size (fraction of diameter)
 RADIAL = np.array([0.0, 0.4, 0.6, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
-RESAMPLE_SPLINE = True
 PROJECT_TO_STL = True
 SMOOTHING_METHOD = "bilinear"    # "bilinear" | "conduction" | "winslow"
 SMOOTH_ITERS = 8              # post-assembly untangle/polish sweeps (0 = off)
@@ -53,8 +50,8 @@ PLOT = False
 
 # -- seam / opening solvers --------------------------------------------------
 def order_openings(surf):
-    """Order the three boundary loops A/B/C: A = trunk (lowest mean Z), B/C =
-    branches by mean X.  Returns a list of 3 vertex-index arrays."""
+    """Order the three boundary loops: A = trunk (lowest mean Z), B/C by mean X.
+    Returns 3 vertex-index arrays."""
     loops = surf.boundary_loops()
     assert len(loops) == 3, "expected exactly 3 boundary loops, got %d" % len(loops)
     Z = surf.points[:, 2]
@@ -68,8 +65,8 @@ def order_openings(surf):
 
 
 def conduction_field(surf, gloops, neumann, dvals):
-    """One conduction problem: Laplace with natural Neumann on loop ``neumann``,
-    Dirichlet ``dvals`` on the other two, shifted to zero mean on the free loop."""
+    """Laplace with Neumann on loop ``neumann``, Dirichlet ``dvals`` on the other
+    two, shifted to zero mean on the free loop."""
     dpoints, dv = [], []
     for k in range(3):
         if k == neumann:
@@ -77,7 +74,7 @@ def conduction_field(surf, gloops, neumann, dvals):
         g = np.asarray(gloops[k]).ravel()
         dpoints.append(g)
         dv.append(dvals[k] * np.ones(g.size))
-    u = trisurf.solve_dirichlet(surf, np.concatenate(dpoints), np.concatenate(dv))
+    u = trimesh.ops.solve_dirichlet(surf, np.concatenate(dpoints), np.concatenate(dv))
     return u - np.mean(u[gloops[neumann]])
 
 
@@ -103,8 +100,7 @@ def leg_label(F):
 
 def cut_surface_from_fields(surf, F):
     """Cut ``surf`` into three legs defined by seam fields ``F`` (nv, 3),
-    retriangulating every triangle a seam passes through.  Returns
-    ``(V, faces)``."""
+    retriangulating triangles a seam crosses.  Returns ``(V, faces)``."""
     xyz = surf.points
     tri = surf.tris
     nv = xyz.shape[0]
@@ -173,10 +169,10 @@ def cut_surface_from_fields(surf, F):
 
 
 def leg_field(V, faces, leg, gloops):
-    """Extract one leg as a sub-mesh and solve Laplace (0 on opening, 1 on seam).
+    """One leg as a sub-mesh with Laplace solved (0 on opening, 1 on seam).
     Returns ``(sub, us, opening, seam, vids)``."""
     sub, vids = TriMesh.from_faces(V, faces[leg])
-    sloops = [c for c in trisurf.boundary_loops(sub) if c.size >= 3]
+    sloops = [c for c in trimesh.ops.boundary_loops(sub) if c.size >= 3]
     gset = set(int(x) for x in gloops[leg])
     opencnt = np.array([np.sum([1 for x in vids[c] if int(x) in gset]) for c in sloops])
     oi = int(np.argmax(opencnt))
@@ -184,7 +180,7 @@ def leg_field(V, faces, leg, gloops):
     si = rest[int(np.argmax([sloops[i].size for i in rest]))]
     opening = sloops[oi]
     seam = sloops[si]
-    us = trisurf.solve_dirichlet(
+    us = trimesh.ops.solve_dirichlet(
         sub,
         np.concatenate([opening, seam]),
         np.concatenate([np.zeros(opening.size), np.ones(seam.size)]))
@@ -209,7 +205,8 @@ def _arc_resample(V, arcverts, iA1, n):
     arcverts = np.asarray(arcverts).ravel()
     if arcverts[0] != iA1:
         arcverts = arcverts[::-1]
-    return LineMesh.open(V[arcverts, :]).resample(np.linspace(0.0, 1.0, n))
+    pts = trimesh.ops.resample_polyline(V[arcverts, :], np.linspace(0.0, 1.0, n))
+    return LineMesh.open(pts)
 
 
 def _join_arcs(p, q, nh):
@@ -217,14 +214,14 @@ def _join_arcs(p, q, nh):
 
 
 def seam_rings(V, faces, gloops, n_half):
-    """Build the three conformal seam rings + spine.  Returns
-    ``(rings, A1, A2, spine)``."""
+    """Build the three conformal seam rings + spine.
+    Returns ``(rings, A1, A2, spine)``."""
     segV = [None, None, None]
     ordV = [None, None, None]
     for leg in range(3):
         sub, _, _, seam, vids = leg_field(V, faces, leg, gloops)
         segV[leg] = vids[seam]
-        ordV[leg] = vids[trisurf.order_boundary_loop(sub, seam)]
+        ordV[leg] = vids[trimesh.ops.order_boundary_loop(sub, seam)]
 
     common = np.intersect1d(np.intersect1d(segV[0], segV[1]), segV[2])
     Pc = V[common, :]
@@ -255,57 +252,33 @@ def seam_rings(V, faces, gloops, n_half):
 
 
 # -- O-grid leg builder ------------------------------------------------------
-def _spline_stack(H, Nout):
-    """Spline-smooth each point's path down the leg, resample to Nout stations."""
-    Nn = H.shape[1]
-    Hout = np.zeros((Nout, Nn, 3))
-    for j in range(Nn):
-        Hout[:, j, :] = LineMesh.open(H[:, j, :]).resample_spline(Nout).points
-    return Hout
-
-
 def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
-              radial, center_scale, resample_spline, project_to_stl, smoothing_method):
-    """Turn a stack of fine interior rings (opening -> seam) into a list of ``nr``
-    full-disk :class:`QuadMesh` cross-section slices: each station's two
-    half-O-grids are repositioned then merged along the shared spine."""
-    fine_rings = [r if isinstance(r, LineMesh) else LineMesh.loop(r) for r in fine_rings]
-    seam_ring = seam_ring.points
+              radial, center_scale, project_to_stl, smoothing_method):
+    """Turn a stack of fine interior rings (opening -> seam) into ``nr`` full-disk
+    :class:`QuadMesh` slices: each station's two half-O-grids are repositioned
+    then merged along the shared spine."""
+    seam_pts = seam_ring.points
     spine_pts = spine.points
     frlev = np.asarray(frlev, dtype=float)
-    M = seam_ring.shape[0]
+    M = seam_pts.shape[0]
     nh = M // 2
-    Nfine = 4 * M
 
-    La = LineMesh.open(seam_ring[0:nh + 1, :]).length
-    Lb = LineMesh.open(np.vstack([seam_ring[nh:M, :], seam_ring[0:1, :]])).length
-    f_seam = La / (La + Lb)
-
-    fr = [r.resample(np.linspace(0.0, 1.0, Nfine, endpoint=False)) for r in fine_rings]
-    ref = LineMesh.loop(seam_ring).resample(np.linspace(0.0, 1.0, Nfine, endpoint=False))
-    for k in range(len(fr) - 1, -1, -1):
-        fr[k] = fr[k].align_to(ref)
-        ref = fr[k]
-
-    rings = []
-    for k in range(len(fr)):
-        f = 0.5 + (f_seam - 0.5) * frlev[k]
-        rings.append(fr[k].split_by_fraction(f, nh).points)
+    # conformalize the scanned interior rings onto the seam ring's topology (the
+    # one intrinsic interpolation that can't be pushed to the caller)
+    rings = trimesh.ops.conform_ring_stack(fine_rings, seam_pts, frlev, nh)
     ni = len(rings)
     nr = ni + 1
 
     RS = np.zeros((nr, M, 3))
     for k in range(ni):
         RS[k, :, :] = rings[k]
-    RS[nr - 1, :, :] = seam_ring
-    if resample_spline:
-        RS = _spline_stack(RS, nr)
+    RS[nr - 1, :, :] = seam_pts
 
     if project_to_stl:
         sub = RS[0:nr - 1, :, :].reshape((nr - 1) * M, 3)
-        sub = trisurf.project_points(surface, sub)
+        sub = trimesh.ops.project_points(surface, sub)
         RS[0:nr - 1, :, :] = sub.reshape(nr - 1, M, 3)
-    RS[nr - 1, :, :] = seam_ring
+    RS[nr - 1, :, :] = seam_pts
 
     A1 = spine_pts[0, :]
     A2 = spine_pts[-1, :]
@@ -317,21 +290,26 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         R = RS[k, :, :]
         e1 = R[0, :]
         e2 = R[nh, :]
-        spn = (e1 + (np.arange(nh + 1)[:, None] / nh) * (e2 - e1)) + ringlev[k] * dev
         arc1 = R[0:nh + 1, :]
         arc2 = np.vstack([R[nh:M, :], R[0:1, :]])
-        # reposition interior stations; leave the opening cap (k=0) and the
-        # pinned seam (k=nr-1) as the raw algebraic fill
+        # the (nh+1)-point deviating diameter is this station's spine curve; sample
+        # it at the exact canonical fractions half_ogrid indexes (meshed exactly).
+        spn = (e1 + (np.arange(nh + 1)[:, None] / nh) * (e2 - e1)) + ringlev[k] * dev
+        arc1_lm = LineMesh.open(arc1, element_tags=["wall"] * (len(arc1) - 1))
+        arc2_lm = LineMesh.open(arc2, element_tags=["wall"] * (len(arc2) - 1))
+        fr = QuadMesh.half_ogrid_spine_fractions(arc1_lm, center_scale, radial)
+        spn1 = trimesh.ops.resample_polyline(spn, fr)
+        spn2 = trimesh.ops.resample_polyline(spn[::-1, :], fr)
+        # reposition interior stations; leave opening cap (k=0) and pinned seam
+        # (k=nr-1) as raw algebraic fill
         m = smoothing_method if 0 < k < nr - 1 else None
-        # the arc IS the wall: tag it at the line level (one tag per arc segment),
-        # so half_ogrid rides it onto the wall edges (see flow_past_cylinder.py).
+        # arc tagged "wall" at the line level so half_ogrid rides it onto the wall
+        # edges (see flow_past_cylinder.py)
         half1.append(QuadMesh.half_ogrid(
-            LineMesh.open(arc1, element_tags=["wall"] * (len(arc1) - 1)),
-            LineMesh.open(spn), radial,
+            arc1_lm, LineMesh.open(spn1), radial,
             center_scale=center_scale, smoothing_method=m))
         half2.append(QuadMesh.half_ogrid(
-            LineMesh.open(arc2, element_tags=["wall"] * (len(arc2) - 1)),
-            LineMesh.open(spn[::-1, :]), radial,
+            arc2_lm, LineMesh.open(spn2), radial,
             center_scale=center_scale, smoothing_method=m))
     return [QuadMesh.merge([half1[k], half2[k]]) for k in range(nr)]
 
@@ -364,16 +342,15 @@ GROUPS = PhysicalGroups.nek_default()
 blocks = []
 for leg in range(3):
     sub, us, _, _, _ = leg_field(V, faces, leg, gloops)
-    fr, frlev = trisurf.extract_rings(sub, us, levels, MIN_LOOP_PTS)
+    fr, frlev = trimesh.ops.extract_rings(sub, us, levels, MIN_LOOP_PTS)
     slices = ogrid_leg(fr, rings[leg], spine, surf, frlev,
                        radial=RADIAL, center_scale=CENTER_SCALE,
-                       resample_spline=RESAMPLE_SPLINE, project_to_stl=PROJECT_TO_STL,
+                       project_to_stl=PROJECT_TO_STL,
                        smoothing_method=SMOOTHING_METHOD)
     flux_name = flux_name_for(outlet_name[leg])
     off = FLUX_OFFSET
-    # opening cap = the leg outlet; the seam end is interior (no far cap).  When
-    # there is a flux plane, split the leg there so it becomes a cap of the
-    # downstream segment; merge re-joins the two into a shared interior face.
+    # opening cap = leg outlet; seam end is interior.  With a flux plane, split
+    # the leg there (a cap of the downstream segment); merge re-joins them.
     if flux_name and 0 < off < len(slices) - 1:
         blocks.append(HexMesh.loft(slices[:off + 1], first_tag=outlet_name[leg]))
         blocks.append(HexMesh.loft(slices[off:], first_tag=flux_name))

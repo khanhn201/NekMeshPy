@@ -1,21 +1,13 @@
-"""Mesh a straight rectangular duct (structured hex) and export for Nek5000.
+"""Straight rectangular duct (structured hex), exported for Nek5000.
 
-A flat, gmsh-style script: edit the constants below and re-run.  The cross-section
-is a structured quad grid built by :meth:`nekmeshpy.QuadMesh.structured` from the
-four rectangle edges (transfinite/Coons interpolation) **in the yz plane at
-x=0**, then swept along the duct axis ``+x`` by :meth:`nekmeshpy.HexMesh.extrude`
-(a rigid translation of the section in its real 3-D placement).  The duct
-therefore runs from the ``inlet`` at ``x=0`` to the ``outlet`` at ``x=LENGTH``.
+:meth:`QuadMesh.structured` builds a Coons patch from the four rectangle edges in
+the yz plane at x=0; :meth:`HexMesh.extrude` sweeps it along ``+x`` (inlet at
+``x=0``, outlet at ``x=LENGTH``).
 
-:meth:`nekmeshpy.QuadMesh.structured` does **not** resample: it uses each edge
-curve's own node distribution.  So to cluster cells toward the walls (a
-boundary-layer-style grid) we simply sample the four edges at non-uniform
-fractions -- here symmetric two-sided geometric clustering via
-:meth:`~nekmeshpy.linemesh.LineMesh.resample` -- and the Coons patch
-carries that grading into the section exactly.  ``WALL_GRADING`` controls how
-strongly the cells thin toward the walls (``1.0`` = uniform).
-
-Run with::
+``structured`` does not resample -- it uses each edge's own node distribution. To
+cluster cells toward the walls we sample the edges at non-uniform fractions
+(symmetric two-sided geometric clustering) and the Coons patch carries the grading
+through. ``WALL_GRADING`` sets the strength (``1.0`` = uniform).
 
     PYTHONPATH=. python examples/rectangular_pipe.py
 
@@ -24,10 +16,8 @@ Produces ``rectangular_pipe.re2`` / ``.rea`` and ``rectangular_pipe.vtk``.
 
 import logging
 
-import numpy as np
-
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
-from nekmeshpy.model.fields import geometric_spacing
+from nekmeshpy import HexMesh, QuadMesh, export
+from nekmeshpy.model.fields import geometric_spacing, symmetric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -49,36 +39,17 @@ OUT_NAME = "rectangular_pipe"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
 
-def wall_clustered(n: int, ratio: float) -> np.ndarray:
-    """``n+1`` symmetric fractions in ``[0,1]`` clustered toward *both* ends (a
-    two-sided near-wall distribution): geometric spacing on each half, mirrored.
-    ``n`` should be even so the two halves match exactly."""
-    m = n // 2
-    g = geometric_spacing(m, ratio)                  # [0,1], cells grow away from 0
-    first = 0.5 * g                                  # [0, 0.5], clustered near 0
-    second = 1.0 - 0.5 * g[::-1]                      # [0.5, 1], clustered near 1
-    return np.concatenate([first[:-1], second])      # 2*m+1 = n+1 fractions
-
-
 # -- build the structured cross-section, then extrude it along the axis -------
-# four rectangle corners (CCW) in the yz plane at x=0; sample each edge at the
-# wall-clustered fractions so structured (which uses the edges' own nodes, no
-# resampling) grades the section.  The section lives in 3-D and extrude sweeps it
-# rigidly along +x, so no reorientation of the section is needed.
-c0 = (0.0, -WIDTH / 2, -HEIGHT / 2)
-c1 = (0.0, WIDTH / 2, -HEIGHT / 2)
-c2 = (0.0, WIDTH / 2, HEIGHT / 2)
-c3 = (0.0, -WIDTH / 2, HEIGHT / 2)
-xf = wall_clustered(NX, WALL_GRADING)        # width-direction node fractions
-yf = wall_clustered(NY, WALL_GRADING)        # height-direction node fractions
-# tag each edge line "wall" at the lowest level -- the single-segment tag rides
-# through resample onto every sampled segment, and structured names each side from
-# its edge's uniform tag (no boundary_tags override needed).
-edges = [LineMesh.open([c0, c1], element_tags=["wall"]).resample(xf),
-         LineMesh.open([c1, c2], element_tags=["wall"]).resample(yf),
-         LineMesh.open([c2, c3], element_tags=["wall"]).resample(xf),
-         LineMesh.open([c3, c0], element_tags=["wall"]).resample(yf)]
-section = QuadMesh.structured(edges, smoothing_method=SMOOTHING_METHOD)
+# four rectangle corners (CCW) in the yz plane at x=0; the symmetric wall-clustered
+# node fractions grade the section toward the walls.  All four sides are the wall.
+corners = [(0.0, -WIDTH / 2, -HEIGHT / 2), (0.0, WIDTH / 2, -HEIGHT / 2),
+           (0.0, WIDTH / 2, HEIGHT / 2), (0.0, -WIDTH / 2, HEIGHT / 2)]
+section = QuadMesh.rectangle(
+    corners, NX, NY,
+    x_frac=symmetric_spacing(NX, WALL_GRADING),   # width-direction node fractions
+    y_frac=symmetric_spacing(NY, WALL_GRADING),   # height-direction node fractions
+    side_tags={s: "wall" for s in ("bottom", "right", "top", "left")},
+    smoothing_method=SMOOTHING_METHOD)
 
 mesh = HexMesh.extrude(
     section, axis=AXIS, length=LENGTH,

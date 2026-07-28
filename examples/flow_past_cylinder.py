@@ -1,22 +1,16 @@
-"""Mesh the flow past a circular cylinder (external flow, all-hex O-grid).
+"""Flow past a circular cylinder (external flow, all-hex O-grid).
 
-A flat, gmsh-style script: edit the constants below and re-run.  The 2-D section is
-a ring O-grid built by :meth:`nekmeshpy.QuadMesh.annulus` between the circular body
-(inner :class:`~nekmeshpy.LineMesh` loop) and a square far-field box (outer loop) --
-"circle blended out to a square at the boundary" -- with the radial layers clustered
-toward the cylinder for a boundary layer (``RADIAL_GRADING`` > 1).
+:meth:`QuadMesh.annulus` builds a ring O-grid between the circular body (inner
+:class:`LineMesh` loop) and a square far-field box (outer loop), radial layers
+clustered toward the cylinder (``RADIAL_GRADING`` > 1).
 
-The boundaries are named **at the lowest level -- the source line geometry** -- and
-carried right through the build: the inner body is ``cylinder`` (one tag per line
-element on the inner ``LineMesh.circle``); the four far-field sides are named **on the
-outer** :class:`~nekmeshpy.LineMesh` loop itself -- one tag per corner-to-corner line
-element (``element_tags=[...]``).  Those element tags survive
-:meth:`~nekmeshpy.LineMesh.radial_match`, ``annulus`` copies them onto the inner / outer
-ring's edges, and the span sweep (:meth:`nekmeshpy.HexMesh.extrude`) carries them onto
-the swept side faces and names the two end caps ``front`` / ``back`` at the hex level --
-no post-hoc boundary detection, no by-hand patch assembly.
-
-Run with::
+Boundaries are named on the source line geometry: the body is ``cylinder`` (per
+line element on the inner loop); the four far-field sides are tagged by
+:meth:`LineMesh.far_field_box`, which builds the outer loop **index-aligned** to
+the inner (one box-perimeter point per inner-point ray), so ``annulus`` pairs them
+directly with no re-alignment. ``annulus`` copies the tags onto the ring edges, and
+the span sweep (:meth:`HexMesh.extrude`) carries them onto the side faces and
+names the caps ``front`` / ``back``.
 
     PYTHONPATH=. python examples/flow_past_cylinder.py
 
@@ -49,22 +43,18 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "cylinder": "W  ",
 
 # -- build the ring section: circle body -> named square far field ------------
 inner = LineMesh.circle(R, N_THETA, element_tags=["cylinder"] * N_THETA)
-# The far-field box is a 4-corner loop; each corner-to-corner line element is one box
-# side, named here at the source.  Element m runs corner m -> corner m+1, so with
-# the corners listed CCW from the lower-left the sides are: bottom (y=-HB), outlet
-# (x=+HB, flow exits), top (y=+HB), inlet (x=-HB, flow enters).
-outer = LineMesh.loop(
-    [(-HALF_BOX, -HALF_BOX, 0.0), (HALF_BOX, -HALF_BOX, 0.0),
-     (HALF_BOX, HALF_BOX, 0.0), (-HALF_BOX, HALF_BOX, 0.0)],
-    element_tags=["bottom", "outlet", "top", "inlet"],
-).radial_match(inner)        # match to the inner's angles; the side names ride along
+# far-field box built index-aligned to the inner: outer[k] is the box-perimeter
+# point on the ray through inner[k], so the two loops pair directly in annulus.
+# Sides named per line element by the direction they face: bottom (y=-HB), outlet
+# (x=+HB), top (y=+HB), inlet (x=-HB).
+outer = LineMesh.far_field_box(inner, HALF_BOX,
+                               side_tags=["bottom", "outlet", "top", "inlet"])
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)
 
 # -- sweep along the span, naming the end caps front/back --------------------
-# extrude rigidly translates the section along +z, so it stays in the world xy
-# plane and the section's edge names ride onto the swept side faces.
+# extrude translates the section along +z; edge names ride onto the side faces
 mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")

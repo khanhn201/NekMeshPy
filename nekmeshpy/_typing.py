@@ -1,20 +1,12 @@
 """Shared numpy array type aliases used across the package.
 
-The library annotates array-valued data with dtype-parametrized
-:data:`numpy.typing.NDArray` aliases rather than a bare ``np.ndarray`` so the
-element type is part of the signature: :data:`FloatArray` for coordinates and
-other real-valued data, :data:`IntArray` for connectivity / index arrays, and
-:data:`BoolArray` for masks.  ``mypy`` is run with ``disallow_any_generics``, so
-a bare ``np.ndarray`` (an implicit ``NDArray[Any]``) is an error -- use one of
-these aliases, or an explicit ``NDArray[...]`` for other dtypes.
+Dtype-parametrized ``NDArray`` aliases replace bare ``np.ndarray`` (rejected by
+``mypy``'s ``disallow_any_generics``): ``FloatArray`` for real data, ``IntArray``
+for connectivity/indices, ``BoolArray`` for masks, ``StrArray`` for labels.
 
-:data:`Point`, :data:`Vec3` and :data:`PointArray` are **shape-documentation**
-aliases of :data:`FloatArray`: they mark a parameter that is a single ``(3,)``
-location (``Point``), a single ``(3,)`` direction/vector (``Vec3``), or a
-``(P,3)`` array of point coordinates (``PointArray``, as opposed to ``(N,)``
-scalar data).  numpy's type system has no static shape checking, so these are
-interchangeable with ``FloatArray`` to ``mypy`` -- they document intent only,
-they do not enforce the shape.
+``Point``, ``Vec3`` and ``PointArray`` are shape-documentation aliases of
+``FloatArray`` marking a ``(3,)`` location, a ``(3,)`` vector, or a ``(P,3)``
+point array.  numpy has no static shape checking, so they document intent only.
 """
 
 from __future__ import annotations

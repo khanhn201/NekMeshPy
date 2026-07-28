@@ -1,14 +1,10 @@
 """Generic shared-point unstructured mesh -- the gmsh/meshio-style data model.
 
-:class:`Mesh` is the interchange representation the whole package can convert to
-and from: a single shared ``points`` array plus ``cells`` grouped by element
-type, with named ``point_sets`` and ``cell_sets`` (physical groups).  It is a
-plain data container -- algorithms live on the typed meshes
-(:class:`~nekmeshpy.trimesh.TriMesh`, :class:`~nekmeshpy.hexmesh.HexMesh`); this
-is what you serialize, hand to :mod:`meshio`, or inspect.
-
-Cell-type keys follow the meshio vocabulary: ``"vertex"``, ``"line"``,
-``"triangle"``, ``"quad"``, ``"tetra"``, ``"hexahedron"``.
+``Mesh`` is the interchange representation the package converts to and from: a
+shared ``points`` array plus ``cells`` grouped by element type, with named
+``point_sets`` and ``cell_sets``.  A plain data container; algorithms live on the
+typed meshes.  Cell-type keys follow the meshio vocabulary (``"vertex"``,
+``"line"``, ``"triangle"``, ``"quad"``, ``"tetra"``, ``"hexahedron"``).
 """
 
 from __future__ import annotations
@@ -27,11 +23,9 @@ _POINTS_PER_CELL = {
 
 
 class Mesh:
-    """A generic shared-point mesh model: ``points`` ``(P,3)`` plus a
+    """Shared-point mesh model: ``points`` ``(P,3)`` plus a
     ``{cell_type: connectivity}`` dict, named ``point_sets`` and ``cell_sets``, and
-    gmsh ``field_data``.  It is the mesh-type-agnostic view used as the meshio
-    bridge (see :meth:`from_meshio` / :meth:`to_meshio`); the concrete containers
-    (:class:`~nekmeshpy.hexmesh.HexMesh` etc.) convert into it for export."""
+    gmsh ``field_data``.  Serves as the meshio bridge."""
 
     def __init__(
         self,
@@ -66,12 +60,11 @@ class Mesh:
 
     @property
     def cell_types(self) -> list[str]:
-        """The cell-type keys present (e.g. ``["quad", "hexahedron"]``)."""
+        """The cell-type keys present."""
         return list(self.cells.keys())
 
     def n_cells(self, ctype: str | None = None) -> int:
-        """Number of cells of type ``ctype``, or the total across all types when
-        ``ctype`` is ``None``."""
+        """Number of cells of type ``ctype``, or the total when ``ctype`` is ``None``."""
         if ctype is not None:
             return self.cells[ctype].shape[0] if ctype in self.cells else 0
         return sum(c.shape[0] for c in self.cells.values())

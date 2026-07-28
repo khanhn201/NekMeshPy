@@ -1,5 +1,4 @@
-"""2-D quad mesh container (:class:`QuadMesh`) and its section-smoothing
-strategies (:mod:`~nekmeshpy.quadmesh.smoothing`)."""
+"""2-D quad mesh container (``QuadMesh``) and its section-smoothing strategies."""
 
 from .quadmesh import NO_BOUNDARY, QuadMesh
 

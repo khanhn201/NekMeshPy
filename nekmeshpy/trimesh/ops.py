@@ -1,12 +1,4 @@
-"""Surface operations on a :class:`~nekmeshpy.trimesh.TriMesh`.
-
-``TriMesh`` is a pure container (``points`` + ``tris``); the surface *algorithms*
--- the cotangent Laplace operators, boundary-loop extraction, marching-triangle
-isocontours, and closest-point projection -- live here as free functions taking
-the surface as their first argument.  Method bodies are ported verbatim from the
-former ``TriMesh`` methods, so results are unchanged; ``cotan_laplacian`` is
-recomputed on each call (the container holds no cache).  All indices are 0-based.
-"""
+"""Surface algorithms on a ``TriMesh`` as free functions. All indices 0-based."""
 
 from __future__ import annotations
 
@@ -31,9 +23,7 @@ def cotan_laplacian(surface: TriMesh) -> sp.csr_matrix:
     nv, nt = xyz.shape[0], tri.shape[0]
     cot_clamp = 1e3
     p = xyz[tri]                                     # (nt,3,3)
-    # Build the (nt, corner c, entry k=0..3) triples in the SAME order as
-    # the original e-outer / c-inner loop so tocsr()'s duplicate summation
-    # is bit-identical; only the per-triangle geometry is vectorized.
+    # Build triples in the original loop order so duplicate summation is bit-identical.
     I = np.empty((nt, 3, 4))
     J = np.empty((nt, 3, 4))
     S = np.empty((nt, 3, 4))
@@ -59,8 +49,7 @@ def cotan_laplacian(surface: TriMesh) -> sp.csr_matrix:
 
 
 def solve_dirichlet(surface: TriMesh, dpoints: IntArray, dvals: FloatArray) -> FloatArray:
-    """Impose Dirichlet values at ``dpoints`` and solve the reduced system
-    (natural Neumann elsewhere).  Returns an ``(nv,)`` field."""
+    """Solve the Laplace system with Dirichlet values at ``dpoints``; returns an ``(nv,)`` field."""
     L = cotan_laplacian(surface)
     nv = surface.n_points
     dpoints = np.asarray(dpoints, dtype=np.int64).ravel()
@@ -87,8 +76,7 @@ def _boundary_edges(surface: TriMesh) -> IntArray:
 
 
 def boundary_loops(surface: TriMesh) -> list[IntArray]:
-    """Group open-boundary edges into connected loops (BFS).  Returns a
-    list of 1-D vertex-index arrays (BFS order)."""
+    """Group open-boundary edges into connected loops; returns a list of vertex-index arrays."""
     nv = surface.n_points
     bnd_edges = _boundary_edges(surface)
     bnd_verts = np.unique(bnd_edges.ravel())
@@ -142,8 +130,7 @@ def order_boundary_loop(surface: TriMesh, lv: IntArray) -> IntArray:
 
 # -- isocontours --------------------------------------------------------
 def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> LineMesh | None:
-    """Marching-triangles extraction of {u == level} as a single closed
-    ``LineMesh`` loop (the largest loop; ``None`` if the level misses the surface)."""
+    """Extract {u == level} as the largest closed ``LineMesh`` loop, or ``None``."""
     xyz, tri = surface.points, surface.tris
     nt = tri.shape[0]
     segs = np.zeros((nt, 6))
@@ -169,8 +156,7 @@ def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> LineMes
 def extract_rings(
     surface: TriMesh, u: FloatArray, levels: FloatArray, min_loop_pts: int,
 ) -> tuple[list[LineMesh], FloatArray]:
-    """Cross-section rings of field ``u`` at each level, keeping the largest
-    usable loop per level.  Returns ``(list[LineMesh], levels_kept)``."""
+    """Cross-section rings of ``u`` at each level; returns ``(rings, levels_kept)``."""
     fr = []
     frlev = []
     for lv in levels:
@@ -182,10 +168,121 @@ def extract_rings(
     return fr, np.asarray(frlev, dtype=float)
 
 
+# -- polyline / ring conformalization -----------------------------------
+def _lerp_along(P: PointArray, arclen: FloatArray, targets: FloatArray) -> PointArray:
+    """Piecewise-linear resample of polyline ``P`` at each query arc length in
+    ``targets`` (``arclen`` = ``P``'s cumulative arc length); callers pass already
+    clamped ``targets``.  Returns ``(len(targets), 3)``."""
+    K = P.shape[0]
+    out: PointArray = np.zeros((targets.shape[0], 3))
+    for k in range(targets.shape[0]):
+        s = targets[k]
+        idx = int(np.flatnonzero(arclen <= s)[-1])
+        idx = min(idx, K - 2)
+        span = arclen[idx + 1] - arclen[idx]
+        t = 0.0
+        if span > 0:
+            t = (s - arclen[idx]) / span
+        out[k, :] = P[idx, :] + t * (P[idx + 1, :] - P[idx, :])
+    return out
+
+
+def resample_polyline(
+    points: PointArray, fractions: FloatArray, *, closed: bool = False,
+) -> PointArray:
+    """Arc-length resample of a polyline at normalized ``fractions`` in ``[0, 1]``.
+    With ``closed=True`` the polyline wraps (fraction ``1`` returns to the start).
+    Returns ``(len(fractions), 3)``.  Use this to prepare an analytic example's curve
+    at the exact sample count a factory needs -- the intrinsic interpolation of a
+    scanned / analytic curve that cannot be pushed to the caller."""
+    P: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
+    fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
+    path: PointArray = np.vstack([P, P[0:1, :]]) if closed else P
+    arclen: FloatArray = np.concatenate(
+        [[0.0], np.cumsum(np.sqrt(np.sum(np.diff(path, axis=0) ** 2, axis=1)))])
+    targets: FloatArray = np.clip(fr, 0.0, 1.0) * arclen[-1]
+    return _lerp_along(path, arclen, targets)
+
+
+def _resample_loop(pts: PointArray, n: int) -> PointArray:
+    """Arc-length resample of a closed loop to ``n`` points (wrapping, endpoint
+    excluded)."""
+    return resample_polyline(pts, np.linspace(0.0, 1.0, n, endpoint=False), closed=True)
+
+
+def _align_loop(A: PointArray, B: PointArray) -> PointArray:
+    """Cyclically shift (and possibly flip) closed loop ``A`` to best match ``B`` in
+    least squares; returns the reordered points."""
+    M = A.shape[0]
+    best = np.inf
+    bestA: PointArray = A
+    for f in (0, 1):
+        Af: PointArray = A[::-1, :].copy() if f else A
+        for s in range(M):
+            As: PointArray = np.roll(Af, s, axis=0)
+            d = float(np.sum((As - B) ** 2))
+            if d < best:
+                best = d
+                bestA = As
+    return bestA
+
+
+def _split_ring(pts: PointArray, f: float, nh: int) -> PointArray:
+    """Resample closed loop ``pts`` into ``2*nh`` points so index 0 is ``pts[0]`` and
+    index ``nh`` sits at arc-length fraction ``f``.  Returns ``(2*nh, 3)``."""
+    R: PointArray = np.asarray(pts, dtype=float).reshape(-1, 3)
+    Rc: PointArray = np.vstack([R, R[0:1, :]])
+    al: FloatArray = np.concatenate(
+        [[0.0], np.cumsum(np.sqrt(np.sum(np.diff(Rc, axis=0) ** 2, axis=1)))])
+    tot = al[-1]
+    p1 = _lerp_along(Rc, al, np.clip(np.linspace(0.0, f * tot, nh + 1), 0.0, tot))
+    p2 = _lerp_along(Rc, al, np.clip(np.linspace(f * tot, tot, nh + 1), 0.0, tot))
+    return np.vstack([p1[0:nh, :], p2[0:nh, :]])
+
+
+def conform_ring_stack(
+    fine_rings: list[LineMesh] | list[PointArray],
+    seam_ring: PointArray, frlev: FloatArray, n_half: int,
+) -> list[PointArray]:
+    """Conformalize a stack of scanned interior rings (arbitrary per-ring point
+    counts) onto the seam ring's topology.  Each fine ring is resampled by arc length
+    to ``Nfine = 4*M`` points (``M`` = seam-ring point count), cyclically aligned
+    back-to-front to the seam, then split at arc-length fraction
+    ``f = 0.5 + (f_seam - 0.5) * frlev[k]`` into an ``M``-point ring whose index 0 /
+    index ``M/2`` sit on the two seam rails.  ``f_seam`` is the seam's first-half
+    fraction.  Returns a list of ``(M, 3)`` arrays."""
+    seam: PointArray = np.asarray(seam_ring, dtype=float).reshape(-1, 3)
+    lev: FloatArray = np.asarray(frlev, dtype=float)
+    M = seam.shape[0]
+    nh = n_half
+    Nfine = 4 * M
+
+    def _plen(P: PointArray) -> float:
+        return float(np.sum(np.sqrt(np.sum(np.diff(P, axis=0) ** 2, axis=1))))
+
+    La = _plen(seam[0:nh + 1, :])
+    Lb = _plen(np.vstack([seam[nh:M, :], seam[0:1, :]]))
+    f_seam = La / (La + Lb)
+
+    fine_pts: list[PointArray] = [
+        np.asarray(r.points if isinstance(r, LineMesh) else r, dtype=float).reshape(-1, 3)
+        for r in fine_rings]
+    fr: list[PointArray] = [_resample_loop(p, Nfine) for p in fine_pts]
+    ref: PointArray = _resample_loop(seam, Nfine)
+    for k in range(len(fr) - 1, -1, -1):
+        fr[k] = _align_loop(fr[k], ref)
+        ref = fr[k]
+
+    rings: list[PointArray] = []
+    for k in range(len(fr)):
+        f = 0.5 + (f_seam - 0.5) * lev[k]
+        rings.append(_split_ring(fr[k], f, nh))
+    return rings
+
+
 # -- projection ---------------------------------------------------------
 def project_points(surface: TriMesh, P: PointArray) -> PointArray:
-    """Snap points onto the nearest vertex's triangle fan (points assumed
-    near the surface).  (Port of ``project_points_to_mesh``.)"""
+    """Snap points onto the nearest vertex's triangle fan (points assumed near the surface)."""
     P = np.atleast_2d(np.asarray(P, dtype=float))
     Vx, T = surface.points, surface.tris
     nv = Vx.shape[0]
@@ -213,10 +310,7 @@ def project_points(surface: TriMesh, P: PointArray) -> PointArray:
 def project_to_surface(
     surface: TriMesh, P: PointArray, faces: IntArray | None = None,
 ) -> PointArray:
-    """Robust closest-point projection over triangles (no proximity
-    assumption).  ``faces`` defaults to all triangles; pass a subset (e.g. a
-    wall point's local patch) to restrict the search.  (Port of
-    ``project_to_surface``.)"""
+    """Closest-point projection over triangles; ``faces`` defaults to all triangles."""
     P = np.atleast_2d(np.asarray(P, dtype=float))
     Vx = surface.points
     T = surface.tris if faces is None else np.asarray(faces, dtype=np.int64).reshape(-1, 3)

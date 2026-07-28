@@ -1,7 +1,7 @@
 # `hexmesh`
 
-The immutable all-hex volume container, its factories, the constrained volume
-smoother, and per-hex quality metrics.
+The immutable all-hex volume container, its factories, the volume smoother, and
+per-hex quality metrics.
 
 ## `hexmesh`
 
