@@ -145,8 +145,8 @@ class LineMesh:
         Point ``k`` sits at angle ``2*pi*k/n + start_theta`` from the in-plane
         ``e1`` axis, so ``start_theta`` rotates the whole loop -- e.g. to align its
         index 0 with another loop or a far-field box before an index-paired
-        :meth:`QuadMesh.annulus`. ``element_tags`` tags the loop's line elements at
-        construction."""
+        :meth:`QuadMesh.annulus <nekmeshpy.quadmesh.QuadMesh.annulus>`.
+        ``element_tags`` tags the loop's line elements at construction."""
         th = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) + float(start_theta)
         c: Point = np.asarray(center, dtype=float).ravel()
         e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
@@ -179,7 +179,8 @@ class LineMesh:
         point per ``inner`` point, placed where the ray from ``center`` through that
         point meets the box of half-extents ``half_width`` x ``half_height``
         (``half_height`` defaults to ``half_width``). The result carries the same
-        point count as ``inner``, so it feeds :meth:`QuadMesh.annulus` directly
+        point count as ``inner``, so it feeds
+        :meth:`QuadMesh.annulus <nekmeshpy.quadmesh.QuadMesh.annulus>` directly
         without any matching/resampling step -- the box follows the body loop the
         way a cubed-``sphere`` follows a ``box`` one dimension up.
 

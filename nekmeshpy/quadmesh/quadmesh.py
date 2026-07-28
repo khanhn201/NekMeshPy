@@ -879,7 +879,8 @@ class QuadMesh:
                element_tag: str = "sphere") -> QuadMesh:
         """Closed cubed-sphere surface of ``radius`` about the origin: a unit
         :meth:`box` projected radially onto the sphere (same connectivity, so it
-        pairs by index with a same-``n`` box for :meth:`HexMesh.annulus`).  Every
+        pairs by index with a same-``n`` box for
+        :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>`).  Every
         quad carries ``element_tag`` (default ``sphere``)."""
         cube = cls.box(1.0, n)
         pts = radius * cube.points / np.linalg.norm(cube.points, axis=1, keepdims=True)
