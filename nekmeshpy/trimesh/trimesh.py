@@ -3,13 +3,13 @@
 ``TriMesh`` is a pure container of a surface triangulation: point coordinates
 ``points`` (nv,3) and triangle connectivity ``tris`` (nt,3), both 0-based (input
 ``.tri`` files are 1-based and converted on load).  It is the triangle sibling of
-:class:`~nekmeshpy.geometry.quadmesh.QuadMesh` (``points`` + ``quads``): same
+:class:`~nekmeshpy.quadmesh.QuadMesh` (``points`` + ``quads``): same
 ``points`` coordinate array, an integer cell array named for its element type, and
 matching ``n_points`` / ``n_<cell>`` size properties.
 
 The surface *algorithms* -- cotangent Laplace operators, Dirichlet solves,
 boundary-loop extraction, marching-triangle isocontours, and closest-point
-projection -- live in :mod:`nekmeshpy.ops.trisurf` as free functions taking the
+projection -- live in :mod:`nekmeshpy.trimesh.ops` as free functions taking the
 surface as their first argument.
 """
 
@@ -23,6 +23,12 @@ from .._typing import BoolArray, IntArray, PointArray
 
 
 class TriMesh:
+    """A triangular surface mesh: ``points`` ``(P,3)`` and ``tris`` ``(T,3)``
+    connectivity, plus a cached cotangent Laplacian.  It is the input surface for
+    the vessel pipeline; the surface algorithms that act on it (cotan Laplacian,
+    Dirichlet solve, boundary loops, isocontours, projection) are free functions in
+    :mod:`nekmeshpy.trimesh.ops` (aliased ``nekmeshpy.trisurf``)."""
+
     def __init__(self, points: PointArray, tris: IntArray) -> None:
         self.points = np.asarray(points, dtype=float).reshape(-1, 3)
         self.tris = np.asarray(tris, dtype=np.int64)
@@ -57,10 +63,12 @@ class TriMesh:
     # -- sizes -----------------------------------------------------------
     @property
     def n_points(self) -> int:
+        """Number of points."""
         return self.points.shape[0]
 
     @property
     def n_tris(self) -> int:
+        """Number of triangles."""
         return self.tris.shape[0]
 
     # -- boundary queries (open surface edges) --------------------------
@@ -99,9 +107,9 @@ class TriMesh:
         connected component of the boundary edges (BFS order); empty for a closed
         surface.  Unlike :meth:`boundary_points` (a flat set), this separates the
         distinct openings.  (Delegates to
-        :func:`nekmeshpy.ops.trisurf.boundary_loops`.)"""
-        from ..ops import trisurf
-        return trisurf.boundary_loops(self)
+        :func:`nekmeshpy.trimesh.ops.boundary_loops`.)"""
+        from . import ops
+        return ops.boundary_loops(self)
 
     # -- topology / validity ---------------------------------------------
     def topology_report(self) -> dict[str, Any]:

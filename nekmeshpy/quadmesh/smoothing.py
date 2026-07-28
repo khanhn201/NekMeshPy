@@ -1,19 +1,19 @@
-"""Cross-section interior-repositioning strategies (free functions + registry).
+"""Cross-section smoothing strategies (free functions + registry).
 
-Interior repositioning is done **per cross-section** on a single O-grid
-:class:`~nekmeshpy.geometry.quadmesh.QuadMesh` before it is swept/extruded, so the
+Smoothing repositions interior points **per cross-section** on a single O-grid
+:class:`~nekmeshpy.quadmesh.QuadMesh` before it is swept/extruded, so the
 strategies here take a ``QuadMesh`` (not an assembled ``HexMesh``).  A slice's
 point indices are already global, so no weld is needed; the fixed points are found
 generically as those on a quad edge belonging to a single quad (for a half-disk
 this is exactly the wall arc + the flat spine, so the two halves stay conformal).
 
 Each strategy is a callable ``fn(qm, **opts) -> qm`` registered under one or more
-names.  :func:`set_section_interior` looks the name up here, so new strategies can
+names.  :func:`set_section_smoothing` looks the name up here, so new strategies can
 be added from user code without touching the meshers::
 
-    from nekmeshpy.ops.interior import register_section_interior
+    from nekmeshpy import register_section_smoothing
 
-    @register_section_interior("laplacian")
+    @register_section_smoothing("laplacian")
     def _laplacian(qm, **opts):
         ...
         return qm
@@ -34,7 +34,7 @@ import scipy.sparse.linalg as spla
 from .._typing import BoolArray, IntArray
 
 if TYPE_CHECKING:
-    from ..geometry.quadmesh import QuadMesh
+    from .quadmesh import QuadMesh
 
 F = TypeVar("F", bound=Callable[..., "QuadMesh"])
 
@@ -114,7 +114,7 @@ def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMe
 SECTION_METHODS: dict[str, Callable[..., QuadMesh]] = {}
 
 
-def register_section_interior(*names: str) -> Callable[[F], F]:
+def register_section_smoothing(*names: str) -> Callable[[F], F]:
     """Decorator: register a section strategy ``fn(qm, **opts) -> qm`` under each
     of ``names`` (case-insensitive)."""
     def deco(fn: F) -> F:
@@ -129,28 +129,28 @@ def available() -> list[str]:
     return sorted(n for n in SECTION_METHODS if n)
 
 
-@register_section_interior("bilinear", "tfi", "none", "")
+@register_section_smoothing("bilinear", "tfi", "none", "")
 def _section_noop(qm: QuadMesh, **opts: Any) -> QuadMesh:
     return qm                         # keep the algebraic transfinite fill
 
 
-@register_section_interior("conduction")
+@register_section_smoothing("conduction")
 def _conduction(qm: QuadMesh, **opts: Any) -> QuadMesh:
     return conduction_section(qm)
 
 
-@register_section_interior("winslow")
+@register_section_smoothing("winslow")
 def _winslow(qm: QuadMesh, **opts: Any) -> QuadMesh:
     return winslow_section(qm, iters=opts.get("iters", 30))
 
 
-def set_section_interior(qm: QuadMesh, method: str | None, **opts: Any) -> QuadMesh:
+def set_section_smoothing(qm: QuadMesh, method: str | None, **opts: Any) -> QuadMesh:
     """Reposition one O-grid cross-section's interior points in place via a
     per-slice strategy registered here (built-ins: bilinear, conduction,
     winslow).  Extra keywords are forwarded to the strategy."""
     m = (method or "conduction").lower()
     fn = SECTION_METHODS.get(m)
     if fn is None:
-        raise ValueError('set_section_interior: unknown method "%s" (available: %s)'
+        raise ValueError('set_section_smoothing: unknown method "%s" (available: %s)'
                          % (method, ", ".join(available())))
     return fn(qm, **opts)

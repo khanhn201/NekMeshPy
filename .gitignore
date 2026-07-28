@@ -28,6 +28,10 @@ htmlcov/
 .tox/
 .nox/
 
+# Sphinx documentation build
+docs/_build/
+docs/reference/generated/
+
 # Editor / OS
 .idea/
 .vscode/

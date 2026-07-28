@@ -1,21 +1,21 @@
 """Mesh the flow past a thin plate (external flow, all-hex O-grid).
 
 A flat, gmsh-style script: edit the constants below and re-run.  Same construction
-as ``flow_past_cylinder.py`` -- **four structured wedge patches, one per box side**,
-each blending a quarter-arc of the body out to one side of the square far field and
-welded with :meth:`nekmeshpy.HexMesh.merge` (the 2-D analogue of the cubed-sphere
-shell in ``flow_past_sphere.py``).  The boundaries are named as the mesh is built
-(radial-in ``plate``; radial-out the box side ``inlet`` / ``outlet`` / ``top`` /
-``bottom``; span caps ``front`` / ``back``).  The only change from the cylinder is
-the body: a **thin ellipse** (half-length ``A``, half-thickness ``B`` with
+as ``flow_past_cylinder.py`` -- a ring O-grid (:meth:`nekmeshpy.QuadMesh.annulus`)
+between the body and a square far-field box, swept along the span -- the only change
+being the body: a **thin ellipse** (half-length ``A``, half-thickness ``B`` with
 ``B << A``) standing in for a flat plate.
 
 *Modeling choice:* a true zero-thickness plate would need a C-grid the toolkit does
 not provide; a thin ellipse keeps a smooth, everywhere-non-degenerate all-hex O-grid
-around the body while approximating the plate as ``B`` -> 0.  The body points are
-sampled by **direction angle** (the ray from the origin at angle ``theta`` meets the
-ellipse), so each wedge's arc and the box side it maps to stay radially aligned right
-through the sharp ends.
+around the body while approximating the plate as ``B`` -> 0.
+
+The boundaries are named **at the lowest level -- the source line geometry** (see
+``flow_past_cylinder.py``): the body is ``plate`` (one tag per line element on the inner
+loop) and the four far-field sides are named on the outer :class:`~nekmeshpy.LineMesh`
+loop's line elements, carried through :meth:`~nekmeshpy.LineMesh.radial_match` ->
+``annulus`` -> :meth:`nekmeshpy.HexMesh.extrude` onto the swept side faces; the sweep
+names the span caps ``front`` / ``back`` at the hex level.
 
 Run with::
 
@@ -28,7 +28,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, export
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 from nekmeshpy.model.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -38,63 +38,46 @@ A = 1.0                      # plate half-length (streamwise)
 B = 0.08                     # plate half-thickness (B << A)
 HALF_BOX = 6.0               # far-field box half-width (domain [-HB, HB]^2 in xy)
 SPAN = 2.0                   # spanwise (z) extent
-N_THETA = 80                 # azimuthal cells around the plate (multiple of 4)
+N_THETA = 80                 # azimuthal cells around the plate
 N_RADIAL = 24                # radial cells from plate out to the box
 RADIAL_GRADING = 1.12        # >1 clusters radial layers toward the plate
 N_SPAN = 4                   # hex layers across the span
+# bilinear (algebraic, radially-graded) ring: an elliptic (winslow) solve tangles
+# the very high aspect-ratio cells near the sharp ends, so keep the algebraic fill.
+SMOOTHING_METHOD = "bilinear"
 OUT_NAME = "flow_past_plate"
 
 # boundary name -> Nek BC code, applied only at export
 GROUPS = {"inlet": "v  ", "outlet": "O  ", "plate": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
 
-# the four box sides: name and the arc centre angle (degrees) facing that side; each
-# wedge spans centre +/- 45 deg, so the seams land exactly on the box corners.
-SIDES = [("outlet", 0.0), ("top", 90.0), ("inlet", 180.0), ("bottom", 270.0)]
+# -- build the ring section: thin-ellipse body -> named square far field ------
+# the ellipse sampled at N_THETA uniform direction angles (the ray from the origin
+# at angle theta meets the ellipse), so radial_match below lands equal cells per side.
+theta = np.linspace(0.0, 2.0 * np.pi, N_THETA, endpoint=False)
+r = 1.0 / np.sqrt((np.cos(theta) / A) ** 2 + (np.sin(theta) / B) ** 2)
+inner = LineMesh.loop(np.column_stack([r * np.cos(theta), r * np.sin(theta),
+                                       np.zeros(N_THETA)]),
+                      element_tags=["plate"] * N_THETA)
 
-if N_THETA % 4 != 0:
-    raise ValueError("N_THETA must be a multiple of 4 (one wedge per box side)")
+# named far-field box: line element m (corner m -> corner m+1) is one box side (see
+# flow_past_cylinder.py) -- bottom / outlet / top / inlet, CCW from the lower-left.
+outer = LineMesh.loop(
+    [(-HALF_BOX, -HALF_BOX, 0.0), (HALF_BOX, -HALF_BOX, 0.0),
+     (HALF_BOX, HALF_BOX, 0.0), (-HALF_BOX, HALF_BOX, 0.0)],
+    element_tags=["bottom", "outlet", "top", "inlet"],
+).radial_match(inner)
 
+section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
+                           smoothing_method=SMOOTHING_METHOD)
 
-def ellipse_point(theta: float) -> np.ndarray:
-    """The point where the ray from the origin at angle ``theta`` meets the ellipse
-    (half-length ``A`` along x, half-thickness ``B`` along y)."""
-    r = 1.0 / np.sqrt((np.cos(theta) / A) ** 2 + (np.sin(theta) / B) ** 2)
-    return np.array([r * np.cos(theta), r * np.sin(theta), 0.0])
-
-
-def square_projection(direction: np.ndarray) -> np.ndarray:
-    """The point where the ray from the origin along ``direction`` (unit, in xy)
-    meets the square box |x|,|y| = HALF_BOX -- an L-infinity projection, so the
-    radial line stays straight from the plate out to the box side."""
-    return HALF_BOX * direction / np.max(np.abs(direction))
-
-
-# -- build one structured wedge per box side, then weld them ------------------
-nq = N_THETA // 4                                    # azimuthal cells per wedge
-t = geometric_spacing(N_RADIAL, RADIAL_GRADING)      # 0 (plate) .. 1 (box)
-zs = np.linspace(0.0, SPAN, N_SPAN + 1)
-
-patches = []
-for name, centre in SIDES:
-    theta = np.deg2rad(np.linspace(centre - 45.0, centre + 45.0, nq + 1))
-    body = np.array([ellipse_point(a) for a in theta])
-    outer = np.array([square_projection(np.array([np.cos(a), np.sin(a), 0.0]))
-                      for a in theta])               # box-side point per azimuth
-    # P[radial, theta, span]: (radial-out, theta, span) is right-handed -> +hexes.
-    P = np.zeros((N_RADIAL + 1, nq + 1, N_SPAN + 1, 3))
-    for it in range(nq + 1):
-        ring = (1.0 - t)[:, None] * body[it] + t[:, None] * outer[it]   # (Nr+1, 3)
-        P[:, it, :, :] = ring[:, None, :] + np.array([0.0, 0.0, 1.0]) * zs[None, :, None]
-    # x = radial (in=plate / out=this side); z = span caps; y (theta) seams stay
-    # untagged so merge welds the wedges along the shared box-corner seams.
-    patches.append(HexMesh.from_grid(P, face_tags={
-        "x_min": "plate", "x_max": name, "z_min": "front", "z_max": "back"}))
-
-mesh = HexMesh.merge(patches)                         # weld the four corner seams
+# -- sweep along the span, naming the end caps front/back --------------------
+mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+                       layers=np.linspace(0.0, 1.0, N_SPAN + 1),
+                       first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_names))
+print("groups:", ", ".join(mesh.boundary_group_tags))

@@ -2,7 +2,7 @@
 codes.
 
 A :class:`PhysicalGroup` binds a human-readable ``name`` to an integer ``tag``
-(as stored in :attr:`HexMesh.boundaries`), a topological ``dim`` (2 = surface /
+(as stored in ``HexMesh.boundaries``), a topological ``dim`` (2 = surface /
 boundary, 3 = volume) and, for boundaries, the 3-character Nek BC ``code``
 written into the ``.re2`` file.  :class:`PhysicalGroups` is the registry that
 maps freely between tag, name and code.
@@ -20,6 +20,10 @@ from typing import Iterable, Iterator
 
 @dataclass(frozen=True)
 class PhysicalGroup:
+    """One named physical group: a ``name`` bound to an integer ``tag``, a
+    dimension (``dim`` 2 = boundary/surface, 3 = volume), and a 3-char Nek BC
+    ``code`` (padded on construction)."""
+
     name: str
     tag: int
     dim: int = 2          # 2 = boundary/surface, 3 = volume
@@ -58,14 +62,17 @@ class PhysicalGroups:
 
     # -- lookup ----------------------------------------------------------
     def code_for(self, tag: int) -> str | None:
+        """The Nek BC code for ``tag``, or ``None`` if not registered."""
         g = self._by_tag.get(tag)
         return g.code if g is not None else None
 
     def name_for(self, tag: int) -> str | None:
+        """The group name for ``tag``, or ``None`` if not registered."""
         g = self._by_tag.get(tag)
         return g.name if g is not None else None
 
     def tag_for(self, name: str) -> int | None:
+        """The integer tag for group ``name``, or ``None`` if not registered."""
         g = self._by_name.get(name)
         return g.tag if g is not None else None
 
@@ -77,12 +84,15 @@ class PhysicalGroups:
 
     # -- container protocol ---------------------------------------------
     def __contains__(self, key: int | str) -> bool:
+        """``True`` if a group with this tag (int) or name (str) is registered."""
         return self.get(key) is not None
 
     def __iter__(self) -> Iterator[PhysicalGroup]:
+        """Iterate the registered groups in ascending tag order."""
         return iter(sorted(self._by_tag.values(), key=lambda g: g.tag))
 
     def __len__(self) -> int:
+        """Number of registered groups."""
         return len(self._by_tag)
 
     def __repr__(self) -> str:

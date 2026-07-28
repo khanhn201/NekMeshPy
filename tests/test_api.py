@@ -1,19 +1,19 @@
 """Tests for the toolkit generalization layer: physical groups, the shared-point
-Mesh view, quality, and the section interior-method registry (exercised on the
+Mesh view, quality, and the section-smoothing registry (exercised on the
 mesh the bifurcation example builds)."""
 
 import numpy as np
 
 from nekmeshpy import (
     SECTION_METHODS,
-    Curve,
+    LineMesh,
     PhysicalGroups,
     QuadMesh,
     export,
-    quality,
-    register_section_interior,
-    set_section_interior,
+    register_section_smoothing,
+    set_section_smoothing,
 )
+from nekmeshpy.hexmesh import quality
 
 
 def test_physical_groups_default_codes():
@@ -32,25 +32,25 @@ def test_physical_group_pads_code():
 
 def test_to_mesh_groups(built_mesh):
     m = export.to_mesh(built_mesh["mesh"])
-    assert m.cells["hexahedron"].shape == (3840, 8)
-    assert m.cells["quad"].shape == (1280, 4)
+    assert m.cells["hexahedron"].shape == (4800, 8)
+    assert m.cells["quad"].shape == (1360, 4)
     assert set(m.cell_sets) >= {"wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"}
     assert m.cell_sets["wall"]["quad"].size == 960
 
 
-def test_section_interior_registry_extensible():
+def test_section_smoothing_registry_extensible():
     calls = {}
 
-    @register_section_interior("noop_test")
+    @register_section_smoothing("noop_test")
     def _noop(qm, **opts):
         calls["hit"] = True
         return qm
 
     assert "noop_test" in SECTION_METHODS
     qm = QuadMesh.structured(
-        [Curve([(0, 0, 0), (1, 0, 0)]), Curve([(1, 0, 0), (1, 1, 0)]),
-         Curve([(1, 1, 0), (0, 1, 0)]), Curve([(0, 1, 0), (0, 0, 0)])])
-    set_section_interior(qm, "noop_test")
+        [LineMesh.open([(0, 0, 0), (1, 0, 0)]), LineMesh.open([(1, 0, 0), (1, 1, 0)]),
+         LineMesh.open([(1, 1, 0), (0, 1, 0)]), LineMesh.open([(0, 1, 0), (0, 0, 0)])])
+    set_section_smoothing(qm, "noop_test")
     assert calls.get("hit") is True
     del SECTION_METHODS["noop_test"]
 

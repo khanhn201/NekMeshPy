@@ -1,7 +1,7 @@
-"""Export / generic-view free functions for a :class:`HexMesh`.
+"""Export / generic-view free functions for a :class:`~nekmeshpy.hexmesh.HexMesh`.
 
-:class:`HexMesh` is a pure hex container (``hexes`` (N,8,3) + ``boundaries`` with
-parallel ``boundary_names``); turning it into a shared-point
+:class:`~nekmeshpy.hexmesh.HexMesh` is a pure hex container (``hexes`` (N,8,3) + ``boundaries`` with
+parallel ``boundary_tags``); turning it into a shared-point
 :class:`~nekmeshpy.model.mesh.Mesh`, a meshio mesh, an arbitrary meshio file, or
 the native Nek ``.re2``/``.rea`` and ASCII ``.vtk`` lives here.  The byte layout
 is ported verbatim, so the exported files stay byte-identical to the reference.
@@ -29,10 +29,10 @@ from ..model.mesh import Mesh
 from ..model.physical import PhysicalGroup, PhysicalGroups
 
 if TYPE_CHECKING:
-    from ..geometry.hexmesh import HexMesh
+    from ..hexmesh import HexMesh
 
-# package root (one level up from this io/ subpackage), holding templates/
-_PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# .rea header/footer templates live beside this module, in io/templates/
+_TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 _log = logging.getLogger("nekmeshpy")
 
 # what the ``groups`` export parameter accepts
@@ -52,7 +52,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
     if isinstance(groups, PhysicalGroups):
         return groups
     if groups is None:
-        names = mesh.boundary_group_names
+        names = mesh.boundary_group_tags
         return PhysicalGroups(
             PhysicalGroup(name, i + 1) for i, name in enumerate(names))
     return PhysicalGroups(
@@ -66,11 +66,11 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     ``hexahedron`` volume cells, plus one ``quad`` boundary cell per tagged
     face grouped into named ``cell_sets`` (and ``point_sets``) taken from the
     mesh's boundary names.  ``groups`` maps those names to Nek codes / tags
-    (see :func:`_as_groups`)."""
+    (see ``_as_groups``)."""
     X, HC, _ = mesh.weld()
     g = _as_groups(mesh, groups)
     b = mesh.boundaries
-    bnames = mesh.boundary_names
+    bnames = mesh.boundary_tags
 
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
@@ -125,18 +125,18 @@ def _str_to_double(s: str) -> float:
 def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
     """Write ``<filename>.re2`` (binary) and ``<filename>.rea`` (ASCII).
     ``groups`` maps each boundary name to its Nek BC code (see
-    :func:`_as_groups`)."""
+    ``_as_groups``)."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
-    bnames = mesh.boundary_names
+    bnames = mesh.boundary_tags
     num_elem = elements.shape[0]
     with open(filename + ".rea", "w") as fh:
-        with open(os.path.join(_PKG, "templates", "header.rea"), "r") as hf:
+        with open(os.path.join(_TEMPLATES, "header.rea"), "r") as hf:
             fh.write(hf.read())
         fh.write("**MESH DATA** 6 lines are X,Y,Z;X,Y,Z. Columns corners 1-4;5-8\n")
         fh.write("      %8i   %8i   %8i NELT,NDIM,NELV\n" % (-num_elem, 3, num_elem))
-        with open(os.path.join(_PKG, "templates", "footer.rea"), "r") as ff:
+        with open(os.path.join(_TEMPLATES, "footer.rea"), "r") as ff:
             fh.write(ff.read())
         fh.write("\n")
     with open(filename + ".re2", "wb") as fid:
@@ -168,11 +168,11 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
 
 def to_vtk(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
     """Write an ASCII VTK unstructured grid with per-point ``bc_id`` (the integer
-    tag each boundary name maps to; see :func:`_as_groups`)."""
+    tag each boundary name maps to; see ``_as_groups``)."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
-    bnames = mesh.boundary_names
+    bnames = mesh.boundary_tags
     N = elements.shape[0]
     X = elements.reshape(N * 8, 3)
     nX = X.shape[0]
@@ -222,9 +222,9 @@ def summary(mesh: HexMesh) -> None:
     mesh's own boundary names), and the topology report."""
     _log.info("mesh: %d hex elements, %d boundary faces",
               mesh.hexes.shape[0], mesh.boundaries.shape[0])
-    for name in mesh.boundary_group_names:
+    for name in mesh.boundary_group_tags:
         _log.info("  %-14s: %d faces",
-                  name, int(np.sum(mesh.boundary_names == name)))
+                  name, int(np.sum(mesh.boundary_tags == name)))
     rep = topology.hex_report(*mesh.weld()[:2])
     _log.info("  watertight=%s  conformal=%s  components=%d  "
               "non-manifold faces=%d  hanging points=%d",

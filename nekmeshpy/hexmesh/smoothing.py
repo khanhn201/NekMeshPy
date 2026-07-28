@@ -1,8 +1,8 @@
-"""Constrained hex-mesh smoothing (free function on a :class:`HexMesh`).
+"""Constrained hex-mesh smoothing (free function on a :class:`~nekmeshpy.hexmesh.HexMesh`).
 
 :func:`smooth` untangles and polishes the assembled hex mesh while keeping wall
 points on the triangulated ``surface`` and opening/cap points fixed.  It operates
-on the welded shared-point view (:meth:`HexMesh.weld`) and is numerically
+on the welded shared-point view (:meth:`~nekmeshpy.hexmesh.HexMesh.weld`) and is numerically
 identical to the original verbatim implementation (two stages: point-local
 untangle, then a back-tracked global Jacobi polish that never lowers the minimum
 scaled Jacobian).
@@ -17,12 +17,12 @@ import numpy as np
 import scipy.sparse as sp
 
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
-from ..model import quality
-from . import trisurf
+from ..trimesh import ops as trisurf
+from . import quality
 
 if TYPE_CHECKING:
-    from ..geometry.hexmesh import HexMesh
-    from ..geometry.trimesh import TriMesh
+    from ..trimesh import TriMesh
+    from .hexmesh import HexMesh
 
 _log = logging.getLogger("nekmeshpy")
 

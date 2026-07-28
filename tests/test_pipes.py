@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 from conftest import run_example
 
-from nekmeshpy import quality, topology
+from nekmeshpy import topology
+from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
@@ -12,7 +13,7 @@ def _scaled_jac(mesh):
 
 
 def _tag_count(mesh, name):
-    return int(np.sum(mesh.boundary_names == name))
+    return int(np.sum(mesh.boundary_tags == name))
 
 
 def test_circular_pipe(tmp_path):
@@ -24,7 +25,7 @@ def test_circular_pipe(tmp_path):
     # butterfly O-grid: no collapsed centre cell, all positive Jacobian
     assert float(np.min(_scaled_jac(mesh))) > 0.5
     assert mesh.is_watertight() and mesh.is_conforming()
-    assert set(mesh.boundary_group_names) >= {"wall", "inlet", "outlet"}
+    assert set(mesh.boundary_group_tags) >= {"wall", "inlet", "outlet"}
 
 
 def test_rectangular_pipe(tmp_path):
@@ -33,7 +34,7 @@ def test_rectangular_pipe(tmp_path):
     assert float(np.min(_scaled_jac(mesh))) == pytest.approx(1.0, abs=1e-9)
     assert mesh.is_watertight() and mesh.is_conforming()
     assert _tag_count(mesh, "inlet") == _tag_count(mesh, "outlet")  # caps match
-    assert set(mesh.boundary_group_names) >= {"wall", "inlet", "outlet"}
+    assert set(mesh.boundary_group_tags) >= {"wall", "inlet", "outlet"}
 
 
 def test_circular_pipe_tjunction(tmp_path):
@@ -47,4 +48,4 @@ def test_circular_pipe_tjunction(tmp_path):
         assert _tag_count(mesh, name) == _tag_count(mesh, "inlet")
     # analytic O-grid junction stays well away from degenerate
     assert float(np.min(_scaled_jac(mesh))) > 0.3
-    assert set(mesh.boundary_group_names) >= {"wall", "inlet", "outlet", "branch"}
+    assert set(mesh.boundary_group_tags) >= {"wall", "inlet", "outlet", "branch"}

@@ -6,15 +6,17 @@ the welded-away interior face."""
 from collections import Counter
 
 import numpy as np
+import pytest
 
 from nekmeshpy import NO_BOUNDARY, HexMesh, QuadMesh
 from nekmeshpy.model.fields import uniform_spacing
 
-# a unit square, one quad, CCW: edges (0,1) bottom, (1,2) right, (2,3) top, (3,0) left
+# a unit square, one quad, CCW: side 1 (0,1) bottom, 2 (1,2) right, 3 (2,3) top,
+# 4 (3,0) left -- boundaries are [quad id, side], parallel with boundary_tags.
 _SQUARE_PTS = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]
 _SQUARE_QUADS = [[0, 1, 2, 3]]
-_SIDES = {frozenset((0, 1)): "bottom", frozenset((1, 2)): "right",
-          frozenset((2, 3)): "top", frozenset((3, 0)): "left"}
+_SQUARE_BND = [[0, 1], [0, 2], [0, 3], [0, 4]]
+_SQUARE_BND_TAGS = ["bottom", "right", "top", "left"]
 
 
 def _face_centroids(mesh):
@@ -25,18 +27,36 @@ def _face_centroids(mesh):
     return np.array(out).reshape(-1, 3)
 
 
-def test_boundary_names_derive_boundaries():
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS, boundary_names=_SIDES)
-    # only boundary_names given -> every named edge is held as a boundary
-    assert qm.boundaries == set(_SIDES)
-    assert qm.boundary_names[frozenset((0, 1))] == "bottom"
+def _edge_points(mesh, row):
+    """Point ids of tagged boundary edge ``row`` (via [quad, side])."""
+    q, s = int(mesh.boundaries[row, 0]), int(mesh.boundaries[row, 1])
+    return mesh.quads[q, QuadMesh.EDGE_POINTS[s - 1]]
 
 
-def test_loft_propagates_per_edge_boundary_names_to_side_faces():
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS, boundary_names=_SIDES)
+def test_boundaries_stored_as_quad_side_parallel_with_names():
+    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS,
+                  boundaries=_SQUARE_BND, boundary_tags=_SQUARE_BND_TAGS)
+    assert qm.boundaries.shape == (4, 2)
+    assert qm.n_boundaries == 4
+    assert qm.boundary_group_tags == ["bottom", "left", "right", "top"]
+    # side 1 (pts 0-1) is named "bottom"
+    row = next(r for r in range(4) if qm.boundaries[r].tolist() == [0, 1])
+    assert qm.boundary_tags[row] == "bottom"
+    assert np.allclose(qm.points[_edge_points(qm, row), 1], 0.0)   # bottom -> y=0
+
+
+def test_mismatched_boundaries_and_names_raises():
+    with pytest.raises(ValueError, match="must match"):
+        QuadMesh(_SQUARE_PTS, _SQUARE_QUADS, boundaries=_SQUARE_BND,
+                 boundary_tags=["only", "two"])
+
+
+def test_loft_propagates_per_edge_boundary_tags_to_side_faces():
+    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS,
+                  boundaries=_SQUARE_BND, boundary_tags=_SQUARE_BND_TAGS)
     blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
-                          first_cap="inlet", last_cap="outlet")
-    counts = Counter(blk.boundary_names.tolist())
+                          first_tag="inlet", last_tag="outlet")
+    counts = Counter(blk.boundary_tags.tolist())
     # 4 named sides + 2 caps, each once (one hex)
     assert counts == {"bottom": 1, "right": 1, "top": 1, "left": 1,
                       "inlet": 1, "outlet": 1}
@@ -44,36 +64,35 @@ def test_loft_propagates_per_edge_boundary_names_to_side_faces():
 
 
 def test_no_boundary_suppresses_a_swept_face():
-    # name three edges "wall"; the right edge is declared NO_BOUNDARY
+    # name three edges "wall"; the right edge (side 2) is declared NO_BOUNDARY
     qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS,
-                  boundary_names={frozenset((0, 1)): "wall", frozenset((2, 3)): "wall",
-                              frozenset((3, 0)): "wall", frozenset((1, 2)): NO_BOUNDARY})
+                  boundaries=[[0, 1], [0, 3], [0, 4], [0, 2]],
+                  boundary_tags=["wall", "wall", "wall", NO_BOUNDARY])
     blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(2))
-    names = blk.boundary_names.tolist()
+    names = blk.boundary_tags.tolist()
     assert "" not in names                       # NO_BOUNDARY never emitted
     # 3 walls x 2 layers = 6 wall faces; the 4th (right) edge is suppressed
     assert Counter(names)["wall"] == 6
 
 
-def test_boundaries_without_names_tags_nothing():
-    # boundaries alone no longer auto-tag side faces -- naming is boundary_names only
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS, boundaries=list(_SIDES))
+def test_untagged_section_tags_only_caps():
+    # a section with no tagged boundaries -> only the caps are named
+    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS)
     blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
-                          first_cap="inlet", last_cap="outlet")
-    # only the two caps are tagged; the four (unnamed) side faces are not
-    assert Counter(blk.boundary_names.tolist()) == {"inlet": 1, "outlet": 1}
+                          first_tag="inlet", last_tag="outlet")
+    assert Counter(blk.boundary_tags.tolist()) == {"inlet": 1, "outlet": 1}
 
 
-def test_quadmesh_merge_unions_and_remaps_boundary_names():
+def test_quadmesh_merge_concats_and_offsets_boundary_tags():
     a = QuadMesh([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], _SQUARE_QUADS,
-                 boundary_names={frozenset((0, 1)): "a_bottom"})
+                 boundaries=[[0, 1]], boundary_tags=["a_bottom"])
     b = QuadMesh([[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], _SQUARE_QUADS,
-                 boundary_names={frozenset((0, 1)): "b_bottom"})
+                 boundaries=[[0, 1]], boundary_tags=["b_bottom"])
     m = QuadMesh.merge([a, b])
-    assert set(m.boundary_names.values()) == {"a_bottom", "b_bottom"}
-    # both names still sit on the y=0 edges after the point remap
-    for edge in m.boundary_names:
-        assert np.allclose(m.points[list(edge), 1], 0.0)
+    assert set(m.boundary_tags.tolist()) == {"a_bottom", "b_bottom"}
+    # each name still sits on a y=0 edge after the point weld + quad-id offset
+    for r in range(m.n_boundaries):
+        assert np.allclose(m.points[_edge_points(m, r), 1], 0.0)
 
 
 def _box(lo, hi, tags):
@@ -93,10 +112,10 @@ def test_no_boundary_seam_keeps_merge_a_plain_concatenate():
     mesh = HexMesh.merge([lower, upper])
 
     assert mesh.is_watertight() and mesh.is_conforming()
-    assert set(mesh.boundary_group_names) == {"wall", "bottom", "top"}
+    assert set(mesh.boundary_group_tags) == {"wall", "bottom", "top"}
     # nothing tagged on the interior interface plane z=1
     z = _face_centroids(mesh)[:, 2]
     assert not np.any(np.isclose(z, 1.0))
     # the true outer caps are present and correctly placed
-    assert np.all(np.isclose(z[mesh.boundary_names == "bottom"], 0.0))
-    assert np.all(np.isclose(z[mesh.boundary_names == "top"], 2.0))
+    assert np.all(np.isclose(z[mesh.boundary_tags == "bottom"], 0.0))
+    assert np.all(np.isclose(z[mesh.boundary_tags == "top"], 2.0))

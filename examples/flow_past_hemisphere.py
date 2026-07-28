@@ -104,4 +104,4 @@ mesh = HexMesh.merge(patches)                              # weld shared gnomoni
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_names))
+print("groups:", ", ".join(mesh.boundary_group_tags))

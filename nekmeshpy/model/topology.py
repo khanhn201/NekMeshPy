@@ -1,8 +1,8 @@
 """Mesh topology / validity checks, decoupled from the mesh containers.
 
 Two families of free functions, both operating on the shared-point representation
-so they work on a welded :class:`~nekmeshpy.geometry.hexmesh.HexMesh` or a
-:class:`~nekmeshpy.geometry.trimesh.TriMesh` (mirroring :mod:`nekmeshpy.model.quality`):
+so they work on a welded :class:`~nekmeshpy.hexmesh.HexMesh` or a
+:class:`~nekmeshpy.trimesh.TriMesh` (mirroring :mod:`nekmeshpy.hexmesh.quality`):
 
 * :func:`hex_report` / :func:`is_watertight` -- all-hex volume meshes.  A hex
   mesh is *watertight* when its boundary (every quad face carried by a single
@@ -118,7 +118,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> dict[str, Any]:
     """Topology / watertightness report for an all-hex mesh.
 
     ``points`` is ``(P,3)`` and ``hexes`` is ``(N,8)`` in Nek corner order
-    (a welded :class:`HexMesh` view).  Returns a dict with the facet inventory
+    (a welded :class:`~nekmeshpy.hexmesh.HexMesh` view).  Returns a dict with the facet inventory
     (``n_faces`` unique quad faces, split into ``n_boundary_faces`` /
     ``n_internal_faces`` / ``n_nonmanifold_faces``), the number of ``n_open_edges``
     on the boundary surface (edges not shared by exactly two boundary faces),
