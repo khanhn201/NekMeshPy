@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 from conftest import run_example
 
-from nekmeshpy import quality, topology
+from nekmeshpy import topology
+from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
@@ -17,7 +18,7 @@ def _scaled_jac(mesh):
 
 
 def _tag_count(mesh, name):
-    return int(np.sum(mesh.boundary_names == name))
+    return int(np.sum(mesh.boundary_tags == name))
 
 
 def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):
@@ -26,7 +27,7 @@ def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):
     assert topology.hex_report(*mesh.weld()[:2])["n_components"] == 1
     assert float(np.min(_scaled_jac(mesh))) > jac_floor
     # exactly the expected named groups, all non-empty
-    assert set(mesh.boundary_group_names) == groups
+    assert set(mesh.boundary_group_tags) == groups
     for name in groups:
         assert _tag_count(mesh, name) > 0
     # inlet and outlet flow openings are present and the body is embedded

@@ -10,11 +10,12 @@ flat ground ``[-W,-R]``, then the semicircular bump up and over ``-R..R``, then 
 ground ``[R,W]``.  Putting the semicircle in the *middle* of one edge (rather than
 splitting the domain into three blocks) avoids the degenerate vertical-tangent
 corner a block split would create where the bump meets the ground at ``x = +/-R``;
-``interior_method="winslow"`` then regularizes the grid over the bump.  Boundaries
-are named **as the mesh is built**: the section tags its own sides (bottom edge --
-ground + bump -- ``wall``, ``inlet`` / ``outlet`` on the ends, ``top`` on the
-ceiling) and the span sweep (:meth:`nekmeshpy.HexMesh.loft`) names the two end caps
-``front`` / ``back``.
+``smoothing_method="bilinear"`` then fills the grid over the bump.  Boundaries
+are named **at the lowest level -- each edge line tags itself**: the bottom edge
+(ground + bump) is ``wall``, ``inlet`` / ``outlet`` on the ends, ``top`` on the
+ceiling; ``structured`` reads each side's uniform edge tag, and the span sweep
+(:meth:`nekmeshpy.HexMesh.loft`) names the two end caps ``front`` / ``back`` at the
+hex level.
 
 Run with::
 
@@ -27,7 +28,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import Curve, HexMesh, QuadMesh, export
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -54,24 +55,28 @@ left_ground = np.column_stack([np.linspace(-W, -R, 40), np.zeros(40), np.zeros(4
 right_ground = np.column_stack([np.linspace(R, W, 40), np.zeros(40), np.zeros(40)])
 bottom_pts = np.vstack([left_ground[:-1], bump, right_ground[1:]])   # drop shared ends
 # structured uses the edges' own nodes (no resampling): resample each edge to the
-# matching division count -- bottom/top to NX+1, left/right to NY+1.
-bottom = Curve(bottom_pts).resample(np.linspace(0.0, 1.0, NX + 1))   # (-W,0) -> (W,0)
-right = Curve([(W, 0.0, 0.0), (W, H, 0.0)]).resample(np.linspace(0.0, 1.0, NY + 1))
-top = Curve([(W, H, 0.0), (-W, H, 0.0)]).resample(np.linspace(0.0, 1.0, NX + 1))
-left = Curve([(-W, H, 0.0), (-W, 0.0, 0.0)]).resample(np.linspace(0.0, 1.0, NY + 1))
-section = QuadMesh.structured(
-    [bottom, right, top, left], interior_method="winslow",
-    boundary_names={"bottom": "wall", "right": "outlet", "top": "top", "left": "inlet"})
+# matching division count -- bottom/top to NX+1, left/right to NY+1.  Each edge tags
+# itself at the line level (the tag rides through resample), so structured names each
+# side from its edge's uniform tag -- no boundary_tags override.
+bottom = LineMesh.open(bottom_pts, element_tags=["wall"] * (len(bottom_pts) - 1)
+                      ).resample(np.linspace(0.0, 1.0, NX + 1))              # (-W,0)->(W,0)
+right = LineMesh.open([(W, 0.0, 0.0), (W, H, 0.0)], element_tags=["outlet"]
+                     ).resample(np.linspace(0.0, 1.0, NY + 1))
+top = LineMesh.open([(W, H, 0.0), (-W, H, 0.0)], element_tags=["top"]
+                   ).resample(np.linspace(0.0, 1.0, NX + 1))
+left = LineMesh.open([(-W, H, 0.0), (-W, 0.0, 0.0)], element_tags=["inlet"]
+                    ).resample(np.linspace(0.0, 1.0, NY + 1))
+section = QuadMesh.structured([bottom, right, top, left], smoothing_method="bilinear")
 
 # -- sweep along the span, naming the end caps front/back --------------------
 zs = np.linspace(0.0, SPAN, N_SPAN + 1)
 slices = [QuadMesh(section.points + np.array([0.0, 0.0, z]), section.quads,
-                   boundaries=section.boundaries, boundary_names=section.boundary_names)
+                   boundaries=section.boundaries, boundary_tags=section.boundary_tags)
           for z in zs]
-mesh = HexMesh.loft(slices, first_cap="front", last_cap="back")
+mesh = HexMesh.loft(slices, first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_names))
+print("groups:", ", ".join(mesh.boundary_group_tags))

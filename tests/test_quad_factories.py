@@ -4,7 +4,7 @@ half_ogrid / annulus).  All boundary inputs are 3-D ``(N,3)`` coordinates."""
 import numpy as np
 import pytest
 
-from nekmeshpy import Curve, CurveLoop, QuadMesh
+from nekmeshpy import LineMesh, QuadMesh
 from nekmeshpy.model.fields import geometric_spacing, uniform_spacing
 
 
@@ -13,18 +13,19 @@ def _rect_edges(x0, x1, y0, y1, nx=1, ny=1):
     # edge to the wanted division count (uniform).
     c0, c1, c2, c3 = ((x0, y0, 0.0), (x1, y0, 0.0),
                       (x1, y1, 0.0), (x0, y1, 0.0))
-    return [Curve([c0, c1]).resample(uniform_spacing(nx)),
-            Curve([c1, c2]).resample(uniform_spacing(ny)),
-            Curve([c2, c3]).resample(uniform_spacing(nx)),
-            Curve([c3, c0]).resample(uniform_spacing(ny))]
+    return [LineMesh.open([c0, c1]).resample(uniform_spacing(nx)),
+            LineMesh.open([c1, c2]).resample(uniform_spacing(ny)),
+            LineMesh.open([c2, c3]).resample(uniform_spacing(nx)),
+            LineMesh.open([c3, c0]).resample(uniform_spacing(ny))]
 
 
 def test_structured_grid():
     qm = QuadMesh.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
     assert qm.n_quads == 3 * 2
     assert qm.n_points == (3 + 1) * (2 + 1)
-    # every edge on the outline is a wall edge (2*(nx+ny) perimeter edges)
-    assert len(qm.boundaries) == 2 * (3 + 2)
+    # no names passed -> no tagged boundaries; the outline is a topological query
+    assert qm.n_boundaries == 0
+    assert qm.boundary_edges().shape[0] == 2 * (3 + 2)   # 2*(nx+ny) perimeter edges
     assert np.asarray(qm.points).shape == (12, 3)     # (P,3) coordinates
 
 
@@ -46,11 +47,11 @@ def test_structured_uses_edge_nodes_verbatim():
     # section's bottom row exactly (honoured on the boundary, blended inward).
     nx, ny = 8, 4
     xb = np.linspace(-1, 1, nx + 1)
-    bottom = Curve(np.column_stack(                                # nx+1 pts
+    bottom = LineMesh.open(np.column_stack(                                # nx+1 pts
         [xb, 0.3 * np.sin(np.pi * (xb + 1) / 2), np.zeros(nx + 1)]))
-    top = Curve([(1, 1, 0), (-1, 1, 0)]).resample(uniform_spacing(nx))
-    right = Curve([(1, bottom.points[-1, 1], 0), (1, 1, 0)]).resample(uniform_spacing(ny))
-    left = Curve([(-1, 1, 0), (-1, bottom.points[0, 1], 0)]).resample(uniform_spacing(ny))
+    top = LineMesh.open([(1, 1, 0), (-1, 1, 0)]).resample(uniform_spacing(nx))
+    right = LineMesh.open([(1, bottom.points[-1, 1], 0), (1, 1, 0)]).resample(uniform_spacing(ny))
+    left = LineMesh.open([(-1, 1, 0), (-1, bottom.points[0, 1], 0)]).resample(uniform_spacing(ny))
     qm = QuadMesh.structured([bottom, right, top, left])
     assert qm.n_quads == nx * ny
     P = np.asarray(qm.points).reshape(nx + 1, ny + 1, 3)
@@ -67,8 +68,8 @@ def test_structured_graded_edges_cluster_toward_walls():
     xf = np.concatenate([0.5 * g[:-1], 1.0 - 0.5 * g[::-1]])   # symmetric, 9 fracs
     c0, c1, c2, c3 = ((-1.0, -1.0, 0.0), (1.0, -1.0, 0.0),
                       (1.0, 1.0, 0.0), (-1.0, 1.0, 0.0))
-    edges = [Curve([c0, c1]).resample(xf), Curve([c1, c2]).resample(xf),
-             Curve([c2, c3]).resample(xf), Curve([c3, c0]).resample(xf)]
+    edges = [LineMesh.open([c0, c1]).resample(xf), LineMesh.open([c1, c2]).resample(xf),
+             LineMesh.open([c2, c3]).resample(xf), LineMesh.open([c3, c0]).resample(xf)]
     qm = QuadMesh.structured(edges)
     P = np.asarray(qm.points).reshape(9, 9, 3)
     # first cell (near wall) is thinner than the middle cell in both directions
@@ -79,7 +80,7 @@ def test_structured_graded_edges_cluster_toward_walls():
 
 
 def _circle(radius, n):
-    return CurveLoop.circle(radius, n)
+    return LineMesh.circle(radius, n)
 
 
 def test_ogrid_counts_and_boundary():
@@ -87,14 +88,15 @@ def test_ogrid_counts_and_boundary():
     # central n_side^2 + n_radial rings of 4*n_side quads
     assert qm.n_quads == 4 * 4 + 3 * (4 * 4)
     assert qm.n_points == (4 + 1) ** 2 + 3 * (4 * 4)
-    assert len(qm.boundaries) == 4 * 4               # outer ring = the wall loop
+    assert qm.n_boundaries == 0                       # no wall_name -> untagged
+    assert qm.boundary_edges().shape[0] == 4 * 4      # outer ring = the wall loop
 
 
-def test_ogrid_interior_method_repositions():
+def test_ogrid_smoothing_method_repositions():
     boundary = _circle(0.5, 16)
     raw = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
     smoothed = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
-                              interior_method="conduction")
+                              smoothing_method="conduction")
     r = np.asarray(raw.points)
     s = np.asarray(smoothed.points)
     # same topology, interior points moved, boundary (wall) held fixed
@@ -105,7 +107,7 @@ def test_ogrid_interior_method_repositions():
 
 
 def _square_loop(half):
-    return CurveLoop([(-half, -half, 0.0), (half, -half, 0.0),
+    return LineMesh.loop([(-half, -half, 0.0), (half, -half, 0.0),
                       (half, half, 0.0), (-half, half, 0.0)])
 
 
@@ -116,7 +118,8 @@ def test_annulus_counts_and_boundary():
     # N azimuthal x n_radial rings of quads; (n_radial+1) rings of N points
     assert qm.n_quads == 16 * 3
     assert qm.n_points == 16 * (3 + 1)
-    assert len(qm.boundaries) == 2 * 16              # inner + outer rings
+    assert qm.n_boundaries == 0                       # no names -> untagged
+    assert qm.boundary_edges().shape[0] == 2 * 16     # inner + outer rings
     assert not np.any(np.isnan(np.asarray(qm.points)))
 
 
@@ -154,11 +157,11 @@ def test_extrude_rejects_single_layer_position():
         HexMesh.extrude(qm, length=1.0, layers=np.array([1.0]))
 
 
-def test_annulus_interior_method_repositions():
+def test_annulus_smoothing_method_repositions():
     inner = _circle(0.5, 24)
     outer = _square_loop(3.0).radial_match(inner)
     raw = QuadMesh.annulus(inner, outer, radial=uniform_spacing(4))
-    smoothed = QuadMesh.annulus(inner, outer, radial=uniform_spacing(4), interior_method="winslow")
+    smoothed = QuadMesh.annulus(inner, outer, radial=uniform_spacing(4), smoothing_method="winslow")
     r, s = np.asarray(raw.points), np.asarray(smoothed.points)
     assert r.shape == s.shape
     assert np.max(np.abs(r - s)) > 1e-9             # interior rings moved
@@ -207,8 +210,8 @@ def test_annulus_rejects_radial_not_reaching_wall():
 
 
 def test_annulus_rejects_non_loop():
-    with pytest.raises(TypeError, match="must be a CurveLoop"):
-        QuadMesh.annulus(Curve([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), _square_loop(2.0),
+    with pytest.raises(TypeError, match="must be a closed LineMesh"):
+        QuadMesh.annulus(LineMesh.open([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), _square_loop(2.0),
                          radial=uniform_spacing(3))
 
 
@@ -216,11 +219,13 @@ def test_half_ogrid_valid():
     Nt, Nr = 2, 2
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)                # semicircle A1(-1,0)..A2(1,0)
-    arc = Curve(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
-    spine = Curve([[-1.0, 0, 0], [1.0, 0, 0]])    # the diameter A1..A2
+    arc = LineMesh.open(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
+    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])    # the diameter A1..A2
     qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
     assert qm.n_quads == 2 * Nt * Nt + 4 * Nt * Nr
-    assert len(qm.boundaries) == 4 * Nt              # the wall arc
+    assert qm.n_boundaries == 0                       # no wall_name -> untagged
+    # topological perimeter = wall arc + straight diameter, both 4*Nt edges
+    assert qm.boundary_edges().shape[0] == 2 * (4 * Nt)
     assert not np.any(np.isnan(np.asarray(qm.points)))
 
 
@@ -239,7 +244,7 @@ def test_circle_normal_places_loop_in_plane():
     n = np.array([1.0, 1.0, 1.0])
     n = n / np.linalg.norm(n)
     center = np.array([0.3, -0.2, 0.7])
-    loop = CurveLoop.circle(2.0, 32, center=center, normal=n)
+    loop = LineMesh.circle(2.0, 32, center=center, normal=n)
     P = loop.points
     assert P.shape == (32, 3)
     # coplanar with the requested plane and correct radius about the center
@@ -249,7 +254,7 @@ def test_circle_normal_places_loop_in_plane():
 
 def test_circle_default_is_xy_plane():
     # default normal +z reproduces the classic xy circle exactly
-    loop = CurveLoop.circle(1.5, 16)
+    loop = LineMesh.circle(1.5, 16)
     P = loop.points
     assert np.allclose(P[:, 2], 0.0)
     assert np.allclose(np.linalg.norm(P[:, :2], axis=1), 1.5)
@@ -258,7 +263,7 @@ def test_circle_default_is_xy_plane():
 def test_ogrid_on_tilted_plane_is_coplanar_and_extrudes():
     from nekmeshpy import HexMesh
     n = np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)
-    boundary = CurveLoop.circle(0.5, 16, normal=n)
+    boundary = LineMesh.circle(0.5, 16, normal=n)
     qm = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
     P = np.asarray(qm.points)
     # every section point lies in the boundary's plane (through its centroid)
@@ -272,8 +277,8 @@ def test_ogrid_on_tilted_plane_is_coplanar_and_extrudes():
 
 def test_annulus_on_tilted_plane_is_coplanar():
     n = np.array([0.0, 1.0, 1.0]) / np.sqrt(2.0)
-    inner = CurveLoop.circle(1.0, 24, normal=n)
-    outer = CurveLoop.circle(3.0, 24, normal=n)
+    inner = LineMesh.circle(1.0, 24, normal=n)
+    outer = LineMesh.circle(3.0, 24, normal=n)
     qm = QuadMesh.annulus(inner, outer, radial=uniform_spacing(4))
     P = np.asarray(qm.points)
     c = P.mean(axis=0)
@@ -285,7 +290,7 @@ def _saddle_loop(n, amp=0.4):
     """A genuinely non-planar closed loop: the unit circle lifted by
     ``z = amp*cos(2 theta)`` (a saddle / Pringle), sampled densely."""
     th = np.linspace(0.0, 2 * np.pi, n, endpoint=False)
-    return CurveLoop(np.column_stack([np.cos(th), np.sin(th), amp * np.cos(2 * th)]))
+    return LineMesh.loop(np.column_stack([np.cos(th), np.sin(th), amp * np.cos(2 * th)]))
 
 
 def test_ogrid_on_curvy_boundary_stays_nonplanar():
@@ -294,13 +299,13 @@ def test_ogrid_on_curvy_boundary_stays_nonplanar():
     amp = 0.4
     boundary = _saddle_loop(400, amp)
     qm = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
-                        interior_method="conduction")
+                        smoothing_method="conduction")
     X = np.asarray(qm.points)
     # the whole section is genuinely non-planar (not snapped to a best-fit plane)
     dev = np.abs((X - X.mean(axis=0)) @ _plane_normal(X))
     assert dev.max() > 0.3                       # ~ the saddle's own z-amplitude
     # the wall ring lies exactly on the analytic saddle surface z = amp*cos(2*theta)
-    wall_ids = sorted({i for e in qm.boundaries for i in e})
+    wall_ids = qm.boundary_points().tolist()      # topological outline (untagged)
     wall = X[wall_ids]
     ang = np.arctan2(wall[:, 1], wall[:, 0])
     assert np.max(np.abs(wall[:, 2] - amp * np.cos(2 * ang))) < 1e-4
@@ -320,9 +325,9 @@ def test_annulus_on_curvy_boundaries_stays_nonplanar():
     # the curved surface rather than collapsing onto a plane.
     inner = _saddle_loop(24, amp=0.4)
     outer = _saddle_loop(24, amp=0.4)
-    outer = CurveLoop(2.0 * outer.points)        # scaled-out saddle, same 24 points
+    outer = LineMesh.loop(2.0 * outer.points)        # scaled-out saddle, same 24 points
     qm = QuadMesh.annulus(inner, outer, radial=uniform_spacing(4),
-                          interior_method="conduction")
+                          smoothing_method="conduction")
     X = np.asarray(qm.points)
     dev = np.abs((X - X.mean(axis=0)) @ _plane_normal(X))
     assert dev.max() > 0.3
@@ -332,22 +337,201 @@ def test_annulus_on_curvy_boundaries_stays_nonplanar():
 def test_radial_match_in_tilted_plane():
     # radial_match works in other's plane, not just xy
     n = np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0)
-    inner = CurveLoop.circle(0.5, 20, normal=n)
-    outer = CurveLoop.circle(2.0, 4, normal=n).radial_match(inner)
+    inner = LineMesh.circle(0.5, 20, normal=n)
+    outer = LineMesh.circle(2.0, 4, normal=n).radial_match(inner)
     assert len(outer) == len(inner)
     # matched loop stays coplanar with inner's plane
     c = inner.points.mean(axis=0)
     assert np.max(np.abs((outer.points - c) @ n)) < 1e-9
 
 
+# -- element tags: tagged on the loop's line elements, carried onto the section
+# boundary edges ------------------------------------------------------------
+
+def _named_box(half):
+    # line element m runs corner m -> corner m+1: bottom / outlet / top / inlet (CCW)
+    return LineMesh.loop([(-half, -half, 0.0), (half, -half, 0.0),
+                      (half, half, 0.0), (-half, half, 0.0)],
+                     element_tags=["bottom", "outlet", "top", "inlet"])
+
+
+def test_loop_element_tags_length_validated():
+    # a closed 3-point loop has 3 line elements; element_tags must match
+    with pytest.raises(ValueError, match="element_tags length .* must match lines"):
+        LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags=["a", "b"])
+    # a matching count (one per line element) is accepted
+    assert LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
+                     element_tags=["a", "b", "c"]).element_tags.tolist() == ["a", "b", "c"]
+
+
+def test_unnamed_loop_stays_untagged_through_resampling():
+    # no behavior change for the common (untagged) path
+    inner = _circle(0.5, 16)
+    assert _square_loop(2.0).radial_match(inner).element_group_tags == []
+    assert _circle(1.0, 8).resample(uniform_spacing(5)).element_group_tags == []
+
+
+def test_radial_match_carries_element_tags_by_sector():
+    inner = _circle(0.5, 64)
+    outer = _named_box(6.0).radial_match(inner)
+    assert len(outer.element_tags) == outer.n_lines == len(inner)
+    from collections import Counter
+    counts = Counter(outer.element_tags.tolist())
+    # 64 azimuthal line elements split evenly across the four symmetric box sides
+    assert counts == {"bottom": 16, "outlet": 16, "top": 16, "inlet": 16}
+    # each output line element's midpoint direction matches the side it was tagged with
+    pts = outer.points
+    mids = (pts + np.roll(pts, -1, axis=0)) / 2.0
+    ang = np.degrees(np.arctan2(mids[:, 1], mids[:, 0]))
+    for target, side in ((0, "outlet"), (90, "top"), (180, "inlet"), (-90, "bottom")):
+        k = int(np.argmin(np.abs(((ang - target + 180) % 360) - 180)))
+        assert outer.element_tags[k] == side
+
+
+def test_annulus_consumes_outer_loop_element_tags():
+    # a tagged outer loop splits the outer ring into distinct sides automatically;
+    # the scalar inner_tag still tags the whole inner ring.
+    inner = _circle(0.5, 64)
+    outer = _named_box(6.0).radial_match(inner)
+    qm = QuadMesh.annulus(inner, outer, geometric_spacing(6, 1.12),
+                          inner_tag="cylinder")
+    from collections import Counter
+    counts = Counter(qm.boundary_tags.tolist())
+    # inner ring (64 edges) all "cylinder"; outer ring split 16 per tagged side
+    assert counts["cylinder"] == 64
+    assert counts["outlet"] == counts["top"] == counts["inlet"] == counts["bottom"] == 16
+
+
+def test_element_tags_propagate_line_to_hex_faces():
+    # the full chain: LineMesh element tags -> QuadMesh boundary edges -> HexMesh faces
+    from nekmeshpy import HexMesh
+    inner = _circle(0.5, 32)
+    outer = _named_box(6.0).radial_match(inner)
+    section = QuadMesh.annulus(inner, outer, uniform_spacing(4), inner_tag="cylinder")
+    block = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,
+                            layers=uniform_spacing(2), first_tag="front",
+                            last_tag="back")
+    assert set(block.boundary_group_tags) == {
+        "cylinder", "inlet", "outlet", "top", "bottom", "front", "back"}
+    # the four far-field sides carry equal face counts (symmetric split)
+    n = {s: int(np.sum(block.boundary_tags == s))
+         for s in ("inlet", "outlet", "top", "bottom")}
+    assert n["inlet"] == n["outlet"] == n["top"] == n["bottom"] > 0
+
+
+# -- line-level tagging + upper-overrides-lower precedence -------------------
+
+def test_ogrid_reads_boundary_element_tags():
+    # the wall is named at the lowest level -- the boundary loop's element_tags --
+    # with no scalar wall_tag.  The wall ring (4*n_side edges) all inherit the tag.
+    boundary = LineMesh.circle(0.5, 16, element_tags=["wall"] * 16)
+    qm = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
+    assert qm.n_boundaries == 4 * 4
+    assert set(qm.boundary_tags.tolist()) == {"wall"}
+
+
+def test_ogrid_wall_tag_overrides_boundary_element_tags():
+    # a non-empty scalar wall_tag OVERRIDES the loop's element_tags for the whole wall
+    boundary = LineMesh.circle(0.5, 16, element_tags=["ring"] * 16)
+    qm = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
+                        wall_tag="override")
+    assert set(qm.boundary_tags.tolist()) == {"override"}
+    assert qm.n_boundaries == 4 * 4
+
+
+def _tagged_arc(Nt, tags):
+    na = 4 * Nt + 1
+    ang = np.linspace(np.pi, 0.0, na)
+    return LineMesh.open(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]),
+                         element_tags=tags)
+
+
+def test_half_ogrid_reads_arc_element_tags():
+    # the arc wall is named per-segment at the line level (no scalar wall_tag); wall
+    # edge k tracks arc segment k, so each side of the arc keeps its own tag.
+    Nt = 4
+    tags = ["a"] * (2 * Nt) + ["b"] * (2 * Nt)      # first half "a", second half "b"
+    arc = _tagged_arc(Nt, tags)
+    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
+    qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
+    from collections import Counter
+    assert Counter(qm.boundary_tags.tolist()) == {"a": 2 * Nt, "b": 2 * Nt}
+
+
+def test_half_ogrid_wall_tag_overrides_arc_element_tags():
+    Nt = 2
+    arc = _tagged_arc(Nt, ["arc"] * (4 * Nt))
+    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
+    qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5,
+                             wall_tag="override")
+    assert set(qm.boundary_tags.tolist()) == {"override"}
+    assert qm.n_boundaries == 4 * Nt
+
+
+def _tagged_rect_edges(nx, ny, tags):
+    # a unit rectangle whose four edges each carry a single uniform element tag
+    c0, c1, c2, c3 = ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0),
+                      (1.0, 1.0, 0.0), (0.0, 1.0, 0.0))
+    return [LineMesh.open([c0, c1], element_tags=[tags[0]]).resample(uniform_spacing(nx)),
+            LineMesh.open([c1, c2], element_tags=[tags[1]]).resample(uniform_spacing(ny)),
+            LineMesh.open([c2, c3], element_tags=[tags[2]]).resample(uniform_spacing(nx)),
+            LineMesh.open([c3, c0], element_tags=[tags[3]]).resample(uniform_spacing(ny))]
+
+
+def test_structured_reads_edge_element_tags():
+    # each side is named from its own edge's uniform element tag (no boundary_tags)
+    qm = QuadMesh.structured(_tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"]))
+    from collections import Counter
+    counts = Counter(qm.boundary_tags.tolist())
+    assert counts == {"wall": 3, "top": 3, "outlet": 2, "inlet": 2}
+
+
+def test_structured_boundary_tags_override_edge_tags():
+    # a non-empty boundary_tags entry OVERRIDES that side's edge tag
+    qm = QuadMesh.structured(
+        _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
+        boundary_tags={"bottom": "floor"})
+    from collections import Counter
+    counts = Counter(qm.boundary_tags.tolist())
+    assert counts["floor"] == 3            # bottom overridden
+    assert counts["wall"] == 3 + 2 + 2     # the other three sides keep their edge tag
+
+
+def test_structured_boundary_tags_empty_suppresses_edge_tag():
+    # a present-but-empty override (NO_BOUNDARY / "") suppresses a tagged edge -- e.g.
+    # a shared edge that merge will weld away
+    from nekmeshpy import NO_BOUNDARY
+    qm = QuadMesh.structured(
+        _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
+        boundary_tags={"left": NO_BOUNDARY})
+    names = qm.boundary_tags.tolist()
+    assert "wall" in names
+    assert qm.n_boundaries == 3 + 2 + 3    # left (ny=2 edges) suppressed
+
+
+def test_annulus_inner_tag_overrides_loop_element_tags():
+    # a tagged inner loop names the inner ring at the line level; a non-empty
+    # inner_tag OVERRIDES it for the whole inner ring
+    inner = LineMesh.circle(0.5, 16, element_tags=["body"] * 16)
+    outer = _named_box(6.0).radial_match(inner)
+    qm = QuadMesh.annulus(inner, outer, geometric_spacing(4, 1.12),
+                          inner_tag="override")
+    from collections import Counter
+    counts = Counter(qm.boundary_tags.tolist())
+    assert counts["override"] == 16        # inner ring overridden
+    assert "body" not in counts
+    # outer sides still come from the outer loop's element_tags
+    assert counts["outlet"] == counts["top"] == counts["inlet"] == counts["bottom"] == 4
+
+
 # -- input validation --------------------------------------------------------
 
-def test_curve_rejects_2d_input():
+def test_linemesh_rejects_2d_input():
     # boundaries must be 3-D (N,3); a 2-D (N,2) array is rejected
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
-        Curve([(0, 0), (1, 0)])
+        LineMesh.open([(0, 0), (1, 0)])
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
-        CurveLoop([(0, 0), (1, 0), (1, 1)])
+        LineMesh.loop([(0, 0), (1, 0), (1, 1)])
 
 
 def test_structured_rejects_wrong_edge_count():
@@ -357,32 +541,32 @@ def test_structured_rejects_wrong_edge_count():
 
 def test_structured_rejects_mismatched_edge_counts():
     # bottom (4 pts) and top (3 pts) disagree on nx -> rejected (no resampling)
-    edges = [Curve([(-1, -1, 0), (0, -1, 0), (1, -1, 0)]).resample(uniform_spacing(3)),
-             Curve([(1, -1, 0), (1, 1, 0)]),
-             Curve([(1, 1, 0), (-1, 1, 0)]).resample(uniform_spacing(2)),
-             Curve([(-1, 1, 0), (-1, -1, 0)])]
+    edges = [LineMesh.open([(-1, -1, 0), (0, -1, 0), (1, -1, 0)]).resample(uniform_spacing(3)),
+             LineMesh.open([(1, -1, 0), (1, 1, 0)]),
+             LineMesh.open([(1, 1, 0), (-1, 1, 0)]).resample(uniform_spacing(2)),
+             LineMesh.open([(-1, 1, 0), (-1, -1, 0)])]
     with pytest.raises(ValueError, match="bottom and top .* equal point counts"):
         QuadMesh.structured(edges)
 
 
-def test_structured_rejects_non_curve_edge():
+def test_structured_rejects_non_linemesh_edge():
     edges = _rect_edges(-1, 1, -1, 1)
-    edges[0] = np.array([[-1, -1, 0], [1, -1, 0]])   # bare array, not a Curve
-    with pytest.raises(TypeError, match="must be a Curve"):
+    edges[0] = np.array([[-1, -1, 0], [1, -1, 0]])   # bare array, not a LineMesh
+    with pytest.raises(TypeError, match="must be a LineMesh"):
         QuadMesh.structured(edges)
 
 
 def test_structured_rejects_open_loop():
     # four edges that do not share corners -> not a closed loop
-    edges = [Curve([(0, 0, 0), (1, 0, 0)]), Curve([(1, 0, 0), (1, 1, 0)]),
-             Curve([(1, 1, 0), (0, 1, 0)]), Curve([(0, 1, 0), (0.5, 0.5, 0)])]
+    edges = [LineMesh.open([(0, 0, 0), (1, 0, 0)]), LineMesh.open([(1, 0, 0), (1, 1, 0)]),
+             LineMesh.open([(1, 1, 0), (0, 1, 0)]), LineMesh.open([(0, 1, 0), (0.5, 0.5, 0)])]
     with pytest.raises(ValueError, match="closed loop"):
         QuadMesh.structured(edges)
 
 
 def test_ogrid_rejects_non_loop_boundary():
-    with pytest.raises(TypeError, match="must be a CurveLoop"):
-        QuadMesh.ogrid(Curve([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
+    with pytest.raises(TypeError, match="must be a closed LineMesh"):
+        QuadMesh.ogrid(LineMesh.open([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
                        radial=uniform_spacing(3))
 
 
@@ -399,25 +583,25 @@ def test_ogrid_rejects_bad_radial():
 def _semicircle_arc(Nt):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
-    return Curve(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
+    return LineMesh.open(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
 
 
 def test_half_ogrid_rejects_bad_arc_count():
-    arc = Curve(np.column_stack([np.linspace(-1, 1, 6), np.zeros(6), np.zeros(6)]))
-    spine = Curve([[-1.0, 0, 0], [1.0, 0, 0]])
+    arc = LineMesh.open(np.column_stack([np.linspace(-1, 1, 6), np.zeros(6), np.zeros(6)]))
+    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="4.Ntheta"):
         QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
 
 
 def test_half_ogrid_rejects_non_increasing_radial():
     arc = _semicircle_arc(2)
-    spine = Curve([[-1.0, 0, 0], [1.0, 0, 0]])
+    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="strictly increasing"):
         QuadMesh.half_ogrid(arc, spine, np.array([1.0, 0.5]), center_scale=0.5)
 
 
 def test_half_ogrid_rejects_radial_not_reaching_wall():
     arc = _semicircle_arc(2)
-    spine = Curve([[-1.0, 0, 0], [1.0, 0, 0]])
+    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="last layer position must be 1.0"):
         QuadMesh.half_ogrid(arc, spine, np.array([0.3, 0.6]), center_scale=0.5)

@@ -1,4 +1,4 @@
-"""Surface operations on a :class:`~nekmeshpy.geometry.trimesh.TriMesh`.
+"""Surface operations on a :class:`~nekmeshpy.trimesh.TriMesh`.
 
 ``TriMesh`` is a pure container (``points`` + ``tris``); the surface *algorithms*
 -- the cotangent Laplace operators, boundary-loop extraction, marching-triangle
@@ -18,10 +18,10 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
-from ..geometry.curve import CurveLoop
+from ..linemesh import LineMesh
 
 if TYPE_CHECKING:
-    from ..geometry.trimesh import TriMesh
+    from .trimesh import TriMesh
 
 
 # -- Laplace ------------------------------------------------------------
@@ -141,9 +141,9 @@ def order_boundary_loop(surface: TriMesh, lv: IntArray) -> IntArray:
 
 
 # -- isocontours --------------------------------------------------------
-def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> CurveLoop | None:
+def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> LineMesh | None:
     """Marching-triangles extraction of {u == level} as a single closed
-    ``CurveLoop`` (the largest loop; ``None`` if the level misses the surface)."""
+    ``LineMesh`` loop (the largest loop; ``None`` if the level misses the surface)."""
     xyz, tri = surface.points, surface.tris
     nt = tri.shape[0]
     segs = np.zeros((nt, 6))
@@ -163,14 +163,14 @@ def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> CurveLo
         if len(pts) == 2:
             segs[ns, :] = np.concatenate([pts[0], pts[1]])
             ns += 1
-    return CurveLoop.chain(segs[:ns, :])
+    return LineMesh.from_segments(segs[:ns, :])
 
 
 def extract_rings(
     surface: TriMesh, u: FloatArray, levels: FloatArray, min_loop_pts: int,
-) -> tuple[list[CurveLoop], FloatArray]:
+) -> tuple[list[LineMesh], FloatArray]:
     """Cross-section rings of field ``u`` at each level, keeping the largest
-    usable loop per level.  Returns ``(list[CurveLoop], levels_kept)``."""
+    usable loop per level.  Returns ``(list[LineMesh], levels_kept)``."""
     fr = []
     frlev = []
     for lv in levels:

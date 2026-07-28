@@ -11,7 +11,7 @@ therefore runs from the ``inlet`` at ``x=0`` to the ``outlet`` at ``x=LENGTH``.
 curve's own node distribution.  So to cluster cells toward the walls (a
 boundary-layer-style grid) we simply sample the four edges at non-uniform
 fractions -- here symmetric two-sided geometric clustering via
-:meth:`~nekmeshpy.geometry.curve.Curve.resample` -- and the Coons patch
+:meth:`~nekmeshpy.linemesh.LineMesh.resample` -- and the Coons patch
 carries that grading into the section exactly.  ``WALL_GRADING`` controls how
 strongly the cells thin toward the walls (``1.0`` = uniform).
 
@@ -26,7 +26,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import Curve, HexMesh, QuadMesh, export
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 from nekmeshpy.model.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -42,7 +42,7 @@ AXIAL_GRADING = 0.97         # <1 clusters cells toward the inlet
 WALL_GRADING = 1.15          # >1 thins cross-section cells toward the walls
 AXIS = (1.0, 0.0, 0.0)       # sweep direction: down the duct (+x)
 CENTER = (0.0, 0.0, 0.0)
-INTERIOR_METHOD = "bilinear"     # no-op: keep the exact (graded) Coons section
+SMOOTHING_METHOD = "bilinear"     # no-op: keep the exact (graded) Coons section
 OUT_NAME = "rectangular_pipe"
 
 # boundary name -> Nek BC code, applied only at export
@@ -71,16 +71,19 @@ c2 = (0.0, WIDTH / 2, HEIGHT / 2)
 c3 = (0.0, -WIDTH / 2, HEIGHT / 2)
 xf = wall_clustered(NX, WALL_GRADING)        # width-direction node fractions
 yf = wall_clustered(NY, WALL_GRADING)        # height-direction node fractions
-edges = [Curve([c0, c1]).resample(xf), Curve([c1, c2]).resample(yf),
-         Curve([c2, c3]).resample(xf), Curve([c3, c0]).resample(yf)]
-section = QuadMesh.structured(
-    edges, interior_method=INTERIOR_METHOD,
-    boundary_names={"bottom": "wall", "right": "wall", "top": "wall", "left": "wall"})
+# tag each edge line "wall" at the lowest level -- the single-segment tag rides
+# through resample onto every sampled segment, and structured names each side from
+# its edge's uniform tag (no boundary_tags override needed).
+edges = [LineMesh.open([c0, c1], element_tags=["wall"]).resample(xf),
+         LineMesh.open([c1, c2], element_tags=["wall"]).resample(yf),
+         LineMesh.open([c2, c3], element_tags=["wall"]).resample(xf),
+         LineMesh.open([c3, c0], element_tags=["wall"]).resample(yf)]
+section = QuadMesh.structured(edges, smoothing_method=SMOOTHING_METHOD)
 
 mesh = HexMesh.extrude(
     section, axis=AXIS, length=LENGTH,
     layers=geometric_spacing(N_AXIAL, AXIAL_GRADING),
-    origin=CENTER, first_cap="inlet", last_cap="outlet")
+    origin=CENTER, first_tag="inlet", last_tag="outlet")
 
 # -- report + export ---------------------------------------------------------
 stats = mesh.quality_summary()
@@ -89,4 +92,4 @@ print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
 
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_names))
+print("groups:", ", ".join(mesh.boundary_group_tags))

@@ -1,8 +1,8 @@
-"""Matplotlib visualisation of a :class:`HexMesh` (free function).
+"""Matplotlib visualisation of a :class:`~nekmeshpy.hexmesh.HexMesh` (free function).
 
 :func:`plot` draws the tagged boundary of an assembled bifurcation hex mesh
 (walls grey, the three outlets coloured).  Kept out of the container so
-:class:`HexMesh` carries no plotting dependency.
+:class:`~nekmeshpy.hexmesh.HexMesh` carries no plotting dependency.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..geometry.hexmesh import HexMesh
+    from ..hexmesh import HexMesh
 
 _log = logging.getLogger("nekmeshpy")
 
@@ -37,7 +37,7 @@ def plot(
         return mesh
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
-    bnames = mesh.boundary_names
+    bnames = mesh.boundary_tags
     names = list(names)
     colors = [(0.80, 0.80, 0.82), (0.85, 0.20, 0.20),
               (0.20, 0.70, 0.25), (0.20, 0.35, 0.90)]

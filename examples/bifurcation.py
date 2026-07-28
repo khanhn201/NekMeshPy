@@ -16,9 +16,8 @@ import os
 import numpy as np
 
 from nekmeshpy import (
-    Curve,
-    CurveLoop,
     HexMesh,
+    LineMesh,
     PhysicalGroups,
     QuadMesh,
     TriMesh,
@@ -39,10 +38,10 @@ N_HALF = 8                    # half-ring resolution; MULTIPLE OF 4
 N_SLICES = 20                 # cross-sections per leg (hex layers = n_slices)
 MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
 CENTER_SCALE = 0.5            # inner square-core size (fraction of diameter)
-RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
+RADIAL = np.array([0.0, 0.4, 0.6, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
 RESAMPLE_SPLINE = True
 PROJECT_TO_STL = True
-INTERIOR_METHOD = "conduction"    # "bilinear" | "conduction" | "winslow"
+SMOOTHING_METHOD = "bilinear"    # "bilinear" | "conduction" | "winslow"
 SMOOTH_ITERS = 8              # post-assembly untangle/polish sweeps (0 = off)
 SMOOTH_LAMBDA = 0.5
 FLUX_OFFSET = 2              # hex layers in from the outlet cap (0 = off)
@@ -210,7 +209,7 @@ def _arc_resample(V, arcverts, iA1, n):
     arcverts = np.asarray(arcverts).ravel()
     if arcverts[0] != iA1:
         arcverts = arcverts[::-1]
-    return Curve(V[arcverts, :]).resample(np.linspace(0.0, 1.0, n))
+    return LineMesh.open(V[arcverts, :]).resample(np.linspace(0.0, 1.0, n))
 
 
 def _join_arcs(p, q, nh):
@@ -248,10 +247,10 @@ def seam_rings(V, faces, gloops, n_half):
     acP = _arc_resample(V, arcAC, iA1, n_half + 1)
     bcP = _arc_resample(V, arcBC, iA1, n_half + 1)
 
-    rings = [CurveLoop(_join_arcs(abP, acP, n_half)),
-             CurveLoop(_join_arcs(abP, bcP, n_half)),
-             CurveLoop(_join_arcs(acP, bcP, n_half))]
-    spine = Curve((abP.points + acP.points + bcP.points) / 3.0)
+    rings = [LineMesh.loop(_join_arcs(abP, acP, n_half)),
+             LineMesh.loop(_join_arcs(abP, bcP, n_half)),
+             LineMesh.loop(_join_arcs(acP, bcP, n_half))]
+    spine = LineMesh.open((abP.points + acP.points + bcP.points) / 3.0)
     return rings, A1, A2, spine
 
 
@@ -261,16 +260,16 @@ def _spline_stack(H, Nout):
     Nn = H.shape[1]
     Hout = np.zeros((Nout, Nn, 3))
     for j in range(Nn):
-        Hout[:, j, :] = Curve(H[:, j, :]).resample_spline(Nout).points
+        Hout[:, j, :] = LineMesh.open(H[:, j, :]).resample_spline(Nout).points
     return Hout
 
 
 def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
-              radial, center_scale, resample_spline, project_to_stl, interior_method):
+              radial, center_scale, resample_spline, project_to_stl, smoothing_method):
     """Turn a stack of fine interior rings (opening -> seam) into a list of ``nr``
     full-disk :class:`QuadMesh` cross-section slices: each station's two
     half-O-grids are repositioned then merged along the shared spine."""
-    fine_rings = [r if isinstance(r, CurveLoop) else CurveLoop(r) for r in fine_rings]
+    fine_rings = [r if isinstance(r, LineMesh) else LineMesh.loop(r) for r in fine_rings]
     seam_ring = seam_ring.points
     spine_pts = spine.points
     frlev = np.asarray(frlev, dtype=float)
@@ -278,12 +277,12 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
     nh = M // 2
     Nfine = 4 * M
 
-    La = Curve(seam_ring[0:nh + 1, :]).length
-    Lb = Curve(np.vstack([seam_ring[nh:M, :], seam_ring[0:1, :]])).length
+    La = LineMesh.open(seam_ring[0:nh + 1, :]).length
+    Lb = LineMesh.open(np.vstack([seam_ring[nh:M, :], seam_ring[0:1, :]])).length
     f_seam = La / (La + Lb)
 
     fr = [r.resample(np.linspace(0.0, 1.0, Nfine, endpoint=False)) for r in fine_rings]
-    ref = CurveLoop(seam_ring).resample(np.linspace(0.0, 1.0, Nfine, endpoint=False))
+    ref = LineMesh.loop(seam_ring).resample(np.linspace(0.0, 1.0, Nfine, endpoint=False))
     for k in range(len(fr) - 1, -1, -1):
         fr[k] = fr[k].align_to(ref)
         ref = fr[k]
@@ -323,13 +322,17 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         arc2 = np.vstack([R[nh:M, :], R[0:1, :]])
         # reposition interior stations; leave the opening cap (k=0) and the
         # pinned seam (k=nr-1) as the raw algebraic fill
-        m = interior_method if 0 < k < nr - 1 else None
-        half1.append(QuadMesh.half_ogrid(Curve(arc1), Curve(spn), radial,
-                                         center_scale=center_scale, wall_name="wall",
-                                         interior_method=m))
-        half2.append(QuadMesh.half_ogrid(Curve(arc2), Curve(spn[::-1, :]), radial,
-                                         center_scale=center_scale, wall_name="wall",
-                                         interior_method=m))
+        m = smoothing_method if 0 < k < nr - 1 else None
+        # the arc IS the wall: tag it at the line level (one tag per arc segment),
+        # so half_ogrid rides it onto the wall edges (see flow_past_cylinder.py).
+        half1.append(QuadMesh.half_ogrid(
+            LineMesh.open(arc1, element_tags=["wall"] * (len(arc1) - 1)),
+            LineMesh.open(spn), radial,
+            center_scale=center_scale, smoothing_method=m))
+        half2.append(QuadMesh.half_ogrid(
+            LineMesh.open(arc2, element_tags=["wall"] * (len(arc2) - 1)),
+            LineMesh.open(spn[::-1, :]), radial,
+            center_scale=center_scale, smoothing_method=m))
     return [QuadMesh.merge([half1[k], half2[k]]) for k in range(nr)]
 
 
@@ -365,17 +368,17 @@ for leg in range(3):
     slices = ogrid_leg(fr, rings[leg], spine, surf, frlev,
                        radial=RADIAL, center_scale=CENTER_SCALE,
                        resample_spline=RESAMPLE_SPLINE, project_to_stl=PROJECT_TO_STL,
-                       interior_method=INTERIOR_METHOD)
+                       smoothing_method=SMOOTHING_METHOD)
     flux_name = flux_name_for(outlet_name[leg])
     off = FLUX_OFFSET
     # opening cap = the leg outlet; the seam end is interior (no far cap).  When
     # there is a flux plane, split the leg there so it becomes a cap of the
     # downstream segment; merge re-joins the two into a shared interior face.
     if flux_name and 0 < off < len(slices) - 1:
-        blocks.append(HexMesh.loft(slices[:off + 1], first_cap=outlet_name[leg]))
-        blocks.append(HexMesh.loft(slices[off:], first_cap=flux_name))
+        blocks.append(HexMesh.loft(slices[:off + 1], first_tag=outlet_name[leg]))
+        blocks.append(HexMesh.loft(slices[off:], first_tag=flux_name))
     else:
-        blocks.append(HexMesh.loft(slices, first_cap=outlet_name[leg]))
+        blocks.append(HexMesh.loft(slices, first_tag=outlet_name[leg]))
 
 mesh = HexMesh.merge(blocks)
 

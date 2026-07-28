@@ -32,8 +32,8 @@ import logging
 import numpy as np
 
 from nekmeshpy import (
-    Curve,
     HexMesh,
+    LineMesh,
     QuadMesh,
     TriMesh,
     export,
@@ -51,7 +51,7 @@ N_SLICES_MAIN = 12            # cross-sections per main leg (hex layers = this -
 N_SLICES_BRANCH = 10          # cross-sections in the branch
 CENTER_SCALE = 0.5            # inner square-core size (fraction of the diameter)
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
-INTERIOR_METHOD = "conduction"    # per-section interior repositioning
+SMOOTHING_METHOD = "bilinear"    # per-section interior repositioning
 SMOOTH_ITERS = 8              # post-assembly untangle/polish sweeps (0 = off)
 SMOOTH_LAMBDA = 0.5
 N_SURF = 48                   # tris per ring on the analytic wall (smoothing target)
@@ -69,7 +69,7 @@ def arc_main_lower():
     two main legs): the ``z <= 0`` semicircle of ``y^2 + z^2 = R^2``."""
     a = np.linspace(0.0, -np.pi, 400)
     p = np.column_stack([np.zeros_like(a), R * np.cos(a), R * np.sin(a)])
-    return Curve(p).resample(np.linspace(0.0, 1.0, N_HALF + 1)).points
+    return LineMesh.open(p).resample(np.linspace(0.0, 1.0, N_HALF + 1)).points
 
 
 def arc_collar(xside):
@@ -79,7 +79,7 @@ def arc_collar(xside):
     y = np.linspace(R, -R, 400)
     r = np.sqrt(np.maximum(R * R - y * y, 0.0))
     p = np.column_stack([xside * r, y, r])
-    return Curve(p).resample(np.linspace(0.0, 1.0, N_HALF + 1)).points
+    return LineMesh.open(p).resample(np.linspace(0.0, 1.0, N_HALF + 1)).points
 
 
 def join_arcs(p, q):
@@ -111,7 +111,7 @@ def leg_slices(open_ring, seam_ring, n_slices):
     """Blend ``open_ring -> seam_ring`` over ``n_slices`` stations; build each
     station as two spine-split :meth:`QuadMesh.half_ogrid` half-discs merged into a
     full disc.  The end stations (opening cap, welded seam) keep the raw algebraic
-    fill; interior stations are repositioned by ``INTERIOR_METHOD``."""
+    fill; interior stations are repositioned by ``SMOOTHING_METHOD``."""
     idx = np.arange(N_HALF + 1)[:, None] / N_HALF
     slices = []
     for s in range(n_slices):
@@ -121,13 +121,15 @@ def leg_slices(open_ring, seam_ring, n_slices):
         spn = e1 + idx * (e2 - e1)                 # straight A1..A2 diameter
         arc1 = ring[0:N_HALF + 1, :]
         arc2 = np.vstack([ring[N_HALF:M, :], ring[0:1, :]])
-        m = INTERIOR_METHOD if 0 < s < n_slices - 1 else None
-        h1 = QuadMesh.half_ogrid(Curve(arc1), Curve(spn), RADIAL,
-                                 center_scale=CENTER_SCALE, wall_name="wall",
-                                 interior_method=m)
-        h2 = QuadMesh.half_ogrid(Curve(arc2), Curve(spn[::-1, :]), RADIAL,
-                                 center_scale=CENTER_SCALE, wall_name="wall",
-                                 interior_method=m)
+        m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None
+        # the arc IS the wall: tag it at the line level (one tag per arc segment),
+        # so half_ogrid rides it onto the wall edges (see flow_past_cylinder.py).
+        h1 = QuadMesh.half_ogrid(
+            LineMesh.open(arc1, element_tags=["wall"] * N_HALF), LineMesh.open(spn),
+            RADIAL, center_scale=CENTER_SCALE, smoothing_method=m)
+        h2 = QuadMesh.half_ogrid(
+            LineMesh.open(arc2, element_tags=["wall"] * N_HALF), LineMesh.open(spn[::-1, :]),
+            RADIAL, center_scale=CENTER_SCALE, smoothing_method=m)
         slices.append(QuadMesh.merge([h1, h2]))
     return slices
 
@@ -188,11 +190,11 @@ seam_branch = join_arcs(a_lb, a_rb)   # branch     : the full collar
 
 blocks = [
     HexMesh.loft(leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN),
-                 first_cap="inlet"),
+                 first_tag="inlet"),
     HexMesh.loft(leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN),
-                 first_cap="outlet"),
+                 first_tag="outlet"),
     HexMesh.loft(leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH),
-                 first_cap="branch"),
+                 first_tag="branch"),
 ]
 
 mesh = HexMesh.merge(blocks)

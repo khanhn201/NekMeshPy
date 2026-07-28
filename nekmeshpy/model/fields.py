@@ -3,7 +3,7 @@
 A :class:`Field` maps points in space to a target element size.  Fields compose
 (``MinField``) and drive graded edge distributions via
 :func:`distribution_from_field`, so structured algorithms
-(:class:`~nekmeshpy.algorithms.blocks.TransfiniteBlock`) can honour a size field instead of
+(:meth:`~nekmeshpy.quadmesh.QuadMesh.structured`) can honour a size field instead of
 a fixed division count.
 
 For convenience there is also :func:`geometric_spacing` (a fixed geometric
@@ -93,7 +93,7 @@ def uniform_spacing(n: int) -> FloatArray:
     """Shorthand for ``geometric_spacing(n, 1.0)``: ``n+1`` uniformly spaced
     positions in ``[0, 1]`` including both endpoints -- the ready-to-use *uniform*
     argument for every explicit-initial layer parameter: the sweep ``layers``
-    (:meth:`HexMesh.extrude`) and the ``radial`` of :meth:`QuadMesh.ogrid` /
+    (:meth:`~nekmeshpy.hexmesh.HexMesh.extrude`) and the ``radial`` of :meth:`~nekmeshpy.quadmesh.QuadMesh.ogrid` /
     ``half_ogrid`` / ``annulus``, giving ``n`` layers over the full span.  Use
     ``geometric_spacing(n, ratio)`` for a graded distribution."""
     return geometric_spacing(n, 1.0)
@@ -102,8 +102,8 @@ def uniform_spacing(n: int) -> FloatArray:
 def validate_layers(positions: FloatArray, who: str) -> FloatArray:
     """Validate a normalized layer-position array and return it flattened.  A
     single **explicit-initial** convention is shared by every layered factory --
-    :meth:`HexMesh.extrude`'s ``layers`` and the ``radial`` of
-    :meth:`QuadMesh.ogrid` / ``half_ogrid`` / ``annulus``: strictly increasing
+    :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`'s ``layers`` and the ``radial`` of
+    :meth:`~nekmeshpy.quadmesh.QuadMesh.ogrid` / ``half_ogrid`` / ``annulus``: strictly increasing
     values in ``[0, 1]`` with the initial position *explicit* -- the first is the
     near/inner face (``0`` for a full span flush with the body, or e.g. ``0.5`` to
     start partway out) and the last is ``1`` (the far/outer face) -- so

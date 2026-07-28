@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "nekmeshpy"
 version = "0.1.0"
 description = "Object-oriented all-hex O-grid mesher for bifurcating vessels, with Nek5000/NekRS export"
-readme = "nekmeshpy/README.md"
+readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "NekMeshPy contributors" }]
@@ -27,6 +27,15 @@ io = ["meshio>=5.0"]
 test = ["pytest>=7.0"]
 dev = ["ruff>=0.5", "mypy>=1.0", "pytest>=7.0"]
 all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0"]
+# docs also pulls in matplotlib/meshio so autodoc can import io.viz / io.export
+docs = [
+    "sphinx>=7",
+    "myst-parser>=2",
+    "furo",
+    "sphinx-copybutton",
+    "matplotlib>=3.4",
+    "meshio>=5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/nekmeshpy/nekmeshpy"
@@ -35,7 +44,8 @@ Homepage = "https://github.com/nekmeshpy/nekmeshpy"
 include = ["nekmeshpy*"]
 
 [tool.setuptools.package-data]
-nekmeshpy = ["templates/*.rea", "py.typed"]
+nekmeshpy = ["py.typed"]
+"nekmeshpy.io" = ["templates/*.rea"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

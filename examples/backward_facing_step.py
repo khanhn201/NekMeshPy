@@ -7,11 +7,12 @@ the step ``[0,L_DOWN] x [-STEP,0]`` -- welded with :meth:`nekmeshpy.QuadMesh.mer
 (matching divisions on the shared edges) and swept along the span by
 :meth:`nekmeshpy.HexMesh.extrude`.
 
-Boundaries are named **as the mesh is built**: each rectangle names its own outer
-sides (``inlet`` on the upstream inlet, ``outlet`` on the downstream ends, ``wall``
-on the channel walls / step floor / vertical step face) while the shared internal
-edges are left unnamed so :meth:`nekmeshpy.QuadMesh.merge` welds them away, and the
-span sweep names the two end caps ``front`` / ``back``.
+Boundaries are named **at the lowest level -- each rectangle tags its own edge
+lines**: the outer sides get ``inlet`` on the upstream inlet, ``outlet`` on the
+downstream ends, ``wall`` on the channel walls / step floor / vertical step face,
+while the shared internal edges are left untagged so :meth:`nekmeshpy.QuadMesh.merge`
+welds them away.  ``structured`` reads each side's uniform edge tag and the span sweep
+names the two end caps ``front`` / ``back`` at the hex level.
 
 Run with::
 
@@ -24,7 +25,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import Curve, HexMesh, QuadMesh, export
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -50,18 +51,23 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
 # each rectangle names only its true outer sides; shared edges are left unnamed so
 # the merge welds them into interior faces (edges = [bottom, right, top, left]).
 def rect(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int,
-         boundary_names: dict[str, str]) -> QuadMesh:
+         side_tags: dict[str, str]) -> QuadMesh:
     """A structured quad grid over the axis-aligned rectangle ``[x0,x1]x[y0,y1]``,
-    with the named outer sides tagged at build time."""
+    with the named outer sides tagged at the line level (edges = [bottom, right, top,
+    left]).  A side absent from ``side_tags`` stays untagged -- a shared edge the
+    merge welds away."""
     c0, c1, c2, c3 = ((x0, y0, 0.0), (x1, y0, 0.0),
                       (x1, y1, 0.0), (x0, y1, 0.0))
     # structured uses the edges' own nodes (no resampling): sample each straight
-    # edge to the matching division count (uniform here).
-    edges = [Curve([c0, c1]).resample(np.linspace(0.0, 1.0, nx + 1)),
-             Curve([c1, c2]).resample(np.linspace(0.0, 1.0, ny + 1)),
-             Curve([c2, c3]).resample(np.linspace(0.0, 1.0, nx + 1)),
-             Curve([c3, c0]).resample(np.linspace(0.0, 1.0, ny + 1))]
-    return QuadMesh.structured(edges, boundary_names=boundary_names)
+    # edge to the matching division count (uniform here).  Each edge tags itself at
+    # the line level ("" = untagged rides through resample), so structured names each
+    # side from its own edge -- no boundary_tags override.
+    corners = {"bottom": (c0, c1, nx), "right": (c1, c2, ny),
+               "top": (c2, c3, nx), "left": (c3, c0, ny)}
+    edges = [LineMesh.open([a, b], element_tags=[side_tags.get(side, "")]
+                          ).resample(np.linspace(0.0, 1.0, n + 1))
+             for side, (a, b, n) in corners.items()]
+    return QuadMesh.structured(edges)
 
 
 section = QuadMesh.merge([
@@ -78,10 +84,10 @@ section = QuadMesh.merge([
 # ride onto the swept side faces.
 mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
-                       first_cap="front", last_cap="back")
+                       first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_names))
+print("groups:", ", ".join(mesh.boundary_group_tags))

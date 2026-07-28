@@ -2,7 +2,7 @@
 
 A flat, gmsh-style script: edit the parameter constants below and re-run. It
 trilinearly interpolates eight corner points into an ``nx x ny x nz`` grid and
-hands it to :meth:`nekmeshpy.geometry.hexmesh.HexMesh.from_grid`; there is no
+hands it to :meth:`nekmeshpy.hexmesh.HexMesh.from_grid`; there is no
 mesher class. Per-axis grading is a geometric ratio, or drive the spacing from a
 :mod:`nekmeshpy.model.fields` size field (set ``SIZE_FIELD``).
 
@@ -79,4 +79,4 @@ print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
 
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_names))
+print("groups:", ", ".join(mesh.boundary_group_tags))

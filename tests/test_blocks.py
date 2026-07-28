@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 from conftest import run_example
 
-from nekmeshpy import AxisLinearField, ConstantField, HexMesh, export, fields, quality
+from nekmeshpy import AxisLinearField, ConstantField, HexMesh, export, fields
+from nekmeshpy.hexmesh import quality
 from nekmeshpy.model.fields import distribution_from_field
 
 

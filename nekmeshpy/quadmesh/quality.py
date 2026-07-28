@@ -1,0 +1,98 @@
+"""Quad-element quality metrics, decoupled from :class:`~nekmeshpy.quadmesh.QuadMesh`.
+
+The 2-D sibling of :mod:`nekmeshpy.hexmesh.quality`.  All metrics operate
+on a shared-point representation ``(points, quads)`` where ``points`` is ``(P,3)``
+and ``quads`` is ``(N,4)`` in CCW corner order, so they work on a section
+``QuadMesh`` or any welded quad surface.
+
+:func:`scaled_jacobian` mirrors the hex version one dimension down: the per-corner
+scaled Jacobian is the two-edge cross product normalized by the edge lengths
+(``1`` = a perfect right-angle corner, ``<= 0`` = degenerate / folded).  Quads
+embedded in 3-D are handled honestly -- the corner cross products are signed
+against each quad's own mean normal, so a folded corner reads negative even on a
+non-planar (curved-section) quad.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import numpy as np
+
+from .._typing import FloatArray, IntArray, PointArray
+
+# corner -> [corner, next, prev] neighbour point positions (CCW quad)
+_CN = np.array([[0, 1, 3], [1, 2, 0], [2, 3, 1], [3, 0, 2]], dtype=np.int64)
+
+
+def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
+    """Per-quad minimum corner scaled Jacobian, shape ``(N,)``.
+
+    1 is a perfect square corner; <= 0 is degenerate / inverted.  Corner cross
+    products are signed against the quad's mean normal, so the metric detects
+    folded corners even for non-planar quads embedded in 3-D.
+    """
+    X = np.asarray(points, dtype=float)
+    QC = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
+    N = QC.shape[0]
+    cross = np.zeros((N, 4, 3))
+    L = np.zeros((N, 4))
+    for c in range(4):
+        o = X[QC[:, _CN[c, 0]], :]
+        e1 = X[QC[:, _CN[c, 1]], :] - o
+        e2 = X[QC[:, _CN[c, 2]], :] - o
+        cross[:, c, :] = np.cross(e1, e2)
+        L[:, c] = np.sqrt(np.sum(e1 ** 2, axis=1)) * np.sqrt(np.sum(e2 ** 2, axis=1))
+    nref = np.sum(cross, axis=1)                      # (N,3) mean-direction normal
+    nmag = np.sqrt(np.sum(nref ** 2, axis=1))         # (N,)
+    good = nmag > 0
+    nu = np.divide(nref, nmag[:, None], out=np.zeros_like(nref), where=good[:, None])
+    sj = np.ones(N)
+    for c in range(4):
+        j = np.sum(cross[:, c, :] * nu, axis=1)       # signed corner area / |n|
+        ok = L[:, c] > 0
+        j = np.where(ok, np.divide(j, L[:, c], out=np.zeros_like(j), where=ok), 0.0)
+        sj = np.minimum(sj, j)
+    return np.where(good, sj, 0.0)
+
+
+def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
+    """Dict of aggregate quality statistics for a quad mesh."""
+    sj = scaled_jacobian(points, quads)
+    return {
+        "n_elements": int(sj.size),
+        "min": float(np.min(sj)),
+        "max": float(np.max(sj)),
+        "mean": float(np.mean(sj)),
+        "median": float(np.median(sj)),
+        "n_inverted": int(np.sum(sj <= 0)),
+        "n_below_0.2": int(np.sum(sj < 0.2)),
+    }
+
+
+def histogram(points: PointArray, quads: IntArray, bins: int = 10,
+              lo: float = 0.0, hi: float = 1.0) -> tuple[IntArray, FloatArray]:
+    """``(counts, edges)`` histogram of the scaled Jacobian distribution."""
+    sj = scaled_jacobian(points, quads)
+    return np.histogram(sj, bins=bins, range=(lo, hi))
+
+
+def format_report(stats: dict[str, Any],
+                  hist: tuple[IntArray, FloatArray] | None = None) -> str:
+    """Human-readable multi-line quality report from :func:`summary` output."""
+    lines = [
+        "elements     : %d" % stats["n_elements"],
+        "scaled Jac   : min=%.4f  mean=%.4f  median=%.4f  max=%.4f"
+        % (stats["min"], stats["mean"], stats["median"], stats["max"]),
+        "inverted(<=0): %d" % stats["n_inverted"],
+        "poor (<0.2)  : %d" % stats["n_below_0.2"],
+    ]
+    if hist is not None:
+        counts, edges = hist
+        lines.append("distribution :")
+        peak = max(int(counts.max()), 1)
+        for i in range(len(counts)):
+            bar = "#" * int(40 * counts[i] / peak)
+            lines.append("  [%.2f,%.2f) %6d %s"
+                         % (edges[i], edges[i + 1], int(counts[i]), bar))
+    return "\n".join(lines)
