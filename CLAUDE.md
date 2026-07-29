@@ -80,17 +80,23 @@ and the imports in sync when adding/removing public names.
   `LineMesh.circle(radius, n, *, center=…, normal=…, start_theta=0.0, element_tags=…)` (closed;
   places `n` evenly-spaced points in the plane with the given `normal`, default `+z`, point `k` at
   angle `2πk/n + start_theta` so `start_theta` rotates the whole loop to align its index 0 with
-  another loop/box before an index-paired `annulus`; `element_tags` tags its line elements),
-  `LineMesh.rectangle(width, height, *, center=…, normal=…, element_tags=…)` (closed 4-corner box
-  loop in the given plane — a `circle`-like sibling),
-  `LineMesh.far_field_box(inner, half_width, half_height=None, *, center=…, normal=…, side_tags=…)`
-  (a rectangular far-field loop **index-aligned to `inner`**: one outer point per `inner` point,
-  placed where the ray from `center` through that point meets the box, so it feeds `annulus`
-  directly with no matching/resampling step — the box follows the body loop the way a cubed-`sphere`
-  follows a `box` one dimension up; `side_tags` `[bottom, right, top, left]` names the four sides
-  by each element's midpoint direction),
+  a `rectangle` far field's lower-left corner (`atan2(-h, -w)`) before an index-paired `annulus`;
+  `element_tags` tags its line elements),
+  `LineMesh.rectangle(width, height, n, *, center=…, normal=…, side_tags=…)`
+  (closed far-field loop in the given plane, discretized into `n` line elements — `n` a positive
+  multiple of 4: `n // 4` evenly spaced per side, running CCW from the lower-left corner with the
+  corners always landing on a point, so it is a true rectangle; `side_tags` `[bottom, right, top,
+  left]` names the four sides. It is the far-field outer loop for `annulus`: pass `n` equal to the
+  inner loop's point count and rotate the inner `circle` with `start_theta` to the lower-left
+  corner, and the two loops pair index-for-index — the radial spokes need not be straight),
   `LineMesh.from_segments` (chain unordered segments into the
-  largest closed loop, or `None`). Factories check `is_closed` at runtime (`ogrid`/`annulus`
+  largest closed loop, or `None`). `LineMesh.merge(meshes, *, tol=…)` is the 1-D
+  sibling of `QuadMesh.merge`/`HexMesh.merge`: it welds coincident **topological end points**
+  (degree-1 chain ends) — never interior points — concatenating `element_tags`/`boundaries`, and
+  reports the result `closed` iff no degree-1 end survives. Two shared-endpoint `A1->A2` arcs
+  (reverse one so the traversal doesn't cross) weld at `A1`/`A2` into a single loop with index 0
+  at `A1` and `M//2` at `A2` — the clean way to close a seam ring from two half-arcs (used by
+  `bifurcation.py` and `circular_pipe_tjunction.py`). Factories check `is_closed` at runtime (`ogrid`/`annulus`
   demand closed; `structured` edges demand open), so the open/closed distinction is still
   enforced — as a value, not a type. **Every curve is meshed exactly at the points given — there
   are no `LineMesh` ordered/resampling ops** (a factory or the caller must hand in an
@@ -124,24 +130,67 @@ and the imports in sync when adding/removing public names.
 
 ### Factory model (also gmsh-named)
 
+The factories are **plain free functions split across files by open-vs-closed**, then
+**bound onto the container class in the package `__init__`** (`setattr(Class, name,
+staticmethod(fn))`), so `LineMesh.circle(...)` / `QuadMesh.ogrid(...)` stay reachable as
+class methods while the container files (`linemesh.py` / `quadmesh.py`) stay **pure data
+containers with no factory code and no factory base classes** — nothing to edit there
+when a shape is added. Core constructors + queries stay in `linemesh.py` / `quadmesh.py`;
+parametric closed shapes live in each package's `_closed.py` (line `circle`/`rectangle`;
+quad `box`/`sphere`) and region-fills / open curves in `_open.py` (line `line`; quad
+`structured`/`rectangle`/`ogrid`/`half_ogrid`/`annulus`), with `quadmesh/_helpers.py`
+holding the shared `_apply_smoothing`/`_check_boundary`. Each module ends with a
+`FACTORIES: dict[str, Callable[..., <Class>]]` registry; the package `__init__` merges
+the two dicts (`{**_CLOSED, **_OPEN}`) and binds every entry. A factory that needs a core
+constructor does a lazy in-body `from .<core> import <Class>` (breaks the import cycle:
+the package imports the core to bind onto it).
+
+- **Adding a factory** touches **only** the matching `_closed.py`/`_open.py`: add the
+  free function (no `cls`/`self`) and one `FACTORIES` entry. The container file and the
+  `__init__` binding loop need no edit.
+- **mypy** pins `files=["nekmeshpy"]`, so only toolkit code is checked and the
+  dynamically-bound `LineMesh.circle` etc. are invisible to it. **Internal toolkit code
+  must call the free functions directly** (e.g. `from ..linemesh._open import line`),
+  never `LineMesh.line`/`QuadMesh.structured`; external callers (examples/tests/users)
+  use the bound `LineMesh.circle(...)` sugar.
+
 - **Sections** are `QuadMesh` classmethods: `QuadMesh.structured` (transfinite grid from four
   open `LineMesh` edges), `QuadMesh.rectangle(corners, nx, ny, *, x_frac=, y_frac=, side_tags=)`
   (structured-grid convenience: 4 corners + counts + optional per-axis grading + `{bottom,right,
   top,left}` side tags), `QuadMesh.ogrid` (O-grid in a closed `LineMesh`),
-  `QuadMesh.half_ogrid` (half-disc O-grid), `QuadMesh.annulus` (ring O-grid between two loops —
+  `QuadMesh.half_ogrid` (half-disc O-grid bounded by a wall arc + a spine diameter),
+  `QuadMesh.spined_ogrid(boundary, radial, *, spine=None, center_scale=, wall_tag=, smoothing_method=)`
+  (full-disk O-grid over a closed `boundary` loop with a natural `A1..A2` seam: it splits the loop
+  at index `0`/`M//2` into two `A1->A2` half-arcs, resamples the `spine` curve by arc length at the
+  fractions each half needs — so a curved spine is meshed exactly and both halves share it
+  point-for-point — runs two `half_ogrid`s and `merge`s them. `spine=None` (the default) uses the
+  straight `A1..A2` chord `boundary.points[[0, M//2]]` — the common case for a planar disc
+  (`circular_pipe_tjunction.py`); pass a curve only to bow the seam (`bifurcation.py`). The caller
+  hands in only the loop (and optional spine) instead of hand-rolling the split/sample/merge),
+  `QuadMesh.annulus` (ring O-grid between two loops —
   built as a radial `QuadMesh.loft` of blended rings, the sibling of `HexMesh.annulus` one
   dimension down; the periodic ring topology rides in the loops' wrapping `lines`, so there is no
   modular arithmetic, and the inner/outer rings are the loft's near/far caps).
   `QuadMesh` also has `extrude`/`loft` **one dimension down** — sweeping a `LineMesh` into a quad
   strip (mirrors `HexMesh.extrude`/`loft`), carrying the line's `element_tags` onto the quads and
-  its boundary-point tags onto the side-wall edges. Each section takes an optional
+  its boundary-point tags onto the side-wall edges.
+  **`blend(a, b, fractions)`** is the shared morphing combinator on all three containers
+  (`LineMesh`/`QuadMesh`/`HexMesh`): given two index-paired conformal profiles (equal point count,
+  identical connectivity — and same open/closed topology for `LineMesh`), it returns one profile per
+  fraction at `(1-t)*a.points + t*b.points`, copying `a`'s connectivity + `boundaries` +
+  `boundary_tags` but **not** its `element_tags` (region/cap tags are assigned by the consuming
+  `loft`/factory, which is what keeps the annulus goldens byte-identical). It is the single
+  positioning step behind both `annulus` factories (`QuadMesh.annulus` = radial `loft` of
+  `LineMesh.blend`ed rings; `HexMesh.annulus` = radial fill of `QuadMesh.blend`ed shells) and behind
+  each leg's slice stack in `bifurcation.py`/`circular_pipe_tjunction.py`
+  (`LineMesh.blend(opening, seam, …)`). Each section takes an optional
   `smoothing_method=` (see below). All build **natively in 3-D** — nothing is projected to a
   plane, so a boundary placed in any plane, or a genuinely **curvy / non-planar** boundary, is
   filled in place with its true shape (never flattened to `xy`). `ogrid`/`annulus` build a
   straight-chord initial guess and rely on `smoothing_method="conduction"` to relax the interior
   harmonically onto the curved surface spanned by the fixed boundary ring; `structured`/
-  `half_ogrid` blend the 3-D edge points directly. (`LineMesh.circle`, `rectangle`, and
-  `far_field_box` use the private `linemesh/_plane.py` `_in_plane_axes` helper — they *construct* a
+  `half_ogrid` blend the 3-D edge points directly. (`LineMesh.circle` and `rectangle`
+  use the private `linemesh/_plane.py` `_in_plane_axes` helper — they *construct* a
   planar loop, not project an existing boundary.) `ogrid`/`half_ogrid` are ICEM/Pointwise terms
   with no gmsh equivalent — kept deliberately.
 - **Hex blocks** are `HexMesh` classmethods: `extrude` (sweep one section along a straight

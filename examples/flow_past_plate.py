@@ -7,10 +7,11 @@ the span -- but the body is a **thin ellipse** (half-length ``A``, half-thicknes
 C-grid; the thin ellipse keeps a non-degenerate O-grid as ``B`` -> 0.
 
 Boundaries are named on the source line geometry (see ``flow_past_cylinder.py``):
-body ``plate`` on the inner loop, far-field sides tagged by
-:meth:`LineMesh.far_field_box` (built index-aligned to the inner), carried
-through ``annulus`` -> :meth:`HexMesh.extrude`; the sweep names the caps
-``front`` / ``back``.
+body ``plate`` on the inner loop, far-field sides tagged per side by
+:meth:`LineMesh.rectangle` (the ellipse angles are offset so index 0 meets the
+box's lower-left corner, pairing the loops index-for-index), carried through
+``annulus`` -> :meth:`HexMesh.extrude`; the sweep names the caps ``front`` /
+``back``.
 
     PYTHONPATH=. python examples/flow_past_plate.py
 
@@ -45,18 +46,19 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "plate": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
 
 # -- build the ring section: thin-ellipse body -> named square far field ------
-# ellipse sampled at N_THETA uniform direction angles (ray from origin meets it)
-theta = np.linspace(0.0, 2.0 * np.pi, N_THETA, endpoint=False)
+# ellipse sampled at N_THETA uniform direction angles, offset so index 0 meets the
+# box's lower-left corner (so the loops pair index-for-index in annulus)
+CORNER = np.arctan2(-HALF_BOX, -HALF_BOX)
+theta = np.linspace(0.0, 2.0 * np.pi, N_THETA, endpoint=False) + CORNER
 r = 1.0 / np.sqrt((np.cos(theta) / A) ** 2 + (np.sin(theta) / B) ** 2)
 inner = LineMesh.loop(np.column_stack([r * np.cos(theta), r * np.sin(theta),
                                        np.zeros(N_THETA)]),
                       element_tags=["plate"] * N_THETA)
 
-# far-field box built index-aligned to the inner (one box-perimeter point per
-# inner-point ray); sides named by the direction they face -- bottom / outlet /
-# top / inlet (see flow_past_cylinder.py)
-outer = LineMesh.far_field_box(inner, HALF_BOX,
-                               side_tags=["bottom", "outlet", "top", "inlet"])
+# square far field discretized into N_THETA line elements (N_THETA/4 per side),
+# sides named by the direction they face -- bottom / outlet / top / inlet
+outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA,
+                           side_tags=["bottom", "outlet", "top", "inlet"])
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)

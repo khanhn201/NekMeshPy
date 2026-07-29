@@ -209,8 +209,11 @@ def _arc_resample(V, arcverts, iA1, n):
     return LineMesh.open(pts)
 
 
-def _join_arcs(p, q, nh):
-    return np.vstack([p.points[0:nh], q.points[::-1][0:nh]])
+def _ring(p, q):
+    """Close two shared-endpoint ``A1 -> A2`` arcs into one loop by welding them at
+    ``A1`` and ``A2`` (:meth:`LineMesh.merge`); ``q`` is reversed so the traversal
+    runs ``A1 -> A2`` down ``p`` then ``A2 -> A1`` back up ``q`` without crossing."""
+    return LineMesh.merge([p, LineMesh.open(q.points[::-1])])
 
 
 def seam_rings(V, faces, gloops, n_half):
@@ -244,9 +247,7 @@ def seam_rings(V, faces, gloops, n_half):
     acP = _arc_resample(V, arcAC, iA1, n_half + 1)
     bcP = _arc_resample(V, arcBC, iA1, n_half + 1)
 
-    rings = [LineMesh.loop(_join_arcs(abP, acP, n_half)),
-             LineMesh.loop(_join_arcs(abP, bcP, n_half)),
-             LineMesh.loop(_join_arcs(acP, bcP, n_half))]
+    rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
     spine = LineMesh.open((abP.points + acP.points + bcP.points) / 3.0)
     return rings, A1, A2, spine
 
@@ -285,33 +286,22 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
     dev = spine_pts - (A1 + (np.arange(nh + 1)[:, None] / nh) * (A2 - A1))
     ringlev = np.arange(nr) / (nr - 1)
 
-    half1, half2 = [], []
+    slices = []
     for k in range(nr):
         R = RS[k, :, :]
         e1 = R[0, :]
         e2 = R[nh, :]
-        arc1 = R[0:nh + 1, :]
-        arc2 = np.vstack([R[nh:M, :], R[0:1, :]])
-        # the (nh+1)-point deviating diameter is this station's spine curve; sample
-        # it at the exact canonical fractions half_ogrid indexes (meshed exactly).
+        # this station's spine is the (nh+1)-point deviating diameter A1..A2;
+        # spined_ogrid splits the wall loop along it into two half-O-grids and merges.
         spn = (e1 + (np.arange(nh + 1)[:, None] / nh) * (e2 - e1)) + ringlev[k] * dev
-        arc1_lm = LineMesh.open(arc1, element_tags=["wall"] * (len(arc1) - 1))
-        arc2_lm = LineMesh.open(arc2, element_tags=["wall"] * (len(arc2) - 1))
-        fr = QuadMesh.half_ogrid_spine_fractions(arc1_lm, center_scale, radial)
-        spn1 = trimesh.ops.resample_polyline(spn, fr)
-        spn2 = trimesh.ops.resample_polyline(spn[::-1, :], fr)
         # reposition interior stations; leave opening cap (k=0) and pinned seam
-        # (k=nr-1) as raw algebraic fill
+        # (k=nr-1) as raw algebraic fill.  Wall tagged on the loop (see
+        # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
-        # arc tagged "wall" at the line level so half_ogrid rides it onto the wall
-        # edges (see flow_past_cylinder.py)
-        half1.append(QuadMesh.half_ogrid(
-            arc1_lm, LineMesh.open(spn1), radial,
-            center_scale=center_scale, smoothing_method=m))
-        half2.append(QuadMesh.half_ogrid(
-            arc2_lm, LineMesh.open(spn2), radial,
-            center_scale=center_scale, smoothing_method=m))
-    return [QuadMesh.merge([half1[k], half2[k]]) for k in range(nr)]
+        slices.append(QuadMesh.spined_ogrid(
+            LineMesh.loop(R, element_tags=["wall"] * M), radial,
+            spine=LineMesh.open(spn), center_scale=center_scale, smoothing_method=m))
+    return slices
 
 
 def flux_name_for(outlet_name):

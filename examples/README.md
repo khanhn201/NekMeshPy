@@ -25,9 +25,9 @@ Each writes native Nek5000/NekRS `.re2`/`.rea` plus a `.vtk` for ParaView.
 
 | script | what it builds |
 |---|---|
-| `bifurcation.py` | vessel surface pipeline: seam fields → cut into legs → O-grid legs (`QuadMesh.half_ogrid`) → `loft`/`merge` → smooth (uses `data/car.{vtx,tri}`) |
+| `bifurcation.py` | vessel surface pipeline: seam fields → cut into legs → O-grid legs (`QuadMesh.spined_ogrid`) → `loft`/`merge` → smooth (uses `data/car.{vtx,tri}`) |
 | `circular_pipe.py` | `QuadMesh.ogrid` disc extruded along an axis (`HexMesh.extrude`) |
-| `circular_pipe_tjunction.py` | analytic three-leg junction: shared seam arcs + spine → half-O-grid legs (`QuadMesh.half_ogrid`) → `loft`/`merge` → smooth (no input geometry) |
+| `circular_pipe_tjunction.py` | analytic three-leg junction: shared seam arcs + spine → spined-O-grid legs (`QuadMesh.spined_ogrid`) → `loft`/`merge` → smooth (no input geometry) |
 | `rectangular_pipe.py` | `QuadMesh.structured` duct extruded along an axis (`HexMesh.extrude`) |
 | `transfinite_block.py` | eight corners → trilinear grid → `HexMesh.from_grid` |
 | `backward_facing_step.py` | three `QuadMesh.structured(boundary_tags=…)` rectangles → `merge` → span-`loft` (caps `front`/`back`) |
@@ -38,12 +38,12 @@ Each writes native Nek5000/NekRS `.re2`/`.rea` plus a `.vtk` for ParaView.
 | `flow_past_hemisphere.py` | five-patch half cubed-sphere on the ground, each `from_grid(face_tags=…)` → `merge` (body → `hemisphere`) |
 
 The 2-D section meshers (`QuadMesh.ogrid` / `structured` / `half_ogrid` /
-`annulus`) are toolkit primitives; the scripts supply a boundary and sweep/stack
+`spined_ogrid` / `annulus`) are toolkit primitives; the scripts supply a boundary and sweep/stack
 them. Tags flow down the pipeline **`LineMesh` → `QuadMesh` edges → `HexMesh`
 faces**: a boundary loop carries a tag per line element
 (`LineMesh.loop([…], element_tags=[…])`), which is copied onto section edges — how
 `flow_past_cylinder.py` splits its far field into `inlet`/`outlet`/`top`/`bottom`
-via `LineMesh.far_field_box(inner, …, side_tags=[…])`. Sections can also tag edges directly
+via `LineMesh.rectangle(w, h, N, side_tags=[…])`. Sections can also tag edges directly
 (`structured(boundary_tags=…)`, `annulus(inner_tag=…, outer_tag=…)`) and patches
 in place (`from_grid(face_tags=…)`). All propagate onto swept side faces via
 `loft`/`extrude`, which name the end caps (`first_tag=…, last_tag=…`). Faces

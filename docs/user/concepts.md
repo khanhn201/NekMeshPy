@@ -32,13 +32,20 @@ it:
 - `LineMesh.circle(radius, n, center=…, normal=…, start_theta=0.0)` — closed ring
   in the plane with the given `normal` (default `+z`); `start_theta` rotates the
   first point off `+e1`.
-- `LineMesh.rectangle(width, height, center=…, normal=…)` — closed 4-corner
-  far-field loop in the given plane.
-- `LineMesh.far_field_box(inner, half_width, half_height=None, …)` — closed loop
-  index-aligned to `inner`, each point placed on the box perimeter along the ray
-  through the matching `inner` point (replaces the old `radial_match`).
+- `LineMesh.rectangle(width, height, n, center=…, normal=…, side_tags=…)` — closed
+  far-field loop in the given plane, discretized into `n` line elements (`n` a
+  multiple of 4): `n // 4` evenly spaced per side, CCW from the lower-left corner
+  (bottom / right / top / left), corners always landing on a point. Pass `n` equal
+  to the inner loop's point count and rotate the inner `circle` with `start_theta`
+  so index 0 meets the lower-left corner, and the two loops pair index-for-index in
+  `annulus` (the radial spokes need not be straight).
 - `LineMesh.from_segments` — chain unordered segments into the largest closed
   loop (or `None`).
+- `LineMesh.merge` — weld coincident **topological end points** (degree-1 chain
+  ends; never interior points), the 1-D sibling of `QuadMesh.merge`/`HexMesh.merge`.
+  The result is `closed` iff no degree-1 end survives, so two shared-endpoint
+  `A1->A2` arcs (reverse one) weld at `A1`/`A2` into a single loop — the clean way
+  to close a seam ring from two half-arcs.
 
 Every factory meshes its points **exactly** — there is no resampling API; the
 caller hands in an exactly-sized, correctly-oriented curve. The ordered ops treat
@@ -99,7 +106,7 @@ filled in place with its true shape.
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.structured` | transfinite (Coons) grid over 4 open `LineMesh` edges; resolution comes from the edges' own points (no resampling — opposite edges must match counts); each side named from its edge tag |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.ogrid` | O-grid inside a closed loop (no collapsed centre); outer ring named from the loop's per-line tags |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.half_ogrid` | half-disc O-grid split along a spine; wall named from the arc's per-segment tags |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.annulus` | ring O-grid between inner and outer closed loops, paired **by index** (equal point counts — build the outer loop index-aligned with `LineMesh.far_field_box(inner, …)`) |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.annulus` | ring O-grid between inner and outer closed loops, paired **by index** (equal point counts — e.g. `LineMesh.rectangle(w, h, N)` against `circle(r, N, start_theta=…)`) |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.extrude` / {meth}`~nekmeshpy.quadmesh.QuadMesh.loft` | sweep/stack a `LineMesh` one dimension down into a quad strip |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.from_grid` | structured `(ni+1,nj+1)` quad grid; `element_tag` fills the per-quad tags |
 

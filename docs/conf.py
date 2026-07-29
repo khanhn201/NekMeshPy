@@ -50,7 +50,10 @@ myst_heading_anchors = 3
 # The reference documents each *leaf* module once with ``automodule`` (see
 # docs/reference/*.md); autodoc excludes imported members by default, so the
 # classes re-exported from the package ``__init__``s are documented exactly once,
-# at their canonical location -- no duplicate/ambiguous cross-references.
+# at their canonical location -- no duplicate/ambiguous cross-references.  The shape
+# factories are free functions bound onto LineMesh / QuadMesh by each package
+# ``__init__`` (setattr), so they land in the class ``__dict__`` and autodoc documents
+# them directly on the container -- no inherited-members needed.
 autodoc_default_options = {
     "members": True,
     "undoc-members": False,

@@ -284,10 +284,7 @@ class HexMesh:
 
         # shell t is the straight-chord blend inner -> outer sharing inner's quads;
         # consecutive shells loft into hex layers.
-        shells = [QuadMesh((1.0 - t) * A + t * B, inner.quads,
-                           boundaries=inner.boundaries,
-                           boundary_tags=inner.boundary_tags)
-                  for t in radial]
+        shells = QuadMesh.blend(inner, outer, radial)
         # wall tags from the surfaces' per-quad element_tags; scalar arg overrides
         inner_caps: str | StrArray = (
             inner_tag if inner_tag
@@ -358,6 +355,28 @@ class HexMesh:
         names = (np.concatenate(name_list) if name_list
                  else np.empty(0, dtype=np.str_))
         return cls(points, hexes, *cls._order_bnd(bnd, names), element_tags=etags)
+
+    @classmethod
+    def blend(cls, a: HexMesh, b: HexMesh,
+              fractions: FloatArray | Sequence[float]) -> list[HexMesh]:
+        """Linearly morph between two conformal blocks ``a`` and ``b`` (identical
+        ``hexes``, equal point count), one block per fraction ``t`` with points
+        ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
+        result carries ``a``'s ``hexes``, ``boundaries`` and ``boundary_tags``
+        (positional BC markers follow the morph); per-hex ``element_tags`` are left
+        for the caller to assign.  The 3-D sibling of :meth:`QuadMesh.blend`."""
+        A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
+        B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
+        if A.shape[0] != B.shape[0]:
+            raise ValueError(
+                "blend: blocks must have equal point counts (got %d, %d); build one "
+                "from the other's points so they pair by index"
+                % (A.shape[0], B.shape[0]))
+        if not np.array_equal(a.hexes, b.hexes):
+            raise ValueError(
+                "blend: blocks must share identical connectivity (paired by index)")
+        return [cls((1.0 - t) * A + t * B, a.hexes, a.boundaries, a.boundary_tags)
+                for t in np.asarray(fractions, dtype=float).ravel()]
 
     # -- boundary queries (topological domain surface) ------------------
     @staticmethod

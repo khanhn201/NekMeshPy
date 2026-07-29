@@ -5,12 +5,13 @@
 clustered toward the cylinder (``RADIAL_GRADING`` > 1).
 
 Boundaries are named on the source line geometry: the body is ``cylinder`` (per
-line element on the inner loop); the four far-field sides are tagged by
-:meth:`LineMesh.far_field_box`, which builds the outer loop **index-aligned** to
-the inner (one box-perimeter point per inner-point ray), so ``annulus`` pairs them
-directly with no re-alignment. ``annulus`` copies the tags onto the ring edges, and
-the span sweep (:meth:`HexMesh.extrude`) carries them onto the side faces and
-names the caps ``front`` / ``back``.
+line element on the inner loop); the four far-field sides are tagged per side by
+:meth:`LineMesh.rectangle`. The circle is rotated (``start_theta``) so its index 0
+meets the box's lower-left corner, so the two loops carry the same point count and
+pair index-for-index in ``annulus`` (the radial spokes are not straight, but the
+mesh conforms). ``annulus`` copies the tags onto the ring edges, and the span sweep
+(:meth:`HexMesh.extrude`) carries them onto the side faces and names the caps
+``front`` / ``back``.
 
     PYTHONPATH=. python examples/flow_past_cylinder.py
 
@@ -42,13 +43,15 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "cylinder": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
 
 # -- build the ring section: circle body -> named square far field ------------
-inner = LineMesh.circle(R, N_THETA, element_tags=["cylinder"] * N_THETA)
-# far-field box built index-aligned to the inner: outer[k] is the box-perimeter
-# point on the ray through inner[k], so the two loops pair directly in annulus.
-# Sides named per line element by the direction they face: bottom (y=-HB), outlet
-# (x=+HB), top (y=+HB), inlet (x=-HB).
-outer = LineMesh.far_field_box(inner, HALF_BOX,
-                               side_tags=["bottom", "outlet", "top", "inlet"])
+# rotate the circle so its index 0 meets the box's lower-left corner, so the two
+# loops pair index-for-index in annulus (the radial spokes are not straight)
+CORNER = np.arctan2(-HALF_BOX, -HALF_BOX)
+inner = LineMesh.circle(R, N_THETA, start_theta=CORNER,
+                        element_tags=["cylinder"] * N_THETA)
+# square far field discretized into N_THETA line elements (N_THETA/4 per side),
+# sides named bottom (y=-HB), outlet (x=+HB), top (y=+HB), inlet (x=-HB)
+outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA,
+                           side_tags=["bottom", "outlet", "top", "inlet"])
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)

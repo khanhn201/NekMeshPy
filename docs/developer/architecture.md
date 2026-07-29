@@ -47,9 +47,9 @@ that acts on it (smoothing / quality / surface ops):
 
 | package | responsibility |
 |---|---|
-| `linemesh/` | `LineMesh`: `(N,3)` points + branching `(L,2)` lines; `open`/`loop`/`line`/`circle`/`rectangle`/`far_field_box`/`from_segments` factories, each meshed exactly (no resampling; `_in_plane_axes` planar-frame helper in `_plane.py`) |
+| `linemesh/` | `LineMesh`: `(N,3)` points + branching `(L,2)` lines; core `open`/`loop`/`from_segments` constructors in `linemesh.py`, shape factories as **free functions** in `_closed.py` (`circle`/`rectangle`) and `_open.py` (`line`) bound onto the class in the package `__init__` (setattr), each meshed exactly (no resampling; `_in_plane_axes` planar-frame helper in `_plane.py`) |
 | `trimesh/` | `TriMesh` container + `trimesh/ops.py` surface ops (reached as `nekmeshpy.trimesh.ops`) |
-| `quadmesh/` | `QuadMesh` container + `quadmesh/smoothing.py` (registry) + `quadmesh/quality.py` (per-quad scaled-Jacobian) |
+| `quadmesh/` | `QuadMesh` container + core `from_grid`/`merge`/`extrude`/`loft` in `quadmesh.py`, region-fill factories as **free functions** in `_open.py` (`structured`/`rectangle`/`ogrid`/`half_ogrid`/`annulus`) and closed-surface factories in `_closed.py` (`box`/`sphere`), both bound onto the class in the package `__init__` (setattr), shared validation in `_helpers.py`; + `quadmesh/smoothing.py` (registry) + `quadmesh/quality.py` (per-quad scaled-Jacobian) |
 | `hexmesh/` | `HexMesh` immutable container + factories + `hexmesh/smoothing.py` (untangle/polish) + `hexmesh/quality.py` (per-hex scaled-Jacobian) |
 
 **`model/`** — mesh model, groups, metrics, sizing:

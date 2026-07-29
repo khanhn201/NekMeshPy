@@ -8,11 +8,13 @@ the origin. Same three-leg construction as the bifurcation:
   shared **spine** is the ``A1 - A2`` segment through the origin;
 * three arcs run ``A1 -> A2`` -- ``aLM`` (main lower wall, plane ``x = 0``) and
   ``aLB`` / ``aRB`` (the two halves of the intersection collar). Each leg's seam
-  ring is the pair of arcs it shares with its neighbours, so reusing the arcs
-  welds adjacent legs conformally;
-* each leg blends a circular opening to its seam ring; each station is split along
-  the spine into two :meth:`QuadMesh.half_ogrid` half-discs and merged, the stack
-  is :meth:`HexMesh.loft`-ed, and the three blocks :meth:`HexMesh.merge`-d.
+  ring is the pair of arcs it shares with its neighbours :meth:`LineMesh.merge`-d
+  at ``A1``/``A2`` into a closed loop, so reusing the arcs welds adjacent legs
+  conformally;
+* each leg blends a circular opening to its seam ring (:meth:`LineMesh.blend`); each
+  station is :meth:`QuadMesh.spined_ogrid`-ed over its A1..A2 chord (split into two
+  half-discs and merged), the stack is :meth:`HexMesh.loft`-ed, and the three blocks
+  :meth:`HexMesh.merge`-d.
 
     PYTHONPATH=. python examples/circular_pipe_tjunction.py
 
@@ -78,57 +80,49 @@ def arc_collar(xside):
 
 
 def join_arcs(p, q):
-    """Two ``A1 -> A2`` arcs into a closed ring of ``M`` points: index 0 at
-    ``A1``, index ``N_HALF`` at ``A2``."""
-    return np.vstack([p[0:N_HALF], q[::-1][0:N_HALF]])
+    """Two shared-endpoint ``A1 -> A2`` arcs into a closed ring of ``M`` points
+    (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
+    :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
+    crossing."""
+    return LineMesh.merge([LineMesh.open(p), LineMesh.open(q[::-1])])
 
 
-# -- analytic circular openings (M points, matching the seam's point order) ---
+# -- circular openings (M points, matching the seam's point order) ------------
 def opening_main(x0):
     """Circle of radius ``R`` in plane ``x = x0``, traversed +y (index 0) -> -z ->
     -y (index ``N_HALF``) -> +z, so its lower half matches ``arc_main_lower``
-    index-for-index and its upper half the collar arc."""
-    a = -np.pi * np.arange(M) / N_HALF
-    return np.column_stack([np.full(M, x0), R * np.cos(a), R * np.sin(a)])
+    index-for-index and its upper half the collar arc. ``normal = -x`` gives the
+    in-plane frame ``e1 = +y``, ``e2 = -z``, so point ``k`` lands on
+    ``(0, R cos, -R sin)`` -- the required clockwise traversal from ``+y``."""
+    return LineMesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0)).points
 
 
 def opening_branch(z0):
     """Circle of radius ``R`` in plane ``z = z0``, traversed +y (index 0) -> -x ->
     -y -> +x, so its ``x <= 0`` half matches ``aLB`` and its ``x >= 0`` half
-    ``aRB``."""
-    g = np.pi * np.arange(M) / N_HALF
-    return np.column_stack([-R * np.sin(g), R * np.cos(g), np.full(M, z0)])
+    ``aRB``. ``normal = +z`` gives ``e1 = +x``, ``e2 = +y``; the ``start_theta =
+    pi/2`` phase turns ``(cos, sin)`` into ``(-sin, cos)`` so index 0 is ``+y``."""
+    return LineMesh.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
+                           start_theta=np.pi / 2).points
 
 
-# -- leg builder: blend opening -> seam, split each station along the spine ---
+# -- leg builder: blend opening -> seam, O-grid each station across the spine --
 def leg_slices(open_ring, seam_ring, n_slices):
-    """Blend ``open_ring -> seam_ring`` over ``n_slices`` stations; each station is
-    two spine-split :meth:`QuadMesh.half_ogrid` half-discs merged into a disc. End
-    stations keep the raw algebraic fill; interior ones use ``SMOOTHING_METHOD``."""
+    """Blend ``open_ring -> seam_ring`` over ``n_slices`` stations; each station is a
+    disc :meth:`QuadMesh.spined_ogrid`-ed over its natural straight A1..A2 diameter
+    (two half-discs welded along it). End stations keep the raw algebraic fill;
+    interior ones use ``SMOOTHING_METHOD``."""
+    loops = LineMesh.blend(LineMesh.loop(open_ring), seam_ring,
+                           np.linspace(0.0, 1.0, n_slices))
     slices = []
-    for s in range(n_slices):
-        w = s / (n_slices - 1)                     # 0 at opening, 1 at seam
-        ring = (1.0 - w) * open_ring + w * seam_ring
-        e1, e2 = ring[0, :], ring[N_HALF, :]
-        arc1 = ring[0:N_HALF + 1, :]
-        arc2 = np.vstack([ring[N_HALF:M, :], ring[0:1, :]])
-        arc1_lm = LineMesh.open(arc1, element_tags=["wall"] * N_HALF)
-        arc2_lm = LineMesh.open(arc2, element_tags=["wall"] * N_HALF)
-        # the spine is the straight A1..A2 diameter; sample it at the exact canonical
-        # fractions half_ogrid indexes (h2's spine runs the opposite way, e2..e1)
-        fr = QuadMesh.half_ogrid_spine_fractions(arc1_lm, CENTER_SCALE, RADIAL)
-        spn1 = e1 + fr[:, None] * (e2 - e1)
-        spn2 = e2 + fr[:, None] * (e1 - e2)
+    for s, loop in enumerate(loops):
         m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None
-        # tag the arc "wall" at the line level so half_ogrid rides it onto the
-        # wall edges (see flow_past_cylinder.py)
-        h1 = QuadMesh.half_ogrid(
-            arc1_lm, LineMesh.open(spn1),
-            RADIAL, center_scale=CENTER_SCALE, smoothing_method=m)
-        h2 = QuadMesh.half_ogrid(
-            arc2_lm, LineMesh.open(spn2),
-            RADIAL, center_scale=CENTER_SCALE, smoothing_method=m)
-        slices.append(QuadMesh.merge([h1, h2]))
+        # spined_ogrid splits the loop along its A1..A2 chord (default spine) and
+        # merges the two half-discs; wall_tag names every wall edge (see
+        # flow_past_cylinder.py for the tag-flow-down convention).
+        slices.append(QuadMesh.spined_ogrid(
+            loop, RADIAL, center_scale=CENTER_SCALE, wall_tag="wall",
+            smoothing_method=m))
     return slices
 
 

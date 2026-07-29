@@ -1,7 +1,7 @@
 """Unit tests for the 1-D mesh sibling :class:`~nekmeshpy.LineMesh`: construction
 (open vs closed as a topological property), the two tag systems (dense per-line
 ``element_tags`` + sparse tagged ``boundaries``/``boundary_tags``), the
-``line`` / ``circle`` / ``rectangle`` / ``far_field_box`` / ``from_segments``
+``line`` / ``circle`` / ``rectangle`` / ``from_segments``
 factories (every curve meshed exactly at the points given -- no resampling), and
 the line -> quad -> hex tag ladder (``QuadMesh.extrude(LineMesh)`` and
 ``HexMesh.extrude`` carrying the tags up)."""
@@ -109,53 +109,43 @@ def test_circle_normal_places_loop_in_plane():
     assert np.allclose(np.linalg.norm(lm.points - c, axis=1), 1.5)
 
 
-def test_rectangle_corners_and_tags():
-    # default +z plane: 4-corner loop CCW from lower-left, sides tagged per element
-    lm = LineMesh.rectangle(4.0, 6.0, element_tags=["bottom", "right", "top", "left"])
+def test_rectangle_corners_and_per_side_tags():
+    # n=4 -> the 4 corners, CCW from lower-left, one line element per side
+    lm = LineMesh.rectangle(4.0, 6.0, 4, side_tags=["bottom", "right", "top", "left"])
     assert lm.is_closed and lm.n_points == 4 and lm.n_lines == 4
     assert np.allclose(lm.points, [[-2, -3, 0], [2, -3, 0], [2, 3, 0], [-2, 3, 0]])
     assert lm.element_tags.tolist() == ["bottom", "right", "top", "left"]
 
 
-def test_rectangle_matches_manual_loop_farfield_box():
-    # LineMesh.rectangle reproduces the far-field box built by hand in the examples
+def test_rectangle_discretizes_per_side_on_box():
+    # n=32 -> 8 evenly spaced points per side, every point on the box perimeter,
+    # corners always landing on a point (so the loop is a true rectangle)
     hb = 6.0
-    tags = ["bottom", "outlet", "top", "inlet"]
-    manual = LineMesh.loop([(-hb, -hb, 0.0), (hb, -hb, 0.0),
-                            (hb, hb, 0.0), (-hb, hb, 0.0)], element_tags=tags)
-    rect = LineMesh.rectangle(2 * hb, 2 * hb, element_tags=tags)
-    assert np.allclose(rect.points, manual.points)
-    assert rect.element_tags.tolist() == manual.element_tags.tolist()
+    lm = LineMesh.rectangle(2 * hb, 2 * hb, 32)
+    assert lm.is_closed and lm.n_points == 32 and lm.n_lines == 32
+    assert np.isclose(np.abs(lm.points[:, :2]).max(axis=1), hb).all()
+    for cxy in ([-hb, -hb], [hb, -hb], [hb, hb], [-hb, hb]):
+        assert np.isclose(lm.points[:, :2] - cxy, 0.0).all(axis=1).any()
+
+
+def test_rectangle_side_tag_counts_are_even():
+    lm = LineMesh.rectangle(2.0, 2.0, 32,
+                            side_tags=["bottom", "right", "top", "left"])
+    assert Counter(lm.element_tags.tolist()) == {
+        "bottom": 8, "right": 8, "top": 8, "left": 8}
+
+
+def test_rectangle_requires_multiple_of_four():
+    with pytest.raises(ValueError, match="multiple of 4"):
+        LineMesh.rectangle(2.0, 2.0, 6)
 
 
 def test_rectangle_in_tilted_plane_is_planar():
     n = np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)
     c = np.array([0.2, -0.1, 0.4])
-    lm = LineMesh.rectangle(3.0, 1.0, center=c, normal=n)
+    lm = LineMesh.rectangle(3.0, 1.0, 8, center=c, normal=n)
     assert np.max(np.abs((lm.points - c) @ n)) < 1e-12   # coplanar
-    assert lm.is_closed and lm.n_points == 4
-
-
-def test_far_field_box_is_index_aligned_and_on_box():
-    # one box-perimeter point per inner-point ray -> index-aligned by construction
-    inner = LineMesh.circle(0.5, 32)
-    outer = LineMesh.far_field_box(inner, 2.0)
-    assert outer.is_closed and outer.n_points == inner.n_points == 32
-    # every outer point lies exactly on the square box |x| = 2 or |y| = 2
-    on_box = np.isclose(np.abs(outer.points[:, :2]).max(axis=1), 2.0)
-    assert on_box.all()
-    # each outer point is radially outward of its paired inner point (same ray)
-    assert (np.sum(outer.points[:, :2] * inner.points[:, :2], axis=1) > 0).all()
-
-
-def test_far_field_box_carries_element_tags_by_sector():
-    inner = LineMesh.circle(0.5, 32)
-    outer = LineMesh.far_field_box(
-        inner, 2.0, side_tags=["bottom", "right", "top", "left"])
-    assert outer.n_lines == inner.n_lines == 32
-    # 32 sectors split evenly across the four symmetric box sides
-    assert Counter(outer.element_tags.tolist()) == {
-        "bottom": 8, "right": 8, "top": 8, "left": 8}
+    assert lm.is_closed and lm.n_points == 8
 
 
 def test_from_segments_chains_a_loop():
@@ -167,6 +157,53 @@ def test_from_segments_chains_a_loop():
     # the four square corners are recovered (the walk repeats the start to close)
     assert len(np.unique(np.round(lm.points, 9), axis=0)) == 4
     assert LineMesh.from_segments(None) is None
+
+
+# -- merge (weld coincident end points) --------------------------------------
+
+def test_merge_two_arcs_close_into_a_loop():
+    # two half-circle arcs sharing both endpoints A1=(1,0,0), A2=(-1,0,0):
+    # upper (z>=0) and lower (z<=0). Reverse the second so the traversal runs
+    # A1->A2 down the upper arc then A2->A1 back up the lower.
+    tu = np.linspace(0.0, np.pi, 5)                     # A1 -> A2, z >= 0
+    upper = np.column_stack([np.cos(tu), np.zeros(5), np.sin(tu)])
+    tl = np.linspace(0.0, np.pi, 5)                     # A1 -> A2, z <= 0
+    lower = np.column_stack([np.cos(tl), np.zeros(5), -np.sin(tl)])
+    ring = LineMesh.merge([LineMesh.open(upper),
+                           LineMesh.open(lower[::-1])])
+    # welded at A1 and A2 -> one closed loop of 8 unique points (2*(5-1))
+    assert ring.is_closed
+    assert ring.n_points == 8
+    assert ring.n_lines == 8
+    # index 0 stays A1, index 4 (M//2) is A2 -- the split points spined_ogrid needs
+    assert np.allclose(ring.points[0], [1.0, 0.0, 0.0])
+    assert np.allclose(ring.points[4], [-1.0, 0.0, 0.0])
+    # connectivity is a single wrapping cycle
+    assert np.array_equal(ring.lines,
+                          np.array([[i, (i + 1) % 8] for i in range(8)]))
+
+
+def test_merge_open_chains_stay_open_and_carry_tags():
+    # two collinear open chains meeting at (1,0,0); the shared point welds but the
+    # far ends stay degree-1, so the result is still open.
+    a = LineMesh.open([(0, 0, 0), (1, 0, 0)], element_tags=["a"],
+                      boundaries=[[0, 1]], boundary_tags=["start"])
+    b = LineMesh.open([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
+    m = LineMesh.merge([a, b])
+    assert m.is_open
+    assert m.n_points == 3                              # the shared point welded
+    assert m.element_tags.tolist() == ["a", "b"]        # dense tags concatenate
+    assert m.boundary_group_tags == ["start"]           # sparse BC markers carried
+
+
+def test_merge_does_not_weld_interior_points():
+    # an interior point coincident with another chain's interior is NOT welded
+    # (only degree-1 ends weld), mirroring QuadMesh/HexMesh.merge.
+    a = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)])   # (1,0,0) is interior
+    b = LineMesh.open([(1, 0, 0), (1, 1, 0)])              # end at (1,0,0)
+    m = LineMesh.merge([a, b])
+    # b's end welds to... nothing on a's interior; only ends weld -> 5 points
+    assert m.n_points == 5
 
 
 # -- line -> quad tag ladder -------------------------------------------------

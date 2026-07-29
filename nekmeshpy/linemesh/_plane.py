@@ -2,8 +2,8 @@
 
 A private free function that returns an orthonormal ``(e1, e2)`` frame spanning the
 plane with the given normal, so a factory can place a planar loop (``circle`` /
-``rectangle`` / ``far_field_box``) in any plane. The axes are world-aligned so an
-axis-aligned plane is not rotated.
+``rectangle``) in any plane. The axes are world-aligned so an axis-aligned plane is
+not rotated.
 """
 
 from __future__ import annotations
