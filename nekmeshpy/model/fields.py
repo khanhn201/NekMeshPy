@@ -1,13 +1,9 @@
 """Mesh-sizing fields (gmsh-style) and 1-D point distributions.
 
-A :class:`Field` maps points in space to a target element size.  Fields compose
+A ``Field`` maps points in space to a target element size.  Fields compose
 (``MinField``) and drive graded edge distributions via
-:func:`distribution_from_field`, so structured algorithms
-(:meth:`~nekmeshpy.quadmesh.QuadMesh.structured`) can honour a size field instead of
-a fixed division count.
-
-For convenience there is also :func:`geometric_spacing` (a fixed geometric
-grading) used when no field is supplied.
+``distribution_from_field``.  ``geometric_spacing`` gives a fixed grading when no
+field is supplied.
 """
 
 from __future__ import annotations
@@ -18,8 +14,8 @@ from .._typing import FloatArray, Point, PointArray
 
 
 class Field:
-    """Base sizing field: ``field(points) -> sizes``.  ``points`` is ``(k,3)``;
-    returns a length-``k`` array of target edge sizes."""
+    """Base sizing field: ``field(points) -> sizes`` mapping ``(k,3)`` points to
+    ``k`` target edge sizes."""
 
     def __call__(self, points: PointArray) -> FloatArray:
         raise NotImplementedError
@@ -78,8 +74,8 @@ class MinField(Field):
 
 # -- 1-D distributions --------------------------------------------------
 def geometric_spacing(n: int, ratio: float = 1.0) -> FloatArray:
-    """``n+1`` normalized point positions in ``[0,1]`` with a geometric size
-    ratio between consecutive cells (``ratio==1`` -> uniform)."""
+    """``n+1`` normalized positions in ``[0,1]`` with a geometric size ratio
+    between consecutive cells (``ratio==1`` -> uniform)."""
     if n < 1:
         raise ValueError("n must be >= 1")
     if abs(ratio - 1.0) < 1e-12:
@@ -90,27 +86,27 @@ def geometric_spacing(n: int, ratio: float = 1.0) -> FloatArray:
 
 
 def uniform_spacing(n: int) -> FloatArray:
-    """Shorthand for ``geometric_spacing(n, 1.0)``: ``n+1`` uniformly spaced
-    positions in ``[0, 1]`` including both endpoints -- the ready-to-use *uniform*
-    argument for every explicit-initial layer parameter: the sweep ``layers``
-    (:meth:`~nekmeshpy.hexmesh.HexMesh.extrude`) and the ``radial`` of :meth:`~nekmeshpy.quadmesh.QuadMesh.ogrid` /
-    ``half_ogrid`` / ``annulus``, giving ``n`` layers over the full span.  Use
-    ``geometric_spacing(n, ratio)`` for a graded distribution."""
+    """``n+1`` uniformly spaced positions in ``[0, 1]``; shorthand for
+    ``geometric_spacing(n, 1.0)``."""
     return geometric_spacing(n, 1.0)
 
 
-def validate_layers(positions: FloatArray, who: str) -> FloatArray:
-    """Validate a normalized layer-position array and return it flattened.  A
-    single **explicit-initial** convention is shared by every layered factory --
-    :meth:`~nekmeshpy.hexmesh.HexMesh.extrude`'s ``layers`` and the ``radial`` of
-    :meth:`~nekmeshpy.quadmesh.QuadMesh.ogrid` / ``half_ogrid`` / ``annulus``: strictly increasing
-    values in ``[0, 1]`` with the initial position *explicit* -- the first is the
-    near/inner face (``0`` for a full span flush with the body, or e.g. ``0.5`` to
-    start partway out) and the last is ``1`` (the far/outer face) -- so
-    ``positions.size - 1`` layers span first..last.
+def symmetric_spacing(n: int, ratio: float = 1.0) -> FloatArray:
+    """``n+1`` positions in ``[0,1]`` clustered toward both ends: geometric
+    spacing per half, mirrored (``n`` must be even; ``ratio==1`` -> uniform)."""
+    if n % 2:
+        raise ValueError("symmetric_spacing needs an even n, got %d" % n)
+    m = n // 2
+    g = geometric_spacing(m, ratio)                  # [0,1], cells grow away from 0
+    first = 0.5 * g                                  # [0, 0.5], clustered near 0
+    second = 1.0 - 0.5 * g[::-1]                      # [0.5, 1], clustered near 1
+    return np.concatenate([first[:-1], second])      # 2*m+1 = n+1 fractions
 
-    Pass ``uniform_spacing(k)`` / ``geometric_spacing(k, ratio)`` /
-    ``numpy.linspace(a, 1, k + 1)``.  ``who`` labels the caller in errors."""
+
+def validate_layers(positions: FloatArray, who: str) -> FloatArray:
+    """Validate a normalized layer-position array and return it flattened:
+    strictly increasing values in ``[0, 1]`` with an explicit first position and a
+    last position of ``1``.  ``who`` labels the caller in errors."""
     p = np.asarray(positions, dtype=float).ravel()
     if p.size < 2:
         raise ValueError("%s: needs at least 2 layer positions" % who)
@@ -125,13 +121,9 @@ def validate_layers(positions: FloatArray, who: str) -> FloatArray:
 
 def distribution_from_field(field: Field, p0: Point, p1: Point,
                             max_cells: int = 200) -> FloatArray:
-    """Choose graded point positions along the segment ``p0 -> p1`` so each cell
-    length approximates the field's target size there.  Returns normalized
-    positions in ``[0,1]`` (endpoints included).
-
-    A greedy walk: step by the locally-sampled size until the far end is
-    reached, then rescale to land exactly on ``p1``.
-    """
+    """Graded positions along ``p0 -> p1`` where each cell length approximates the
+    field's target size.  Greedy walk stepping by the local size, then rescaled to
+    land on ``p1``.  Returns normalized positions in ``[0,1]``."""
     p0 = np.asarray(p0, float)
     p1 = np.asarray(p1, float)
     length = float(np.linalg.norm(p1 - p0))

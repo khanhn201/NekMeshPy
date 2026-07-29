@@ -1,15 +1,13 @@
 # Concepts
 
-This page explains the ideas the toolkit is built on: the dimensional ladder of
-mesh containers, the two tag systems that name regions and boundaries, the
-section and hex-block factories, per-section smoothing, and how physical groups
-map to export codes. It is the conceptual companion to the {doc}`getting-started`
-tutorial and the {doc}`../reference/index`.
+The ideas the toolkit is built on: the dimensional ladder of mesh containers,
+the two tag systems, the factories, per-section smoothing, and physical groups.
+Companion to the {doc}`getting-started` tutorial and {doc}`../reference/index`.
 
 ## The line → quad → hex ladder
 
-NekMeshPy models geometry with a ladder of mesh containers, one per dimension,
-each with 2 / 4 / 8 vertices per element:
+Geometry is modeled with one mesh container per dimension, each with 2 / 4 / 8
+vertices per element:
 
 | container | element | role |
 |---|---|---|
@@ -17,92 +15,105 @@ each with 2 / 4 / 8 vertices per element:
 | {class}`~nekmeshpy.quadmesh.QuadMesh` | quad (4 pts) | 2-D cross-section / surface |
 | {class}`~nekmeshpy.hexmesh.HexMesh` | hex (8 pts)  | 3-D all-hex volume |
 
-Each container stores its coordinates as a **bare `(P,3)` NumPy array** on
-`.points` (mutate in place with `mesh.points[:] = X`). There is **no `Point`
-class** — a single point is just a `(3,)` array. All boundaries live honestly in
-3-D: a `(N,2)` array is *rejected*, never padded to `z=0`.
+Each container stores coordinates as a **bare `(P,3)` NumPy array** on `.points`
+(mutate in place with `mesh.points[:] = X`). There is **no `Point` class** — a
+single point is just a `(3,)` array. Boundaries live in 3-D: a `(N,2)` array is
+*rejected*, never padded to `z=0`.
 
-`LineMesh` is the 1-D sibling of the surface/volume containers: a shared `(N,3)`
-point array plus `(L,2)` `lines` connectivity that **can branch** (it is a mesh,
-not a single ordered path). Open vs closed is a **topological property**
-(`is_open` / `is_closed`), not a subclass — the factories set it:
+`LineMesh` holds a shared `(N,3)` point array plus `(L,2)` `lines` connectivity
+that **can branch** (a mesh, not a single ordered path). Open vs closed is a
+**topological property** (`is_open` / `is_closed`), not a subclass; factories set
+it:
 
-- `LineMesh.open` — a consecutive chain (default).
-- `LineMesh.loop` — a chain that wraps back to the start.
-- `LineMesh.circle(radius, n, center=…, normal=…)` — a closed ring placed in the
-  plane with the given `normal` (default `+z`).
+- `LineMesh.open` — consecutive chain (default).
+- `LineMesh.loop` — chain that wraps to the start.
+- `LineMesh.line(start, end, fractions, …)` — straight edge sampled at the given
+  fractions (a direct lerp, meshed exactly).
+- `LineMesh.circle(radius, n, center=…, normal=…, start_theta=0.0)` — closed ring
+  in the plane with the given `normal` (default `+z`); `start_theta` rotates the
+  first point off `+e1`.
+- `LineMesh.rectangle(width, height, n, center=…, normal=…, side_tags=…)` — closed
+  far-field loop in the given plane, discretized into `n` line elements (`n` a
+  multiple of 4): `n // 4` evenly spaced per side, CCW from the lower-left corner
+  (bottom / right / top / left), corners always landing on a point. Pass `n` equal
+  to the inner loop's point count and rotate the inner `circle` with `start_theta`
+  so index 0 meets the lower-left corner, and the two loops pair index-for-index in
+  `annulus` (the radial spokes need not be straight).
 - `LineMesh.from_segments` — chain unordered segments into the largest closed
   loop (or `None`).
+- `LineMesh.merge` — weld coincident **topological end points** (degree-1 chain
+  ends; never interior points), the 1-D sibling of `QuadMesh.merge`/`HexMesh.merge`.
+  The result is `closed` iff no degree-1 end survives, so two shared-endpoint
+  `A1->A2` arcs (reverse one) weld at `A1`/`A2` into a single loop — the clean way
+  to close a seam ring from two half-arcs.
 
-The ordered ops (`resample`, `resample_spline`, `align_to`, `radial_match`,
-`split_by_fraction`, `.length`) treat the points in index order as a path/loop.
+Every factory meshes its points **exactly** — there is no resampling API; the
+caller hands in an exactly-sized, correctly-oriented curve. The ordered ops treat
+points in index order as a path/loop (`.length`).
 
-{class}`~nekmeshpy.trimesh.TriMesh` sits alongside as the **input surface** for
-the vessel pipeline; its algorithms (cotan Laplacian, Dirichlet solve, boundary
-loops) live in {mod}`nekmeshpy.trimesh.ops` (aliased `nekmeshpy.trisurf`).
+{class}`~nekmeshpy.trimesh.TriMesh` is the **input surface** for the vessel
+pipeline; its algorithms (cotan Laplacian, Dirichlet solve, boundary loops) live
+in {mod}`nekmeshpy.trimesh.ops` (reached as `nekmeshpy.trimesh.ops`).
 
 ## The two tag systems
 
-Both tag systems **propagate up the ladder** (line → quad → hex) on `extrude` /
-`loft`, and both are no-ops when untagged.
+Both **propagate up the ladder** (line → quad → hex) on `extrude` / `loft`, and
+both are no-ops when untagged.
 
 ### `element_tags` — dense, per-element (region / material)
 
-A dense per-element string array (`""` = untagged), one tag per line / quad / hex.
-Carried by `resample` / `align_to` / `radial_match`, copied by the section
-factories onto the section edges/quads and thence onto the hex faces/hexes.
-`element_group_tags` is the sorted unique non-empty set.
+One tag per line / quad / hex (`""` = untagged). Set at construction on the
+`LineMesh`, copied by the section factories onto the section edges/quads and
+thence onto the hex faces/hexes. `element_group_tags` is the sorted unique
+non-empty set.
 
 ### `boundary_tags` — sparse, parallel with `boundaries`
 
-A sparse string array parallel with `boundaries` `(Nbc,2)`. At each level the
-second column means one dimension's "side":
+A sparse string array parallel with `boundaries` `(Nbc,2)`. The second column is
+the "side" at each level:
 
-- `LineMesh`: `[elem id, side ∈ {1,2}]` → local end **point** `s-1`.
-- `QuadMesh`: `[quad id, side ∈ {1..4}]` → local **edge** `EDGE_POINTS[s-1]`.
-- `HexMesh`: `[elem id, face ∈ {1..6}]` → local **face**.
+- `LineMesh`: `[elem id, side ∈ {1,2}]` → end **point** `s-1`.
+- `QuadMesh`: `[quad id, side ∈ {1..4}]` → **edge** `EDGE_POINTS[s-1]`.
+- `HexMesh`: `[elem id, face ∈ {1..6}]` → **face**.
 
-On `extrude`, a line's end-point tags become quad boundary **edges**, then hex
+On `extrude`, line end-point tags become quad boundary **edges**, then hex
 boundary **faces**. `boundary_group_tags` is the sorted unique set. See
 `examples/flow_past_cylinder.py`.
 
 ### Tag at the lowest level; upper overrides lower
 
-The guiding rule is **tag at the lowest level** — every section-wall tag can
-originate on the `LineMesh` input (the circle / loop / arc / edge), which every
-section factory reads:
+Every section-wall tag can originate on the `LineMesh` input, which each section
+factory reads:
 
-- `ogrid` / `annulus` read the loop's per-line tags,
-- `half_ogrid` reads the arc's per-segment tags,
-- `structured` reads each edge's uniform tag.
+- `ogrid` / `annulus` — the loop's per-line tags,
+- `half_ogrid` — the arc's per-segment tags,
+- `structured` — each edge's uniform tag.
 
-The factories' scalar / mapping args (`wall_tag`, `inner_tag`, `outer_tag`,
-`boundary_tags[side]`) are **overrides**: a non-empty arg replaces the line-level
-tag for that wall/side (**upper overrides lower**); an empty/absent arg falls
-through to it (and a present-but-empty `boundary_tags[side]` / `NO_BOUNDARY`
-suppresses the side). The end caps of a sweep (`first_tag` / `last_tag`) are
-named at the hex level because no lower level exists for them.
+The factory args (`wall_tag`, `inner_tag`, `outer_tag`, `boundary_tags[side]`)
+are **overrides**: a non-empty arg replaces the line-level tag; an empty/absent
+one falls through (a present-but-empty `boundary_tags[side]` / `NO_BOUNDARY`
+suppresses the side). Sweep end caps (`first_tag` / `last_tag`) are named at the
+hex level — no lower level exists for them.
 
 ## Section factories (`QuadMesh` classmethods)
 
 Sections fill a boundary with quads. All build **natively in 3-D** — nothing is
-projected to a plane, so a boundary placed in any plane, or a genuinely curvy /
-non-planar boundary, is filled in place with its true shape.
+projected to a plane, so a boundary in any plane, or a curvy / non-planar one, is
+filled in place with its true shape.
 
 | factory | fills |
 |---|---|
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.structured` | transfinite (Coons) grid over a surface bounded by 4 open `LineMesh` edges; resolution comes **from the edges' own points** (no resampling — opposite edges must match counts), so graded edges give a graded grid; each side is named from its edge's uniform tag |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.ogrid` | butterfly O-grid inside a closed `LineMesh` loop (no collapsed centre); the outer ring is named from the loop's per-line tags |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.half_ogrid` | half-disc O-grid split along a spine; the wall is named from the arc's per-segment tags |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.annulus` | ring O-grid between an inner and outer closed loop (a body inside a far-field box), paired **by index** (equal point counts — align a coarse box loop first with `outer.radial_match(inner)`) |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.extrude` / {meth}`~nekmeshpy.quadmesh.QuadMesh.loft` | sweep/stack a `LineMesh` **one dimension down** into a quad strip (mirrors the `HexMesh` versions) |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.from_grid` | structured `(ni+1,nj+1)` quad grid from a point array; `element_tag` fills the dense per-quad tags |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.structured` | transfinite (Coons) grid over 4 open `LineMesh` edges; resolution comes from the edges' own points (no resampling — opposite edges must match counts); each side named from its edge tag |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.ogrid` | O-grid inside a closed loop (no collapsed centre); outer ring named from the loop's per-line tags |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.half_ogrid` | half-disc O-grid split along a spine; wall named from the arc's per-segment tags |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.annulus` | ring O-grid between inner and outer closed loops, paired **by index** (equal point counts — e.g. `LineMesh.rectangle(w, h, N)` against `circle(r, N, start_theta=…)`) |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.extrude` / {meth}`~nekmeshpy.quadmesh.QuadMesh.loft` | sweep/stack a `LineMesh` one dimension down into a quad strip |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.from_grid` | structured `(ni+1,nj+1)` quad grid; `element_tag` fills the per-quad tags |
 
 `ogrid` / `annulus` build a straight-chord initial guess and rely on
-`smoothing_method="conduction"` to relax the interior harmonically onto the curved
-surface spanned by the fixed boundary ring; `structured` / `half_ogrid` blend the
-3-D edge points directly. (`ogrid` / `half_ogrid` are ICEM/Pointwise terms kept
-deliberately; everything else follows gmsh vocabulary.)
+`smoothing_method="conduction"` to relax the interior onto the curved boundary
+ring; `structured` / `half_ogrid` blend the 3-D edge points directly. (`ogrid` /
+`half_ogrid` are ICEM/Pointwise terms; the rest follow gmsh.)
 
 ## Hex-block factories (`HexMesh` classmethods)
 
@@ -110,48 +121,45 @@ deliberately; everything else follows gmsh vocabulary.)
 |---|---|
 | {meth}`~nekmeshpy.hexmesh.HexMesh.extrude` | sweep one section along a straight axis (gmsh Extrude + Layers + Recombine) |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.loft` | recombine a stack of pre-positioned conformal profiles — the general case behind `extrude` |
-| {meth}`~nekmeshpy.hexmesh.HexMesh.annulus` | fill the 3-D shell between two **closed `QuadMesh` surfaces**, paired **by index** (build one from the other's points, e.g. `sphere = R*normalize(cube.points)` on `cube.quads`) |
+| {meth}`~nekmeshpy.hexmesh.HexMesh.annulus` | fill the shell between two **closed `QuadMesh` surfaces**, paired **by index** (e.g. `sphere = R*normalize(cube.points)` on `cube.quads`) |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.merge` | stitch blocks, welding coincident **boundary** points only |
-| {meth}`~nekmeshpy.hexmesh.HexMesh.from_grid` | structured `i×j×k` block; `face_tags` maps a side `x_min`…`z_max` to a boundary name |
+| {meth}`~nekmeshpy.hexmesh.HexMesh.from_grid` | structured `i×j×k` block; `face_tags` maps a side `x_min`…`z_max` to a name |
 
-`HexMesh` is **immutable by construction** (no incremental building). `extrude` /
-`loft` are shared-point by construction (conformal slices → index arithmetic, no
-weld); `merge` is the one place coincident seam points are coordinate-welded.
+`HexMesh` is **immutable by construction**. `extrude` / `loft` are shared-point
+(conformal slices → index arithmetic, no weld); `merge` is the one place seam
+points are coordinate-welded.
 
 ### The explicit-initial layer convention
 
 Layer counts are set by a **normalized-position array**, not a count + grading
 pair — one convention shared by every layered factory (`extrude`'s `layers`; the
 `radial` of `ogrid` / `half_ogrid` / `annulus`). Values strictly increase in
-`[0, 1]` with the initial position **explicit**: the first value is the near cap /
-inner ring (`0` for a full span flush with the body) and the last is `1`, so
-`array.size - 1` layers span `array[0]..1`. Use `uniform_spacing(k)` for uniform,
-`geometric_spacing(k, ratio)` for graded (`ratio > 1` clusters toward the wall),
-or `numpy.linspace(a, 1, k + 1)` to start at `a`. Both helpers live in
-{mod}`nekmeshpy.model.fields`.
+`[0, 1]` with the initial position explicit: first value is the near cap / inner
+ring (`0` for a full span flush with the body), last is `1`, so `array.size - 1`
+layers span `array[0]..1`. Use `uniform_spacing(k)`, `geometric_spacing(k, ratio)`
+(`ratio > 1` clusters toward the wall), or `numpy.linspace(a, 1, k + 1)` to start
+at `a`. Both helpers live in {mod}`nekmeshpy.model.fields`.
 
 ## Per-section smoothing
 
-Cross-section interior nodes are repositioned on a single `QuadMesh` *before*
-extrusion, via {func}`nekmeshpy.quadmesh.smoothing.set_section_smoothing` (registry
+Interior nodes are repositioned on a single `QuadMesh` *before* extrusion, via
+{func}`nekmeshpy.quadmesh.smoothing.set_section_smoothing` (registry
 `SECTION_METHODS`; extend with `@register_section_smoothing("name")`). Built-ins:
 
-- `bilinear` / `none` — algebraic, radially-graded blend (the default; near
-  no-op).
+- `bilinear` / `none` — algebraic radially-graded blend (default; near no-op).
 - `conduction` — harmonic (Laplace) relaxation onto a curved boundary ring.
 - `winslow` — elliptic (Winslow) smoothing.
 
 Each factory takes an optional `smoothing_method=`. There is **no** HexMesh-level
-smoothing registry; the constrained volume untangle/polish is the separate
+registry; the constrained volume untangle/polish is the separate
 {func}`nekmeshpy.hexmesh.smoothing.smooth`.
 
 ## Physical groups & export
 
-Boundaries are identified by a plain **name** throughout construction. The mapping
-of each name to a Nek BC code / integer id is supplied only at **export**, via the
-`groups=` argument to the exporters:
+Boundaries are plain **names** during construction. Each name maps to a Nek BC
+code / integer id only at **export**, via the `groups=` argument:
 
-- a plain `{name: nek_code}` dict,
+- a `{name: nek_code}` dict,
 - a {class}`~nekmeshpy.model.physical.PhysicalGroups` registry (presets:
   `PhysicalGroups.nek_default()`, `.duct()`, `.from_tags()`), or
 - `None` to auto-number the mesh's distinct names.

@@ -3,7 +3,7 @@
 Build locally with::
 
     pip install -e ".[docs]"
-    MPLBACKEND=Agg sphinx-build -b html -n --keep-going docs docs/_build/html
+    sphinx-build -b html -n --keep-going docs docs/_build/html
 """
 
 import os
@@ -12,7 +12,9 @@ from importlib import metadata
 
 # autodoc imports nekmeshpy.io.viz, which imports matplotlib -- force a headless
 # backend so the build works in CI without a display.
-os.environ.setdefault("MPLBACKEND", "Agg")
+import matplotlib  # noqa: E402
+
+matplotlib.use("Agg")
 
 # make the package importable from a source checkout (editable install also works)
 sys.path.insert(0, os.path.abspath(".."))
@@ -48,7 +50,10 @@ myst_heading_anchors = 3
 # The reference documents each *leaf* module once with ``automodule`` (see
 # docs/reference/*.md); autodoc excludes imported members by default, so the
 # classes re-exported from the package ``__init__``s are documented exactly once,
-# at their canonical location -- no duplicate/ambiguous cross-references.
+# at their canonical location -- no duplicate/ambiguous cross-references.  The shape
+# factories are free functions bound onto LineMesh / QuadMesh by each package
+# ``__init__`` (setattr), so they land in the class ``__dict__`` and autodoc documents
+# them directly on the container -- no inherited-members needed.
 autodoc_default_options = {
     "members": True,
     "undoc-members": False,

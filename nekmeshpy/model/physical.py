@@ -1,15 +1,8 @@
-"""Named physical groups (gmsh-style) and their Nek5000 boundary-condition
-codes.
+"""Named physical groups (gmsh-style) and their Nek5000 boundary-condition codes.
 
-A :class:`PhysicalGroup` binds a human-readable ``name`` to an integer ``tag``
-(as stored in ``HexMesh.boundaries``), a topological ``dim`` (2 = surface /
-boundary, 3 = volume) and, for boundaries, the 3-character Nek BC ``code``
-written into the ``.re2`` file.  :class:`PhysicalGroups` is the registry that
-maps freely between tag, name and code.
-
-The :meth:`PhysicalGroups.nek_default` registry reproduces the original
-hard-coded ``_TAG_CODE`` table exactly, so routing the exporter through it keeps
-the ``.re2`` bytes identical to the validated reference.
+A ``PhysicalGroup`` binds a ``name`` to an integer ``tag``, a ``dim`` (2 =
+boundary/surface, 3 = volume) and a 3-char Nek BC ``code``.  ``PhysicalGroups``
+is the registry mapping between tag, name and code.
 """
 
 from __future__ import annotations
@@ -20,9 +13,8 @@ from typing import Iterable, Iterator
 
 @dataclass(frozen=True)
 class PhysicalGroup:
-    """One named physical group: a ``name`` bound to an integer ``tag``, a
-    dimension (``dim`` 2 = boundary/surface, 3 = volume), and a 3-char Nek BC
-    ``code`` (padded on construction)."""
+    """One named physical group: ``name``, integer ``tag``, ``dim`` (2 =
+    boundary/surface, 3 = volume), and a 3-char Nek BC ``code``."""
 
     name: str
     tag: int
@@ -45,7 +37,7 @@ class PhysicalGroups:
 
     # -- mutation --------------------------------------------------------
     def add(self, group: PhysicalGroup) -> PhysicalGroup:
-        """Register ``group`` (a :class:`PhysicalGroup`); returns it."""
+        """Register ``group``; returns it."""
         if group.tag in self._by_tag:
             raise ValueError("tag %d already registered (%s)"
                              % (group.tag, self._by_tag[group.tag].name))
@@ -102,7 +94,7 @@ class PhysicalGroups:
     # -- presets ---------------------------------------------------------
     @classmethod
     def nek_default(cls) -> "PhysicalGroups":
-        """The original built-in tag->code table (byte-compatible)."""
+        """The original built-in tag->code table."""
         return cls([
             PhysicalGroup("wall",         1, 2, "W  "),
             PhysicalGroup("trunk_outlet", 2, 2, "v  "),
@@ -114,8 +106,7 @@ class PhysicalGroups:
 
     @classmethod
     def duct(cls, wall: int = 1, inlet: int = 2, outlet: int = 3) -> "PhysicalGroups":
-        """Wall / inlet / outlet registry for a simple duct or pipe, with the Nek
-        BC codes ``W`` / ``v`` / ``O``."""
+        """Wall / inlet / outlet registry for a duct or pipe (codes ``W``/``v``/``O``)."""
         return cls([
             PhysicalGroup("wall",   wall,   2, "W  "),
             PhysicalGroup("inlet",  inlet,  2, "v  "),
@@ -126,8 +117,7 @@ class PhysicalGroups:
     def from_tags(cls, tag_wall: int = 1, tag_trunk: int = 2, tag_top1: int = 3,
                   tag_top2: int = 4, tag_f1: int = 5, tag_f2: int = 6
                   ) -> "PhysicalGroups":
-        """Build the bifurcation registry from explicit boundary tags,
-        preserving the byte-compatible Nek codes."""
+        """Build the bifurcation registry from explicit boundary tags."""
         return cls([
             PhysicalGroup("wall",         tag_wall,  2, "W  "),
             PhysicalGroup("trunk_outlet", tag_trunk, 2, "v  "),

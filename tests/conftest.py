@@ -11,8 +11,13 @@ in ``tests/golden/`` (a frozen snapshot of the validated results).
 import os
 import runpy
 
+import matplotlib
 import numpy as np
 import pytest
+
+# the suite runs headless (viz tests import matplotlib), so pin a non-interactive
+# backend here -- no MPLBACKEND=Agg needed on the command line.
+matplotlib.use("Agg")
 
 _HERE = os.path.dirname(__file__)
 _EXAMPLES = os.path.join(_HERE, "..", "examples")

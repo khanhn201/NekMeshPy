@@ -1,5 +1,4 @@
-"""3-D hex mesh container (:class:`HexMesh`) and its constrained-smoothing free
-function (:mod:`~nekmeshpy.hexmesh.smoothing`)."""
+"""3-D hex mesh container (``HexMesh``) and its constrained-smoothing function."""
 
 from .hexmesh import HexMesh
 

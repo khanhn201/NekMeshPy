@@ -1,10 +1,7 @@
-"""Mesh a straight circular pipe as an all-hex O-grid and export for Nek5000.
+"""Straight circular pipe as an all-hex O-grid, exported for Nek5000.
 
-A flat, gmsh-style script: edit the constants below and re-run.  The cross-section
-is a "butterfly" O-grid built by :meth:`nekmeshpy.QuadMesh.ogrid` from the circle
-boundary, then extruded along the axis by :meth:`nekmeshpy.HexMesh.extrude`.
-
-Run with::
+:meth:`QuadMesh.ogrid` fills the circle boundary; :meth:`HexMesh.extrude` sweeps
+it along the axis.
 
     PYTHONPATH=. python examples/circular_pipe.py
 
@@ -36,8 +33,7 @@ OUT_NAME = "circular_pipe"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
 # -- build the O-grid cross-section, then extrude it along the axis -----------
-# the section's interior is filled + repositioned here (wall held fixed); the
-# straight extrude then just copies it along the axis
+# interior filled + repositioned (wall fixed); extrude copies it along the axis
 section = QuadMesh.ogrid(
     LineMesh.circle(RADIUS, 4 * N_SIDE, element_tags=["wall"] * (4 * N_SIDE)), N_SIDE,
     geometric_spacing(N_RADIAL, RADIAL_GRADING),

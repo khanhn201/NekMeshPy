@@ -1,45 +1,13 @@
 """All-hex mesh container.
 
-``HexMesh`` is a pure hex container and a true sibling of
-:class:`~nekmeshpy.quadmesh.QuadMesh` / :class:`~nekmeshpy.trimesh.TriMesh`:
-storage is a plain ``(P,3)`` NumPy array ``points``
-plus ``hexes`` (N,8) integer connectivity in Nek point order, ``boundaries``
-(Nbc,2) = ``[element id (0-based), face (1-6)]`` and a parallel string array
-``boundary_tags`` (Nbc,) naming each tagged face.  A boundary is identified by a
-plain **tag** at build time; the tag is mapped to a Nek BC code / integer id
-only at export (see :mod:`nekmeshpy.io.export`).
+``HexMesh`` stores ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` connectivity in Nek
+order, a sparse tagged ``boundaries`` ``(Nbc,2)`` = ``[element id, face 1-6]`` with
+parallel ``boundary_tags``, and a dense per-hex ``element_tags``. Boundary tags map
+to Nek BC codes only at export.
 
-It also carries a dense per-hex ``element_tags`` ``(N,)`` (``""`` = untagged) --
-the top of the region/material tag ladder: a
-:class:`~nekmeshpy.linemesh.LineMesh`'s per-line ``element_tags`` ride
-up through :meth:`~nekmeshpy.quadmesh.QuadMesh.extrude` onto the section
-quads, and thence through :meth:`extrude` / :meth:`loft` onto every hex in that
-quad's column.  Element tags have **no export path** yet (they never touch the
-``.re2`` / ``.rea`` / ``.vtk`` bytes).
-
-It is **not** built incrementally.  A mesh is constructed complete, either from
-arrays (``HexMesh(points, hexes, boundaries)``) or through one of the factory
-classmethods, named after the gmsh/CAD operations they mirror:
-
-* :meth:`loft` -- recombine a stack of conformal
-  :class:`~nekmeshpy.quadmesh.QuadMesh` cross-section profiles into a hex
-  block (CAD *loft* through profiles).  Shared-point *by construction*: the
-  profiles are conformal, so connectivity is index arithmetic -- no coordinate weld.
-* :meth:`extrude` -- translate a single ``QuadMesh`` section along a straight axis
-  into a hex block (gmsh ``Extrude`` + ``Layers`` + ``Recombine``); the straight
-  special case of :meth:`loft`.
-* :meth:`merge` -- stitch several hex blocks into one, coordinate-welding
-  coincident seam points in a single explicit pass.
-* :meth:`from_grid` -- a structured ``(ni+1,nj+1,nk+1)`` point grid to hexes.
-
-The topology is fixed at construction; :meth:`weld` exposes the shared-point view
-``(points, hexes, n_points)`` and its coordinates may still be repositioned in
-place (interior repositioning, smoothing).  Everything that operates *on* a
-finished mesh lives in dedicated modules taking the mesh as first argument:
-:mod:`nekmeshpy.quadmesh.smoothing`,
-:mod:`nekmeshpy.hexmesh.smoothing`,
-:mod:`nekmeshpy.hexmesh.quality`, :mod:`nekmeshpy.io.export`,
-:mod:`nekmeshpy.io.viz`.
+It is built complete, not incrementally: from arrays or via the factory
+classmethods ``loft`` / ``extrude`` / ``annulus`` / ``merge`` / ``from_grid``. The
+topology is fixed at construction, but coordinates may be repositioned in place.
 """
 
 from __future__ import annotations
@@ -53,7 +21,7 @@ from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray, StrArr
 from ..model.fields import validate_layers
 from ..quadmesh import NO_BOUNDARY, QuadMesh
 
-# default sweep axis / origin for extrude (module-level singletons; read-only)
+# default sweep axis / origin for extrude
 _Z_AXIS = np.array([0.0, 0.0, 1.0])
 _ORIGIN = np.array([0.0, 0.0, 0.0])
 
@@ -68,14 +36,10 @@ _GRID_SIDES = {
 class HexMesh:
     """An all-hexahedral volume mesh in shared-point form.
 
-    Stores ``points`` ``(P,3)`` and ``hexes`` ``(N,8)`` integer connectivity (Nek
-    point order), a sparse tagged-boundary list ``boundaries`` ``(Nbc,2)`` =
-    ``[element id, face 1-6]`` with a parallel ``boundary_tags``, and a dense
-    per-hex ``element_tags``.  It is **immutable by construction**: build it with a
-    factory (:meth:`extrude` / :meth:`loft` / :meth:`annulus` / :meth:`merge` /
-    :meth:`from_grid`) or the array constructor; coordinates may still be
-    repositioned in place (smoothing) but the topology is fixed.  See
-    :mod:`nekmeshpy.io.export` for writing ``.re2`` / ``.vtk`` / meshio output."""
+    Stores ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` connectivity (Nek order), a
+    sparse tagged ``boundaries`` with parallel ``boundary_tags``, and a dense
+    per-hex ``element_tags``. Immutable topology; build via a factory or the array
+    constructor."""
 
     # Nek face -> the 4 corner point positions (0-based); row f is face f+1.
     FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
@@ -89,13 +53,9 @@ class HexMesh:
         boundary_tags: StrArray | Sequence[str] | None = None,
         element_tags: StrArray | Sequence[str] | None = None,
     ) -> None:
-        """Construct from a shared-point representation: ``points`` ``(P,3)``,
-        ``hexes`` ``(N,8)`` indices (Nek order), optional ``boundaries``
-        ``(Nbc,2)`` = ``[elem, face]`` with a parallel ``boundary_tags``
-        ``(Nbc,)`` naming each tagged face, and an optional dense ``element_tags``
-        ``(N,)`` (``""`` = untagged; length must equal ``len(hexes)``).  Use the
-        :meth:`extrude` / :meth:`merge` / :meth:`from_grid` factories for the usual
-        build paths."""
+        """Construct from ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` (Nek order),
+        optional ``boundaries`` with parallel ``boundary_tags``, and an optional
+        dense ``element_tags``."""
         self.points = np.asarray(points, dtype=float).reshape(-1, 3)
         self.hexes = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
         self.boundaries = (np.zeros((0, 2), np.int64) if boundaries is None
@@ -132,9 +92,7 @@ class HexMesh:
 
     @property
     def boundary_group_tags(self) -> list[str]:
-        """Sorted unique tags of the tagged boundary faces (the physical groups
-        present on this mesh).  A Nek BC code / integer id is assigned to each
-        only at export -- see :mod:`nekmeshpy.io.export`."""
+        """Sorted unique tags of the tagged boundary faces."""
         return sorted(set(self.boundary_tags.tolist()))
 
     @property
@@ -144,24 +102,20 @@ class HexMesh:
 
     # -- quality ---------------------------------------------------------
     def scaled_jacobian(self) -> FloatArray:
-        """Per-hex minimum corner scaled Jacobian ``(n_hexes,)`` (see
-        :func:`nekmeshpy.hexmesh.quality.scaled_jacobian`)."""
+        """Per-hex minimum corner scaled Jacobian ``(n_hexes,)``."""
         from . import quality
         return quality.scaled_jacobian(self.points, self.hexes)
 
     def quality_summary(self) -> dict[str, Any]:
-        """Aggregate scaled-Jacobian statistics (see
-        :func:`nekmeshpy.hexmesh.quality.summary`)."""
+        """Aggregate scaled-Jacobian statistics."""
         from . import quality
         return quality.summary(self.points, self.hexes)
 
     # -- orientation -----------------------------------------------------
     @staticmethod
     def _cap_tags(cap: str | Sequence[str] | StrArray, M: int) -> list[str]:
-        """Normalize a cap tag to one tag per section quad (length ``M``).  A scalar
-        ``str`` tags the whole cap (``""`` = untagged everywhere); an array-like is a
-        per-quad tag (``""`` entries stay untagged), used by :meth:`annulus` to tag a
-        cap from the section's per-quad ``element_tags``."""
+        """Normalize a cap tag to one tag per section quad (length ``M``): a scalar
+        ``str`` tags the whole cap, an array-like is per-quad."""
         if isinstance(cap, str):
             return [cap] * M
         arr = np.asarray(cap, dtype=np.str_).reshape(-1)
@@ -193,29 +147,14 @@ class HexMesh:
         last_tag: str | Sequence[str] | StrArray = "",
     ) -> HexMesh:
         """Sweep a single quad ``section`` a distance ``length`` along ``axis`` into
-        a hex block (gmsh ``Extrude`` + ``Layers`` + ``Recombine``).
+        a hex block.
 
-        The ``section`` is taken as a real plane in 3-D and translated **rigidly**
-        along ``axis`` -- its own placement and orientation are preserved, so build
-        the section in the plane you want swept (an xy section sweeps along ``z``;
-        for a ``y`` sweep, author the section in xz).  ``origin`` shifts the whole
-        block by a constant offset.
-
-        ``layers`` are the normalized copy-plane positions along ``axis`` as
-        fractions of ``length`` -- strictly increasing values in ``[0, 1]`` with the
-        last ``1`` (the far cap).  Unlike the O-grid ``radial``, the initial position
-        is *explicit*: ``layers[0]`` is the near cap -- ``0`` for a full sweep, or
-        e.g. ``0.5`` to sweep only the far half of ``length`` -- so
-        ``layers.size - 1`` hex layers span ``layers[0]..1``.  Pass
-        ``uniform_spacing(k)`` for uniform layers, ``geometric_spacing(k, ratio)``
-        for a geometric grading, or ``numpy.linspace(a, 1, k + 1)`` to start at
-        ``a``.  ``first_tag`` / ``last_tag`` name the inlet/outlet caps; the swept
-        side faces are named by the section's own ``boundary_tags`` and every hex
-        inherits the section quad's ``element_tags`` (see :meth:`loft`).  This is the
-        straight special case of :meth:`loft` -- a pure translation of the given
-        profile; for a curved centreline or otherwise
-        non-uniform profiles, position the profiles yourself and call :meth:`loft`.
-        """
+        The section is translated rigidly along ``axis`` (its placement is
+        preserved); ``origin`` shifts the whole block. ``layers`` are the normalized
+        copy-plane positions in ``[0, 1]``, strictly increasing, last ``1``;
+        ``layers[0]`` is the near cap and ``layers.size - 1`` hex layers span it to
+        ``1``. ``first_tag`` / ``last_tag`` name the caps. The straight special case
+        of ``loft``."""
         base = np.asarray(section.points, dtype=float).reshape(-1, 3) \
             + np.asarray(origin, dtype=float)
         axis_u: Vec3 = np.asarray(axis, dtype=float)
@@ -236,37 +175,19 @@ class HexMesh:
         first_tag: str | Sequence[str] | StrArray = "",
         last_tag: str | Sequence[str] | StrArray = "",
     ) -> HexMesh:
-        """Loft a stack of conformal quad cross-section profiles into a hex block
-        (CAD *loft* through profiles; the general primitive behind :meth:`extrude`).
+        """Loft a stack of conformal quad profiles into a hex block (the general
+        primitive behind ``extrude``).
 
-        ``slices`` is ``nz+1`` :class:`~nekmeshpy.quadmesh.QuadMesh`
-        profiles sharing the same quad connectivity, ``boundary_tags``, and
-        ``element_tags``; consecutive profiles form ``nz`` hex layers.  The first
-        profile's bottom cap (face 5) is named ``first_tag``, the last profile's top
-        cap (face 6) ``last_tag`` -- each a scalar ``str`` tagging the whole cap, or
-        a per-quad array (one tag per section quad, ``""`` = untagged) so a cap can be
-        tagged from the section's own ``element_tags`` (see :meth:`annulus`).  Each
-        side face is named after its section edge
-        via the section's ``boundary_tags`` (built at section time -- e.g.
-        :meth:`~nekmeshpy.quadmesh.QuadMesh.structured` ``boundary_tags=`` or
-        :meth:`~nekmeshpy.quadmesh.QuadMesh.ogrid` ``wall_tag=``).  An
-        unnamed edge and the ``NO_BOUNDARY``
-        sentinel are skipped, so a face can stay untagged (e.g. one that will be
-        welded by :meth:`merge`).  Every hex in a quad's column inherits that quad's
-        dense ``element_tags``.
-
-        To tag an *interior* plane (e.g. a flux-measurement plane), loft the
-        two segments either side of it separately -- with the plane as a cap of
-        one of them -- and :meth:`merge`; the named cap then becomes the shared
-        interior face.
-
-        Points are shared by construction (index arithmetic over the conformal
-        profile grid) -- no coordinate welding.
-        """
+        ``slices`` is ``nz+1`` profiles sharing the same quad connectivity,
+        ``boundary_tags``, and ``element_tags``; consecutive profiles form ``nz`` hex
+        layers. ``first_tag`` names the first bottom cap (face 5), ``last_tag`` the
+        last top cap (face 6) -- each a scalar or a per-quad array. Side faces are
+        named from the section's ``boundary_tags`` (unnamed or ``NO_BOUNDARY`` edges
+        stay untagged), and every hex inherits its quad's ``element_tags``. Points
+        are shared by construction."""
         slices = list(slices)
         quads = np.asarray(slices[0].quads, dtype=np.int64).reshape(-1, 4)
-        # section (quad, side) -> name; each swept side face inherits its section
-        # edge (side s spans QuadMesh.EDGE_POINTS[s-1]).
+        # section (quad, side) -> name; each swept side face inherits its section edge
         sec_bnd = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
         sec_tags = slices[0].boundary_tags
         side_name: dict[tuple[int, int], str] = {
@@ -281,11 +202,8 @@ class HexMesh:
         nn = S.shape[1]
         points = S.reshape((nz + 1) * nn, 3)                 # global id = i*nn + v
 
-        # A consistently-wound section has one handedness, so decide it once from
-        # the first layer and flip the whole quad template if the stack is
-        # left-handed -- instead of testing every hex.  A mixed section (some
-        # quads wound the other way) would silently produce inverted elements, so
-        # it is rejected here rather than papered over.
+        # Decide handedness once from the first layer and flip the quad template if
+        # left-handed; reject a mixed-winding section rather than invert elements.
         signs = np.array([cls._signed_vol(np.vstack([S[0, quads[q], :], S[1, quads[q], :]]))
                           for q in range(M)]) if nz else np.zeros(0)
         if nz and not (np.all(signs > 0) or np.all(signs < 0)):
@@ -295,8 +213,7 @@ class HexMesh:
         flip = bool(nz and signs[0] < 0)
         qw = quads[:, [0, 3, 2, 1]] if flip else quads
 
-        # caps: scalar tags the whole cap, an array tags per section quad q (the
-        # flip only reorders a quad's 4 corners, so caps stay faces 5/6 by q).
+        # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners)
         first_caps = cls._cap_tags(first_tag, M)
         last_caps = cls._cap_tags(last_tag, M)
 
@@ -311,9 +228,7 @@ class HexMesh:
                 hexes[e] = np.concatenate([i * nn + v, (i + 1) * nn + v])
                 etags[e] = qtag[q] if qtag.size else ""
                 if tag_sides:
-                    # section side s -> hex side face: s when the quad kept its
-                    # winding, 5-s when it was flipped (the flip reverses the edge
-                    # cycle).  An unnamed edge / NO_BOUNDARY / "" stays untagged.
+                    # section side s -> hex face s, or 5-s when the quad was flipped
                     for s in (1, 2, 3, 4):
                         nm = side_name.get((q, s))
                         if nm is None or nm == NO_BOUNDARY:
@@ -339,41 +254,19 @@ class HexMesh:
         inner_tag: str = "",
         outer_tag: str = "",
     ) -> HexMesh:
-        """Shell O-grid filling the region *between* an inner and an outer closed
-        quad surface -- e.g. a spherical body inside a cubic far-field box for a
-        flow-past-sphere domain (the sibling of
-        :meth:`~nekmeshpy.quadmesh.QuadMesh.annulus` one dimension up, and
-        the surface-to-surface general case behind a spherical :meth:`extrude`).
+        """Shell O-grid filling the region between an inner and an outer closed quad
+        surface (e.g. a sphere inside a cubic far-field box).
 
-        The two surfaces are paired **by index**: they must carry the same number of
-        points ``P`` and identical ``quads`` connectivity, and point ``p`` of
-        ``inner`` is joined radially to point ``p`` of ``outer`` (build ``inner`` from
-        ``outer``'s points -- or vice versa -- so the pairing holds; see
-        ``examples/flow_past_sphere.py``, where the sphere surface is ``R *
-        normalize(cube surface points)`` on the same connectivity).
+        The two surfaces are paired by index: equal point count ``P`` and identical
+        ``quads`` connectivity, with point ``p`` of ``inner`` joined radially to point
+        ``p`` of ``outer``. ``radial`` are the shell positions in ``[0, 1]``, strictly
+        increasing; ``radial[0]`` is the inner shell and the last is ``1``, so
+        ``radial.size - 1`` shell layers blend inner -> outer directly in 3-D.
 
-        ``radial`` are the shell positions with the **initial position explicit**
-        (same convention as :meth:`extrude`'s ``layers`` and
-        :meth:`~nekmeshpy.quadmesh.QuadMesh.annulus`): strictly increasing
-        values in ``[0, 1]`` -- ``radial[0]`` is the inner shell (``0`` flush with the
-        inner body) and the last is ``1`` (the outer surface) -- so
-        ``radial.size - 1`` shell layers blend ``radial[0]`` -> outer.  Pass
-        ``geometric_spacing(k, ratio)`` to cluster shells toward the inner body for a
-        boundary layer.  The blend runs directly in 3-D (no projection), so a curvy /
-        non-planar pair of surfaces keeps its true shape.
-
-        **Wall faces are tagged from the surfaces' per-quad ``element_tags``**, not
-        their ``boundary_tags`` -- a closed surface has no free boundary edges.  The
-        inner (radial-in) cap of every shell column is tagged from
-        ``inner.element_tags[q]`` and the outer (radial-out) cap from
-        ``outer.element_tags[q]`` (``""`` stays untagged), so a cube far-field whose
-        six faces carry ``inlet`` / ``outlet`` / ``top`` / ... element tags splits the
-        outer wall into those groups automatically.  A non-empty scalar ``inner_tag``
-        / ``outer_tag`` is the **override** -- it replaces the surface's per-quad tags
-        and names the whole inner / outer wall.  An **open**
-        surface's tagged ``boundaries`` still ride onto the swept lateral faces via
-        :meth:`loft` (empty for the closed case here).  The hexes themselves are left
-        region-untagged (the surface ``element_tags`` are wall designators)."""
+        Wall faces are tagged from the surfaces' per-quad ``element_tags`` (a closed
+        surface has no free boundary edges): inner caps face 5, outer caps face 6. A
+        non-empty scalar ``inner_tag`` / ``outer_tag`` overrides and names the whole
+        wall."""
         radial = validate_layers(radial, "annulus radial")
         A: FloatArray = np.asarray(inner.points, dtype=float).reshape(-1, 3)
         B: FloatArray = np.asarray(outer.points, dtype=float).reshape(-1, 3)
@@ -389,17 +282,10 @@ class HexMesh:
         if float(np.min(np.linalg.norm(B - A, axis=1))) <= 0.0:
             raise ValueError("annulus: inner and outer surfaces touch or cross")
 
-        # shell k is the straight-chord blend inner(radial[0]) -> outer(radial[-1]=1),
-        # sharing inner's quad connectivity; consecutive shells loft into hex layers.
-        # No element_tags on the shells -> hexes stay region-untagged; inner's tagged
-        # boundaries ride onto the lateral faces (empty for a closed surface).
-        shells = [QuadMesh((1.0 - t) * A + t * B, inner.quads,
-                           boundaries=inner.boundaries,
-                           boundary_tags=inner.boundary_tags)
-                  for t in radial]
-        # wall tags come from the lowest level -- the surfaces' per-quad element_tags,
-        # consumed as the inner (face 5) / outer (face 6) caps.  A non-empty scalar
-        # inner_tag / outer_tag OVERRIDES that and names the whole wall.
+        # shell t is the straight-chord blend inner -> outer sharing inner's quads;
+        # consecutive shells loft into hex layers.
+        shells = QuadMesh.blend(inner, outer, radial)
+        # wall tags from the surfaces' per-quad element_tags; scalar arg overrides
         inner_caps: str | StrArray = (
             inner_tag if inner_tag
             else (inner.element_tags if inner.element_group_tags else ""))
@@ -415,14 +301,12 @@ class HexMesh:
         *,
         tol: float | None = None,
     ) -> HexMesh:
-        """Stitch several hex blocks into one mesh, coordinate-welding coincident
-        seam points in a single pass.  ``tol`` is the absolute coincidence
-        distance (default ``1e-7`` x the merged bounding-box extent).
+        """Stitch several hex blocks into one, coordinate-welding coincident seam
+        points in a single pass.  ``tol`` is the absolute coincidence distance
+        (default ``1e-7`` x the merged bounding-box extent).
 
-        Only points on each block's **domain boundary** (faces carried by a single
-        hex) are weld candidates -- interior points are exclusive to their block
-        and always kept distinct, so a stray interior coincidence can never
-        silently collapse the mesh."""
+        Only points on each block's domain boundary (faces carried by a single hex)
+        are weld candidates; interior points are always kept distinct."""
         meshes = list(meshes)
         pos = [m.points for m in meshes]
         counts = [p.shape[0] for p in pos]
@@ -472,12 +356,34 @@ class HexMesh:
                  else np.empty(0, dtype=np.str_))
         return cls(points, hexes, *cls._order_bnd(bnd, names), element_tags=etags)
 
+    @classmethod
+    def blend(cls, a: HexMesh, b: HexMesh,
+              fractions: FloatArray | Sequence[float]) -> list[HexMesh]:
+        """Linearly morph between two conformal blocks ``a`` and ``b`` (identical
+        ``hexes``, equal point count), one block per fraction ``t`` with points
+        ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
+        result carries ``a``'s ``hexes``, ``boundaries`` and ``boundary_tags``
+        (positional BC markers follow the morph); per-hex ``element_tags`` are left
+        for the caller to assign.  The 3-D sibling of
+        :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>`."""
+        A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
+        B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
+        if A.shape[0] != B.shape[0]:
+            raise ValueError(
+                "blend: blocks must have equal point counts (got %d, %d); build one "
+                "from the other's points so they pair by index"
+                % (A.shape[0], B.shape[0]))
+        if not np.array_equal(a.hexes, b.hexes):
+            raise ValueError(
+                "blend: blocks must share identical connectivity (paired by index)")
+        return [cls((1.0 - t) * A + t * B, a.hexes, a.boundaries, a.boundary_tags)
+                for t in np.asarray(fractions, dtype=float).ravel()]
+
     # -- boundary queries (topological domain surface) ------------------
     @staticmethod
     def _boundary_mask(hexes: IntArray) -> tuple[IntArray, BoolArray]:
         """``(faces, is_boundary)``: every hex quad face ``(6N,4)`` in Nek order,
-        element-major (row ``6e+f`` is element ``e``, local face ``f``), and a
-        boolean mask of those carried by a single hex (the domain boundary)."""
+        element-major (row ``6e+f``), and a mask of those on the domain boundary."""
         HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
         faces: IntArray = HC[:, HexMesh.FACE_POINTS].reshape(-1, 4)
         keys = np.sort(faces, axis=1)
@@ -492,12 +398,9 @@ class HexMesh:
         return np.unique(bf) if bf.size else np.zeros(0, dtype=np.int64)
 
     def boundary_faces(self) -> IntArray:
-        """``(K,2)`` array of ``[element id, local face (1-6)]`` for every face on
-        the **topological** domain boundary (a quad carried by a single hex).
-
-        Distinct from the *tagged* ``boundaries``, which may also carry
-        interior planes (e.g. the bifurcation flux caps).  A face's four point ids
-        are ``self.hexes[e, self.FACE_POINTS[f - 1]]``."""
+        """``(K,2)`` of ``[element id, local face (1-6)]`` for every face on the
+        topological domain boundary (a quad carried by a single hex). Distinct from
+        the tagged ``boundaries``, which may also carry interior planes."""
         _, mask = self._boundary_mask(self.hexes)
         rows = np.flatnonzero(mask)
         return np.column_stack([rows // 6, rows % 6 + 1]).astype(np.int64)
@@ -520,12 +423,9 @@ class HexMesh:
     ) -> HexMesh:
         """Build hexes from a structured point grid ``P`` ``(ni+1,nj+1,nk+1,3)``.
         ``face_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
-        ``z_min``/``z_max``) to boundary **names** on the six outer sides.  A side
-        left out (or mapped to ``NO_BOUNDARY``)
-        emits no boundary row -- use that for a side that will be welded away by
-        :meth:`merge`, so merge stays a plain concatenate with no stale tag.
-        ``element_tag`` (default untagged) is written to every hex's dense
-        ``element_tags``."""
+        ``z_min``/``z_max``) to boundary names on the six outer sides; a side left out
+        or mapped to ``NO_BOUNDARY`` emits no boundary row. ``element_tag`` is written
+        to every hex's ``element_tags``."""
         P = np.asarray(P, dtype=float)
         ni1, nj1, nk1, _ = P.shape
         ni, nj, nk = ni1 - 1, nj1 - 1, nk1 - 1
@@ -562,9 +462,8 @@ class HexMesh:
         bnd: Sequence[Sequence[int]] | IntArray,
         names: Sequence[str] | StrArray,
     ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(element id, face)`` so the exported
-        block is independent of insertion order, applying the same permutation to
-        the parallel ``names`` array."""
+        """Stably order boundary rows by ``(element id, face)``, applying the same
+        permutation to the parallel ``names`` array."""
         b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
         nm: StrArray = np.asarray(names, dtype=np.str_).reshape(-1)
         if b.shape[0]:
@@ -575,8 +474,8 @@ class HexMesh:
 
     # -- shared-point view ------------------------------------------------
     def weld(self) -> tuple[PointArray, IntArray, int]:
-        """Shared-point view ``(points, hexes, n_points)``.  Returns the live
-        positions array, so mutating it in place repositions the mesh."""
+        """Shared-point view ``(points, hexes, n_points)``; the live positions array
+        can be mutated in place to reposition the mesh."""
         return self.points, self.hexes, self.n_points
 
     def classify_points(self, wall: str) -> tuple[BoolArray, BoolArray]:
@@ -599,29 +498,24 @@ class HexMesh:
 
     # -- topology / validity --------------------------------------------
     def topology_report(self) -> dict[str, Any]:
-        """Watertightness / connectivity report of the welded mesh (see
-        :func:`nekmeshpy.model.topology.hex_report`)."""
+        """Watertightness / connectivity report of the welded mesh."""
         from ..model import topology
         X, HC, _ = self.weld()
         return topology.hex_report(X, HC)
 
     def is_watertight(self) -> bool:
-        """``True`` if the mesh boundary is a closed, leak-tight 2-manifold and
-        the mesh is a single connected component.  Note this does *not* imply
-        conformity: a T-junction is watertight -- use :meth:`is_conforming`."""
+        """``True`` if the mesh boundary is a closed, leak-tight 2-manifold and the
+        mesh is a single connected component. Does not imply conformity."""
         rep = self.topology_report()
         return bool(rep["watertight"] and rep["n_components"] == 1)
 
     def is_conforming(self) -> bool:
-        """``True`` if the mesh has no hanging points (no non-conformal
-        T-junctions between coarse and fine elements)."""
+        """``True`` if the mesh has no hanging points (no T-junctions)."""
         return bool(self.topology_report()["conformal"])
 
     def report(self) -> str:
-        """One-call human-readable summary: element/point counts, scaled-Jacobian
-        quality, per-name tagged-face counts, and the topology report.  Uses the
-        mesh's own boundary tags -- no BC-code mapping needed (that is applied
-        only at export)."""
+        """Human-readable summary: element/point counts, scaled-Jacobian quality,
+        per-name tagged-face counts, and the topology report."""
         from ..model import topology
         from . import quality
         lines = ["%d hex elements, %d points" % (self.n_hexes, self.n_points)]

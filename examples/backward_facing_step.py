@@ -1,20 +1,13 @@
-"""Mesh the classic backward-facing step (external/internal expansion flow).
+"""Classic backward-facing step (expansion flow).
 
-A flat, gmsh-style script: edit the constants below and re-run.  The 2-D section is
-three structured rectangles -- the inlet channel ``[-L_UP,0] x [0,H]``, the
-downstream upper channel ``[0,L_DOWN] x [0,H]`` and the recirculation region below
-the step ``[0,L_DOWN] x [-STEP,0]`` -- welded with :meth:`nekmeshpy.QuadMesh.merge`
-(matching divisions on the shared edges) and swept along the span by
-:meth:`nekmeshpy.HexMesh.extrude`.
+The 2-D section is three structured rectangles -- inlet channel
+``[-L_UP,0] x [0,H]``, downstream channel ``[0,L_DOWN] x [0,H]``, recirculation
+region ``[0,L_DOWN] x [-STEP,0]`` -- welded with :meth:`QuadMesh.merge` and swept
+along the span by :meth:`HexMesh.extrude`.
 
-Boundaries are named **at the lowest level -- each rectangle tags its own edge
-lines**: the outer sides get ``inlet`` on the upstream inlet, ``outlet`` on the
-downstream ends, ``wall`` on the channel walls / step floor / vertical step face,
-while the shared internal edges are left untagged so :meth:`nekmeshpy.QuadMesh.merge`
-welds them away.  ``structured`` reads each side's uniform edge tag and the span sweep
-names the two end caps ``front`` / ``back`` at the hex level.
-
-Run with::
+Each rectangle tags its own outer edge lines (``inlet`` / ``outlet`` / ``wall``);
+shared internal edges stay untagged so ``merge`` welds them away. The span sweep
+names the end caps ``front`` / ``back``.
 
     PYTHONPATH=. python examples/backward_facing_step.py
 
@@ -25,7 +18,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -48,26 +41,15 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
 
 
 # -- build the L-shaped section from three structured rectangles --------------
-# each rectangle names only its true outer sides; shared edges are left unnamed so
-# the merge welds them into interior faces (edges = [bottom, right, top, left]).
+# QuadMesh.rectangle tags only the named outer sides; shared edges stay untagged
+# so merge welds them into interior faces.
 def rect(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int,
          side_tags: dict[str, str]) -> QuadMesh:
-    """A structured quad grid over the axis-aligned rectangle ``[x0,x1]x[y0,y1]``,
-    with the named outer sides tagged at the line level (edges = [bottom, right, top,
-    left]).  A side absent from ``side_tags`` stays untagged -- a shared edge the
-    merge welds away."""
-    c0, c1, c2, c3 = ((x0, y0, 0.0), (x1, y0, 0.0),
-                      (x1, y1, 0.0), (x0, y1, 0.0))
-    # structured uses the edges' own nodes (no resampling): sample each straight
-    # edge to the matching division count (uniform here).  Each edge tags itself at
-    # the line level ("" = untagged rides through resample), so structured names each
-    # side from its own edge -- no boundary_tags override.
-    corners = {"bottom": (c0, c1, nx), "right": (c1, c2, ny),
-               "top": (c2, c3, nx), "left": (c3, c0, ny)}
-    edges = [LineMesh.open([a, b], element_tags=[side_tags.get(side, "")]
-                          ).resample(np.linspace(0.0, 1.0, n + 1))
-             for side, (a, b, n) in corners.items()]
-    return QuadMesh.structured(edges)
+    """Structured quad grid over ``[x0,x1]x[y0,y1]`` with the named outer sides
+    (bottom/right/top/left) tagged; an absent side stays untagged."""
+    return QuadMesh.rectangle(
+        [(x0, y0, 0.0), (x1, y0, 0.0), (x1, y1, 0.0), (x0, y1, 0.0)],
+        nx, ny, side_tags=side_tags)
 
 
 section = QuadMesh.merge([
@@ -80,8 +62,7 @@ section = QuadMesh.merge([
 ])
 
 # -- sweep along the span, naming the end caps front/back --------------------
-# extrude rigidly translates the xy section along +z; the section's edge names
-# ride onto the swept side faces.
+# extrude translates the xy section along +z; edge names ride onto the side faces
 mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")

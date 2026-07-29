@@ -1,25 +1,9 @@
 """Cross-section smoothing strategies (free functions + registry).
 
-Smoothing repositions interior points **per cross-section** on a single O-grid
-:class:`~nekmeshpy.quadmesh.QuadMesh` before it is swept/extruded, so the
-strategies here take a ``QuadMesh`` (not an assembled ``HexMesh``).  A slice's
-point indices are already global, so no weld is needed; the fixed points are found
-generically as those on a quad edge belonging to a single quad (for a half-disk
-this is exactly the wall arc + the flat spine, so the two halves stay conformal).
-
-Each strategy is a callable ``fn(qm, **opts) -> qm`` registered under one or more
-names.  :func:`set_section_smoothing` looks the name up here, so new strategies can
-be added from user code without touching the meshers::
-
-    from nekmeshpy import register_section_smoothing
-
-    @register_section_smoothing("laplacian")
-    def _laplacian(qm, **opts):
-        ...
-        return qm
-
-The built-in elliptic strategies (``conduction`` / ``winslow``) are numerically
-identical to the original verbatim implementations.
+Each strategy repositions interior points on a single ``QuadMesh`` before it is
+swept, keeping the boundary (edges borne by a single quad) fixed.  Strategies are
+callables ``fn(qm, **opts) -> qm`` registered by name via
+``register_section_smoothing`` and looked up by ``set_section_smoothing``.
 """
 
 from __future__ import annotations
@@ -43,8 +27,8 @@ _QE_RING = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)
 
 
 def _section_edges(quads: IntArray) -> tuple[IntArray, IntArray]:
-    """``(edges (nE,2), counts (nE,))``: unique undirected quad edges of a
-    cross-section and how many quads each borders."""
+    """``(edges (nE,2), counts (nE,))``: unique undirected quad edges and how
+    many quads each borders."""
     Ei = quads[:, _QE_RING[:, 0]].ravel()
     Ej = quads[:, _QE_RING[:, 1]].ravel()
     pairs = np.sort(np.column_stack([Ei, Ej]), axis=1)
@@ -60,8 +44,7 @@ def _section_boundary(quads: IntArray, nu: int) -> BoolArray:
 
 
 def conduction_section(qm: QuadMesh) -> QuadMesh:
-    """Discrete-conduction map of one cross-section's interior, boundary
-    (wall + flat edge) held fixed.  Repositions ``qm.points`` in place."""
+    """Discrete-conduction map of the interior, boundary held fixed. In place."""
     X = qm.points
     nu = X.shape[0]
     edges, _ = _section_edges(qm.quads)
@@ -83,8 +66,8 @@ def conduction_section(qm: QuadMesh) -> QuadMesh:
 
 
 def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMesh:
-    """Winslow-type elliptic smoothing of one cross-section's interior
-    (floored, under-relaxed), boundary held fixed.  In place."""
+    """Winslow-type elliptic smoothing of the interior (floored, under-relaxed),
+    boundary held fixed. In place."""
     X = qm.points
     nu = X.shape[0]
     edges, _ = _section_edges(qm.quads)
@@ -115,8 +98,7 @@ SECTION_METHODS: dict[str, Callable[..., QuadMesh]] = {}
 
 
 def register_section_smoothing(*names: str) -> Callable[[F], F]:
-    """Decorator: register a section strategy ``fn(qm, **opts) -> qm`` under each
-    of ``names`` (case-insensitive)."""
+    """Decorator: register a strategy under each of ``names`` (case-insensitive)."""
     def deco(fn: F) -> F:
         for n in names:
             SECTION_METHODS[n.lower()] = fn
@@ -145,9 +127,8 @@ def _winslow(qm: QuadMesh, **opts: Any) -> QuadMesh:
 
 
 def set_section_smoothing(qm: QuadMesh, method: str | None, **opts: Any) -> QuadMesh:
-    """Reposition one O-grid cross-section's interior points in place via a
-    per-slice strategy registered here (built-ins: bilinear, conduction,
-    winslow).  Extra keywords are forwarded to the strategy."""
+    """Reposition a section's interior points in place via a registered strategy
+    (built-ins: bilinear, conduction, winslow).  Extra keywords are forwarded."""
     m = (method or "conduction").lower()
     fn = SECTION_METHODS.get(m)
     if fn is None:

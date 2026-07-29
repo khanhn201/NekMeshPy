@@ -1,11 +1,9 @@
-"""Constrained hex-mesh smoothing (free function on a :class:`~nekmeshpy.hexmesh.HexMesh`).
+"""Constrained hex-mesh smoothing.
 
-:func:`smooth` untangles and polishes the assembled hex mesh while keeping wall
-points on the triangulated ``surface`` and opening/cap points fixed.  It operates
-on the welded shared-point view (:meth:`~nekmeshpy.hexmesh.HexMesh.weld`) and is numerically
-identical to the original verbatim implementation (two stages: point-local
-untangle, then a back-tracked global Jacobi polish that never lowers the minimum
-scaled Jacobian).
+``smooth`` untangles and polishes the assembled hex mesh while keeping wall points
+on the triangulated ``surface`` and opening/cap points fixed. Two stages: a
+point-local untangle, then a back-tracked global Jacobi polish that never lowers
+the minimum scaled Jacobian.
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
-from ..trimesh import ops as trisurf
+from ..trimesh import ops
 from . import quality
 
 if TYPE_CHECKING:
@@ -38,12 +36,10 @@ def smooth(
     untangle_iters: int = 40,
     quality_floor: float = 0.2,
 ) -> HexMesh:
-    """Constrained untangle + polish, keeping the wall on ``surface`` (a
-    TriMesh) and opening/cap points fixed.  ``smooth_iters`` global polish sweeps
-    (``<=0`` returns the mesh unchanged) after up to ``untangle_iters`` point-local
-    untangle sweeps that stop once every element clears ``quality_floor``;
-    ``wall`` is the boundary **name** whose points ride on ``surface`` (projected
-    when ``project_to_stl``)."""
+    """Constrained untangle + polish, keeping the ``wall``-named points on
+    ``surface`` and opening/cap points fixed. Runs up to ``untangle_iters``
+    point-local sweeps (stopping once every element clears ``quality_floor``), then
+    ``smooth_iters`` global polish sweeps (``<=0`` returns the mesh unchanged)."""
     if smooth_iters <= 0:
         return mesh
     lam0 = smooth_lambda or 0.5
@@ -90,7 +86,7 @@ def smooth(
             for fr in (1.0, 0.7, 0.4, 0.15):
                 cand = (1 - fr) * X[v, :] + fr * tgt
                 if is_wall[v]:
-                    cand = trisurf.project_to_surface(surface, cand[None, :], Otri[wtri[v], :])[0]
+                    cand = ops.project_to_surface(surface, cand[None, :], Otri[wtri[v], :])[0]
                 xo = X[v, :].copy()
                 X[v, :] = cand
                 q = float(np.min(quality.scaled_jacobian(X, HC[els, :])))
@@ -115,7 +111,7 @@ def smooth(
             Xn = X.copy()
             Xn[free, :] = (1 - lam) * X[free, :] + lam * target[free, :]
             if proj and np.any(is_wall):
-                Xn[is_wall, :] = trisurf.project_to_surface(surface, Xn[is_wall, :])
+                Xn[is_wall, :] = ops.project_to_surface(surface, Xn[is_wall, :])
             mnn = float(np.min(quality.scaled_jacobian(Xn, HC)))
             if mnn >= mn - 1e-9:
                 X = Xn
@@ -127,7 +123,7 @@ def smooth(
             break
 
     if proj and np.any(is_wall):
-        X[is_wall, :] = trisurf.project_to_surface(surface, X[is_wall, :])
+        X[is_wall, :] = ops.project_to_surface(surface, X[is_wall, :])
 
     sj = quality.scaled_jacobian(X, HC)
     _log.info("  quality after : min scaled Jac=%.4f  mean=%.4f", np.min(sj), np.mean(sj))

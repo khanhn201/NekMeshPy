@@ -1,7 +1,7 @@
 # `quadmesh`
 
-The quad cross-section container, its section factories, the per-section smoothing
-registry, and per-quad quality metrics.
+The quad cross-section container, its factories, the smoothing registry, and
+per-quad quality metrics.
 
 ## `quadmesh`
 

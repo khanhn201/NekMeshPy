@@ -1,16 +1,10 @@
-"""Quad-element quality metrics, decoupled from :class:`~nekmeshpy.quadmesh.QuadMesh`.
+"""Quad-element quality metrics.
 
-The 2-D sibling of :mod:`nekmeshpy.hexmesh.quality`.  All metrics operate
-on a shared-point representation ``(points, quads)`` where ``points`` is ``(P,3)``
-and ``quads`` is ``(N,4)`` in CCW corner order, so they work on a section
-``QuadMesh`` or any welded quad surface.
-
-:func:`scaled_jacobian` mirrors the hex version one dimension down: the per-corner
-scaled Jacobian is the two-edge cross product normalized by the edge lengths
-(``1`` = a perfect right-angle corner, ``<= 0`` = degenerate / folded).  Quads
-embedded in 3-D are handled honestly -- the corner cross products are signed
-against each quad's own mean normal, so a folded corner reads negative even on a
-non-planar (curved-section) quad.
+Free functions on a shared-point representation ``(points, quads)`` with ``points``
+``(P,3)`` and ``quads`` ``(N,4)`` in CCW corner order.  The per-corner scaled
+Jacobian is the two-edge cross product normalized by the edge lengths (``1`` =
+perfect right angle, ``<= 0`` = degenerate / folded), signed against each quad's
+mean normal so folded corners read negative on non-planar quads.
 """
 
 from __future__ import annotations

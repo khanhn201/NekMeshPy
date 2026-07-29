@@ -1,9 +1,4 @@
-"""Matplotlib visualisation of a :class:`~nekmeshpy.hexmesh.HexMesh` (free function).
-
-:func:`plot` draws the tagged boundary of an assembled bifurcation hex mesh
-(walls grey, the three outlets coloured).  Kept out of the container so
-:class:`~nekmeshpy.hexmesh.HexMesh` carries no plotting dependency.
-"""
+"""Matplotlib visualisation of a ``HexMesh`` (free function)."""
 
 from __future__ import annotations
 
@@ -25,9 +20,7 @@ def plot(
     grid: bool = True,
     save_path: str | None = None,
 ) -> HexMesh:
-    """Draw the named boundary faces (walls grey, the three outlets coloured).
-    ``names`` selects which boundary names to draw, in colour order.  The 3D axis
-    panes are transparent unless ``panes=True``."""
+    """Draw the named boundary faces in colour order; panes transparent unless ``panes=True``."""
     import matplotlib
     try:
         import matplotlib.pyplot as plt

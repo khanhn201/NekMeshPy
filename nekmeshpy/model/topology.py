@@ -1,23 +1,8 @@
 """Mesh topology / validity checks, decoupled from the mesh containers.
 
-Two families of free functions, both operating on the shared-point representation
-so they work on a welded :class:`~nekmeshpy.hexmesh.HexMesh` or a
-:class:`~nekmeshpy.trimesh.TriMesh` (mirroring :mod:`nekmeshpy.hexmesh.quality`):
-
-* :func:`hex_report` / :func:`is_watertight` -- all-hex volume meshes.  A hex
-  mesh is *watertight* when its boundary (every quad face carried by a single
-  hex) is a closed 2-manifold: each boundary-face edge is shared by exactly two
-  boundary faces, and no face is shared by three or more hexes.  A crack or a
-  hole breaks that.  Separately, :func:`hex_report` flags *non-conformal*
-  T-junctions (a hanging point sitting inside a coarse face's edge): those leave
-  the boundary closed -- so they are watertight -- but invalid for a conforming
-  hex solver, and are reported as ``conformal=False``.
-* :func:`surface_report` / :func:`is_closed` -- triangle surface meshes.  A
-  surface is *closed* when every edge is shared by exactly two triangles (no
-  boundary edges, no non-manifold edges).
-
-Both reports also count connected components, so a mesh that silently splits into
-disconnected pieces is caught.
+Free functions on the shared-point representation: ``hex_report`` /
+``is_watertight`` for all-hex volume meshes, ``surface_report`` / ``is_closed``
+for triangle surface meshes.  Both reports also count connected components.
 """
 
 from __future__ import annotations
@@ -28,16 +13,14 @@ import numpy as np
 
 from .._typing import IntArray, PointArray
 
-# Nek face -> the 4 corner point positions (0-based), cyclic order (matches
-# HexMesh.FACE_POINTS; kept local so this module stays independent of geometry/).
+# Nek face -> the 4 corner point positions (0-based), cyclic order.
 _FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
                         [3, 0, 4, 7], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int64)
 
 
 # -- shared helpers -----------------------------------------------------
 def _count_components(n: int, edges: IntArray) -> int:
-    """Number of connected components of an ``n``-point graph whose undirected
-    edges are the rows of ``edges`` (an ``(E,2)`` int array)."""
+    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges."""
     parent: IntArray = np.arange(n, dtype=np.int64)
 
     def find(x: int) -> int:
@@ -57,10 +40,8 @@ def _count_components(n: int, edges: IntArray) -> int:
 
 def _adjacency_edges(inverse: IntArray, counts: IntArray,
                      owner: IntArray) -> IntArray:
-    """Cell-adjacency edges from a face/edge incidence.  ``inverse`` maps each
-    incidence row to its unique-facet id, ``counts`` is the per-facet
-    multiplicity, and ``owner`` maps each incidence row to its owning cell.
-    Facets shared by exactly two cells contribute one cell-cell edge."""
+    """Cell-adjacency edges from a face/edge incidence: facets shared by exactly
+    two cells contribute one cell-cell edge."""
     order = np.argsort(inverse, kind="stable")
     inv_s = inverse[order]
     owner_s = owner[order]
@@ -73,15 +54,8 @@ def _adjacency_edges(inverse: IntArray, counts: IntArray,
 
 def _count_hanging_points(points: PointArray, edges: IntArray,
                          candidates: IntArray, rtol: float = 1e-7) -> int:
-    """Number of ``candidates`` points that lie strictly inside an ``edges`` edge
-    without being one of its endpoints -- the geometric signature of a
-    non-conforming (T-junction / hanging-point) interface.
-
-    ``edges`` are point-index pairs; ``candidates`` are point indices to test.
-    A conforming mesh has none (every point is an edge endpoint).  Detection is
-    on edges only, which is the reliable signature of standard 1->N refinement
-    (a subdivided face always plants points on the coarse edges); a point interior
-    to a coarse *face* but on no edge is not counted.
+    """Number of ``candidates`` points lying strictly inside an ``edges`` edge
+    (not an endpoint) -- the signature of a non-conforming T-junction interface.
     """
     X = np.asarray(points, dtype=float)
     E = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
@@ -117,17 +91,9 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
 def hex_report(points: PointArray, hexes: IntArray) -> dict[str, Any]:
     """Topology / watertightness report for an all-hex mesh.
 
-    ``points`` is ``(P,3)`` and ``hexes`` is ``(N,8)`` in Nek corner order
-    (a welded :class:`~nekmeshpy.hexmesh.HexMesh` view).  Returns a dict with the facet inventory
-    (``n_faces`` unique quad faces, split into ``n_boundary_faces`` /
-    ``n_internal_faces`` / ``n_nonmanifold_faces``), the number of ``n_open_edges``
-    on the boundary surface (edges not shared by exactly two boundary faces),
-    ``n_hanging_points`` (points sitting inside a boundary edge -- a non-conforming
-    T-junction), ``n_components`` (hexes joined through shared internal faces),
-    and two verdicts: ``watertight`` (closed, leak-tight boundary) and
-    ``conformal`` (no hanging points).  A T-junction is typically *watertight but
-    not conformal* -- its faces still pair into a closed boundary, so the
-    hanging-point test is what catches it.
+    ``points`` is ``(P,3)``, ``hexes`` is ``(N,8)`` in Nek corner order.  Returns
+    a dict with the facet inventory, open-edge and hanging-point counts, component
+    count, and the ``watertight`` / ``conformal`` verdicts.
     """
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
@@ -154,8 +120,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> dict[str, Any]:
         ube, bec = be.reshape(0, 2), np.zeros(0, np.int64)
     n_open_edges = int(np.sum(bec != 2))
 
-    # hanging points: a boundary point interior to *any* boundary edge (tested on
-    # all boundary edges, not just open ones -- a T-junction leaves no open edge)
+    # hanging points: a boundary point interior to any boundary edge
     bpoints = np.unique(bfaces) if bfaces.size else np.zeros(0, np.int64)
     n_hanging = _count_hanging_points(X, ube, bpoints)
 
@@ -179,8 +144,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> dict[str, Any]:
 
 
 def is_watertight(points: PointArray, hexes: IntArray) -> bool:
-    """``True`` if the all-hex mesh's boundary is a closed 2-manifold with no
-    non-conformal faces (see :func:`hex_report`)."""
+    """``True`` if the all-hex mesh's boundary is a closed 2-manifold."""
     return bool(hex_report(points, hexes)["watertight"])
 
 
@@ -188,11 +152,8 @@ def is_watertight(points: PointArray, hexes: IntArray) -> bool:
 def surface_report(points: PointArray, tris: IntArray) -> dict[str, Any]:
     """Topology report for a triangle surface mesh.
 
-    ``points`` is ``(nv,3)`` and ``tris`` is ``(nt,3)``.  Returns a dict with the
-    edge inventory (``n_edges`` unique edges, split into ``n_boundary_edges`` /
-    ``n_interior_edges`` / ``n_nonmanifold_edges``), ``n_boundary_loops``,
-    ``n_components`` (triangles joined through shared edges), and the ``closed``
-    verdict (no boundary and no non-manifold edges).
+    ``points`` is ``(nv,3)``, ``tris`` is ``(nt,3)``.  Returns a dict with the edge
+    inventory, boundary-loop and component counts, and the ``closed`` verdict.
     """
     T = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
     M = T.shape[0]
@@ -235,14 +196,13 @@ def surface_report(points: PointArray, tris: IntArray) -> dict[str, Any]:
 
 
 def is_closed(points: PointArray, tris: IntArray) -> bool:
-    """``True`` if the surface is a closed 2-manifold (see :func:`surface_report`)."""
+    """``True`` if the surface is a closed 2-manifold."""
     return bool(surface_report(points, tris)["closed"])
 
 
 # -- reporting ----------------------------------------------------------
 def format_report(report: dict[str, Any]) -> str:
-    """Human-readable multi-line summary of a :func:`hex_report` or
-    :func:`surface_report` result."""
+    """Human-readable multi-line summary of a hex or surface report."""
     if report.get("kind") == "hex":
         return "\n".join([
             "hex elements   : %d" % report["n_elements"],

@@ -2,14 +2,12 @@
 
 An object-oriented, all-hex meshing **toolkit** with Nek5000/NekRS export.
 
-NekMeshPy began as a port of the surface pipeline of a bifurcation hex-mesh
-generator (originally MATLAB/Octave) and has been generalized into composable
-primitives: a shared-point mesh model, named physical groups, `HexMesh`
-factories, smoothing / surface operations, sizing fields, quality + topology
-checks, and meshio I/O. Concrete geometry meshers — the bifurcation vessel
-pipeline, straight pipes, external-flow domains — are **built on this toolkit and
-live in [`examples/`](https://github.com/nekmeshpy/nekmeshpy/tree/main/examples)**,
-not in the library itself.
+The library is a set of composable primitives: a shared-point mesh model, named
+physical groups, `HexMesh` factories, smoothing / surface operations, sizing
+fields, quality + topology checks, and meshio I/O. Concrete meshers (bifurcation
+vessel, straight pipes, external-flow domains) are built on the toolkit and live
+in [`examples/`](https://github.com/nekmeshpy/nekmeshpy/tree/main/examples), not
+in the library.
 
 ```python
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
@@ -25,16 +23,13 @@ export.to_re2(mesh, "pipe", groups={"wall": "W  ", "inlet": "v  ", "outlet": "O 
 
 ## Where to go next
 
-- **{doc}`user/getting-started`** — install NekMeshPy and build & export your first
-  mesh.
-- **{doc}`user/concepts`** — the line→quad→hex ladder, the two tag systems,
-  factories, smoothing, export.
-- **{doc}`user/howto`** — task-oriented recipes distilled from the bundled
-  `examples/`.
-- **{doc}`reference/index`** — auto-generated reference for every public module,
-  class, and function.
+- **{doc}`user/getting-started`** — install, build, and export your first mesh.
+- **{doc}`user/concepts`** — the line→quad→hex ladder, tag systems, factories,
+  smoothing, export.
+- **{doc}`user/howto`** — recipes distilled from `examples/`.
+- **{doc}`reference/index`** — auto-generated API reference.
 - **{doc}`developer/architecture`** — architecture, extension points, conventions,
-  and contributing.
+  contributing.
 
 ```{toctree}
 :hidden:

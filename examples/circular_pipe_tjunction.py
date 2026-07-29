@@ -1,26 +1,20 @@
-"""Mesh a circular-pipe T-junction as a conformal all-hex block and export it.
+"""Circular-pipe T-junction as a conformal all-hex block.
 
-A flat, gmsh-style script (edit the constants, re-run).  Unlike ``bifurcation.py``
--- which reads a triangulated vessel and *finds* its seams -- this junction is
-built from **analytic geometry**: a straight main pipe (axis X, radius ``R``) and
-a branch pipe (axis +Z, radius ``R``) tee off at the origin.  The whole junction
-is the same three-leg construction as the bifurcation, so the pieces come from the
-same toolkit primitives:
+Built from **analytic geometry** (not a scanned surface like ``bifurcation.py``):
+a main pipe (axis X, radius ``R``) and a branch (axis +Z, radius ``R``) tee off at
+the origin. Same three-leg construction as the bifurcation:
 
-* the two saddle points where the three tube walls meet are ``A1 = (0, +R, 0)`` and
-  ``A2 = (0, -R, 0)``; the shared **spine** is the straight ``A1 - A2`` segment
-  through the origin;
-* three arcs run ``A1 -> A2`` over the junction surface -- ``aLM`` (the main pipe's
-  lower wall, in the plane ``x = 0``), ``aLB`` / ``aRB`` (the two halves of the
-  cylinder-cylinder intersection collar, ``x <= 0`` and ``x >= 0``).  Each leg's
-  **seam ring** is the pair of arcs it shares with its two neighbours, so adjacent
-  legs are welded conformally when the arc arrays are reused;
-* each leg blends from a clean circular opening to its seam ring; every station is
-  split along the spine into two :meth:`QuadMesh.half_ogrid` half-discs and merged,
-  then the stack is :meth:`HexMesh.loft`-ed into a block; the three blocks are
-  :meth:`HexMesh.merge`-d (welding the coincident seam quads) and polished.
-
-Run with::
+* the two saddle points are ``A1 = (0, +R, 0)`` and ``A2 = (0, -R, 0)``; the
+  shared **spine** is the ``A1 - A2`` segment through the origin;
+* three arcs run ``A1 -> A2`` -- ``aLM`` (main lower wall, plane ``x = 0``) and
+  ``aLB`` / ``aRB`` (the two halves of the intersection collar). Each leg's seam
+  ring is the pair of arcs it shares with its neighbours :meth:`LineMesh.merge`-d
+  at ``A1``/``A2`` into a closed loop, so reusing the arcs welds adjacent legs
+  conformally;
+* each leg blends a circular opening to its seam ring (:meth:`LineMesh.blend`); each
+  station is :meth:`QuadMesh.spined_ogrid`-ed over its A1..A2 chord (split into two
+  half-discs and merged), the stack is :meth:`HexMesh.loft`-ed, and the three blocks
+  :meth:`HexMesh.merge`-d.
 
     PYTHONPATH=. python examples/circular_pipe_tjunction.py
 
@@ -38,6 +32,7 @@ from nekmeshpy import (
     TriMesh,
     export,
     smoothing,
+    trimesh,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -65,81 +60,78 @@ M = 2 * N_HALF                # points per full cross-section ring
 
 # -- analytic seam arcs (each A1 -> A2, N_HALF+1 arc-length-even points) ------
 def arc_main_lower():
-    """The main pipe's lower wall in the plane ``x = 0`` (the seam shared by the
-    two main legs): the ``z <= 0`` semicircle of ``y^2 + z^2 = R^2``."""
-    a = np.linspace(0.0, -np.pi, 400)
-    p = np.column_stack([np.zeros_like(a), R * np.cos(a), R * np.sin(a)])
-    return LineMesh.open(p).resample(np.linspace(0.0, 1.0, N_HALF + 1)).points
+    """Main lower wall in plane ``x = 0`` (seam of the two main legs): the
+    ``z <= 0`` semicircle of ``y^2 + z^2 = R^2``.  Constant-speed in angle, so the
+    arc-length-even samples are exactly the angle-even points (built analytically)."""
+    a = np.linspace(0.0, -np.pi, N_HALF + 1)
+    return np.column_stack([np.zeros_like(a), R * np.cos(a), R * np.sin(a)])
 
 
 def arc_collar(xside):
-    """One half of the cylinder-cylinder intersection collar (the seam between a
-    main leg and the branch): ``y^2+z^2 = x^2+y^2 = R^2`` with ``z >= 0`` gives
-    ``(xside*sqrt(R^2-y^2), y, sqrt(R^2-y^2))`` for ``y`` running ``+R -> -R``."""
+    """One half of the intersection collar (seam between a main leg and the
+    branch): ``y^2+z^2 = x^2+y^2 = R^2``, ``z >= 0`` gives
+    ``(xside*sqrt(R^2-y^2), y, sqrt(R^2-y^2))`` for ``y`` from ``+R -> -R``.  This
+    Viviani curve has no closed-form arc length, so sample it densely and resample
+    by arc length to the exact ``N_HALF+1`` seam points."""
     y = np.linspace(R, -R, 400)
     r = np.sqrt(np.maximum(R * R - y * y, 0.0))
     p = np.column_stack([xside * r, y, r])
-    return LineMesh.open(p).resample(np.linspace(0.0, 1.0, N_HALF + 1)).points
+    return trimesh.ops.resample_polyline(p, np.linspace(0.0, 1.0, N_HALF + 1))
 
 
 def join_arcs(p, q):
-    """Two arcs (each ``A1 -> A2``) into a closed ring of ``M`` points, index 0 at
-    ``A1`` and index ``N_HALF`` at ``A2`` (ported from the bifurcation join)."""
-    return np.vstack([p[0:N_HALF], q[::-1][0:N_HALF]])
+    """Two shared-endpoint ``A1 -> A2`` arcs into a closed ring of ``M`` points
+    (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
+    :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
+    crossing."""
+    return LineMesh.merge([LineMesh.open(p), LineMesh.open(q[::-1])])
 
 
-# -- analytic circular openings (M points, matching the seam's point order) ---
+# -- circular openings (M points, matching the seam's point order) ------------
 def opening_main(x0):
-    """A circle of radius ``R`` in the plane ``x = x0``, traversed +y (index 0) ->
-    down through -z -> -y (index ``N_HALF``) -> up through +z, so its lower half
-    corresponds index-for-index to ``arc_main_lower`` and its upper half to the
-    collar arc."""
-    a = -np.pi * np.arange(M) / N_HALF
-    return np.column_stack([np.full(M, x0), R * np.cos(a), R * np.sin(a)])
+    """Circle of radius ``R`` in plane ``x = x0``, traversed +y (index 0) -> -z ->
+    -y (index ``N_HALF``) -> +z, so its lower half matches ``arc_main_lower``
+    index-for-index and its upper half the collar arc. ``normal = -x`` gives the
+    in-plane frame ``e1 = +y``, ``e2 = -z``, so point ``k`` lands on
+    ``(0, R cos, -R sin)`` -- the required clockwise traversal from ``+y``."""
+    return LineMesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0)).points
 
 
 def opening_branch(z0):
-    """A circle of radius ``R`` in the plane ``z = z0``, traversed +y (index 0) ->
-    through -x -> -y -> through +x, so its ``x <= 0`` half matches ``aLB`` and its
-    ``x >= 0`` half matches ``aRB``."""
-    g = np.pi * np.arange(M) / N_HALF
-    return np.column_stack([-R * np.sin(g), R * np.cos(g), np.full(M, z0)])
+    """Circle of radius ``R`` in plane ``z = z0``, traversed +y (index 0) -> -x ->
+    -y -> +x, so its ``x <= 0`` half matches ``aLB`` and its ``x >= 0`` half
+    ``aRB``. ``normal = +z`` gives ``e1 = +x``, ``e2 = +y``; the ``start_theta =
+    pi/2`` phase turns ``(cos, sin)`` into ``(-sin, cos)`` so index 0 is ``+y``."""
+    return LineMesh.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
+                           start_theta=np.pi / 2).points
 
 
-# -- leg builder: blend opening -> seam, split each station along the spine ---
+# -- leg builder: blend opening -> seam, O-grid each station across the spine --
 def leg_slices(open_ring, seam_ring, n_slices):
-    """Blend ``open_ring -> seam_ring`` over ``n_slices`` stations; build each
-    station as two spine-split :meth:`QuadMesh.half_ogrid` half-discs merged into a
-    full disc.  The end stations (opening cap, welded seam) keep the raw algebraic
-    fill; interior stations are repositioned by ``SMOOTHING_METHOD``."""
-    idx = np.arange(N_HALF + 1)[:, None] / N_HALF
+    """Blend ``open_ring -> seam_ring`` over ``n_slices`` stations; each station is a
+    disc :meth:`QuadMesh.spined_ogrid`-ed over its natural straight A1..A2 diameter
+    (two half-discs welded along it). End stations keep the raw algebraic fill;
+    interior ones use ``SMOOTHING_METHOD``."""
+    loops = LineMesh.blend(LineMesh.loop(open_ring), seam_ring,
+                           np.linspace(0.0, 1.0, n_slices))
     slices = []
-    for s in range(n_slices):
-        w = s / (n_slices - 1)                     # 0 at opening, 1 at seam
-        ring = (1.0 - w) * open_ring + w * seam_ring
-        e1, e2 = ring[0, :], ring[N_HALF, :]
-        spn = e1 + idx * (e2 - e1)                 # straight A1..A2 diameter
-        arc1 = ring[0:N_HALF + 1, :]
-        arc2 = np.vstack([ring[N_HALF:M, :], ring[0:1, :]])
+    for s, loop in enumerate(loops):
         m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None
-        # the arc IS the wall: tag it at the line level (one tag per arc segment),
-        # so half_ogrid rides it onto the wall edges (see flow_past_cylinder.py).
-        h1 = QuadMesh.half_ogrid(
-            LineMesh.open(arc1, element_tags=["wall"] * N_HALF), LineMesh.open(spn),
-            RADIAL, center_scale=CENTER_SCALE, smoothing_method=m)
-        h2 = QuadMesh.half_ogrid(
-            LineMesh.open(arc2, element_tags=["wall"] * N_HALF), LineMesh.open(spn[::-1, :]),
-            RADIAL, center_scale=CENTER_SCALE, smoothing_method=m)
-        slices.append(QuadMesh.merge([h1, h2]))
+        # spined_ogrid splits the loop along its A1..A2 chord (default spine) and
+        # merges the two half-discs; wall_tag names every wall edge (see
+        # flow_past_cylinder.py for the tag-flow-down convention).
+        slices.append(QuadMesh.spined_ogrid(
+            loop, RADIAL, center_scale=CENTER_SCALE, wall_tag="wall",
+            smoothing_method=m))
     return slices
 
 
 # -- analytic wall surface (smoothing projection target) ---------------------
 def wall_surface():
-    """Triangulated walls of the three tubes, trimmed at the collar, as a single
-    :class:`TriMesh` for the smoother to keep wall nodes on.  The main tube spans
-    ``x in [-L, L]`` but its ``z > 0`` part is removed where the branch opens
-    (``|x| < sqrt(R^2 - y^2)``); the branch tube spans ``z in [0, H]``."""
+    """Triangulated walls of the three tubes, trimmed at the collar, as one
+    :class:`TriMesh` projection target for the smoother.  The main tube spans
+    ``x in [-L, L]`` minus the branch opening (``z > 0``, ``|x| < sqrt(R^2 -
+    y^2)``); the branch tube spans ``z in [0, H]``."""
     th = np.linspace(0.0, 2.0 * np.pi, N_SURF, endpoint=False)
     tris, pts = [], []
 

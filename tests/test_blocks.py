@@ -48,6 +48,18 @@ def test_geometric_spacing():
     assert np.all(np.diff(np.diff(g)) > 0)           # widths increase
 
 
+def test_symmetric_spacing():
+    # uniform ratio -> plain linspace; symmetric about 0.5
+    assert np.allclose(fields.symmetric_spacing(4, 1.0), [0, 0.25, 0.5, 0.75, 1.0])
+    p = fields.symmetric_spacing(8, 1.3)
+    assert len(p) == 9 and p[0] == 0.0 and p[-1] == pytest.approx(1.0)
+    assert np.allclose(p, 1.0 - p[::-1])              # mirror-symmetric
+    d = np.diff(p)
+    assert d[0] < d[len(d) // 2] and d[-1] < d[len(d) // 2]   # clustered both ends
+    with pytest.raises(ValueError, match="even n"):
+        fields.symmetric_spacing(5, 1.2)
+
+
 def test_constant_and_linear_fields():
     cf = ConstantField(0.1)
     assert np.allclose(cf(np.zeros((5, 3))), 0.1)

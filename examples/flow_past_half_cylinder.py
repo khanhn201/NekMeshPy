@@ -1,23 +1,17 @@
-"""Mesh the flow past a half-cylinder sitting on the ground (external flow).
+"""Flow past a half-cylinder on the ground (external flow).
 
-A flat, gmsh-style script: edit the constants below and re-run.  A half-cylinder of
-radius ``R`` rests on the floor and the flow fills the channel above, up to a flat
-ceiling at ``H`` -- the classic "bump in a channel".
+A half-cylinder of radius ``R`` rests on the floor; flow fills the channel up to a
+flat ceiling at ``H`` -- the classic "bump in a channel".
 
-The 2-D section is a **single** transfinite block
-(:meth:`nekmeshpy.QuadMesh.structured`) whose bottom edge is one composite curve:
-flat ground ``[-W,-R]``, then the semicircular bump up and over ``-R..R``, then flat
-ground ``[R,W]``.  Putting the semicircle in the *middle* of one edge (rather than
-splitting the domain into three blocks) avoids the degenerate vertical-tangent
-corner a block split would create where the bump meets the ground at ``x = +/-R``;
-``smoothing_method="bilinear"`` then fills the grid over the bump.  Boundaries
-are named **at the lowest level -- each edge line tags itself**: the bottom edge
-(ground + bump) is ``wall``, ``inlet`` / ``outlet`` on the ends, ``top`` on the
-ceiling; ``structured`` reads each side's uniform edge tag, and the span sweep
-(:meth:`nekmeshpy.HexMesh.loft`) names the two end caps ``front`` / ``back`` at the
-hex level.
+The 2-D section is a **single** transfinite block (:meth:`QuadMesh.structured`)
+whose bottom edge is one composite curve: flat ground ``[-W,-R]``, semicircular
+bump ``-R..R``, flat ground ``[R,W]``. Keeping the semicircle mid-edge (vs a
+three-block split) avoids the degenerate corner where bump meets ground at
+``x = +/-R``; ``smoothing_method="bilinear"`` fills the grid over the bump.
 
-Run with::
+Each edge line tags itself: bottom (ground + bump) ``wall``, ends ``inlet`` /
+``outlet``, ceiling ``top``. The span sweep (:meth:`HexMesh.extrude`) names the caps
+``front`` / ``back``.
 
     PYTHONPATH=. python examples/flow_past_half_cylinder.py
 
@@ -28,7 +22,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export, trimesh
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -54,26 +48,24 @@ bump = np.column_stack([R * np.cos(theta), R * np.sin(theta), z])
 left_ground = np.column_stack([np.linspace(-W, -R, 40), np.zeros(40), np.zeros(40)])
 right_ground = np.column_stack([np.linspace(R, W, 40), np.zeros(40), np.zeros(40)])
 bottom_pts = np.vstack([left_ground[:-1], bump, right_ground[1:]])   # drop shared ends
-# structured uses the edges' own nodes (no resampling): resample each edge to the
-# matching division count -- bottom/top to NX+1, left/right to NY+1.  Each edge tags
-# itself at the line level (the tag rides through resample), so structured names each
-# side from its edge's uniform tag -- no boundary_tags override.
-bottom = LineMesh.open(bottom_pts, element_tags=["wall"] * (len(bottom_pts) - 1)
-                      ).resample(np.linspace(0.0, 1.0, NX + 1))              # (-W,0)->(W,0)
-right = LineMesh.open([(W, 0.0, 0.0), (W, H, 0.0)], element_tags=["outlet"]
-                     ).resample(np.linspace(0.0, 1.0, NY + 1))
-top = LineMesh.open([(W, H, 0.0), (-W, H, 0.0)], element_tags=["top"]
-                   ).resample(np.linspace(0.0, 1.0, NX + 1))
-left = LineMesh.open([(-W, H, 0.0), (-W, 0.0, 0.0)], element_tags=["inlet"]
-                    ).resample(np.linspace(0.0, 1.0, NY + 1))
+# the composite bottom (ground -> bump -> ground) has no closed-form arc length, so
+# sample it by arc length to the exact NX+1 edge points; tag the whole edge "wall"
+# at the line level so structured names the bottom side from it.
+pts = trimesh.ops.resample_polyline(bottom_pts, np.linspace(0.0, 1.0, NX + 1))   # (-W,0)->(W,0)
+bottom = LineMesh.open(pts, element_tags=["wall"] * NX)
+right = LineMesh.line((W, 0.0, 0.0), (W, H, 0.0),
+                      np.linspace(0.0, 1.0, NY + 1), element_tag="outlet")
+top = LineMesh.line((W, H, 0.0), (-W, H, 0.0),
+                    np.linspace(0.0, 1.0, NX + 1), element_tag="top")
+left = LineMesh.line((-W, H, 0.0), (-W, 0.0, 0.0),
+                     np.linspace(0.0, 1.0, NY + 1), element_tag="inlet")
 section = QuadMesh.structured([bottom, right, top, left], smoothing_method="bilinear")
 
 # -- sweep along the span, naming the end caps front/back --------------------
-zs = np.linspace(0.0, SPAN, N_SPAN + 1)
-slices = [QuadMesh(section.points + np.array([0.0, 0.0, z]), section.quads,
-                   boundaries=section.boundaries, boundary_tags=section.boundary_tags)
-          for z in zs]
-mesh = HexMesh.loft(slices, first_tag="front", last_tag="back")
+# extrude translates the section along +z; edge names ride onto the side faces
+mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+                       layers=np.linspace(0.0, 1.0, N_SPAN + 1),
+                       first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
