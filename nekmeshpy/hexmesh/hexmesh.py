@@ -364,7 +364,8 @@ class HexMesh:
         ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
         result carries ``a``'s ``hexes``, ``boundaries`` and ``boundary_tags``
         (positional BC markers follow the morph); per-hex ``element_tags`` are left
-        for the caller to assign.  The 3-D sibling of :meth:`QuadMesh.blend`."""
+        for the caller to assign.  The 3-D sibling of
+        :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>`."""
         A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
         B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
         if A.shape[0] != B.shape[0]:
