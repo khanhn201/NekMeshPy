@@ -21,11 +21,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import FloatArray, IntArray, Point, PointArray, StrArray
+from .._typing import CurvedBlock, FloatArray, IntArray, Point, PointArray, StrArray
 from ..linemesh import LineMesh
 from ..linemesh._open import line
 from ..model.fields import validate_layers
-from ._helpers import _apply_smoothing, _check_boundary
+from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,13 +37,17 @@ def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
               x_frac: FloatArray | None = None,
               y_frac: FloatArray | None = None,
               side_tags: Mapping[str, str] | None = None,
-              smoothing_method: str | None = None) -> QuadMesh:
+              smoothing_method: str | None = None,
+              order: int = 1) -> QuadMesh:
     """Structured quad grid over the rectangle with four CCW corners
     ``corners = [c0, c1, c2, c3]``: ``nx`` cells along ``c0->c1`` (bottom/top),
     ``ny`` along ``c1->c2`` (left/right).  ``x_frac`` / ``y_frac`` are optional
     node fractions in ``[0,1]`` (length ``nx+1`` / ``ny+1``) for grading, else
     uniform.  ``side_tags`` (keyed ``bottom`` / ``right`` / ``top`` / ``left``)
-    names the outer sides; an absent side stays untagged."""
+    names the outer sides; an absent side stays untagged.
+
+    ``order`` (default 1 = linear) sets the polynomial order: the four edges are
+    built at ``order`` (straight sides) and :func:`structured` inherits it."""
     c = np.asarray(corners, dtype=float).reshape(-1, 3)
     if c.shape[0] != 4:
         raise ValueError("rectangle needs exactly 4 corners")
@@ -54,7 +58,7 @@ def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
     st = side_tags or {}
     specs = (("bottom", c[0], c[1], xf), ("right", c[1], c[2], yf),
              ("top", c[2], c[3], xf), ("left", c[3], c[0], yf))
-    edges = [line(a, b, frac, element_tag=st.get(side, ""))
+    edges = [line(a, b, frac, element_tag=st.get(side, ""), order=order)
              for side, a, b, frac in specs]
     return structured(edges, smoothing_method=smoothing_method)
 
@@ -84,6 +88,9 @@ def structured(edges: list[LineMesh], *,
     for nm, e in (("bottom", bottom), ("right", right),
                   ("top", top), ("left", left)):
         _check_boundary(e, "structured " + nm + " edge", False, 2)
+    order = bottom.order
+    if any(e.order != order for e in edges):
+        raise ValueError("structured: all four edges must share the same order")
     # resolution comes from the edges' own point counts (no resampling)
     if bottom.points.shape[0] != top.points.shape[0]:
         raise ValueError(
@@ -163,9 +170,11 @@ def structured(edges: list[LineMesh], *,
         for q, s in rows:
             bnd.append([q, s])
             names.append(nm)
-    return _apply_smoothing(
-        QuadMesh(points, quads, *QuadMesh._order_bnd(bnd, names)),
-        smoothing_method)
+    # elevate to order N first (a no-op at order 1), then smooth: a repositioning
+    # smoother rejects order > 1 (high-order smoothing is not implemented).
+    qm = _elevate(
+        QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names)), order)
+    return _apply_smoothing(qm, smoothing_method)
 
 
 def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
@@ -269,7 +278,14 @@ def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
         if nm:
             bnd.append([wall_q0 + m, 1])
             names.append(nm)
-    qm = QuadMesh(points, quads, *QuadMesh._order_bnd(bnd, names))
+    qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
+    # order-N: the wall ring (side 1 of the outer ring quads) follows the exact
+    # boundary loop, the interior stays a straight order-N fill (overlay ignored at
+    # order 1, where _elevate is a no-op).  Elevate first, then smooth: a
+    # repositioning smoother rejects order > 1 (high-order smoothing not implemented).
+    overlays: list[Overlay] = [
+        (wall_q0 + np.arange(P, dtype=np.int64), 1, boundary.curved)]
+    qm = _elevate(qm, boundary.order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
 
@@ -385,8 +401,15 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
         if nm:
             bnd.append([wall_q0 + k, 3])
             names.append(nm)
-    qm = QuadMesh(points, np.array(quads, dtype=np.int64),
-                  *QuadMesh._order_bnd(bnd, names))
+    qm = QuadMesh.from_corners(points, np.array(quads, dtype=np.int64),
+                               *QuadMesh._order_bnd(bnd, names))
+    # order-N: the wall arc (side 3 of the outer ring quads) follows the exact arc;
+    # the interior stays a straight order-N fill (overlay ignored at order 1, where
+    # _elevate is a no-op).  Elevate first, then smooth: a repositioning smoother
+    # rejects order > 1 (high-order smoothing not implemented).
+    overlays: list[Overlay] = [
+        (wall_q0 + np.arange(4 * Nt, dtype=np.int64), 3, arc.curved)]
+    qm = _elevate(qm, arc.order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
 
@@ -442,11 +465,17 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
 
     # split the loop (and its per-segment tags) into the two half arcs: arc1 runs
     # A1 -> A2 over segments [0, nh), arc2 runs A2 -> A1 over segments [nh, M).
+    # order-N: the loop's per-segment curved blocks split the same way, so each
+    # half arc carries its exact wall geometry.
     seg = boundary._seg_tags()
+    o = boundary.order
+    cv: CurvedBlock | None = boundary.curved
     arc1 = LineMesh.open(bpts[0:nh + 1, :],
-                         element_tags=None if seg is None else seg[0:nh])
+                         element_tags=None if seg is None else seg[0:nh],
+                         order=o, curved=None if cv is None else cv[0:nh])
     arc2 = LineMesh.open(np.vstack([bpts[nh:M, :], bpts[0:1, :]]),
-                         element_tags=None if seg is None else seg[nh:M])
+                         element_tags=None if seg is None else seg[nh:M],
+                         order=o, curved=None if cv is None else cv[nh:M])
     h1 = half_ogrid(arc1, LineMesh.open(spn1), radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
     h2 = half_ogrid(arc2, LineMesh.open(spn2), radial, center_scale=center_scale,
@@ -476,6 +505,15 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
     into distinct sides).  A non-empty scalar ``inner_tag`` / ``outer_tag``
     overrides that for the whole inner / outer ring.
 
+    The rings are always a genuine high-order blend: ``LineMesh.blend`` interpolates
+    the two loops' curved blocks (``blend_ho``) so every ring carries curved
+    tangential edges, and :meth:`loft` sweeps them radially -- the sibling of
+    :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>` one dimension down.
+    A repositioning ``smoothing_method`` (``conduction`` / ``winslow``) relaxes the
+    corner grid, which cannot ride a curved block, so it is rejected at ``order > 1``
+    (high-order smoothing is not implemented -- use ``order=1`` or drop the smoother);
+    at ``order 1`` it relaxes the ring interior as usual.
+
     Built by :meth:`loft`-ing the blended rings; the inner / outer rings are the
     loft's near / far caps.  Gives ``N x (radial.size - 1)`` quads."""
     from .quadmesh import QuadMesh
@@ -490,11 +528,10 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
             % (A.shape[0], B.shape[0]))
     if float(np.min(np.linalg.norm(B - A, axis=1))) <= 0.0:
         raise ValueError("annulus: inner and outer loops touch or cross")
+    order = inner.order
+    if outer.order != order:
+        raise ValueError("annulus: inner and outer loops must share the same order")
 
-    # ring k is the straight-chord blend inner -> outer, all sharing inner's
-    # wrapping line connectivity; consecutive rings loft into quad layers.  The
-    # loops' per-segment tags become the inner (side 1) / outer (side 3) caps.
-    rings = LineMesh.blend(inner, outer, radial)
     # tags from each loop's per-segment element_tags; a non-empty scalar
     # inner_tag / outer_tag overrides that for the whole ring.
     inner_caps: str | StrArray = (
@@ -503,6 +540,15 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
     outer_caps: str | StrArray = (
         outer_tag if outer_tag
         else (outer.element_tags if outer.element_group_tags else ""))
+
+    # Blend the loops (carrying their curved blocks) and loft directly -- ring k =
+    # blend_ho(inner, outer, t_k), so a high-order annulus is curved throughout, not
+    # just on the two walls; loft builds the curved Coons columns.  blend copies the
+    # ring topology but drops element_tags (the wall tags ride in inner_caps /
+    # outer_caps as the loft's cap tags).  A requested repositioning smoother rejects
+    # order > 1 (high-order smoothing not implemented); at order 1 it relaxes the
+    # linear loft as before.
+    rings = LineMesh.blend(inner, outer, radial)
     qm = QuadMesh.loft(rings, first_tag=inner_caps, last_tag=outer_caps)
     return _apply_smoothing(qm, smoothing_method)
 

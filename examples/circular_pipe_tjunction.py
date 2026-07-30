@@ -18,7 +18,7 @@ the origin. Same three-leg construction as the bifurcation:
 
     PYTHONPATH=. python examples/circular_pipe_tjunction.py
 
-Produces ``circular_pipe_tjunction.re2`` / ``.rea`` and ``.vtk``.
+Produces ``circular_pipe_tjunction.re2`` / ``.rea`` and ``.vtu``.
 """
 
 import logging
@@ -200,4 +200,4 @@ if SMOOTH_ITERS > 0:
 print(mesh.report())
 
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

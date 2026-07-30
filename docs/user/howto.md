@@ -6,7 +6,7 @@ gmsh-style scripts (constants at top, assign to a `mesh` global, export). Edit t
 constants and re-run:
 
 ```bash
-PYTHONPATH=. python examples/circular_pipe.py    # writes .re2/.rea/.vtk in cwd
+PYTHONPATH=. python examples/circular_pipe.py    # writes .re2/.rea/.vtu in cwd
 ```
 
 The test suite runs these scripts and inspects the `mesh` global. If a recipe and

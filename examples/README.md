@@ -19,9 +19,12 @@ PYTHONPATH=. python examples/flow_past_plate.py        # external flow: thin pla
 PYTHONPATH=. python examples/flow_past_half_cylinder.py # external flow: half-cylinder bump
 PYTHONPATH=. python examples/flow_past_sphere.py       # external flow: sphere (cubed-sphere)
 PYTHONPATH=. python examples/flow_past_hemisphere.py   # external flow: hemisphere on ground
+PYTHONPATH=. python examples/high_order_curve.py       # order-5 circle: nodes on the true arc
+PYTHONPATH=. python examples/high_order_quad.py        # order-5 cubed-sphere surface
+PYTHONPATH=. python examples/high_order_hex.py         # order-4 spherical shell (curved volume)
 ```
 
-Each writes native Nek5000/NekRS `.re2`/`.rea` plus a `.vtk` for ParaView.
+Each writes native Nek5000/NekRS `.re2`/`.rea` plus a `.vtu` for ParaView.
 
 | script | what it builds |
 |---|---|
@@ -36,6 +39,9 @@ Each writes native Nek5000/NekRS `.re2`/`.rea` plus a `.vtk` for ParaView.
 | `flow_past_half_cylinder.py` | `QuadMesh.structured(boundary_tags=…)` with a semicircular-bump bottom edge → span-`loft` (caps `front`/`back`) |
 | `flow_past_sphere.py` | `HexMesh.annulus` between a closed sphere surface and a closed cube surface (six `QuadMesh.from_grid` patches → `QuadMesh.merge`, per-patch `element_tag`) — wall faces tagged from the surfaces' per-quad `element_tags` (body → `sphere`; far field → `inlet`/`outlet`/…) |
 | `flow_past_hemisphere.py` | five-patch half cubed-sphere on the ground, each `from_grid(face_tags=…)` → `merge` (body → `hemisphere`) |
+| `high_order_curve.py` | order-5 `LineMesh.circle(order=5)` — every arc node placed on the true circle; `.vtu` `VTK_LAGRANGE_CURVE` |
+| `high_order_quad.py` | order-5 `QuadMesh.sphere(order=5)` — all `(N+1)²` surface nodes on the true sphere; `.vtu` `VTK_LAGRANGE_QUADRILATERAL` |
+| `high_order_hex.py` | order-4 `HexMesh.annulus(sphere, cube, order=4)` shell — curved inner wall on the true sphere; `.re2` stays linear, `.vtu` `VTK_LAGRANGE_HEXAHEDRON` |
 
 The 2-D section meshers (`QuadMesh.ogrid` / `structured` / `half_ogrid` /
 `spined_ogrid` / `annulus`) are toolkit primitives; the scripts supply a boundary and sweep/stack
@@ -49,8 +55,22 @@ in place (`from_grid(face_tags=…)`). All propagate onto swept side faces via
 `loft`/`extrude`, which name the end caps (`first_tag=…, last_tag=…`). Faces
 welded away by `merge` stay untagged.
 
+## High-order (order-N) elements
+
+The `high_order_*.py` trio show spectral-element output: pass `order=N` to a
+factory (`LineMesh.circle`, `QuadMesh.sphere`/`box`, `HexMesh.annulus`, …) and each
+element carries `(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction
+(line `N+1`, quad `(N+1)²`, hex `(N+1)³`), placed on the **true** geometry the
+factory owns — a circle's arc nodes lie on the exact circle, a shell's inner-wall
+nodes on the exact sphere. Order defaults to `1` (plain linear elements), so every
+other example is unaffected. `.re2` export **stays linear** (8 corners/hex — Nek's
+re2 has no high-order format yet); `.vtu` export emits VTK Lagrange cells that a
+viewer renders as curved geometry via the XML `.vtu` writer (`export.to_vtu` /
+`line_to_vtu` / `quad_to_vtu`) — ParaView and VisIt render Lagrange cells reliably
+from `.vtu`.
+
 ## Tested via the toolkit
 
 The scripts double as integration tests: `tests/conftest.py` runs them with
 `runpy.run_path` and inspects the `mesh` global (plus the byte-exact golden
-`.re2`/`.rea`/`.vtk` for the bifurcation). They must keep producing a valid mesh.
+`.re2`/`.rea`/`.vtu` for the bifurcation). They must keep producing a valid mesh.

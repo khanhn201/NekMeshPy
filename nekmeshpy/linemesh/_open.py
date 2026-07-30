@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._typing import FloatArray, Point
+from ..model.interp import straight_edges
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,20 +23,30 @@ if TYPE_CHECKING:
 
 
 def line(start: Point, end: Point, fractions: float | FloatArray, *,
-         element_tag: str = "") -> LineMesh:
+         element_tag: str = "", order: int = 1) -> LineMesh:
     """A straight open line from ``start`` to ``end`` sampled at normalized
     arc-length ``fractions`` in ``[0, 1]`` (``0`` = start, ``1`` = end): the
     graded-edge sibling of ``circle``/``rectangle``. The points are placed
     exactly at ``start + f*(end - start)`` -- no resampling. ``element_tag``
     names every resulting line element (e.g. to tag a structured edge as one
-    wall)."""
+    wall).
+
+    ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
+    each line element carries ``order+1`` GLL nodes placed on the straight
+    segment (the ``curved`` block, read by high-order ``vtu`` export)."""
     from .linemesh import LineMesh
     frac = np.atleast_1d(np.asarray(fractions, dtype=float))
     s: Point = np.asarray(start, dtype=float).ravel()
     e: Point = np.asarray(end, dtype=float).ravel()
     pts = s + frac[:, None] * (e - s)
     tags = [element_tag] * (pts.shape[0] - 1) if element_tag else None
-    return LineMesh.open(pts, element_tags=tags)
+    lm = LineMesh.open(pts, element_tags=tags)
+    if order == 1:
+        return lm
+    curved = straight_edges(lm.points[lm.lines[:, 0]],
+                            lm.points[lm.lines[:, 1]], order)
+    return LineMesh(lm.points, lm.lines, lm.element_tags, lm.boundaries,
+                    lm.boundary_tags, closed=False, order=order, curved=curved)
 
 
 #: Open-curve factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.

@@ -11,7 +11,7 @@ through. ``WALL_GRADING`` sets the strength (``1.0`` = uniform).
 
     PYTHONPATH=. python examples/rectangular_pipe.py
 
-Produces ``rectangular_pipe.re2`` / ``.rea`` and ``rectangular_pipe.vtk``.
+Produces ``rectangular_pipe.re2`` / ``.rea`` and ``rectangular_pipe.vtu``.
 """
 
 import logging
@@ -62,5 +62,5 @@ print("rectangular duct: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_poi
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
 
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

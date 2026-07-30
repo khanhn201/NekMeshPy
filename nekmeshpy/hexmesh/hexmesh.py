@@ -17,8 +17,24 @@ from typing import Any
 
 import numpy as np
 
-from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray, StrArray, Vec3
-from ..model.fields import validate_layers
+from .._typing import (
+    BoolArray,
+    CurvedBlock,
+    FloatArray,
+    IntArray,
+    Point,
+    PointArray,
+    StrArray,
+    Vec3,
+)
+from ..linemesh import LineMesh
+from ..model import conform
+from ..model.fields import gll_nodes, validate_layers
+from ..model.interp import (
+    blend_ho,
+    corner_indices,
+    subdivide_hexes,
+)
 from ..quadmesh import NO_BOUNDARY, QuadMesh
 
 # default sweep axis / origin for extrude
@@ -47,32 +63,211 @@ class HexMesh:
 
     def __init__(
         self,
+        quads: QuadMesh,
+        hex: IntArray,
+        face_orient: IntArray,
+        interior: FloatArray | None = None,
+        boundaries: IntArray | None = None,
+        boundary_tags: StrArray | Sequence[str] | None = None,
+        element_tags: StrArray | Sequence[str] | None = None,
+        *,
+        order: int = 1,
+    ) -> None:
+        """Construct from the B-rep directly: ``quads`` (a ``QuadMesh`` holding every
+        shared face -- its ``points`` are the shared corners, its ``quads`` the shared
+        face connectivity, its edges / ``interior`` the shared face-boundary / interior
+        HO nodes), ``hex`` ``(E,6)`` face indices into ``quads.quads`` (Nek local-face
+        order), ``face_orient`` ``(E,6)`` D4 codes (element-local face frame ->
+        canonical), and ``interior`` ``(E,(order-1)**3,3)`` private per-hex nodes (omit /
+        ``None`` at order 1).  Also an optional dense per-hex ``element_tags`` ``(E,)``
+        and a tagged-boundary list ``boundaries`` ``(Nbc,2)`` = ``[hex id, face 1-6]``
+        with a parallel ``boundary_tags``.
+
+        ``.points`` / ``.hexes`` / ``.curved`` are **derived** views over this B-rep, so
+        a shared face is literally one stored object referenced by every incident hex
+        (structural conformality).  Prefer :meth:`from_corners` to build from corner
+        points + hex connectivity; the factories all route through it.  ``re2`` export
+        stays linear; only ``vtu`` reads the curved nodes."""
+        if not isinstance(quads, QuadMesh):
+            raise TypeError("HexMesh: quads must be a QuadMesh, got %s"
+                            % type(quads).__name__)
+        self._order = int(order)
+        if quads.order != self._order:
+            raise ValueError("HexMesh: quads.order (%d) must match order (%d)"
+                             % (quads.order, self._order))
+        self.quads = quads
+        self.hex: IntArray = np.asarray(hex, dtype=np.int64).reshape(-1, 6)
+        self.face_orient: IntArray = np.asarray(
+            face_orient, dtype=np.int64).reshape(-1, 6)
+        if self.face_orient.shape[0] != self.hex.shape[0]:
+            raise ValueError("HexMesh: face_orient length (%d) must match hex (%d)"
+                             % (self.face_orient.shape[0], self.hex.shape[0]))
+        E = self.hex.shape[0]
+        k = (self._order - 1) ** 3
+        if interior is None:
+            if self._order > 1:
+                raise ValueError(
+                    "HexMesh: order %d > 1 requires interior nodes" % self._order)
+            self.interior: FloatArray = np.zeros((E, 0, 3), dtype=float)
+        else:
+            ia: FloatArray = np.asarray(interior, dtype=float)
+            if ia.shape != (E, k, 3):
+                raise ValueError(
+                    "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
+                    % (E, k, ia.shape))
+            self.interior = ia
+        if element_tags is None:
+            self.element_tags: StrArray = np.full(E, "", dtype=np.str_)
+        else:
+            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
+            if et.shape[0] != E:
+                raise ValueError("element_tags length (%d) must match hexes (%d)"
+                                 % (et.shape[0], E))
+            self.element_tags = et
+        self.boundaries: IntArray = (
+            np.zeros((0, 2), np.int64) if boundaries is None
+            else np.asarray(boundaries, np.int64).reshape(-1, 2))
+        self.boundary_tags: StrArray = (
+            np.empty(0, dtype=np.str_) if boundary_tags is None
+            else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
+        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
+            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
+                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
+
+        # corner connectivity + per-hex edge incidence are derived from the shared
+        # faces and immutable post-construction (point moves don't change them), so
+        # memoize once.
+        self._hexes: IntArray = self._derive_hexes()
+        _, self._elem_edges, self._edge_flip = conform.unique_edges(self._hexes, 3)
+
+    @classmethod
+    def from_corners(
+        cls,
         points: PointArray,
         hexes: IntArray,
         boundaries: IntArray | None = None,
         boundary_tags: StrArray | Sequence[str] | None = None,
         element_tags: StrArray | Sequence[str] | None = None,
-    ) -> None:
-        """Construct from ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` (Nek order),
-        optional ``boundaries`` with parallel ``boundary_tags``, and an optional
-        dense ``element_tags``."""
-        self.points = np.asarray(points, dtype=float).reshape(-1, 3)
-        self.hexes = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
-        self.boundaries = (np.zeros((0, 2), np.int64) if boundaries is None
-                           else np.asarray(boundaries, np.int64).reshape(-1, 2))
-        self.boundary_tags = (np.empty(0, dtype=np.str_) if boundary_tags is None
-                              else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
-        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
-            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
-                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
-        if element_tags is None:
-            self.element_tags: StrArray = np.full(self.hexes.shape[0], "", dtype=np.str_)
+        *,
+        order: int = 1,
+        curved: CurvedBlock | None = None,
+    ) -> HexMesh:
+        """Build a ``HexMesh`` from corner ``points`` ``(P,3)`` + Nek-order ``hexes``
+        ``(E,8)`` connectivity -- the corner -> B-rep bridge every factory routes
+        through.  Decomposes the shared faces with ``conform.canonical_faces`` (lossless,
+        so ``.hexes`` round-trips the input exactly) and, at ``order > 1``, validates +
+        scatters the ``curved`` block ``(E,(order+1)**3,3)`` via ``conform.split`` (shape
+        + corner-consistency, owner-wins edge / face nodes).  Same signature and
+        semantics as the old array constructor."""
+        pts: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
+        conn: IntArray = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
+        canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
+        interior: FloatArray | None
+        if order > 1:
+            t = conform.split(order, curved, pts, conn, 3, "HexMesh")
+            q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
+            eb: CurvedBlock = np.empty((q_edges.shape[0], order + 1, 3), dtype=float)
+            eb[:, corner_indices(order, 1), :] = pts[q_edges]
+            eb[:, 1:order, :] = t.edge_nodes
+            edge_lm = LineMesh(pts, q_edges, order=order, curved=eb)
+            quads = QuadMesh(edge_lm, q_elem_edges, q_flip, interior=t.face_nodes,
+                             order=order)
+            interior = t.interior
         else:
-            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
-            if et.shape[0] != self.hexes.shape[0]:
-                raise ValueError("element_tags length (%d) must match hexes (%d)"
-                                 % (et.shape[0], self.hexes.shape[0]))
-            self.element_tags = et
+            # order 1: split still validates curved (corner-consistency) but returns
+            # empty tables; the shared-face topology comes from canonical_faces.
+            conform.split(order, curved, pts, conn, 3, "HexMesh")
+            quads = QuadMesh.from_corners(pts, canonical_conn)
+            interior = None
+        return cls(quads, elem_faces, face_orient, interior, boundaries,
+                   boundary_tags, element_tags, order=order)
+
+    def _derive_hexes(self) -> IntArray:
+        """Corner connectivity ``(E,8)`` (Nek order) recovered from the shared faces via
+        ``conform.hex_corners_from_faces`` -- the lossless inverse of
+        ``conform.canonical_faces``, so it reproduces the connectivity the mesh was built
+        from byte-for-byte."""
+        return conform.hex_corners_from_faces(
+            self.quads.quads, self.hex, self.face_orient)
+
+    def _tables(self) -> conform.EntityTables:
+        """A transient :class:`~nekmeshpy.model.conform.EntityTables` assembled from the
+        stored B-rep fields -- the vehicle for the tested ``assemble`` / ``to_conformal``
+        readers (not storage).  Edges / faces come from the shared-face ``QuadMesh``; the
+        per-hex edge incidence is the cached ``unique_edges`` of the derived corners."""
+        return conform.EntityTables(
+            order=self._order, dim=3,
+            edges=self.quads.edges,
+            edge_nodes=self.quads.edge_nodes,
+            elem_edges=self._elem_edges,
+            edge_flip=self._edge_flip,
+            faces=np.sort(self.quads.quads, axis=1),
+            face_nodes=self.quads.interior,
+            elem_faces=self.hex,
+            face_orient=self.face_orient,
+            interior=self.interior)
+
+    @property
+    def order(self) -> int:
+        """Global polynomial order (1 = linear)."""
+        return self._order
+
+    @property
+    def points(self) -> PointArray:
+        """The ``(P,3)`` shared corner points -- a live view of the shared-face
+        ``QuadMesh``'s ``points`` (the single source of truth), so an in-place edit
+        (``mesh.points[:] = X``) moves the shared corners for every hex."""
+        return self.quads.points
+
+    @property
+    def hexes(self) -> IntArray:
+        """``(E,8)`` Nek-order corner connectivity, derived (memoized) from the shared
+        faces.  Read-only; the B-rep ``quads`` / ``hex`` / ``face_orient`` are the source
+        of truth."""
+        return self._hexes
+
+    @property
+    def curved(self) -> CurvedBlock:
+        """The full high-order node block ``(N, (order+1)**3, 3)`` in lexicographic GLL
+        order (``i`` fastest), reassembled on read from the authoritative corners
+        ``points[hexes]`` and the stored non-corner nodes -- so corners are never
+        duplicated and an in-place ``points`` edit is reflected.  At order 1 it holds
+        the 8 corners."""
+        return conform.assemble(self._tables(), self.points, self.hexes)
+
+    @property
+    def edges(self) -> IntArray:
+        """``(Ne,2)`` unique undirected hex edges (canonical: min corner id first) -- the
+        shared edge topology (the ``edges`` of the shared-face ``QuadMesh``).  Non-empty
+        at every order (edges are first-class B-rep storage)."""
+        return self.quads.edges
+
+    @property
+    def edge_nodes(self) -> CurvedBlock:
+        """``(Ne, order-1, 3)`` shared high-order interior nodes of each unique
+        :attr:`edges` entry, in canonical (min->max corner) order.  Empty at order 1."""
+        return self.quads.edge_nodes
+
+    @property
+    def faces(self) -> IntArray:
+        """``(Nf,4)`` unique hex faces (canonical: sorted corner ids) -- the shared face
+        topology.  Non-empty at every order (faces are first-class B-rep storage)."""
+        return np.sort(self.quads.quads, axis=1)
+
+    @property
+    def face_nodes(self) -> CurvedBlock:
+        """``(Nf, (order-1)**2, 3)`` shared high-order interior nodes of each unique
+        :attr:`faces` entry, in the canonical D4-normalized frame.  Empty at order 1; a
+        shared face resolves to the same nodes from either incident hex."""
+        return self.quads.interior
+
+    def to_conformal(self) -> tuple[PointArray, IntArray]:
+        """Conformal high-order view ``(nodes (M,3), conn (N,(order+1)**3))``: every node
+        (corner, shared edge / face-interior, private cell-interior) numbered once in one
+        global array with dense per-hex connectivity into it -- the high-order analog of
+        ``points`` + ``hexes``.  Shared edges and faces resolve to the same node ids from
+        every incident hex.  At order 1 this is ``points`` + ``hexes`` in block order."""
+        return conform.to_conformal(self._tables(), self.points, self.hexes)
 
     # -- sizes -----------------------------------------------------------
     @property
@@ -101,14 +296,24 @@ class HexMesh:
         return sorted({t for t in self.element_tags.tolist() if t})
 
     # -- quality ---------------------------------------------------------
-    def scaled_jacobian(self) -> FloatArray:
-        """Per-hex minimum corner scaled Jacobian ``(n_hexes,)``."""
+    def scaled_jacobian(self, *, high_order: bool = False) -> FloatArray:
+        """Per-hex minimum scaled Jacobian ``(n_hexes,)``.
+
+        Defaults to the corner metric (the pinned linear numbers).  With
+        ``high_order=True`` it is sampled at the ``(order+1)**3`` GLL nodes of the
+        curved block (:func:`~nekmeshpy.hexmesh.quality.scaled_jacobian_ho`); at order
+        1 the two agree."""
         from . import quality
+        if high_order:
+            return quality.scaled_jacobian_ho(self.curved, self.order)
         return quality.scaled_jacobian(self.points, self.hexes)
 
-    def quality_summary(self) -> dict[str, Any]:
-        """Aggregate scaled-Jacobian statistics."""
+    def quality_summary(self, *, high_order: bool = False) -> dict[str, Any]:
+        """Aggregate scaled-Jacobian statistics (see :meth:`scaled_jacobian` for the
+        ``high_order`` flag)."""
         from . import quality
+        if high_order:
+            return quality.summary_ho(self.curved, self.order)
         return quality.summary(self.points, self.hexes)
 
     # -- orientation -----------------------------------------------------
@@ -160,10 +365,14 @@ class HexMesh:
         axis_u: Vec3 = np.asarray(axis, dtype=float)
         axis_u = axis_u / np.linalg.norm(axis_u)
         offsets = validate_layers(layers, "extrude layers") * float(length)
-        slices = [QuadMesh(base + d * axis_u[None, :],
-                           section.quads, boundaries=section.boundaries,
-                           boundary_tags=section.boundary_tags,
-                           element_tags=section.element_tags)
+        sc = None if section.curved is None else np.asarray(section.curved, float)
+        slices = [QuadMesh.from_corners(
+                      base + d * axis_u[None, :],
+                      section.quads, boundaries=section.boundaries,
+                      boundary_tags=section.boundary_tags,
+                      element_tags=section.element_tags,
+                      order=section.order,
+                      curved=None if sc is None else sc + d * axis_u[None, None, :])
                   for d in offsets]
         return cls.loft(slices, first_tag=first_tag, last_tag=last_tag)
 
@@ -242,7 +451,33 @@ class HexMesh:
                     bnd.append([e, 6])
                     names.append(last_caps[q])
                 e += 1
-        return cls(points, hexes, *cls._order_bnd(bnd, names), element_tags=etags)
+
+        order = slices[0].order
+        if any(s.order != order for s in slices):
+            raise ValueError("loft: all slices must share the same order")
+        curved: CurvedBlock | None = None
+        if order > 1:
+            g = gll_nodes(order)
+            row = order + 1
+            m2 = row * row
+            SC = np.stack([np.asarray(s.curved, dtype=float) for s in slices], axis=0)
+            # (nz, M, m2, 3) in-plane blocks of the bottom/top slice of each layer,
+            # flattened to hex order e = i*M + q
+            bottom = SC[:-1].reshape(nz * M, m2, 3)
+            top = SC[1:].reshape(nz * M, m2, 3)
+            if flip:
+                kk = np.arange(m2)
+                trans = (kk // row) + row * (kk % row)    # transpose the in-plane grid
+                bottom = bottom[:, trans, :]
+                top = top[:, trans, :]
+            # straight GLL sweep between the two in-plane blocks: (E, row_k, m2, 3)
+            gg = g.reshape(1, row, 1, 1)
+            block = (1.0 - gg) * bottom[:, None, :, :] + gg * top[:, None, :, :]
+            # lexicographic hex order: in-plane index m fastest, sweep k slowest
+            curved = block.reshape(nz * M, row * m2, 3)
+            curved[:, corner_indices(order, 3), :] = points[hexes]
+        return cls.from_corners(points, hexes, *cls._order_bnd(bnd, names),
+                                element_tags=etags, order=order, curved=curved)
 
     @classmethod
     def annulus(
@@ -354,7 +589,16 @@ class HexMesh:
         bnd = np.concatenate(bnd_list, axis=0) if bnd_list else np.zeros((0, 2), np.int64)
         names = (np.concatenate(name_list) if name_list
                  else np.empty(0, dtype=np.str_))
-        return cls(points, hexes, *cls._order_bnd(bnd, names), element_tags=etags)
+        order = meshes[0].order if meshes else 1
+        if any(mm.order != order for mm in meshes):
+            raise ValueError("merge: all blocks must share the same order")
+        curved: CurvedBlock | None = None
+        if order > 1:
+            curved = np.concatenate(
+                [np.asarray(mm.curved, dtype=float) for mm in meshes], axis=0)
+            curved[:, corner_indices(order, 3), :] = points[hexes]
+        return cls.from_corners(points, hexes, *cls._order_bnd(bnd, names),
+                                element_tags=etags, order=order, curved=curved)
 
     @classmethod
     def blend(cls, a: HexMesh, b: HexMesh,
@@ -376,8 +620,15 @@ class HexMesh:
         if not np.array_equal(a.hexes, b.hexes):
             raise ValueError(
                 "blend: blocks must share identical connectivity (paired by index)")
-        return [cls((1.0 - t) * A + t * B, a.hexes, a.boundaries, a.boundary_tags)
-                for t in np.asarray(fractions, dtype=float).ravel()]
+        if a.order != b.order:
+            raise ValueError("blend: blocks must share the same order")
+        out: list[HexMesh] = []
+        for t in np.asarray(fractions, dtype=float).ravel():
+            cb = blend_ho(a.curved, b.curved, float(t))
+            out.append(cls.from_corners((1.0 - t) * A + t * B, a.hexes,
+                                        a.boundaries, a.boundary_tags,
+                                        order=a.order, curved=cb))
+        return out
 
     # -- boundary queries (topological domain surface) ------------------
     @staticmethod
@@ -420,12 +671,16 @@ class HexMesh:
         *,
         face_tags: dict[str, str] | None = None,
         element_tag: str = "",
+        order: int = 1,
     ) -> HexMesh:
         """Build hexes from a structured point grid ``P`` ``(ni+1,nj+1,nk+1,3)``.
         ``face_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
         ``z_min``/``z_max``) to boundary names on the six outer sides; a side left out
         or mapped to ``NO_BOUNDARY`` emits no boundary row. ``element_tag`` is written
-        to every hex's ``element_tags``."""
+        to every hex's ``element_tags``.
+
+        ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
+        each hex carries ``(order+1)**3`` straight-sided (trilinear) GLL nodes."""
         P = np.asarray(P, dtype=float)
         ni1, nj1, nk1, _ = P.shape
         ni, nj, nk = ni1 - 1, nj1 - 1, nk1 - 1
@@ -455,7 +710,10 @@ class HexMesh:
                 names.append(name)
         # np.full width-infers from the fill value (dtype=np.str_ would clip to <U1)
         etags: StrArray = np.full(hexes.shape[0], element_tag)
-        return cls(points, hexes, *cls._order_bnd(bnd, names), element_tags=etags)
+        curved: CurvedBlock | None = (subdivide_hexes(points, hexes, order)
+                                      if order > 1 else None)
+        return cls.from_corners(points, hexes, *cls._order_bnd(bnd, names),
+                                element_tags=etags, order=order, curved=curved)
 
     @staticmethod
     def _order_bnd(

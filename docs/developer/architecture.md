@@ -22,7 +22,7 @@ TriMesh ──▶ QuadMesh cross-section slices ──HexMesh.extrude/loft/annul
  Dirichlet solve,         ┌──────────────────────────────────────────────────────┤
  boundary loops)          ▼               ▼            ▼               ▼          ▼
              quadmesh.smoothing/  quadmesh|hexmesh   model.topology  io.export  io.viz
-             hexmesh.smoothing    .quality           (watertight/    (re2/vtk/  (plot)
+             hexmesh.smoothing    .quality           (watertight/    (re2/vtu/  (plot)
                    (reposition)   (scaled Jac)       conformal)      mesh, meshio)
 ```
 
@@ -62,7 +62,7 @@ that acts on it (smoothing / quality / surface ops):
 | `model/fields.py` | sizing `Field`s + 1-D graded distributions |
 
 **`io/`** — export and visualization: `io/export.py`
-(`to_re2` / `to_vtk` / `to_mesh` / `to_meshio` / `write`), `io/viz.py`
+(`to_re2` / `to_vtu` / `to_mesh` / `to_meshio` / `write`), `io/viz.py`
 (`plot`), `io/templates/` (`.rea` header/footer templates).
 
 **`_typing.py`** — shared numpy dtype aliases; see {doc}`conventions`.

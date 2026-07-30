@@ -5,7 +5,7 @@ extrude each leg's O-grid sections into hexes, weld, smooth, export::
 
     PYTHONPATH=. python examples/bifurcation.py
 
-Writes ``bifurcation.re2`` / ``.rea`` (Nek5000/NekRS) and ``bifurcation.vtk``.
+Writes ``bifurcation.re2`` / ``.rea`` (Nek5000/NekRS) and ``bifurcation.vtu``.
 """
 
 import logging
@@ -355,7 +355,7 @@ if SMOOTH_ITERS > 0:
 
 export.summary(mesh)
 if EXPORT_VTK:
-    export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+    export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 if EXPORT_RE2:
     export.to_re2(mesh, OUT_NAME, groups=GROUPS)
 if PLOT:

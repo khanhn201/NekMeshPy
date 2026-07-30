@@ -119,6 +119,85 @@ def validate_layers(positions: FloatArray, who: str) -> FloatArray:
     return p
 
 
+# -- high-order reference nodes (Gauss-Lobatto-Legendre) ----------------
+_GLL_CACHE: dict[int, FloatArray] = {}
+
+
+def gll_nodes(order: int) -> FloatArray:
+    """The ``order+1`` Gauss-Lobatto-Legendre nodes mapped to ``[0, 1]``, ascending.
+
+    GLL nodes are the two endpoints plus the roots of ``P'_order`` (the derivative
+    of the order-``order`` Legendre polynomial) -- the grid Nek5000's spectral
+    operators are defined on.  ``order == 1`` returns ``[0, 1]`` exactly (so the
+    high-order paths reduce to the linear corners).  Cached per order."""
+    if order < 1:
+        raise ValueError("gll_nodes needs order >= 1")
+    cached = _GLL_CACHE.get(order)
+    if cached is not None:
+        return cached
+    if order == 1:
+        nodes = np.array([0.0, 1.0])
+    else:
+        # interior GLL nodes on [-1,1] are the roots of P'_order; build P'_order
+        # from the Legendre series and take its roots, then add the endpoints.
+        dP = np.polynomial.legendre.Legendre.basis(order).deriv()
+        interior = np.sort(dP.roots().real)
+        x = np.concatenate([[-1.0], interior, [1.0]])
+        nodes = 0.5 * (x + 1.0)                       # map [-1,1] -> [0,1]
+        nodes[0], nodes[-1] = 0.0, 1.0                # pin endpoints exactly
+    _GLL_CACHE[order] = nodes
+    return nodes
+
+
+def gll_weights(order: int) -> FloatArray:
+    """The ``order+1`` GLL quadrature weights on ``[0, 1]`` (sum to 1), matching
+    :func:`gll_nodes`.  Used by the (deferred) order-N quality metric."""
+    if order < 1:
+        raise ValueError("gll_weights needs order >= 1")
+    x = 2.0 * gll_nodes(order) - 1.0                  # back to [-1,1]
+    Pn = np.polynomial.legendre.Legendre.basis(order)(x)
+    w = 2.0 / (order * (order + 1) * Pn ** 2)         # standard GLL weight
+    return w / w.sum()                                # normalized to [0,1] span
+
+
+def lagrange_matrix(nodes: FloatArray, eval_pts: FloatArray) -> FloatArray:
+    """The ``(len(eval_pts), len(nodes))`` matrix of Lagrange basis values: row
+    ``i`` holds ``L_k(eval_pts[i])`` for each node ``k``.  ``M @ f`` interpolates
+    nodal values ``f`` to ``eval_pts``; each row sums to 1 (partition of unity)."""
+    xn = np.asarray(nodes, dtype=float).ravel()
+    xe = np.asarray(eval_pts, dtype=float).ravel()
+    n = xn.size
+    M = np.ones((xe.size, n))
+    for k in range(n):
+        for j in range(n):
+            if j != k:
+                M[:, k] *= (xe - xn[j]) / (xn[k] - xn[j])
+    return M
+
+
+def lagrange_derivative_matrix(nodes: FloatArray, eval_pts: FloatArray) -> FloatArray:
+    """The ``(len(eval_pts), len(nodes))`` matrix of Lagrange basis derivatives: entry
+    ``(i, k)`` is ``L'_k(eval_pts[i])``.  ``M @ f`` gives the derivative of the
+    interpolant of nodal values ``f`` at ``eval_pts``; each row sums to 0 (derivative
+    of the partition of unity).  The companion of :func:`lagrange_matrix`, used by the
+    order-N scaled-Jacobian metric to form element tangents from a curved block."""
+    xn = np.asarray(nodes, dtype=float).ravel()
+    xe = np.asarray(eval_pts, dtype=float).ravel()
+    n = xn.size
+    D = np.zeros((xe.size, n))
+    for k in range(n):
+        # L'_k = sum_{m != k} 1/(xn[k]-xn[m]) * prod_{j != k,m} (x-xn[j])/(xn[k]-xn[j])
+        for m in range(n):
+            if m == k:
+                continue
+            term = np.full(xe.size, 1.0 / (xn[k] - xn[m]))
+            for j in range(n):
+                if j != k and j != m:
+                    term *= (xe - xn[j]) / (xn[k] - xn[j])
+            D[:, k] += term
+    return D
+
+
 def distribution_from_field(field: Field, p0: Point, p1: Point,
                             max_cells: int = 200) -> FloatArray:
     """Graded positions along ``p0 -> p1`` where each cell length approximates the

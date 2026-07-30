@@ -15,7 +15,7 @@ Each edge line tags itself: bottom (ground + bump) ``wall``, ends ``inlet`` /
 
     PYTHONPATH=. python examples/flow_past_half_cylinder.py
 
-Produces ``flow_past_half_cylinder.re2`` / ``.rea`` and ``.vtk``.
+Produces ``flow_past_half_cylinder.re2`` / ``.rea`` and ``.vtu``.
 """
 
 import logging
@@ -70,5 +70,5 @@ mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

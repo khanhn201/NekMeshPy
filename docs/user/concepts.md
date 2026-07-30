@@ -154,6 +154,74 @@ Each factory takes an optional `smoothing_method=`. There is **no** HexMesh-leve
 registry; the constrained volume untangle/polish is the separate
 {func}`nekmeshpy.hexmesh.smoothing.smooth`.
 
+## High-order (order-N) elements
+
+Every factory takes an optional `order=N` (default `1`). At `order > 1` each
+element carries `(N+1)` nodes per parametric direction — line `N+1`, quad
+`(N+1)²`, hex `(N+1)³` — sampled at **Gauss–Lobatto–Legendre (GLL)** parameters
+(the grid Nek5000's solver evaluates on; endpoints land exactly on the corners).
+Each factory places its extra nodes on the **true** geometry it owns, so a
+`circle`'s arc nodes lie on the exact circle and a `sphere`'s on the exact sphere
+— curvature is captured by the nodes, not approximated by straight chords.
+
+### Entity-based conformal storage
+
+Order-N is stored **conformally, without disturbing the linear topology** — the
+high-order layer mirrors the corner layer, where a shared corner is one node in
+`points` referenced by every incident element:
+
+- corner connectivity (`lines` / `quads` / `hexes`) stays authoritative — it is
+  what `.re2`, quality, topology, and `merge` read;
+- the non-corner nodes are decomposed by **topology** into shared entities plus
+  per-element private interiors (module `nekmeshpy.model.conform`):
+  - **edges** — unique undirected edges (canonical: min-corner-id first) with their
+    `N−1` shared interior nodes; a per-element incidence records the edge and a *flip*
+    bit when an element traverses it anti-canonically (quad 4 / hex 12 edges per cell);
+  - **faces** (hex only) — unique faces with their `(N−1)²` shared interior nodes, plus
+    a per-hex incidence and a **D4 orientation code** (one of the 8 square symmetries)
+    mapping the hex's local face grid to the shared canonical frame;
+  - **interior** — the per-element private nodes (line `N−1`, quad `(N−1)²`, hex
+    `(N−1)³`) that are never shared.
+
+Sharing is decided by **corner ids** (structural / exact conformality), not by a
+coordinate search: two elements meeting on an edge or face resolve to the *same*
+high-order nodes. A `curved=` block whose incident copies disagree on a shared entity
+is rejected at construction (a non-conforming input is a loud error, not a silent weld).
+
+`mesh.curved` is a **read-only view** always materialized at shape
+`(E, (order+1)^d, 3)` — reassembled on each read from the authoritative corners
+`points[conn]` and the entity tables. Even at `order == 1` it holds the `2^d` corner
+nodes (line `(E,2,3)`, quad `(E,4,3)`, hex `(E,8,3)`); the `2^d` corner sub-slice always
+equals `points[conn]` (the corner-consistency invariant), and because corners are read
+fresh from `points`, an in-place `mesh.points[:] = X` edit is reflected automatically.
+At `order == 1` every entity table is empty and the view is just `points[conn]`, so the
+order-1 path — `.re2`, quality, topology, `merge`, and the order-1 VTK writers — reads
+only `points`/corner connectivity and order-1 meshes stay byte-for-byte unchanged (this
+is what keeps the golden regression pinned).
+
+`mesh.to_conformal()` exposes the conformal model directly as
+`(nodes (M,3), conn (E,(N+1)^d))` — every node numbered once in one global array with
+dense per-element connectivity into it, the high-order analog of `points` + `quads`.
+The entity tables are also readable via `.edges` / `.edge_nodes` (quad, hex) and
+`.faces` / `.face_nodes` (hex).
+
+Both `element_tags` and `boundary_tags` propagate exactly as in the linear case;
+the extra nodes are geometry only and carry no tags of their own.
+
+### What sees the extra nodes
+
+- **`.re2` export stays linear** — Nek's re2 format has no high-order support yet,
+  so the exporter reads only the 8 corners per hex; a mesh exports byte-identically
+  at any order.
+- **VTK export becomes high-order** — the `.vtu` writer emits VTK Lagrange cells
+  (`VTK_LAGRANGE_CURVE` / `_QUADRILATERAL` / `_HEXAHEDRON`) with `(N+1)^d` nodes per
+  cell, so a viewer renders the true curved geometry. Use the XML `.vtu` writer
+  ({func}`nekmeshpy.io.export.to_vtu` / `line_to_vtu` / `quad_to_vtu`) — ParaView and
+  VisIt render Lagrange cells reliably from `.vtu`. See `examples/high_order_*.py`.
+
+Order-N quality metrics and smoothing are deferred (opt-in): the defaults stay
+corner-based.
+
 ## Physical groups & export
 
 Boundaries are plain **names** during construction. Each name maps to a Nek BC

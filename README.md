@@ -67,6 +67,34 @@ PYTHONPATH=. python examples/flow_past_cylinder.py # external flow around a body
 See the [how-to recipes](https://khanhn201.github.io/NekMeshPy/user/howto.html)
 for a guided tour of each.
 
+### High-order (order-N) elements
+
+Every factory takes an optional `order=N`: each element then carries `(N+1)`
+Gauss–Lobatto–Legendre nodes per parametric direction (line `N+1`, quad `(N+1)²`,
+hex `(N+1)³`), placed on the true geometry — a circle's arc nodes on the exact
+circle, a shell's inner wall on the exact sphere. Corner connectivity stays
+authoritative, so `.re2` export is unchanged (linear corners — Nek's re2 has no
+high-order format yet) while `.vtu` export emits VTK Lagrange cells for curved
+rendering. `order` defaults to `1` (plain linear elements). The XML `.vtu` writers
+render Lagrange cells reliably in ParaView and VisIt.
+
+The high-order nodes are stored **conformally**, decomposed by topology into shared
+edge/face entities plus per-element interiors (module `nekmeshpy.model.conform`): two
+elements meeting on an edge or face resolve to the *same* nodes, decided by corner ids
+(not a coordinate search). `mesh.to_conformal()` returns `(nodes, conn)` — one global
+node array with dense per-element connectivity, the high-order analog of
+`points` + `quads`; the tables are also readable via `.edges`/`.edge_nodes` and (hex)
+`.faces`/`.face_nodes`.
+
+```python
+loop  = LineMesh.circle(radius=2.0, n=8, order=5)   # 6 GLL nodes / arc, on the circle
+export.line_to_vtu(loop, "arc.vtu")                 # VTK_LAGRANGE_CURVE (XML)
+```
+
+See [`examples/high_order_curve.py`](examples/high_order_curve.py),
+[`high_order_quad.py`](examples/high_order_quad.py), and
+[`high_order_hex.py`](examples/high_order_hex.py).
+
 ## Development
 
 ```bash
@@ -83,5 +111,6 @@ for the workflow and the golden-regression invariant.
 ## Roadmap
 
 - [ ] Periodic boundary
-- [ ] High-order / curved elements
+- [x] High-order / curved elements — `order=N` on the factories (GLL nodes, curved
+  `.vtu`; `.re2` stays linear). See [`examples/high_order_*.py`](examples).
 - [ ] Solid–fluid conjugate mesh

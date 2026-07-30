@@ -23,7 +23,15 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from .._typing import BoolArray, FloatArray, IntArray, PointArray, StrArray
+from .._typing import (
+    BoolArray,
+    CurvedBlock,
+    FloatArray,
+    IntArray,
+    PointArray,
+    StrArray,
+)
+from ..model.interp import blend_ho, corner_indices
 
 
 class LineMesh:
@@ -44,12 +52,20 @@ class LineMesh:
         boundary_tags: StrArray | Sequence[str] | None = None,
         *,
         closed: bool = False,
+        order: int = 1,
+        curved: CurvedBlock | None = None,
     ) -> None:
         """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), optional
         ``lines`` ``(L,2)`` connectivity (defaults to a consecutive chain, wrapping
         when ``closed``), optional dense ``element_tags`` ``(L,)``, and an optional
         tagged-boundary list ``boundaries`` ``(Nbc,2)`` with parallel
-        ``boundary_tags``. Prefer the ``open`` / ``loop`` factories."""
+        ``boundary_tags``. Prefer the ``open`` / ``loop`` factories.
+
+        ``order`` is the global polynomial order (default 1 = linear). At
+        ``order > 1`` pass ``curved`` -- the per-line high-order nodes, shape
+        ``(L, order+1, 3)`` in ascending GLL order, whose two endpoint nodes must
+        equal ``points[lines]`` (the corner-consistency invariant). ``re2`` export
+        stays linear; only ``vtu`` reads the curved nodes."""
         a = np.asarray(points, dtype=float)
         if a.ndim == 1:
             a = a.reshape(1, -1)
@@ -95,6 +111,83 @@ class LineMesh:
             raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
                              % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
 
+        self._order = int(order)
+        #: ``(L, order-1, 3)`` per-line private high-order interior nodes (ascending GLL
+        #: order).  A line has no shared edges/faces, so its endpoints (owned by
+        #: ``points[lines]``) are its only conformal nodes and every interior node is
+        #: private -- there is nothing to reconcile between lines.  Empty at order 1.
+        self.interior: FloatArray = self._extract_interior(curved)
+
+    def _extract_interior(self, curved: CurvedBlock | None) -> FloatArray:
+        """Validate a full ``(L, order+1, 3)`` curved block and return the per-line
+        private interior ``(L, order-1, 3)``.  Checks the 2 endpoint nodes equal
+        ``points[lines]`` (corner consistency, scale-relative tol).  ``curved=None`` is
+        allowed only at order 1 (empty interior)."""
+        order = self._order
+        if order < 1:
+            raise ValueError("LineMesh: order must be >= 1, got %d" % order)
+        n_lines = self.lines.shape[0]
+        if curved is None:
+            if order > 1:
+                raise ValueError(
+                    "LineMesh: order %d > 1 requires a curved block" % order)
+            return np.zeros((n_lines, 0, 3), dtype=float)
+        cb: CurvedBlock = np.asarray(curved, dtype=float)
+        if cb.shape != (n_lines, order + 1, 3):
+            raise ValueError(
+                "LineMesh: curved block must be (L, order+1, 3) = (%d,%d,3), got %s"
+                % (n_lines, order + 1, cb.shape))
+        scale = (float(np.max(self.points.max(axis=0) - self.points.min(axis=0)))
+                 if self.points.size else 0.0)
+        tol = 1e-9 * scale if scale > 0 else 1e-12
+        corners = cb[:, corner_indices(order, 1), :]
+        if not np.allclose(corners, self.points[self.lines], rtol=0.0, atol=tol):
+            raise ValueError(
+                "LineMesh: curved block corners disagree with points[lines] "
+                "(the 2 endpoint nodes must equal the linear corners)")
+        if order == 1:
+            return np.zeros((n_lines, 0, 3), dtype=float)
+        return cb[:, 1:order, :].copy()
+
+    @property
+    def order(self) -> int:
+        """Global polynomial order (1 = linear)."""
+        return self._order
+
+    @property
+    def curved(self) -> CurvedBlock:
+        """The full high-order node block ``(L, order+1, 3)`` in ascending GLL order,
+        reassembled on read from the authoritative endpoints ``points[lines]`` and the
+        stored per-line ``interior`` -- so corners are never duplicated and an in-place
+        ``points`` edit is reflected.  At order 1 it holds the 2 endpoints."""
+        order = self._order
+        block: CurvedBlock = np.empty((self.lines.shape[0], order + 1, 3), dtype=float)
+        block[:, corner_indices(order, 1), :] = self.points[self.lines]
+        if order > 1:
+            block[:, 1:order, :] = self.interior
+        return block
+
+    def to_conformal(self) -> tuple[PointArray, IntArray]:
+        """Conformal high-order view ``(nodes (M,3), conn (L,order+1))``: every node
+        (endpoints + per-line interior) numbered once in one global array with dense
+        per-line connectivity into it -- the high-order analog of ``points`` +
+        ``lines``.  Line elements share only endpoints (never interior nodes), so the
+        endpoints are the shared corners and each line's ``order-1`` interior is private.
+        At order 1 this is ``points`` + ``lines`` in block order."""
+        order = self._order
+        n_lines = self.lines.shape[0]
+        conn: IntArray = np.empty((n_lines, order + 1), dtype=np.int64)
+        conn[:, corner_indices(order, 1)] = self.lines
+        parts: list[PointArray] = [np.asarray(self.points, dtype=float)]
+        if order > 1:
+            k = order - 1
+            parts.append(self.interior.reshape(n_lines * k, 3))
+            base = self.points.shape[0]
+            conn[:, 1:order] = base + (
+                np.arange(n_lines)[:, None] * k + np.arange(k)[None, :])
+        nodes: PointArray = np.concatenate(parts, axis=0)
+        return nodes, conn
+
     # -- construction factories -----------------------------------------
     @classmethod
     def open(
@@ -103,10 +196,14 @@ class LineMesh:
         element_tags: StrArray | Sequence[str] | None = None,
         boundaries: IntArray | None = None,
         boundary_tags: StrArray | Sequence[str] | None = None,
+        *,
+        order: int = 1,
+        curved: CurvedBlock | None = None,
     ) -> LineMesh:
-        """An open line mesh through ``points`` in order: a consecutive chain."""
+        """An open line mesh through ``points`` in order: a consecutive chain.
+        Pass ``order``/``curved`` to carry a high-order block (see ``__init__``)."""
         return cls(points, None, element_tags, boundaries, boundary_tags,
-                   closed=False)
+                   closed=False, order=order, curved=curved)
 
     @classmethod
     def loop(
@@ -115,13 +212,17 @@ class LineMesh:
         element_tags: StrArray | Sequence[str] | None = None,
         boundaries: IntArray | None = None,
         boundary_tags: StrArray | Sequence[str] | None = None,
+        *,
+        order: int = 1,
+        curved: CurvedBlock | None = None,
     ) -> LineMesh:
         """A closed loop through ``points`` (last rejoins first): ``N`` line
         elements. A per-element ``element_tags`` (element ``m`` = point ``m`` ->
         ``(m+1) % N``) is carried through the ordered ops and consumed by the section
-        factories, e.g. to split a far-field box into named sides."""
+        factories, e.g. to split a far-field box into named sides. Pass
+        ``order``/``curved`` to carry a high-order block (see ``__init__``)."""
         return cls(points, None, element_tags, boundaries, boundary_tags,
-                   closed=True)
+                   closed=True, order=order, curved=curved)
 
     @classmethod
     def from_segments(cls, segs: FloatArray | None) -> LineMesh | None:
@@ -198,7 +299,14 @@ class LineMesh:
         and ``boundary_tags`` (positional BC markers follow the morph); per-element
         ``element_tags`` are left for the consuming factory/``loft`` to assign, so a
         blended stack feeds straight into ``loft`` or a section factory.  This is the
-        profile-positioning step behind ``annulus`` (and any morphing sweep)."""
+        profile-positioning step behind ``annulus`` (and any morphing sweep).
+
+        High-order profiles morph too: ``a``/``b`` share the same order ``N`` (so
+        their always-materialized ``curved`` blocks pair by index) and each result
+        carries the blended block ``(1-t)*a.curved + t*b.curved`` -- corner-consistent
+        by construction, so a high-order blended stack feeds ``loft`` unchanged.  At
+        order 1 the blended corner block equals the plain point blend, so the result
+        is byte-identical to the linear morph."""
         A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
         B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
         if A.shape[0] != B.shape[0]:
@@ -211,9 +319,16 @@ class LineMesh:
         if not np.array_equal(a.lines, b.lines):
             raise ValueError(
                 "blend: profiles must share identical connectivity (paired by index)")
-        return [cls((1.0 - t) * A + t * B, a.lines, boundaries=a.boundaries,
-                    boundary_tags=a.boundary_tags, closed=a.is_closed)
-                for t in np.asarray(fractions, dtype=float).ravel()]
+        if a.order != b.order:
+            raise ValueError("blend: profiles must have the same order (got %d, %d)"
+                             % (a.order, b.order))
+        out: list[LineMesh] = []
+        for t in np.asarray(fractions, dtype=float).ravel():
+            cb = blend_ho(a.curved, b.curved, float(t))
+            out.append(cls((1.0 - t) * A + t * B, a.lines, boundaries=a.boundaries,
+                           boundary_tags=a.boundary_tags, closed=a.is_closed,
+                           order=a.order, curved=cb))
+        return out
 
     @classmethod
     def merge(cls, meshes: list[LineMesh], *,
@@ -279,7 +394,18 @@ class LineMesh:
         names = (np.concatenate(name_list) if name_list
                  else np.empty(0, dtype=np.str_))
 
-        out = cls(points, lines, etags, bnd, names)
+        # order-N: concatenate the per-line curved blocks (same line order) in the same
+        # order the lines were concatenated; welding only touches endpoints (corners),
+        # so the private interiors ride through and the corner re-pin keeps them exact.
+        order = meshes[0].order if meshes else 1
+        if any(m.order != order for m in meshes):
+            raise ValueError("LineMesh.merge: all meshes must share the same order")
+        curved: CurvedBlock | None = None
+        if order > 1 and line_list:
+            curved = np.concatenate([m.curved for m in meshes], axis=0)
+            curved[:, corner_indices(order, 1), :] = points[lines]
+
+        out = cls(points, lines, etags, bnd, names, order=order, curved=curved)
         # closed iff welding left no degree-1 chain end (e.g. two arcs -> loop)
         out._closed = bool(out.boundary_points().size == 0)
         return out

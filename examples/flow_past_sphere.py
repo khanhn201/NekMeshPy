@@ -14,7 +14,7 @@ edges, so wall groups come from element tags).
 
     PYTHONPATH=. python examples/flow_past_sphere.py
 
-Produces ``flow_past_sphere.re2`` / ``.rea`` and ``flow_past_sphere.vtk``.
+Produces ``flow_past_sphere.re2`` / ``.rea`` and ``flow_past_sphere.vtu``.
 """
 
 import logging
@@ -53,5 +53,5 @@ mesh = HexMesh.annulus(sphere, cube,
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

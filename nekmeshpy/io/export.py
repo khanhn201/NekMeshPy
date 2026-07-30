@@ -1,7 +1,9 @@
 """Export / generic-view free functions for a ``HexMesh``.
 
 Exports to a shared-point ``Mesh``, meshio, or native Nek ``.re2``/``.rea`` and
-``.vtk``. The ``groups`` parameter maps each boundary name to a Nek BC code and tag.
+VTK XML (``.vtu``). The ``.vtu`` writer emits high-order VTK Lagrange cells at
+``order > 1``; ``.re2`` always stays linear. The ``groups`` parameter maps each
+boundary name to a Nek BC code and tag.
 """
 
 from __future__ import annotations
@@ -16,11 +18,22 @@ import numpy as np
 
 from .._typing import FloatArray, IntArray
 from ..model import topology
+from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
 from ..model.physical import PhysicalGroup, PhysicalGroups
 
 if TYPE_CHECKING:
     from ..hexmesh import HexMesh
+    from ..linemesh import LineMesh
+    from ..quadmesh import QuadMesh
+
+# VTK cell-type ids: linear + high-order (Lagrange) line / quad / hex.
+_VTK_LINE = 3
+_VTK_LAGRANGE_CURVE = 68
+_VTK_QUAD = 9
+_VTK_LAGRANGE_QUADRILATERAL = 70
+_VTK_HEXAHEDRON = 12
+_VTK_LAGRANGE_HEXAHEDRON = 72
 
 # .rea header/footer templates
 _TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -147,52 +160,228 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
     return mesh
 
 
-def to_vtk(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
-    """Write an ASCII VTK unstructured grid with per-point ``bc_id`` tags."""
-    g = _as_groups(mesh, groups)
-    elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    boundaries = mesh.boundaries
-    bnames = mesh.boundary_tags
+def _hex_point_index(i: int, j: int, k: int, n: int) -> int:
+    """VTK_LAGRANGE_HEXAHEDRON connectivity position of lattice node ``(i,j,k)`` at
+    order ``n`` per axis -- VTK's ``PointIndexFromIJK`` recursion (corners, then the
+    12 edges, then the 6 faces, then the interior)."""
+    ibdy = i == 0 or i == n
+    jbdy = j == 0 or j == n
+    kbdy = k == 0 or k == n
+    nbdy = int(ibdy) + int(jbdy) + int(kbdy)
+    e = n - 1
+    if nbdy == 3:                                        # corner
+        return (2 if (i and j) else (1 if i else (3 if j else 0))) + (4 if k else 0)
+    offset = 8
+    if nbdy == 2:                                        # edge
+        if not ibdy:
+            return (i - 1) + (2 * e if j else 0) + (4 * e if k else 0) + offset
+        if not jbdy:
+            return (j - 1) + (e if i else 3 * e) + (4 * e if k else 0) + offset
+        offset += 8 * e
+        return (k - 1) + e * (3 if (i and j) else (1 if i else (2 if j else 0))) + offset
+    offset += 12 * e
+    if nbdy == 1:                                        # face
+        if ibdy:
+            return (j - 1) + e * (k - 1) + (e * e if i else 0) + offset
+        offset += 2 * e * e
+        if jbdy:
+            return (i - 1) + e * (k - 1) + (e * e if j else 0) + offset
+        offset += 2 * e * e
+        return (i - 1) + e * (j - 1) + (e * e if k else 0) + offset
+    offset += 6 * e * e                                  # interior
+    return offset + (i - 1) + e * ((j - 1) + e * (k - 1))
+
+
+def _lagrange_hex_perm(order: int) -> IntArray:
+    """Map our lexicographic (``i`` fastest, ``i + row*j + row**2*k``) hex nodes to
+    the VTK Lagrange-hexahedron node order (:func:`_hex_point_index`)."""
+    n = order
+    row = n + 1
+    perm: IntArray = np.empty(row ** 3, dtype=np.int64)
+    for k in range(row):
+        for j in range(row):
+            for i in range(row):
+                perm[_hex_point_index(i, j, k, n)] = i + row * j + row * row * k
+    return perm
+
+
+def _lagrange_curve_perm(order: int) -> IntArray:
+    """Map our lexicographic (ascending) curve nodes ``[0,1,...,N]`` to the VTK
+    Lagrange-curve order ``[end0, end1, interior1, ..., interior(N-1)]``."""
+    return np.array([0, order, *range(1, order)], dtype=np.int64)
+
+
+def _lagrange_quad_perm(order: int) -> IntArray:
+    """Map our lexicographic (``i`` fastest, index ``i + (order+1)*j``) quad nodes to
+    the VTK Lagrange-quadrilateral order: 4 corners, then the four edges
+    (bottom / right / top / left, each start->end), then the interior nodes
+    (``i`` fastest)."""
+    n = order
+    row = n + 1
+
+    def idx(i: int, j: int) -> int:
+        return i + row * j
+    corners = [idx(0, 0), idx(n, 0), idx(n, n), idx(0, n)]
+    e0 = [idx(i, 0) for i in range(1, n)]
+    e1 = [idx(n, j) for j in range(1, n)]
+    e2 = [idx(i, n) for i in range(n - 1, 0, -1)]
+    e3 = [idx(0, j) for j in range(n - 1, 0, -1)]
+    interior = [idx(i, j) for j in range(1, n) for i in range(1, n)]
+    return np.array(corners + e0 + e1 + e2 + e3 + interior, dtype=np.int64)
+
+
+# -- node-array builders (for the .vtu writer) --------------------------
+# Each returns per-element (un-welded) node coordinates already in VTK node order,
+# the nodes-per-cell, and the VTK cell-type id; the hex builder also returns the
+# flat per-node ``bc_id``.
+def _hex_arrays(mesh: HexMesh,
+                g: PhysicalGroups) -> tuple[FloatArray, int, int, IntArray]:
+    """Un-welded hex nodes + ``bc_id``: linear ``VTK_HEXAHEDRON`` at ``order == 1``,
+    a curved ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes) above it (face
+    nodes inherit the boundary face's tag)."""
+    if mesh.order > 1:
+        order = mesh.order
+        perm = _lagrange_hex_perm(order)
+        blocks = np.asarray(mesh.curved, dtype=float)    # (N, m3, 3) lexicographic
+        N, m, _ = blocks.shape
+        X = blocks[:, perm, :].reshape(N * m, 3)
+        bc: IntArray = np.zeros((N, m), dtype=np.int64)
+        face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
+        for i in range(mesh.boundaries.shape[0]):
+            elem = int(mesh.boundaries[i, 0])
+            face = int(mesh.boundaries[i, 1])
+            grp = g.get(str(mesh.boundary_tags[i]))
+            if grp is None:
+                _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
+                continue
+            bc[elem, face_idx[face]] = grp.tag
+        return X, m, _VTK_LAGRANGE_HEXAHEDRON, bc[:, perm].reshape(N * m)
+    elements = mesh.points[mesh.hexes]                   # (N,8,3) per-element coords
     N = elements.shape[0]
     X = elements.reshape(N * 8, 3)
-    nX = X.shape[0]
+    bc = np.zeros((N, 8), dtype=np.int64)
+    for i in range(mesh.boundaries.shape[0]):
+        elem = int(mesh.boundaries[i, 0])
+        face = int(mesh.boundaries[i, 1])
+        grp = g.get(str(mesh.boundary_tags[i]))
+        if grp is None:
+            _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
+            continue
+        bc[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+    return X, 8, _VTK_HEXAHEDRON, bc.reshape(N * 8)
+
+
+def _line_arrays(mesh: LineMesh) -> tuple[FloatArray, int, int]:
+    """Un-welded line nodes: ``VTK_LINE`` (2 nodes) at ``order == 1``, a
+    ``VTK_LAGRANGE_CURVE`` (``order+1`` GLL nodes) above it."""
+    if mesh.order == 1:
+        blocks = mesh.points[mesh.lines]                 # (L,2,3)
+        perm = np.array([0, 1], dtype=np.int64)
+        cell_type = _VTK_LINE
+    else:
+        blocks = np.asarray(mesh.curved, dtype=float)    # (L,order+1,3) ascending
+        perm = _lagrange_curve_perm(mesh.order)
+        cell_type = _VTK_LAGRANGE_CURVE
+    L, m, _ = blocks.shape
+    return blocks[:, perm, :].reshape(L * m, 3), m, cell_type
+
+
+def _quad_arrays(mesh: QuadMesh) -> tuple[FloatArray, int, int]:
+    """Un-welded quad nodes: ``VTK_QUAD`` (4 CCW nodes) at ``order == 1``, a
+    ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes) above it."""
+    if mesh.order == 1:
+        blocks = mesh.points[mesh.quads]                 # (Q,4,3)
+        perm = np.array([0, 1, 2, 3], dtype=np.int64)
+        cell_type = _VTK_QUAD
+    else:
+        blocks = np.asarray(mesh.curved, dtype=float)    # (Q,(N+1)^2,3) lexicographic
+        perm = _lagrange_quad_perm(mesh.order)
+        cell_type = _VTK_LAGRANGE_QUADRILATERAL
+    Q, m, _ = blocks.shape
+    return blocks[:, perm, :].reshape(Q * m, 3), m, cell_type
+
+
+# -- the unstructured-grid writer ---------------------------------------
+def _write_vtu(fname: str, X: FloatArray, m: int, cell_type: int,
+               *, bc_out: IntArray | None = None) -> None:
+    """XML VTK unstructured grid (``.vtu``): ``X`` is per-element un-welded nodes
+    (``m`` per cell, contiguous), so connectivity is just consecutive blocks.
+    ``bc_out``, if given, is written as ``bc_id`` PointData.  The XML container
+    renders VTK Lagrange cells reliably in ParaView / VisIt."""
+    P = X.shape[0]
+    N = P // m
     with open(fname, "w") as fid:
-        fid.write("# vtk DataFile Version 2.0\n")
-        fid.write("Hexes\n")
-        fid.write("ASCII\n")
-        fid.write("DATASET UNSTRUCTURED_GRID\n")
-        fid.write("\n")
-        fid.write("POINTS %d float\n" % nX)
-        for r in range(nX):
-            fid.write("%f %f %f \n" % (X[r, 0], X[r, 1], X[r, 2]))
-        fid.write("\n")
-        fid.write("CELLS %d %d\n" % (N, N * 9))
+        fid.write('<?xml version="1.0"?>\n')
+        fid.write('<VTKFile type="UnstructuredGrid" version="1.0" '
+                  'byte_order="LittleEndian" header_type="UInt64">\n')
+        fid.write("  <UnstructuredGrid>\n")
+        fid.write('    <Piece NumberOfPoints="%d" NumberOfCells="%d">\n' % (P, N))
+        fid.write("      <Points>\n")
+        fid.write('        <DataArray type="Float64" NumberOfComponents="3" '
+                  'format="ascii">\n')
+        for r in range(P):
+            fid.write("          %.17g %.17g %.17g\n" % (X[r, 0], X[r, 1], X[r, 2]))
+        fid.write("        </DataArray>\n")
+        fid.write("      </Points>\n")
+        fid.write("      <Cells>\n")
+        fid.write('        <DataArray type="Int64" Name="connectivity" '
+                  'format="ascii">\n')
         for e in range(N):
-            base = 8 * e
-            fid.write("8 %s\n" % " ".join(str(base + k) for k in range(8)))
-        fid.write("\n")
-        fid.write("CELL_TYPES %d\n" % N)
+            base = m * e
+            fid.write("          %s\n" % " ".join(str(base + c) for c in range(m)))
+        fid.write("        </DataArray>\n")
+        fid.write('        <DataArray type="Int64" Name="offsets" format="ascii">\n')
+        for e in range(1, N + 1):
+            fid.write("          %d\n" % (m * e))
+        fid.write("        </DataArray>\n")
+        fid.write('        <DataArray type="UInt8" Name="types" format="ascii">\n')
         for _ in range(N):
-            fid.write("12\n")
-        fid.write("\n")
-        iftoiv = mesh.FACE_POINTS + 1
-        tmp = np.zeros((8, N), dtype=np.int64)
-        for i in range(boundaries.shape[0]):
-            face = int(boundaries[i, 1])
-            elem = int(boundaries[i, 0])
-            name = str(bnames[i])
-            grp = g.get(name)
-            if grp is None:
-                _log.warning("unknown boundary name: %s", name)
-                continue
-            for j in iftoiv[face - 1, :]:
-                tmp[j - 1, elem] = grp.tag
-        fid.write("POINT_DATA %d\n" % (N * 8))
-        fid.write("SCALARS bc_id int 1\n")
-        fid.write("LOOKUP_TABLE default\n")
-        for val in tmp.flatten(order="F"):
-            fid.write("%d\n" % val)
-        fid.write("\n")
+            fid.write("          %d\n" % cell_type)
+        fid.write("        </DataArray>\n")
+        fid.write("      </Cells>\n")
+        if bc_out is not None:
+            fid.write('      <PointData Scalars="bc_id">\n')
+            fid.write('        <DataArray type="Int32" Name="bc_id" '
+                      'format="ascii">\n')
+            for val in bc_out:
+                fid.write("          %d\n" % int(val))
+            fid.write("        </DataArray>\n")
+            fid.write("      </PointData>\n")
+        fid.write("    </Piece>\n")
+        fid.write("  </UnstructuredGrid>\n")
+        fid.write("</VTKFile>\n")
+
+
+# -- .vtu (XML; VTK Lagrange cells render reliably in ParaView / VisIt) --
+def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
+    """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
+    ``bc_id`` tags.
+
+    At ``order == 1`` each hex is a linear ``VTK_HEXAHEDRON``; at ``order > 1`` a
+    ``VTK_LAGRANGE_HEXAHEDRON`` carrying the hex's ``(order+1)**3`` curved GLL nodes."""
+    X, m, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
+    _write_vtu(fname, X, m, cell_type, bc_out=bc_out)
+    return mesh
+
+
+def line_to_vtu(mesh: LineMesh, fname: str) -> LineMesh:
+    """Write an XML VTK unstructured grid (``.vtu``) of a ``LineMesh``, un-welded (one
+    node block per line element).  At ``order == 1`` each element is a ``VTK_LINE`` (2
+    nodes); at ``order > 1`` a ``VTK_LAGRANGE_CURVE`` carrying the element's
+    ``order+1`` GLL nodes -- so a high-order ``circle`` renders as its true arc."""
+    X, m, cell_type = _line_arrays(mesh)
+    _write_vtu(fname, X, m, cell_type)
+    return mesh
+
+
+def quad_to_vtu(mesh: QuadMesh, fname: str) -> QuadMesh:
+    """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, un-welded (one
+    node block per quad).  At ``order == 1`` each quad is a ``VTK_QUAD`` (4 CCW nodes);
+    at ``order > 1`` a ``VTK_LAGRANGE_QUADRILATERAL`` carrying the element's
+    ``(order+1)**2`` GLL nodes -- so a high-order ``sphere`` renders as its true
+    surface."""
+    X, m, cell_type = _quad_arrays(mesh)
+    _write_vtu(fname, X, m, cell_type)
     return mesh
 
 

@@ -242,7 +242,7 @@ def test_extrude_line_to_quad_carries_element_and_boundary_tags():
 def test_hex_extrude_carries_quad_element_tags():
     # two-quad section carrying element_tags -> extrude 2 layers -> 4 hexes, each
     # inheriting its column quad's element tag.
-    section = QuadMesh(
+    section = QuadMesh.from_corners(
         [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
         [[0, 1, 2, 3], [1, 4, 5, 2]], element_tags=["A", "B"])
     block = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,

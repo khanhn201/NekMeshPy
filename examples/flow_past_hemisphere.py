@@ -15,7 +15,7 @@ so :meth:`HexMesh.merge` welds them. The ceiling sits at ``z=S``.
 
     PYTHONPATH=. python examples/flow_past_hemisphere.py
 
-Produces ``flow_past_hemisphere.re2`` / ``.rea`` and ``.vtk``.
+Produces ``flow_past_hemisphere.re2`` / ``.rea`` and ``.vtu``.
 """
 
 import logging
@@ -30,10 +30,11 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 # -- parameters --------------------------------------------------------------
 R = 0.5                      # hemisphere radius (rests on the floor z=0)
 S = 4.0                      # far-field half-box: [-S,S] x [-S,S] x [0,S]
-N_FACE = 12                  # horizontal cells per direction on each cube face
+N_FACE = 6                  # horizontal cells per direction on each cube face
 N_HALF = 6                   # vertical cells over z in [0,S] on the side patches
 N_RADIAL = 12                # radial cells from hemisphere out to the box
 RADIAL_GRADING = 1.15        # >1 clusters radial layers toward the hemisphere
+ORDER = 4
 OUT_NAME = "flow_past_hemisphere"
 
 # boundary name -> Nek BC code, applied only at export
@@ -94,5 +95,5 @@ mesh = HexMesh.merge(patches)                              # weld shared gnomoni
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

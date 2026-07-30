@@ -67,9 +67,9 @@ def test_rea_byte_identical(built_mesh):
     assert got == ref
 
 
-def test_vtk_byte_identical(built_mesh):
-    with open(built_mesh["vtk"], "rb") as f:
+def test_vtu_byte_identical(built_mesh):
+    with open(built_mesh["vtu"], "rb") as f:
         got = f.read()
-    with open(os.path.join(GOLDEN, "bifurcation.vtk"), "rb") as f:
+    with open(os.path.join(GOLDEN, "bifurcation.vtu"), "rb") as f:
         ref = f.read()
     assert got == ref

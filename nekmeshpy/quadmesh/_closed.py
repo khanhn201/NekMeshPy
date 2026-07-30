@@ -37,13 +37,18 @@ _BOX_FACES = [
 
 def box(half_sizes: float | Sequence[float] | FloatArray,
         n: int | Sequence[int] | IntArray, *,
-        face_tags: Mapping[str, str] | None = None) -> QuadMesh:
+        face_tags: Mapping[str, str] | None = None,
+        order: int = 1) -> QuadMesh:
     """Closed box surface centred at the origin: six quad patches welded with
     :meth:`merge`.  ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n``
     is a scalar or ``(nx, ny, nz)`` cells per axis.  ``face_tags`` (keyed
     ``x_min`` / ``x_max`` / ... / ``z_max``) writes each face's dense per-quad
     ``element_tags`` -- e.g. the far-field side it forms; an absent face stays
-    untagged so ``merge`` welds shared edges cleanly."""
+    untagged so ``merge`` welds shared edges cleanly.
+
+    ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
+    each flat face patch carries ``(order+1)**2`` straight-sided GLL nodes (exact,
+    the faces are planar)."""
     from .quadmesh import QuadMesh
     hs: FloatArray = np.asarray(half_sizes, dtype=float).ravel()
     if hs.size == 1:
@@ -69,22 +74,33 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
         B: FloatArray
         A, B = np.meshgrid(au, av, indexing="ij")
         face = hs * (nv + A[..., None] * uv + B[..., None] * vv)
-        patches.append(QuadMesh.from_grid(face, element_tag=ft.get(key, "")))
+        patches.append(QuadMesh.from_grid(face, element_tag=ft.get(key, ""),
+                                          order=order))
     return QuadMesh.merge(patches)
 
 
 def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
-           element_tag: str = "sphere") -> QuadMesh:
+           element_tag: str = "sphere", order: int = 1) -> QuadMesh:
     """Closed cubed-sphere surface of ``radius`` about the origin: a unit
     :meth:`box` projected radially onto the sphere (same connectivity, so it
     pairs by index with a same-``n`` box for
     :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>`).  Every
-    quad carries ``element_tag`` (default ``sphere``)."""
+    quad carries ``element_tag`` (default ``sphere``).
+
+    ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
+    **every** ``(order+1)**2`` node of each face is projected onto the true sphere
+    (not just the corners), so the high-order surface is the exact sphere -- the
+    motivating high-order case."""
     from .quadmesh import QuadMesh
-    cube = box(1.0, n)
+    cube = box(1.0, n, order=order)
     pts = radius * cube.points / np.linalg.norm(cube.points, axis=1, keepdims=True)
-    return QuadMesh(pts, cube.quads,
-                    element_tags=np.full(cube.n_quads, element_tag))
+    etags = np.full(cube.n_quads, element_tag)
+    if order == 1:
+        return QuadMesh.from_corners(pts, cube.quads, element_tags=etags)
+    cb = np.asarray(cube.curved, dtype=float)
+    curved = radius * cb / np.linalg.norm(cb, axis=2, keepdims=True)
+    return QuadMesh.from_corners(pts, cube.quads, element_tags=etags,
+                                 order=order, curved=curved)
 
 
 #: Closed-surface factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.

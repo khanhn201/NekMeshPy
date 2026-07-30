@@ -4,7 +4,7 @@ The concrete geometry meshers are flat scripts in ``examples/``; the tests run
 them with :func:`runpy.run_path` and read the resulting ``mesh`` global.  The
 ``built_mesh`` fixture runs ``examples/bifurcation.py`` once per session (into a
 temp dir), returning the assembled :class:`~nekmeshpy.hexmesh.HexMesh`
-plus its written ``.re2``/``.rea``/``.vtk`` paths.  Golden reference outputs live
+plus its written ``.re2``/``.rea``/``.vtu`` paths.  Golden reference outputs live
 in ``tests/golden/`` (a frozen snapshot of the validated results).
 """
 
@@ -47,7 +47,7 @@ def built_mesh(tmp_path_factory):
         "mesh": ns["mesh"],
         "re2": os.path.join(out, "bifurcation.re2"),
         "rea": os.path.join(out, "bifurcation.rea"),
-        "vtk": os.path.join(out, "bifurcation.vtk"),
+        "vtu": os.path.join(out, "bifurcation.vtu"),
     }
 
 

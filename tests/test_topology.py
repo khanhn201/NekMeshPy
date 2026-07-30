@@ -55,7 +55,7 @@ def _box(x0, x1, y0, y1, z0, z1):
 
 def _hex(box):
     """A one-element HexMesh from an (8,3) Nek-ordered corner block."""
-    return HexMesh(box, np.arange(8).reshape(1, 8))
+    return HexMesh.from_corners(box, np.arange(8).reshape(1, 8))
 
 
 def test_t_junction_is_watertight_but_not_conformal():
@@ -110,7 +110,7 @@ def test_hexmesh_report_matches_free_function(built_mesh):
 
 
 def test_boundary_helpers_single_hex():
-    mesh = HexMesh(_UNIT_HEX, np.arange(8).reshape(1, 8))
+    mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
     assert mesh.boundary_faces().shape == (6, 2)                 # all 6 faces
     assert set(mesh.boundary_faces()[:, 1]) == {1, 2, 3, 4, 5, 6}
     assert mesh.boundary_elements().tolist() == [0]
@@ -161,12 +161,12 @@ def test_quadmesh_boundary_helpers():
     points = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0],
                       [0, 1, 0], [1, 1, 0], [2, 1, 0]], dtype=float)
     quads = np.array([[0, 1, 4, 3], [1, 2, 5, 4]], dtype=np.int64)
-    qm = QuadMesh(points, quads)
+    qm = QuadMesh.from_corners(points, quads)
     assert qm.boundary_edges().shape[0] == 6              # 8 edges - 2 shared
     assert qm.boundary_elements().tolist() == [0, 1]
     assert qm.boundary_points().tolist() == [0, 1, 2, 3, 4, 5]
     square = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
-    single = QuadMesh(square, np.array([[0, 1, 2, 3]]))
+    single = QuadMesh.from_corners(square, np.array([[0, 1, 2, 3]]))
     assert single.boundary_edges().shape[0] == 4
     assert single.boundary_points().tolist() == [0, 1, 2, 3]
 
@@ -197,5 +197,5 @@ def test_format_report_roundtrips():
 
 def test_hexmesh_from_arrays_is_watertight():
     """A HexMesh built from the array constructor reports watertight."""
-    mesh = HexMesh(_UNIT_HEX, np.arange(8).reshape(1, 8))
+    mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
     assert mesh.is_watertight() is True

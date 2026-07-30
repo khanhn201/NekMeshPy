@@ -14,16 +14,29 @@ python -m pytest                             # full suite (conftest pins the Agg
 pytest tests/test_api.py::test_to_mesh_groups   # single test
 pytest -k re2                                    # by keyword
 
-PYTHONPATH=. python examples/bifurcation.py     # run a concrete mesher (writes .re2/.rea/.vtk in cwd)
+PYTHONPATH=. python examples/bifurcation.py     # run a concrete mesher (writes .re2/.rea/.vtu in cwd)
+
+sphinx-build -b html -n -W --keep-going docs docs/_build/html   # docs (matches CI exactly)
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + mypy on py3.12 and pytest on py3.9–3.12. All three must stay green.
+Two workflows gate a PR; **all four checks must stay green** before you consider a
+change done — after pushing, poll `gh pr checks <n>` until it settles, don't stop at
+a local pass:
+
+- `.github/workflows/ci.yml` — **ruff** + **mypy** on py3.12, **pytest** on py3.9–3.12.
+- `.github/workflows/docs.yml` — **Build docs** via `sphinx-build -n -W` (nitpicky +
+  **warnings-as-errors**). A single unresolved autodoc reference fails the build. Any
+  **cross-module** `:meth:`/`:class:`/`:data:` ref in a docstring must be
+  **fully-qualified** with an explicit target, e.g.
+  ``:meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>` `` — a bare
+  ``:meth:`QuadMesh.blend` `` only resolves within the *same* class and errors from
+  another module. (`Deploy to GitHub Pages` only runs post-merge.)
 
 ## The golden-regression invariant (read before editing anything numeric)
 
 `tests/` freezes the output of `examples/bifurcation.py` in `tests/golden/`. The
 tests assert it **byte-for-byte**: `.rea` and the `.re2` boundary block are byte-exact,
-`.re2` coordinates match to `1e-12`, and `.vtk` is byte-identical. The numerics were
+`.re2` coordinates match to `1e-12`, and `.vtu` is byte-identical. The numerics were
 ported verbatim from a reference MATLAB/Octave implementation, so "results unchanged"
 is a hard constraint — most refactors here are expected to be output-preserving.
 
@@ -31,7 +44,7 @@ After any change that could touch geometry/numerics, verify:
 
 ```bash
 cd /tmp && PYTHONPATH=<repo> python <repo>/examples/bifurcation.py
-for f in bifurcation.re2 bifurcation.rea bifurcation.vtk; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
+for f in bifurcation.re2 bifurcation.rea bifurcation.vtu; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
 ```
 
 The pipe examples have **no** goldens (tolerance-only quality tests), so they may
@@ -225,7 +238,107 @@ the package imports the core to bind onto it).
 Cross-section interior nodes are repositioned on a single `QuadMesh` *before* extrusion,
 via `quadmesh.smoothing.set_section_smoothing(qm, method)` (registry `SECTION_METHODS`;
 extend with `@register_section_smoothing("name")`). Built-ins: `conduction`, `winslow`,
-`bilinear`/`none`. There is no HexMesh-level smoothing registry.
+`bilinear`/`none`. There is no HexMesh-level smoothing registry. **The relaxers move
+only corner nodes**, so a *repositioning* method (`conduction`/`winslow`) on an `order >
+1` section is **rejected** (`NotImplementedError`) — high-order smoothing is not
+implemented; the no-op strategies (`bilinear`/`tfi`/`none`/`""`) stay allowed at any
+order because they leave every node in place (`circular_pipe.py` runs order 5 +
+`bilinear`). The factories `_elevate` to order N *first*, then smooth, so the smoother
+sees the true order and raises cleanly instead of silently degrading. `hexmesh.smoothing.smooth`
+(the STL-constrained wall polish used by `bifurcation.py`/`circular_pipe_tjunction.py`)
+rejects `order > 1` the same way.
+
+### High-order (order-N) elements
+
+Every factory takes an optional `order=N` (default `1`). At `order > 1` each element
+carries `(N+1)` **GLL** (Gauss–Lobatto–Legendre) nodes per parametric direction —
+line `N+1`, quad `(N+1)²`, hex `(N+1)³` — placed on the **true** geometry the factory
+owns (a `circle`'s arc nodes on the exact circle, a `sphere`'s on the exact sphere).
+GLL endpoints are exactly `0.0`/`1.0`, so corner nodes stay exact under every sweep.
+
+**Entity-based conformal storage (corners single-sourced, HO nodes shared by topology).**
+Corner connectivity (`lines`/`quads`/`hexes`) stays the authoritative topology, and
+**the corners are owned solely by `points[conn]` — never duplicated into a stored
+block**. The **non-corner** high-order nodes are decomposed by *topology* into shared
+entities plus private interiors and stored on the private `_ho: conform.EntityTables`
+(module `nekmeshpy/model/conform.py`): **edges** (unique undirected edges — canonical
+min-corner-id first — with their `N−1` shared interior nodes, a per-element incidence
+`elem_edges`, and an `edge_flip` bit for anti-canonical traversal); **faces** (hex only:
+unique faces with their `(N−1)²` shared nodes, incidence `elem_faces`, and a **D4
+orientation code** `face_orient` — one of 8 square symmetries — mapping the hex's local
+face grid to the shared canonical frame); and per-element **interior** (line `N−1`, quad
+`(N−1)²`, hex `(N−1)³`, never shared). Sharing is decided by **corner ids** (structural /
+exact conformality): two elements meeting on an edge/face resolve to the *same* HO nodes,
+and a `curved=` block whose incident copies disagree on a shared entity is **rejected at
+construction** (loud error, not a silent weld). At `order == 1` every table is empty.
+`.curved` is a **read-only computed property**, not a stored attribute: on each read
+`conform.assemble` reassembles the full `(E, (N+1)^d, 3)` block from `points[conn]`
+(corners) + the entity tables, so `mesh.curved` always has shape `(E, (order+1)^d, 3)`
+regardless of order. Because corners are read fresh from `points` every time, an in-place
+`mesh.points[:] = X` is **automatically reflected** in `.curved` — no staleness, and the
+corner-consistency invariant is **structural**. `mesh.to_conformal()` exposes the
+conformal model directly as `(nodes (M,3), conn (E,(N+1)^d))` — one global node array with
+dense per-element connectivity (the HO analog of `points`+`quads`); the tables are also
+readable via `.edges`/`.edge_nodes` (quad, hex) and `.faces`/`.face_nodes` (hex). Both
+params ride the container `__init__` (`order: int = 1`, `curved: CurvedBlock | None = None`
+— a factory may pass the *full* block or omit it); `conform.split(order, curved, points,
+conn, dim, who)` validates it (exact shape + corner-consistency against `points[conn]`,
+scale-relative tol) and **scatters it into the entity tables** (owner-wins + verify);
+`CurvedBlock` is a `FloatArray` shape-doc alias in `_typing.py`. **Goldens stay
+byte-identical because every order-1 code path branches on `order`, not on
+curved-presence** — `to_re2`, quality, topology, `merge`, `FACE_POINTS`, and the `.vtu`
+order-1 writer all read only `points`/`conn` (the order-1 VTK path reads `points[conn]` in
+Nek/CCW order, never the reassembled `curved` block). This is why the golden
+`bifurcation.*` (built with defaults) stays byte-identical: **order-1 export is a strict
+no-op, and treating any golden diff at default order as a bug still holds.** Combinators
+(`blend`/`annulus`/`loft`/`extrude`/`merge`) interpolate the full `curved` block at
+`order > 1` (`blend_ho`) and hand it back to the constructor (validated, then split into
+its entity tables); at order 1 the empty tables make that a no-op equal to the plain point
+blend.
+
+**Shared kernel.** Order-N logic is split across two modules over GLL reference nodes from
+`model/fields.py` (`gll_nodes`). `model/interp.py` holds the numeric primitives
+(`tensor_nodes`, `corner_indices`, `subdivide_quads`/`subdivide_hexes`, `coons_grid`,
+`blend_ho`, `quad_edge_indices`/`hex_edge_indices`/`hex_face_indices`). `model/conform.py`
+holds the topology + orientation + storage engine (`EntityTables`, `unique_edges`,
+`unique_faces`, `split`/`assemble`/`to_conformal`, the D4 helpers
+`_d4_apply`/`_perm_tables`/`_face_code`); `split` is the `curved=` validator/decomposer
+and `assemble` the `.curved` reassembler used by every container. Region factories
+`ogrid`/`half_ogrid`/`structured` build a linear guess and
+`_elevate` it to order N (straight tensor-subdivided interior + boundary overlays
+stamping the true wall curves onto the sides) — **then** smooth, so a repositioning
+smoother rejects `order > 1` (see *Section smoothing*) rather than silently producing a
+straight interior. Pure combinators (`blend`/`loft`/`extrude`/`merge`/`annulus`)
+propagate or build `curved` directly (`loft` sweeps each column as a straight GLL blend
+of the two bounding slices' in-plane blocks); `QuadMesh.annulus` is now a *single*
+curved path (radial `loft` of `blend_ho`ed rings) at every order, with any repositioning
+`smoothing_method` rejected at `order > 1`. All factories reject a mismatched `order`
+across their inputs.
+
+**Export.** `.re2` **stays linear** — Nek's re2 has no high-order format yet, so
+`to_re2` reads only the 8 corners and a mesh exports byte-identically at any order.
+The `.vtu` (XML VTK) writer becomes high-order at `order > 1`, emitting VTK Lagrange
+cells (`VTK_LAGRANGE_CURVE=68` / `_QUADRILATERAL=70` / `_HEXAHEDRON=72`), `(N+1)^d`
+un-welded nodes/cell, ordered via a hand-built `_lagrange_*_perm(order)` (corners →
+edges → faces → interior, VTK's `PointIndexFromIJK` recursion — no `vtk`/`meshio`
+dep). Face nodes inherit the face's `bc_id` via `hex_face_indices`. The writer
+(`to_vtu`/`line_to_vtu`/`quad_to_vtu`) builds its node arrays via
+`_hex_arrays`/`_line_arrays`/`_quad_arrays` and emits through `_write_vtu`; there is
+**no legacy ASCII `.vtk` writer** — only `.re2` and `.vtu`. The order-1 path is
+byte-untouched (golden `bifurcation.vtu` byte-exact).
+**Order-N quality is opt-in** (defaults stay corner-based so pinned quality numbers
+hold): `quadmesh.quality.scaled_jacobian_ho(curved, order)` /
+`hexmesh.quality.scaled_jacobian_ho(...)` sample the scaled Jacobian at the
+`(N+1)^d` GLL nodes of the curved block (tangents from
+`model.fields.lagrange_derivative_matrix`; kernel `model.interp.scaled_jacobian_ho`),
+reached via `mesh.scaled_jacobian(high_order=True)` / `quality_summary(high_order=True)`
+— at order 1 the GLL nodes are the corners so it reduces exactly to the default corner
+metric. **Order-N smoothing is not implemented** (the corner-graph Laplacian/Winslow
+ignore mid/interior nodes; straight-subdivided interiors are already fine). Rather than
+silently degrade, a repositioning smoother now **raises `NotImplementedError` at `order
+> 1`** — `set_section_smoothing` (`conduction`/`winslow`; the no-op `bilinear`/`none`
+stay allowed) and `hexmesh.smoothing.smooth` both guard on `mesh.order`. Build it only
+when a real need appears. See `examples/high_order_{curve,quad,hex}.py`.
 
 ### Physical groups & export
 

@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from .._typing import FloatArray, IntArray, PointArray
+from .._typing import CurvedBlock, FloatArray, IntArray, PointArray
 
 # corner -> [corner, next, prev] neighbour point positions (CCW quad)
 _CN = np.array([[0, 1, 3], [1, 2, 0], [2, 3, 1], [3, 0, 2]], dtype=np.int64)
@@ -50,9 +50,22 @@ def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
     return np.where(good, sj, 0.0)
 
 
-def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
-    """Dict of aggregate quality statistics for a quad mesh."""
-    sj = scaled_jacobian(points, quads)
+def scaled_jacobian_ho(curved: CurvedBlock, order: int) -> FloatArray:
+    """Per-quad minimum scaled Jacobian sampled at the ``(order+1)**2`` GLL nodes of a
+    ``curved`` block, shape ``(N,)`` -- the order-N generalization of
+    :func:`scaled_jacobian`.
+
+    Uses the surface metric (each node's cross product signed against the quad's mean
+    normal), so it detects folds on non-planar quads.  This is the **opt-in** metric:
+    the default corner-based :func:`scaled_jacobian` keeps the pinned linear numbers,
+    and at ``order == 1`` (GLL nodes == corners) this reduces to it.
+    """
+    from ..model.interp import scaled_jacobian_ho as _sj
+    return _sj(np.asarray(curved, dtype=float), order, dim=2)
+
+
+def _summary(sj: FloatArray) -> dict[str, Any]:
+    """Aggregate-statistics dict from a per-element scaled-Jacobian array."""
     return {
         "n_elements": int(sj.size),
         "min": float(np.min(sj)),
@@ -62,6 +75,16 @@ def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
         "n_inverted": int(np.sum(sj <= 0)),
         "n_below_0.2": int(np.sum(sj < 0.2)),
     }
+
+
+def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
+    """Dict of aggregate quality statistics for a quad mesh."""
+    return _summary(scaled_jacobian(points, quads))
+
+
+def summary_ho(curved: CurvedBlock, order: int) -> dict[str, Any]:
+    """Aggregate statistics for the order-N :func:`scaled_jacobian_ho` metric."""
+    return _summary(scaled_jacobian_ho(curved, order))
 
 
 def histogram(points: PointArray, quads: IntArray, bins: int = 10,
