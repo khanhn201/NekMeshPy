@@ -32,7 +32,7 @@ The package is fully annotated and checked with `disallow_untyped_defs` **and**
 **Read this before editing anything numeric.** `tests/` freezes the output of
 `examples/bifurcation.py` in `tests/golden/` and asserts it **byte-for-byte**:
 `.rea` and the `.re2` boundary block are byte-exact, `.re2` coordinates match to
-`1e-12`, `.vtk` is byte-identical. The numerics were ported verbatim from a
+`1e-12`, `.vtu` is byte-identical. The numerics were ported verbatim from a
 reference MATLAB/Octave implementation, so most refactors here are expected to be
 output-preserving.
 
@@ -40,7 +40,7 @@ After any change that could touch geometry/numerics, verify:
 
 ```bash
 cd /tmp && PYTHONPATH=<repo> python <repo>/examples/bifurcation.py
-for f in bifurcation.re2 bifurcation.rea bifurcation.vtk; do
+for f in bifurcation.re2 bifurcation.rea bifurcation.vtu; do
   cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"
 done
 ```

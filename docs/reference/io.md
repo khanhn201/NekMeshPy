@@ -1,6 +1,6 @@
 # `io`
 
-Export (`.re2` / `.rea` / `.vtk` / meshio) and matplotlib visualization.
+Export (`.re2` / `.rea` / `.vtu` / meshio) and matplotlib visualization.
 
 ## `io.export`
 

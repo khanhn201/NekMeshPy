@@ -9,11 +9,14 @@ mean normal so folded corners read negative on non-planar quads.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+
+if TYPE_CHECKING:
+    from .quadmesh import QuadMesh
 
 # corner -> [corner, next, prev] neighbour point positions (CCW quad)
 _CN = np.array([[0, 1, 3], [1, 2, 0], [2, 3, 1], [3, 0, 2]], dtype=np.int64)
@@ -50,9 +53,40 @@ def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
     return np.where(good, sj, 0.0)
 
 
-def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
-    """Dict of aggregate quality statistics for a quad mesh."""
-    sj = scaled_jacobian(points, quads)
+def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
+    """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample.
+
+    The mesh's entity B-rep is walked
+    (:func:`~nekmeshpy.model.conform.conformal_quad`) and the block gathered
+    **transiently** as ``nodes[conn_ho]`` -- nothing is stored.
+    """
+    from ..model import conform
+    nodes, conn_ho = conform.conformal_quad(
+        mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
+        mesh.interior, order)
+    block: PointArray = nodes[conn_ho]
+    return block
+
+
+def scaled_jacobian_ho(mesh: QuadMesh, order: int) -> FloatArray:
+    """Per-quad minimum scaled Jacobian sampled at the ``(order+1)**2`` GLL nodes of the
+    curved element block, shape ``(N,)`` -- the order-N generalization of
+    :func:`scaled_jacobian`.
+
+    ``mesh`` is a ``QuadMesh``; its high-order nodes are gathered from the entity B-rep
+    on the fly.
+
+    Uses the surface metric (each node's cross product signed against the quad's mean
+    normal), so it detects folds on non-planar quads.  This is the **opt-in** metric:
+    the default corner-based :func:`scaled_jacobian` keeps the pinned linear numbers,
+    and at ``order == 1`` (GLL nodes == corners) this reduces to it.
+    """
+    from ..model.interp import scaled_jacobian_ho as _sj
+    return _sj(_ho_block(mesh, order), order, dim=2)
+
+
+def _summary(sj: FloatArray) -> dict[str, Any]:
+    """Aggregate-statistics dict from a per-element scaled-Jacobian array."""
     return {
         "n_elements": int(sj.size),
         "min": float(np.min(sj)),
@@ -62,6 +96,16 @@ def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
         "n_inverted": int(np.sum(sj <= 0)),
         "n_below_0.2": int(np.sum(sj < 0.2)),
     }
+
+
+def summary(points: PointArray, quads: IntArray) -> dict[str, Any]:
+    """Dict of aggregate quality statistics for a quad mesh."""
+    return _summary(scaled_jacobian(points, quads))
+
+
+def summary_ho(mesh: QuadMesh, order: int) -> dict[str, Any]:
+    """Aggregate statistics for the order-N :func:`scaled_jacobian_ho` metric."""
+    return _summary(scaled_jacobian_ho(mesh, order))
 
 
 def histogram(points: PointArray, quads: IntArray, bins: int = 10,

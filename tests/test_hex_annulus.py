@@ -77,7 +77,7 @@ def test_quad_from_grid_edge_tags_land_on_correct_sides():
 
 def test_annulus_shell_watertight_and_tagged_from_element_tags():
     outer = _cube_surface(2.0, 2)                           # faces tagged xp/xm/...
-    inner = QuadMesh(0.5 * outer.points, outer.quads,       # inner cube, half=1.0
+    inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads,       # inner cube, half=1.0
                      element_tags=np.full(outer.n_quads, "body"))
     mesh = HexMesh.annulus(inner, outer, uniform_spacing(3))
 
@@ -96,7 +96,7 @@ def test_annulus_shell_watertight_and_tagged_from_element_tags():
 
 def test_annulus_scalar_wall_tags_fallback():
     outer = _cube_surface(2.0, 1, tag_faces=False)          # untagged surfaces
-    inner = QuadMesh(0.5 * outer.points, outer.quads)
+    inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads)
     mesh = HexMesh.annulus(inner, outer, uniform_spacing(2),
                            inner_tag="body", outer_tag="far")
     assert set(mesh.boundary_group_tags) == {"body", "far"}
@@ -106,7 +106,7 @@ def test_annulus_scalar_tag_overrides_surface_element_tags():
     # a non-empty scalar inner_tag / outer_tag OVERRIDES the surface's per-quad
     # element_tags for the whole wall (upper overrides lower)
     outer = _cube_surface(2.0, 2)                           # faces tagged xp/xm/...
-    inner = QuadMesh(0.5 * outer.points, outer.quads,
+    inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads,
                      element_tags=np.full(outer.n_quads, "body"))
     mesh = HexMesh.annulus(inner, outer, uniform_spacing(3),
                            inner_tag="cylinder", outer_tag="far")
@@ -122,14 +122,14 @@ def test_annulus_rejects_mismatched_point_counts():
 
 def test_annulus_rejects_mismatched_connectivity():
     outer = _cube_surface(2.0, 2)
-    inner = QuadMesh(0.5 * outer.points, outer.quads[::-1])  # same points, diff quads
+    inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads[::-1])  # same points, diff quads
     with pytest.raises(ValueError, match="identical quad connectivity"):
         HexMesh.annulus(inner, outer, uniform_spacing(2))
 
 
 def test_annulus_rejects_touching_surfaces():
     outer = _cube_surface(2.0, 2)
-    inner = QuadMesh(outer.points.copy(), outer.quads)      # coincident with outer
+    inner = QuadMesh.from_corners(outer.points.copy(), outer.quads)      # coincident with outer
     with pytest.raises(ValueError, match="touch or cross"):
         HexMesh.annulus(inner, outer, uniform_spacing(2))
 
@@ -137,9 +137,9 @@ def test_annulus_rejects_touching_surfaces():
 # -- HexMesh.loft per-quad caps ----------------------------------------------
 
 def _two_quad_slices():
-    s0 = QuadMesh([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
+    s0 = QuadMesh.from_corners([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
                   [[0, 1, 2, 3], [1, 4, 5, 2]])
-    s1 = QuadMesh(s0.points + np.array([0.0, 0.0, 1.0]), s0.quads)
+    s1 = QuadMesh.from_corners(s0.points + np.array([0.0, 0.0, 1.0]), s0.quads)
     return s0, s1
 
 

@@ -5,7 +5,7 @@ it along the axis.
 
     PYTHONPATH=. python examples/circular_pipe.py
 
-Produces ``circular_pipe.re2`` / ``.rea`` and ``circular_pipe.vtk``.
+Produces ``circular_pipe.re2`` / ``.rea`` and ``circular_pipe.vtu``.
 """
 
 import logging
@@ -20,10 +20,13 @@ RADIUS = 0.5
 LENGTH = 5.0
 N_AXIAL = 40                 # hex layers along the axis
 N_SIDE = 6                   # central square block cells per side
-N_RADIAL = 6                 # O-ring layers out to the wall
+N_RADIAL = 8                 # O-ring layers out to the wall
 CENTER_SCALE = 0.4
-RADIAL_GRADING = 0.8        # <1 clusters cells toward the wall
+RADIAL_GRADING = 0.5        # <1 clusters cells toward the wall
 AXIAL_GRADING = 1.0
+ORDER = 2                    # polynomial order; 1 = linear. High order bows the
+                            # O-ring wall onto the true circle (curved .vtu;
+                            # .re2 stays linear either way)
 AXIS = (0.0, 0.0, 1.0)
 CENTER = (0.0, 0.0, 0.0)
 SMOOTHING_METHOD = "bilinear"   # per-section interior repositioning
@@ -35,7 +38,8 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 # -- build the O-grid cross-section, then extrude it along the axis -----------
 # interior filled + repositioned (wall fixed); extrude copies it along the axis
 section = QuadMesh.ogrid(
-    LineMesh.circle(RADIUS, 4 * N_SIDE, element_tags=["wall"] * (4 * N_SIDE)), N_SIDE,
+    LineMesh.circle(RADIUS, 4 * N_SIDE, element_tags=["wall"] * (4 * N_SIDE),
+                    order=ORDER), N_SIDE,
     geometric_spacing(N_RADIAL, RADIAL_GRADING),
     center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)
 
@@ -50,5 +54,5 @@ print("circular pipe: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
 
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
 print("groups:", ", ".join(mesh.boundary_group_tags))

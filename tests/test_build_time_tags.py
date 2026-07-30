@@ -34,7 +34,7 @@ def _edge_points(mesh, row):
 
 
 def test_boundaries_stored_as_quad_side_parallel_with_names():
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS,
+    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
                   boundaries=_SQUARE_BND, boundary_tags=_SQUARE_BND_TAGS)
     assert qm.boundaries.shape == (4, 2)
     assert qm.n_boundaries == 4
@@ -47,12 +47,12 @@ def test_boundaries_stored_as_quad_side_parallel_with_names():
 
 def test_mismatched_boundaries_and_names_raises():
     with pytest.raises(ValueError, match="must match"):
-        QuadMesh(_SQUARE_PTS, _SQUARE_QUADS, boundaries=_SQUARE_BND,
+        QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS, boundaries=_SQUARE_BND,
                  boundary_tags=["only", "two"])
 
 
 def test_loft_propagates_per_edge_boundary_tags_to_side_faces():
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS,
+    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
                   boundaries=_SQUARE_BND, boundary_tags=_SQUARE_BND_TAGS)
     blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
                           first_tag="inlet", last_tag="outlet")
@@ -65,7 +65,7 @@ def test_loft_propagates_per_edge_boundary_tags_to_side_faces():
 
 def test_no_boundary_suppresses_a_swept_face():
     # name three edges "wall"; the right edge (side 2) is declared NO_BOUNDARY
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS,
+    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
                   boundaries=[[0, 1], [0, 3], [0, 4], [0, 2]],
                   boundary_tags=["wall", "wall", "wall", NO_BOUNDARY])
     blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(2))
@@ -77,16 +77,16 @@ def test_no_boundary_suppresses_a_swept_face():
 
 def test_untagged_section_tags_only_caps():
     # a section with no tagged boundaries -> only the caps are named
-    qm = QuadMesh(_SQUARE_PTS, _SQUARE_QUADS)
+    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS)
     blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
                           first_tag="inlet", last_tag="outlet")
     assert Counter(blk.boundary_tags.tolist()) == {"inlet": 1, "outlet": 1}
 
 
 def test_quadmesh_merge_concats_and_offsets_boundary_tags():
-    a = QuadMesh([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], _SQUARE_QUADS,
+    a = QuadMesh.from_corners([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], _SQUARE_QUADS,
                  boundaries=[[0, 1]], boundary_tags=["a_bottom"])
-    b = QuadMesh([[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], _SQUARE_QUADS,
+    b = QuadMesh.from_corners([[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], _SQUARE_QUADS,
                  boundaries=[[0, 1]], boundary_tags=["b_bottom"])
     m = QuadMesh.merge([a, b])
     assert set(m.boundary_tags.tolist()) == {"a_bottom", "b_bottom"}

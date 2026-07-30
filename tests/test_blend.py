@@ -20,8 +20,10 @@ def test_linemesh_blend_endpoints_and_midpoint():
     assert np.allclose(lo.points, a.points)                  # t=0 reproduces a
     assert np.allclose(hi.points, b.points)                  # t=1 reproduces b
     assert np.allclose(mid.points, 0.5 * (a.points + b.points))
-    # connectivity + topology carried from a
-    assert mid.is_closed and np.array_equal(mid.lines, a.lines)
+    # connectivity carried from a -- and that connectivity *is* the topology:
+    # a's wrapping cycle rides through, so the blend has no degree-1 ends.
+    assert np.array_equal(mid.lines, a.lines)
+    assert mid.boundary_points().size == 0
 
 
 def test_linemesh_blend_carries_boundary_tags_not_element_tags():
@@ -40,7 +42,9 @@ def test_linemesh_blend_rejects_count_and_topology_mismatch():
     a = LineMesh.loop(_loop(1.0))
     with pytest.raises(ValueError, match="equal point counts"):
         LineMesh.blend(a, LineMesh.loop(_loop(2.0)[:6]), [0.5])
-    with pytest.raises(ValueError, match="open/closed"):
+    # an open chain over the same points has different `lines` (7 vs 8, no wrap),
+    # which is exactly how open-vs-closed is expressed now
+    with pytest.raises(ValueError, match="identical connectivity"):
         LineMesh.blend(a, LineMesh.open(_loop(2.0)), [0.5])
 
 

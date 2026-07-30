@@ -23,6 +23,9 @@ CORNERS = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
 DIVISIONS = (4, 4, 4)             # nx, ny, nz
 GRADING = (1.0, 1.0, 1.0)         # per-axis geometric ratio (1 = uniform)
 SIZE_FIELD = None                 # e.g. fields.ConstantField(0.1) to drive spacing
+ORDER = 2                         # polynomial order; 1 = linear.  from_grid places
+                                  # straight-sided (trilinear) GLL nodes; the block
+                                  # is flat, so they land on the same faces
 OUT_NAME = "block"
 
 # boundary name -> Nek BC code, applied only at export (tags follow this order)
@@ -66,7 +69,7 @@ for i, u in enumerate(us):
         for k, w in enumerate(ws):
             P[i, j, k] = trilinear(CORNERS, u, v, w)
 
-mesh = HexMesh.from_grid(P, face_tags={s: s for s in SIDES})
+mesh = HexMesh.from_grid(P, face_tags={s: s for s in SIDES}, order=ORDER)
 
 # -- report + export ---------------------------------------------------------
 stats = mesh.quality_summary()
@@ -74,5 +77,5 @@ print("block: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
 
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

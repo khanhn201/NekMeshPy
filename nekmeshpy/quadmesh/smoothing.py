@@ -128,10 +128,21 @@ def _winslow(qm: QuadMesh, **opts: Any) -> QuadMesh:
 
 def set_section_smoothing(qm: QuadMesh, method: str | None, **opts: Any) -> QuadMesh:
     """Reposition a section's interior points in place via a registered strategy
-    (built-ins: bilinear, conduction, winslow).  Extra keywords are forwarded."""
+    (built-ins: bilinear, conduction, winslow).  Extra keywords are forwarded.
+
+    The relaxers move only the corner graph, so a repositioning method on an
+    ``order > 1`` section is rejected -- high-order smoothing is not implemented yet
+    (the no-op ``bilinear``/``tfi``/``none`` strategies stay allowed at any order,
+    since they leave every node in place)."""
     m = (method or "conduction").lower()
     fn = SECTION_METHODS.get(m)
     if fn is None:
         raise ValueError('set_section_smoothing: unknown method "%s" (available: %s)'
                          % (method, ", ".join(available())))
+    if fn is not _section_noop and qm.order > 1:
+        raise NotImplementedError(
+            'set_section_smoothing: method "%s" cannot smooth an order-%d section '
+            "(the relaxers move only corner nodes; high-order smoothing is not "
+            "implemented yet). Use order=1, or drop smoothing_method for a straight "
+            "high-order interior." % (m, qm.order))
     return fn(qm, **opts)

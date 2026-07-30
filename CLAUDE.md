@@ -14,16 +14,29 @@ python -m pytest                             # full suite (conftest pins the Agg
 pytest tests/test_api.py::test_to_mesh_groups   # single test
 pytest -k re2                                    # by keyword
 
-PYTHONPATH=. python examples/bifurcation.py     # run a concrete mesher (writes .re2/.rea/.vtk in cwd)
+PYTHONPATH=. python examples/bifurcation.py     # run a concrete mesher (writes .re2/.rea/.vtu in cwd)
+
+sphinx-build -b html -n -W --keep-going docs docs/_build/html   # docs (matches CI exactly)
 ```
 
-CI (`.github/workflows/ci.yml`) runs ruff + mypy on py3.12 and pytest on py3.9–3.12. All three must stay green.
+Two workflows gate a PR; **all four checks must stay green** before you consider a
+change done — after pushing, poll `gh pr checks <n>` until it settles, don't stop at
+a local pass:
+
+- `.github/workflows/ci.yml` — **ruff** + **mypy** on py3.12, **pytest** on py3.9–3.12.
+- `.github/workflows/docs.yml` — **Build docs** via `sphinx-build -n -W` (nitpicky +
+  **warnings-as-errors**). A single unresolved autodoc reference fails the build. Any
+  **cross-module** `:meth:`/`:class:`/`:data:` ref in a docstring must be
+  **fully-qualified** with an explicit target, e.g.
+  ``:meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>` `` — a bare
+  ``:meth:`QuadMesh.blend` `` only resolves within the *same* class and errors from
+  another module. (`Deploy to GitHub Pages` only runs post-merge.)
 
 ## The golden-regression invariant (read before editing anything numeric)
 
 `tests/` freezes the output of `examples/bifurcation.py` in `tests/golden/`. The
 tests assert it **byte-for-byte**: `.rea` and the `.re2` boundary block are byte-exact,
-`.re2` coordinates match to `1e-12`, and `.vtk` is byte-identical. The numerics were
+`.re2` coordinates match to `1e-12`, and `.vtu` is byte-identical. The numerics were
 ported verbatim from a reference MATLAB/Octave implementation, so "results unchanged"
 is a hard constraint — most refactors here are expected to be output-preserving.
 
@@ -31,7 +44,7 @@ After any change that could touch geometry/numerics, verify:
 
 ```bash
 cd /tmp && PYTHONPATH=<repo> python <repo>/examples/bifurcation.py
-for f in bifurcation.re2 bifurcation.rea bifurcation.vtk; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
+for f in bifurcation.re2 bifurcation.rea bifurcation.vtu; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
 ```
 
 The pipe examples have **no** goldens (tolerance-only quality tests), so they may
@@ -72,8 +85,25 @@ and the imports in sync when adding/removing public names.
   `(L,2)` `lines` connectivity that **can branch** (it is a mesh, not a single ordered path).
   Constructors accept any array-like, but input **must be 3-D** — a `(N,2)` array is rejected with
   a `ValueError`, not padded to `z=0`; all boundaries live honestly in 3-D. Open vs closed is a
-  **topological property** (`is_open` / `is_closed`), not a subclass — factories set it:
-  `LineMesh.open` (default consecutive chain), `LineMesh.loop` (chain that wraps),
+  property of the `lines` array and **is stored nowhere** — there is no `closed=` kwarg and no
+  `is_open`/`is_closed`: a loop is simply a cycle of line elements, i.e. one whose `lines` carry
+  the explicit wrap row `[N-1, 0]` and therefore leave no degree-1 end (`boundary_points()` is
+  empty). `LineMesh` trusts its connectivity exactly as `QuadMesh`/`HexMesh` do — and it never
+  *invents* it: **`lines` is a required constructor argument**, there is no "consecutive chain"
+  default and therefore nothing in the container that could imply a wrap. Callers either own their
+  `lines` outright (`from_segments`' chained loop, `merge`'s rewelded lines, `blend`'s copy of
+  `a.lines`, the quad/hex edge `LineMesh`es built from `conform.unique_edges` or the layer-by-layer
+  append) or author them one rung up with `LineMesh.loft`. Factories build the wrap where it
+  belongs:
+  `LineMesh.loft(points, *, loop=False, …)` (the **bottom rung of the uniform sweep primitive** —
+  see *loft is the sweep primitive at every rung* below — each "profile" is a single point so the
+  rungs *are* the line elements: `loop=False` gives the consecutive chain, `loop=True` appends the
+  single closing rung `[N-1, 0]`. At `order > 1` an omitted `interior` is filled with the straight
+  GLL blend between each line's endpoints, which is what the straight-sided factories want),
+  `LineMesh.open` (consecutive chain — a thin wrapper over `loft(..., loop=False)`),
+  `LineMesh.loop` (chain that wraps — a thin wrapper over `loft(..., loop=True)`, which builds the
+  `[N-1, 0]` row; note the unavoidable collision between the `loop` *factory* name and the `loop=`
+  *kwarg*),
   `LineMesh.line(start, end, fractions, *, element_tag=…)` (open straight edge placed exactly at
   `start + f*(end-start)` for each normalized-arc-length `f` — the graded-edge sibling of
   `circle`/`rectangle`; `element_tag` names every line element),
@@ -92,13 +122,18 @@ and the imports in sync when adding/removing public names.
   `LineMesh.from_segments` (chain unordered segments into the
   largest closed loop, or `None`). `LineMesh.merge(meshes, *, tol=…)` is the 1-D
   sibling of `QuadMesh.merge`/`HexMesh.merge`: it welds coincident **topological end points**
-  (degree-1 chain ends) — never interior points — concatenating `element_tags`/`boundaries`, and
-  reports the result `closed` iff no degree-1 end survives. Two shared-endpoint `A1->A2` arcs
-  (reverse one so the traversal doesn't cross) weld at `A1`/`A2` into a single loop with index 0
+  (degree-1 chain ends) — never interior points — concatenating `element_tags`/`boundaries`. The
+  welded connectivity *is* the answer: if no degree-1 end survives the result is a loop. Two
+  shared-endpoint `A1->A2` arcs
+  (reverse one so the traversal doesn't cross) weld at `A1`/`A2` into a single cycle with index 0
   at `A1` and `M//2` at `A2` — the clean way to close a seam ring from two half-arcs (used by
-  `bifurcation.py` and `circular_pipe_tjunction.py`). Factories check `is_closed` at runtime (`ogrid`/`annulus`
-  demand closed; `structured` edges demand open), so the open/closed distinction is still
-  enforced — as a value, not a type. **Every curve is meshed exactly at the points given — there
+  `bifurcation.py` and `circular_pipe_tjunction.py`). **No factory checks closedness**
+  (there is no flag to check): each constrains its input through the facts it actually needs —
+  `ogrid` an exact `4*n_side` point ring, `annulus`/`blend` identical `lines` on both rings,
+  `structured` four edges that share corners, `spined_ogrid` an `8*Ntheta` ring. A factory that
+  reads only `boundary.points` (`ogrid`, `half_ogrid`, `structured`) therefore accepts an open
+  chain and silently treats it as the equivalent closed ring — a known, deliberate gap.
+  **Every curve is meshed exactly at the points given — there
   are no `LineMesh` ordered/resampling ops** (a factory or the caller must hand in an
   exactly-sized, correctly-oriented curve, so two blocks sharing a boundary can never disagree on
   it); `.length` (index-order arc length) is the only ordered read that remains. The intrinsic
@@ -176,10 +211,15 @@ the package imports the core to bind onto it).
   its boundary-point tags onto the side-wall edges.
   **`blend(a, b, fractions)`** is the shared morphing combinator on all three containers
   (`LineMesh`/`QuadMesh`/`HexMesh`): given two index-paired conformal profiles (equal point count,
-  identical connectivity — and same open/closed topology for `LineMesh`), it returns one profile per
+  identical connectivity — which, for `LineMesh`, is exactly what makes both open or both closed), it returns one profile per
   fraction at `(1-t)*a.points + t*b.points`, copying `a`'s connectivity + `boundaries` +
   `boundary_tags` but **not** its `element_tags` (region/cap tags are assigned by the consuming
-  `loft`/factory, which is what keeps the annulus goldens byte-identical). It is the single
+  `loft`/factory, which is what keeps the annulus goldens byte-identical). Like every other rung
+  of the ladder it is **composed downward**: `HexMesh.blend` is a `QuadMesh.blend` of the
+  shared-face mesh plus a lerp of the private per-hex `interior`, and `QuadMesh.blend` in turn a
+  `LineMesh.blend` of the shared-edge mesh plus the per-quad `interior` — each rung lerps only
+  what it privately owns and keeps `a`'s incidence (`hex`/`face_orient`, `quad`/`flip`) verbatim.
+  It is the single
   positioning step behind both `annulus` factories (`QuadMesh.annulus` = radial `loft` of
   `LineMesh.blend`ed rings; `HexMesh.annulus` = radial fill of `QuadMesh.blend`ed shells) and behind
   each leg's slice stack in `bifurcation.py`/`circular_pipe_tjunction.py`
@@ -207,12 +247,34 @@ the package imports the core to bind onto it).
     `element_tags`** (a closed surface has no free boundary edges) — the inner surface's tag
     lands on face 5 of each shell column, the outer's on face 6; a non-empty scalar `inner_tag`/
     `outer_tag` **overrides** the surface tags and names a whole wall. It has no `smoothing_method` (there is no
-    HexMesh smoothing registry). `loft`'s `first_tag`/`last_tag` (the end-cap tags, renamed from
-    `first_cap`/`last_cap`) also accept a per-quad array (not just a scalar), which is how
-    `annulus` forwards the surface tags.
+    HexMesh smoothing registry). `loft`'s end-cap tags `first_tag`/`last_tag` accept a per-quad
+    array as well as a scalar, which is how `annulus` forwards the surface tags.
   - `QuadMesh.from_grid(P, *, edge_tags=, element_tag=)` is the section sibling of
     `HexMesh.from_grid` — a structured `(ni+1,nj+1)` quad grid; `element_tag` fills the dense
     per-quad `element_tags` (e.g. tag a whole cube-face patch with the far-field side it forms).
+    It is itself a **`QuadMesh.loft` of the grid's column profiles**, and each profile is in turn
+    a **`LineMesh.loft`** of that column's `i` points (profile `j` = the `i`-chain lofted from
+    `P[:, j, :]`, sweep along `j`), so the ladder
+    `HexMesh.from_grid → QuadMesh.from_grid → LineMesh.loft` is composed at **every** rung — the
+    chain connectivity and (at `order > 1`) each segment's straight-GLL interior come from the
+    rung below, not hand-rolled here, and nothing is re-derived from corners with
+    `conform.unique_edges`. All four `edge_tags` sides ride channels `loft` already has: the
+    profile's tagged end **points** become `x_min`/`x_max` (quad sides 4/2) and the sweep's
+    `first_tag`/`last_tag` caps become `y_min`/`y_max` (sides 1/3). **The loft's numbering is
+    carried up unchanged** — composing the rung below means accepting its numbering, so there is
+    **no relabel**: the grid comes out **sweep-major, `i` fastest** (node `(i,j)` = point
+    `j*(ni+1)+i`, cell `(i,j)` = quad `j*ni+i`, i.e. `points == P.transpose(1,0,2).reshape(-1,3)`,
+    *not* `P.reshape(-1,3)`). `boundaries` stays lexsorted by `(quad, side)` so its rows follow the
+    quad ids; each row still names the same physical side.
+  - `HexMesh.from_grid(P, *, face_tags=, element_tag=)` is the same composition one rung up: a
+    **`HexMesh.loft` of the grid's `k`-sections** (section `k` = `QuadMesh.from_grid(P[:,:,k,:])`,
+    sweep along `k`), so corners, shared edges *and* shared faces all come out of the
+    layer-by-layer B-rep assembly instead of a `conform.unique_edges` re-derivation from a
+    hand-built `(E,8)` corner table. The section's four `edge_tags` become the
+    `x_min`/`x_max`/`y_min`/`y_max` swept side faces (section side `s` → hex face `s`, exactly the
+    `_GRID_SIDES` Nek numbering) and the sweep's caps the `z_min`/`z_max` ones; `element_tag`
+    rides the section's per-quad tags. Numbering is again the loft's, unrelabelled: `i` fastest,
+    `k` slowest (`points == P.transpose(2,1,0,3).reshape(-1,3)`).
   - **Closed 3-D surfaces** (`merge` of six `from_grid` face patches): `QuadMesh.box(half_sizes,
     n, *, face_tags=)` (watertight box surface — `half_sizes`/`n` each a scalar or per-axis
     `(sx,sy,sz)`/`(nx,ny,nz)`; `face_tags` keyed `{x_min,x_max,y_min,y_max,z_min,z_max}` tag whole
@@ -220,12 +282,213 @@ the package imports the core to bind onto it).
     points projected onto the sphere, so it **pairs by index** with a `box` of the same `n` for
     `HexMesh.annulus`). See `flow_past_sphere.py`.
 
+### `loft` is the uniform sweep primitive at every rung of the ladder
+
+`LineMesh.loft` / `QuadMesh.loft` / `HexMesh.loft` are **one primitive at three
+dimensions**, each taking a stack of index-paired conformal profiles and a
+`loop: bool = False` flag:
+
+| rung | a "profile" is | a "rung" entity is | `extrude` = |
+|---|---|---|---|
+| `LineMesh.loft(points, *, loop=…)` | a single **point** | a **line** element | (n/a — `line`/`circle` place the points) |
+| `QuadMesh.loft(slices, *, loop=…)` | a `LineMesh` | a rung **line** + the **quads** | `QuadMesh.extrude` |
+| `HexMesh.loft(slices, *, loop=…)` | a `QuadMesh` | a rung **face** + the **hexes** | `HexMesh.extrude` |
+
+The quad rung assembles **layer by layer** (append profile `i`'s own lines +
+`interior` verbatim, then the rung lines joining level `i` to level `i-1`; a quad is
+then just four line indices + four `flip` bits — no `unique_edges` dedupe, no
+owner-wins reconciliation, because no shared edge is ever duplicated). The line rung
+is that same pattern one dimension down, which is why `LineMesh.open`/`LineMesh.loop`
+are **thin wrappers** over `LineMesh.loft` (`loop=False` / `loop=True`) rather than
+connectivity-generating code in the container. `HexMesh.loft` instead builds the
+corner table and derives its B-rep with `unique_edges` → `canonical_faces` →
+`scatter_*`; `loop=True` works there because the seam faces resolve from the shared
+corner ids like any other face.
+
+**`loop=True` is a periodic sweep**: the last profile joins back to the **first**, so
+`M` profiles give `M` layers instead of `M-1`. It falls out of the assembly as *one
+extra iteration* — exactly one more rung block, appended once at the end, with the
+first profile's lines/faces **not** re-appended — so the seam is a genuine shared
+entity, the closed sweep has no free boundary in the sweep direction, and it carries
+strictly fewer points than the `loop=False` stack that repeats profile 0. At every
+rung `loop=True`:
+- **rejects `first_tag`/`last_tag`** with an actionable `ValueError` (shared guard
+  `model.fields.reject_loop_caps`) — a closed sweep has no near/far cap, so passing
+  one is a caller mistake and must not be silently dropped (scalar *or* per-element
+  array form);
+- emits **no cap boundary rows**; side-wall boundaries derived from the profiles' own
+  boundary entities are unaffected.
+
+`loop=False` is bit-identical to the pre-`loop` behaviour at every rung (the swept-to
+profile index is `i+1` unconditionally there), which is what keeps the goldens
+byte-identical. Use it for a torus surface (`QuadMesh.loft` of revolved rings) or a
+solid torus (`HexMesh.loft` of revolved discs) — see `tests/test_periodic_loft.py`.
+Note that `QuadMesh.annulus` closes in the **ring** direction, which lives in the
+loops' own connectivity, not the loft direction — it does *not* use `loop=True`.
+
 ### Section smoothing is per-section
 
 Cross-section interior nodes are repositioned on a single `QuadMesh` *before* extrusion,
 via `quadmesh.smoothing.set_section_smoothing(qm, method)` (registry `SECTION_METHODS`;
 extend with `@register_section_smoothing("name")`). Built-ins: `conduction`, `winslow`,
-`bilinear`/`none`. There is no HexMesh-level smoothing registry.
+`bilinear`/`none`. There is no HexMesh-level smoothing registry. **The relaxers move
+only corner nodes**, so a *repositioning* method (`conduction`/`winslow`) on an `order >
+1` section is **rejected** (`NotImplementedError`) — high-order smoothing is not
+implemented; the no-op strategies (`bilinear`/`tfi`/`none`/`""`) stay allowed at any
+order because they leave every node in place (`circular_pipe.py` runs order 2 +
+`bilinear`). The factories `_elevate` to order N *first*, then smooth, so the smoother
+sees the true order and raises cleanly instead of silently degrading. `hexmesh.smoothing.smooth`
+(the STL-constrained wall polish used by `bifurcation.py`/`circular_pipe_tjunction.py`)
+rejects `order > 1` the same way.
+
+### High-order (order-N) elements
+
+Every factory takes an optional `order=N` (default `1`). At `order > 1` each element
+carries `(N+1)` **GLL** (Gauss–Lobatto–Legendre) nodes per parametric direction —
+line `N+1`, quad `(N+1)²`, hex `(N+1)³`. GLL endpoint parameters are exactly
+`0.0`/`1.0`, so the two extreme nodes *are* the corners and stay exact under every
+sweep.
+
+**The B-rep ladder is the storage.** There is no per-element node block anywhere, no
+`.curved` attribute and no `to_conformal()` facade. Each container stores the rung
+below it plus what it privately owns:
+
+| container | stored | derived read-only views |
+|---|---|---|
+| `LineMesh` | `points (P,3)`, **required** `lines (L,2)`, `interior (L,N−1,3)` | — |
+| `QuadMesh` | `lines`: a `LineMesh` of the shared edges (its `interior` = the edge nodes) + `quad (Q,4)` edge incidence + `flip (Q,4)` + `interior (Q,(N−1)²,3)` | `points`, `quads (Q,4)` |
+| `HexMesh` | `quads`: a `QuadMesh` of the shared faces (its `interior` = the face nodes, its `lines.interior` = the edge nodes) + `hex (E,6)` face incidence + `face_orient (E,6)` D4 codes + `interior (E,(N−1)³,3)` | `points`, `hexes (E,8)` |
+
+A hex's `points` *is* its shared-face `QuadMesh`'s `points`, which *is* its shared-edge
+`LineMesh`'s `points` — one array, single-sourced — so corner consistency is
+**structural**, `quads`/`hexes` are memoized derivations (`_derive_corners`), and an
+in-place `mesh.points[:] = X` is picked up at every rung for free. Convenience readers:
+`.edges`/`.edge_nodes` (quad, hex), `.faces`/`.face_nodes` (hex). At `order == 1` the
+`interior` tables are empty `(·,0,3)` but the edge/face *topology* is still first-class
+storage.
+
+**Conformality is structural, decided by corner ids** — never a coordinate weld. A
+shared edge is literally one row of the edge `LineMesh` referenced by every incident
+quad; a shared face is one quad of the shared-face `QuadMesh`. `model/conform.py` owns
+the topology + orientation + reconciliation engine (`unique_edges`,
+`unique_faces`/`canonical_faces`/`hex_corners_from_faces`, `entity_tol`, the
+`scatter_*`/`gather_*` pair, the `conformal_*` walks, D4 helpers
+`_d4_apply`/`_perm_tables`/`_face_code`) and **imports no container** — everything
+crosses as plain arrays. Entities: **edges** (unique undirected, canonical min-corner-id
+first, `N−1` shared nodes + per-element incidence + a `flip` bit for anti-canonical
+traversal); **faces** (hex only, `(N−1)²` shared nodes + incidence + a **D4 orientation
+code**, one of 8 square symmetries, mapping the hex's local face grid to the canonical
+frame); **interior** (private, line `N−1` / quad `(N−1)²` / hex `(N−1)³`). Where a
+combinator must rebuild the shared tables against a new topology (`merge`,
+`HexMesh.loft`) it reconciles with `conform.scatter_edge_nodes`/`scatter_face_nodes`:
+owner-wins + verify every other incident copy within `conform.entity_tol`, loud
+`ValueError` on disagreement. The **conformal walks** `conform.conformal_line`/
+`conformal_quad`/`conformal_hex` flatten the ladder on demand into
+`(nodes (M,3), conn_ho (E,(N+1)^d))` — the HO analog of `points`+`quads`, and the single
+node numbering the `.vtu` writer and the order-N quality metrics read; `nodes[conn_ho]`
+is the transient per-element block whenever one is genuinely needed.
+
+**True geometry vs straight GLL subdivision — the thing callers get wrong.** `order=N`
+is valid on every factory, but a mesh can be **high-order in storage and linear in
+geometry**. Only a factory that owns an analytic shape can place a node off the straight
+line between corners:
+- **on the true shape**: `LineMesh.circle`/`LineMesh.arc` (interior GLL nodes evaluated
+  at the exact arc angles — `_plane._arc_points`/`_arc_interior` — and handed to `loft`
+  as an explicit `interior`, overriding its default chord blend),
+  `QuadMesh.sphere`/`QuadMesh.hemisphere` (radial projection applied **entity-wise** to
+  the cube's / half box's whole B-rep — `points`, `lines.interior`, `interior` — never to
+  a reassembled block, so a shared edge lands identically from either quad).
+  Straight-sided analytic shapes are exact trivially: `LineMesh.line`,
+  `LineMesh.rectangle`, `QuadMesh.box`/`half_box` (planar patches).
+- **straight GLL subdivision**: anything built from an explicit point array —
+  `LineMesh.open`/`loop`/`loft` (each line's interior = the straight blend of its two
+  endpoints), `QuadMesh.from_grid`/`HexMesh.from_grid`. Sampling a curve into points and
+  calling `LineMesh.open` therefore *loses* the curve at `order > 1`; hand in the
+  analytic `arc`/`circle` instead.
+- **region fills — curved throughout, by two different mechanisms.** Both propagate the
+  input wall's curvature into the *interior*, not just onto the boundary elements:
+  - `structured` owns an exact global transfinite map, so at `order > 1` it simply
+    **samples that map at the GLL-refined lattice** (`_refined_params`: interval `i`'s
+    node `a` at `(i + g[a]) / n`) against each edge's own nodes in traversal order
+    (`_refined_chain`), via the shared `interp.coons_grid`. The resulting
+    `(Q,(order+1)²,3)` blocks are decomposed back into B-rep tables by
+    `_helpers.entities_from_blocks` (the inverse of the entity→block gather:
+    `scatter_edge_nodes` owner-wins + verify, plus the private interiors). Every node —
+    corner, edge, interior — is the true transfinite point, so a curved input edge bows
+    the whole block and no overlay is needed. At `order == 1`, `g = [0,1]` makes the
+    refined lattice exactly `linspace`, so the order-1 no-op falls out by construction
+    rather than by a branch.
+  - `ogrid`/`half_ogrid` have no global analytic map, so they keep the linear
+    construction and generalize the `Overlay` `(quad ids, local side, curve)` channel:
+    **one overlay pair per O-ring**, not just the wall. Each intermediate ring's curve is
+    `LineMesh.blend(block perimeter, wall, t)` — the same mechanism `annulus` uses — so a
+    ring at `t` inherits its share of the wall's bow. Both incident copies of a shared
+    ring must be stamped (ring `m` is block `m−1`'s outer side *and* block `m`'s inner
+    side); stamping one leaves the other straight and `scatter_edge_nodes` rejects the
+    mesh. Each element is then curved tangentially and straight radially — exactly
+    `annulus`'s behaviour, which is right for a radial blend.
+  - Underneath both, `_elevate` derives each quad's private `interior` as the
+    **transfinite (Coons) patch of that element's own four edge curves**, evaluated
+    *after* the overlays (`_coons_at`), instead of a bilinear fill from its corners. A
+    curved side therefore bows the interior with it; with four straight edges the patch
+    is algebraically that bilinear fill (it differs only in float association, ~1e-16).
+- **carried through**: `extrude` translates a section's whole B-rep rigidly; `blend`
+  lerps the entity tables with the same `t` the corners get; `loft` sweeps each column
+  as a Coons patch curved along the profile (from the slices' own nodes, `_coons_at` /
+  `_slice_block` / `_sweep_at`) and straight along the sweep; `QuadMesh.annulus` is a
+  single curved path at every order (radial `loft` of `LineMesh.blend`ed rings).
+All factories reject a mismatched `order` across their inputs.
+
+**Constructors.** `order: int = 1` rides every container `__init__` alongside the native
+entity fields. `Quad/HexMesh.from_corners(points, conn, ...)` is the **corner → B-rep
+bridge at order 1 only** — corners are all a linear mesh has, so `order > 1` raises an
+actionable `ValueError` pointing at a factory with `order=N`, or at direct construction
+from the entity fields (`QuadMesh(lines, quad, flip, interior=…, order=N)` /
+`HexMesh(quads, hex, face_orient, interior=…, order=N)` — what every combinator uses),
+rather than silently straight-subdividing invented geometry.
+
+**Shared kernel.** `model/fields.py` supplies the GLL reference nodes (`gll_nodes`) and
+`lagrange_derivative_matrix`; `model/interp.py` the dimension-general numeric primitives
+(`tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`,
+`quad_edge_indices`/`hex_edge_indices`/`hex_face_indices`, `scaled_jacobian_ho`) over the
+`(E,(N+1)^d,3)` lexicographic (`i` fastest) block, which is only ever gathered
+transiently. Region factories `_elevate` **before** smoothing, so a repositioning
+smoother sees the true order and raises cleanly (see *Section smoothing*) instead of
+silently producing a straight interior.
+
+**Export.** `.re2` **stays linear** — Nek's re2 has no high-order format yet, so
+`to_re2` reads only the 8 corners and a mesh exports byte-identically at any order.
+The `.vtu` (XML VTK) writer becomes high-order at `order > 1`, emitting VTK Lagrange
+cells (`VTK_LAGRANGE_CURVE=68` / `_QUADRILATERAL=70` / `_HEXAHEDRON=72`) whose `(N+1)^d`
+nodes/cell index the **conformal (welded)** node array from the `conform.conformal_*`
+walk, ordered via a hand-built `_lagrange_*_perm(order)` (corners → edges → faces →
+interior, VTK's `PointIndexFromIJK` recursion — no `vtk`/`meshio` dep). Face nodes
+inherit the face's `bc_id` via `hex_face_indices`. The writer
+(`to_vtu`/`line_to_vtu`/`quad_to_vtu`) builds its node arrays via
+`_hex_arrays`/`_line_arrays`/`_quad_arrays` and emits through `_write_vtu`; there is
+**no legacy ASCII `.vtk` writer** — only `.re2` and `.vtu`.
+
+**Order-N quality is opt-in** (defaults stay corner-based so pinned quality numbers
+hold): `quadmesh.quality.scaled_jacobian_ho(mesh, order)` /
+`hexmesh.quality.scaled_jacobian_ho(mesh, order)` sample the scaled Jacobian at the
+`(N+1)^d` GLL nodes of the block gathered transiently from the mesh's B-rep via the
+conformal walk (kernel `model.interp.scaled_jacobian_ho`), reached via
+`mesh.scaled_jacobian(high_order=True)` / `quality_summary(high_order=True)` — at order 1
+the GLL nodes are the corners so it reduces exactly to the default corner metric.
+**Order-N smoothing is not implemented** (the corner-graph Laplacian/Winslow ignore
+mid/interior nodes). Rather than degrade silently, a repositioning smoother **raises
+`NotImplementedError` at `order > 1`** — `set_section_smoothing`
+(`conduction`/`winslow`; the no-op `bilinear`/`none` stay allowed) and
+`hexmesh.smoothing.smooth` both guard on `mesh.order`. Build it only when a real need
+appears.
+
+**Order 1 is a strict no-op, which is what pins the goldens.** Every order-1 code path
+branches on `order`: `to_re2`, quality, topology, `merge`, `FACE_POINTS` and the `.vtu`
+order-1 writer read only `points`/`conn` (the order-1 VTK path reads `points[conn]` in
+Nek/CCW order), and the combinators' entity interpolation/concatenation degenerates to
+the plain point blend against empty tables. The golden `bifurcation.*` (built with
+defaults) is byte-identical, and treating any golden diff at default order as a bug
+still holds. See `examples/high_order_{curve,quad,hex}.py`.
 
 ### Physical groups & export
 
@@ -238,7 +501,8 @@ all internal indices are 0-based.
 
 - **Strong typing is enforced** (`mypy` with `disallow_untyped_defs`, `check_untyped_defs`,
   `disallow_any_generics`). Everything in `nekmeshpy/` is annotated. Geometry-object parameters
-  take the concrete type (`LineMesh`, and open-vs-closed is checked at runtime, not in the type)
+  take the concrete type (`LineMesh`; open-vs-closed is neither a type nor a stored flag — it is
+  read off the `lines` connectivity)
   with no `| np.ndarray` fallback; only genuine
   vector *literals* (axis/origin/center) use `Sequence[float] | FloatArray`. Array-valued
   numeric internals use the dtype-parametrized aliases in `nekmeshpy/_typing.py` — `FloatArray`
@@ -247,7 +511,14 @@ all internal indices are 0-based.
   `boundary_tags`) — never a bare `np.ndarray`, which
   `disallow_any_generics` rejects as an implicit `NDArray[Any]` (use an explicit `NDArray[...]`
   for any other dtype). `Point` / `Vec3` / `PointArray` are shape-documentation aliases of
-  `FloatArray` marking a single `(3,)` location / a single `(3,)` direction / a `(P,3)` array of
-  point coordinates (vs `(N,)` scalar data); numpy has no static shape checking, so they document
+  `FloatArray` marking a single `(3,)` location / a single `(3,)` direction / **any** array of
+  point coordinates whose **trailing axis is the 3 spatial components**, with any leading shape —
+  `(P,3)` `points`, `(L,order-1,3)` `LineMesh.interior`, `(Q,(order-1)**2,3)` `QuadMesh.interior`,
+  `(E,6,(order-1)**2,3)` gathered hex face nodes, `(ni+1,nj+1[,nk+1],3)` `from_grid` grids. The
+  concrete shape belongs in each field/parameter docstring; the alias deliberately does not encode
+  it. Real data that is **not** a position keeps `FloatArray`: `fractions`/`t` blend parameters,
+  `layers`/`radial` positions, `x_frac`/`y_frac` grading, GLL nodes/weights and Lagrange
+  (derivative) matrices, `tensor_nodes`' `(M,dim)` *parametric* reference lattice, scaled-Jacobian
+  values and quality metrics, tolerances. numpy has no static shape checking, so they document
   intent only and are interchangeable with `FloatArray` to mypy.
 - Full architecture, module reference, and extension points: `README.md`.

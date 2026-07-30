@@ -15,7 +15,7 @@ mesh conforms). ``annulus`` copies the tags onto the ring edges, and the span sw
 
     PYTHONPATH=. python examples/flow_past_cylinder.py
 
-Produces ``flow_past_cylinder.re2`` / ``.rea`` and ``flow_past_cylinder.vtk``.
+Produces ``flow_past_cylinder.re2`` / ``.rea`` and ``flow_past_cylinder.vtu``.
 """
 
 import logging
@@ -31,11 +31,14 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 R = 0.5                      # cylinder radius
 HALF_BOX = 6.0               # far-field box half-width (domain [-HB, HB]^2 in xy)
 SPAN = 2.0                   # spanwise (z) extent
-N_THETA = 64                 # azimuthal cells around the cylinder
+N_THETA = 24                 # azimuthal cells around the cylinder
 N_RADIAL = 24                # radial cells from cylinder out to the box
-RADIAL_GRADING = 1.12        # >1 clusters radial layers toward the cylinder
+RADIAL_GRADING = 1.2        # >1 clusters radial layers toward the cylinder
 N_SPAN = 4                   # hex layers across the span
-SMOOTHING_METHOD = "bilinear"  # per-section interior repositioning
+ORDER = 2                    # polynomial order; 1 = linear. High order bows the
+                             # ring's inner wall onto the true circle (curved
+                             # .vtu; .re2 stays linear either way)
+SMOOTHING_METHOD = None  # per-section interior repositioning
 OUT_NAME = "flow_past_cylinder"
 
 # boundary name -> Nek BC code, applied only at export
@@ -47,10 +50,10 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "cylinder": "W  ",
 # loops pair index-for-index in annulus (the radial spokes are not straight)
 CORNER = np.arctan2(-HALF_BOX, -HALF_BOX)
 inner = LineMesh.circle(R, N_THETA, start_theta=CORNER,
-                        element_tags=["cylinder"] * N_THETA)
+                        element_tags=["cylinder"] * N_THETA, order=ORDER)
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named bottom (y=-HB), outlet (x=+HB), top (y=+HB), inlet (x=-HB)
-outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA,
+outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags=["bottom", "outlet", "top", "inlet"])
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
@@ -65,5 +68,5 @@ mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME, groups=GROUPS)
-export.to_vtk(mesh, OUT_NAME + ".vtk", groups=GROUPS)
+export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

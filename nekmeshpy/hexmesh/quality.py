@@ -6,11 +6,14 @@ All metrics operate on a shared-point representation ``(points, hexes)`` where
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+
+if TYPE_CHECKING:
+    from .hexmesh import HexMesh
 
 # corner -> [corner, +xi, +eta, +zeta] neighbour point positions
 _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
@@ -41,9 +44,41 @@ def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
     return sj
 
 
-def summary(points: PointArray, hexes: IntArray) -> dict[str, Any]:
-    """Dict of aggregate quality statistics for a hex mesh."""
-    sj = scaled_jacobian(points, hexes)
+def _ho_block(mesh: HexMesh, order: int) -> PointArray:
+    """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample.
+
+    The mesh's entity B-rep is walked
+    (:func:`~nekmeshpy.model.conform.conformal_hex`) and the block gathered
+    **transiently** as ``nodes[conn_ho]`` -- nothing is stored.
+    """
+    from ..model import conform
+    nodes, conn_ho = conform.conformal_hex(
+        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
+        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
+        mesh.quads.interior, mesh.interior, order)
+    block: PointArray = nodes[conn_ho]
+    return block
+
+
+def scaled_jacobian_ho(mesh: HexMesh, order: int) -> FloatArray:
+    """Per-hex minimum scaled Jacobian sampled at the ``(order+1)**3`` GLL nodes of the
+    curved element block, shape ``(N,)`` -- the order-N generalization of
+    :func:`scaled_jacobian`.
+
+    ``mesh`` is a ``HexMesh``; its high-order nodes are gathered from the entity B-rep
+    on the fly.
+
+    Each node's ``det(J) / prod(|tangent|)`` is formed from the mapping's parametric
+    tangents there.  This is the **opt-in** metric: the default corner-based
+    :func:`scaled_jacobian` keeps the pinned linear numbers, and at ``order == 1`` (GLL
+    nodes == corners) this reduces to it.
+    """
+    from ..model.interp import scaled_jacobian_ho as _sj
+    return _sj(_ho_block(mesh, order), order, dim=3)
+
+
+def _summary(sj: FloatArray) -> dict[str, Any]:
+    """Aggregate-statistics dict from a per-element scaled-Jacobian array."""
     return {
         "n_elements": int(sj.size),
         "min": float(np.min(sj)),
@@ -53,6 +88,16 @@ def summary(points: PointArray, hexes: IntArray) -> dict[str, Any]:
         "n_inverted": int(np.sum(sj <= 0)),
         "n_below_0.2": int(np.sum(sj < 0.2)),
     }
+
+
+def summary(points: PointArray, hexes: IntArray) -> dict[str, Any]:
+    """Dict of aggregate quality statistics for a hex mesh."""
+    return _summary(scaled_jacobian(points, hexes))
+
+
+def summary_ho(mesh: HexMesh, order: int) -> dict[str, Any]:
+    """Aggregate statistics for the order-N :func:`scaled_jacobian_ho` metric."""
+    return _summary(scaled_jacobian_ho(mesh, order))
 
 
 def histogram(points: PointArray, hexes: IntArray, bins: int = 10,

@@ -39,7 +39,15 @@ def smooth(
     """Constrained untangle + polish, keeping the ``wall``-named points on
     ``surface`` and opening/cap points fixed. Runs up to ``untangle_iters``
     point-local sweeps (stopping once every element clears ``quality_floor``), then
-    ``smooth_iters`` global polish sweeps (``<=0`` returns the mesh unchanged)."""
+    ``smooth_iters`` global polish sweeps (``<=0`` returns the mesh unchanged).
+
+    Operates on the corner graph only, so an ``order > 1`` mesh is rejected --
+    high-order smoothing is not implemented yet."""
+    if mesh.order > 1:
+        raise NotImplementedError(
+            "hexmesh.smoothing.smooth: cannot smooth an order-%d mesh (operates on "
+            "corner nodes only; high-order smoothing is not implemented yet). Use "
+            "order=1." % mesh.order)
     if smooth_iters <= 0:
         return mesh
     lam0 = smooth_lambda or 0.5
