@@ -67,27 +67,60 @@ PYTHONPATH=. python examples/flow_past_cylinder.py # external flow around a body
 See the [how-to recipes](https://khanhn201.github.io/NekMeshPy/user/howto.html)
 for a guided tour of each.
 
+### Sweeping with `loft`
+
+`loft` is one primitive at three dimensions — `LineMesh.loft` (each profile a single
+point, the rungs *are* the lines), `QuadMesh.loft` (profiles are `LineMesh`es) and
+`HexMesh.loft` (profiles are `QuadMesh`es) — with `extrude` the straight special case
+at each rung, and `LineMesh.open` / `LineMesh.loop` thin wrappers over
+`LineMesh.loft(…, loop=False/True)`.
+
+Pass `loop=True` for a **periodic** sweep: the last profile joins back to the first,
+so `M` profiles give `M` layers and the seam is a genuine shared entity (no
+duplicated layer, no free boundary in the sweep direction) — a torus surface from
+revolved rings, a solid torus from revolved discs. A closed sweep has no near/far
+cap, so `first_tag` / `last_tag` are rejected with a `ValueError` and no cap boundary
+rows are emitted.
+
+```python
+sections = [...]                                   # rings revolved about an axis
+torus    = QuadMesh.loft(sections, loop=True)      # closed surface, zero free edges
+```
+
 ### High-order (order-N) elements
 
-Every factory takes an optional `order=N`: each element then carries `(N+1)`
-Gauss–Lobatto–Legendre nodes per parametric direction (line `N+1`, quad `(N+1)²`,
-hex `(N+1)³`), placed on the true geometry — a circle's arc nodes on the exact
-circle, a shell's inner wall on the exact sphere. Corner connectivity stays
-authoritative, so `.re2` export is unchanged (linear corners — Nek's re2 has no
-high-order format yet) while `.vtu` export emits VTK Lagrange cells for curved
-rendering. `order` defaults to `1` (plain linear elements). The XML `.vtu` writers
-render Lagrange cells reliably in ParaView and VisIt.
+Every factory takes an optional `order=N` (default `1`): each element then carries
+`(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction (line `N+1`, quad
+`(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's re2 has no
+high-order format yet), so a mesh exports byte-identically at any order, while `.vtu`
+emits VTK Lagrange cells (68 / 70 / 72) that ParaView and VisIt render as curved
+geometry.
 
-The high-order nodes are stored **conformally**, decomposed by topology into shared
-edge/face entities plus per-element interiors (module `nekmeshpy.model.conform`): two
-elements meeting on an edge or face resolve to the *same* nodes, decided by corner ids
-(not a coordinate search). That decomposition **is** the storage: the containers hold
-it natively (`LineMesh.interior`; `QuadMesh.lines`/`quad`/`flip`/`interior`;
-`HexMesh.quads`/`hex`/`face_orient`/`interior`), readable as `.edges`/`.edge_nodes` and
-(hex) `.faces`/`.face_nodes`. The conformal walks
-`conform.conformal_line`/`_quad`/`_hex` return `(nodes, conn_ho)` — one global node
-array with dense per-element connectivity, the high-order analog of `points` + `quads`
-— and that is what the `.vtu` writer and the order-N quality metrics read.
+**The B-rep ladder is the storage.** There is no per-element node block anywhere and
+no `.curved` facade: each container holds the rung below it plus what it privately
+owns — `LineMesh` (`points`, `lines`, `interior (L,N-1,3)`); `QuadMesh` (a `lines`
+*`LineMesh` of the shared edges* + `quad`/`flip` incidence + `interior
+(Q,(N-1)²,3)`); `HexMesh` (a `quads` *`QuadMesh` of the shared faces* + `hex` /
+`face_orient` incidence + `interior (E,(N-1)³,3)`). `points` / `quads` / `hexes` are
+**derived read-only views** over it, so corner consistency is structural and
+`mesh.points[:] = X` propagates everywhere for free. Conformality is likewise
+structural: a shared edge or face is *one stored object* referenced by every incident
+element, resolved by corner ids rather than a coordinate search
+(`nekmeshpy.model.conform`). The conformal walks
+`conform.conformal_line`/`_quad`/`_hex` flatten it on demand into `(nodes, conn_ho)`
+— the high-order analog of `points` + `quads` — and that is what the `.vtu` writer and
+the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.
+
+**Curved geometry is not automatic.** Factories that own an analytic shape place the
+extra nodes on it — `LineMesh.circle` / `LineMesh.arc` on the exact arc,
+`QuadMesh.sphere` / `QuadMesh.hemisphere` projecting every node onto the exact sphere —
+the region fills (`ogrid` / `half_ogrid` / `structured`) carry their input walls'
+curvature into the interior as well as onto the wall, and the combinators (`extrude` /
+`blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
+(`LineMesh.open`/`loop`/`loft`, `from_grid`) has only those points to go on and
+straight-subdivides between them: high order in storage, linear in geometry. Order-N
+smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
+above order 1 rather than degrading silently.
 
 ```python
 loop  = LineMesh.circle(radius=2.0, n=8, order=5)   # 6 GLL nodes / arc, on the circle

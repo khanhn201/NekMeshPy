@@ -23,7 +23,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
-from nekmeshpy.model.fields import geometric_spacing
+from nekmeshpy.model.fields import geometric_spacing, gll_nodes
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -39,6 +39,9 @@ N_SPAN = 4                   # hex layers across the span
 # bilinear (algebraic) ring: a winslow solve tangles the high-aspect cells at the
 # sharp ends, so keep the algebraic fill
 SMOOTHING_METHOD = "bilinear"
+ORDER = 2                    # polynomial order; 1 = linear. "bilinear" is a no-op
+                             # fill, so it stays legal above order 1 (a
+                             # repositioning smoother would be rejected)
 OUT_NAME = "flow_past_plate"
 
 # boundary name -> Nek BC code, applied only at export
@@ -50,14 +53,29 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "plate": "W  ",
 # box's lower-left corner (so the loops pair index-for-index in annulus)
 CORNER = np.arctan2(-HALF_BOX, -HALF_BOX)
 theta = np.linspace(0.0, 2.0 * np.pi, N_THETA, endpoint=False) + CORNER
-r = 1.0 / np.sqrt((np.cos(theta) / A) ** 2 + (np.sin(theta) / B) ** 2)
-inner = LineMesh.loop(np.column_stack([r * np.cos(theta), r * np.sin(theta),
-                                       np.zeros(N_THETA)]),
-                      element_tags=["plate"] * N_THETA)
+
+
+def ellipse(th):
+    """Points on the **exact** ellipse at direction angles ``th`` (any shape); the
+    trailing axis of the result is xyz."""
+    rad = 1.0 / np.sqrt((np.cos(th) / A) ** 2 + (np.sin(th) / B) ** 2)
+    return np.stack([rad * np.cos(th), rad * np.sin(th), np.zeros_like(th)], axis=-1)
+
+
+# There is no analytic ``LineMesh`` factory for an ellipse (``circle`` is the only
+# one), so place the high-order nodes here the way ``circle`` does: element k spans
+# theta[k] .. theta[k] + dtheta, and its interior GLL nodes go on the exact ellipse
+# rather than on ``LineMesh.loop``'s default straight chord.  Without this the wall
+# would be high-order in storage and linear in geometry.
+interior = (None if ORDER == 1 else
+            ellipse(theta[:, None]
+                    + gll_nodes(ORDER)[1:ORDER][None, :] * (2.0 * np.pi / N_THETA)))
+inner = LineMesh.loop(ellipse(theta), element_tags=["plate"] * N_THETA,
+                      order=ORDER, interior=interior)
 
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named by the direction they face -- bottom / outlet / top / inlet
-outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA,
+outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags=["bottom", "outlet", "top", "inlet"])
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),

@@ -33,6 +33,9 @@ NX_DOWN = 48                 # cells along the downstream channel
 NY_CH = 12                   # cells across the channel height (0..H)
 NY_STEP = 12                 # cells across the step depth (-STEP..0)
 N_SPAN = 8                   # hex layers across the span
+ORDER = 2                    # polynomial order; 1 = linear. The domain is
+                             # polyhedral, so the curved nodes land on the same
+                             # flat faces (.re2 stays linear either way)
 OUT_NAME = "backward_facing_step"
 
 # boundary name -> Nek BC code, applied only at export (span faces = symmetry)
@@ -49,7 +52,7 @@ def rect(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int,
     (bottom/right/top/left) tagged; an absent side stays untagged."""
     return QuadMesh.rectangle(
         [(x0, y0, 0.0), (x1, y0, 0.0), (x1, y1, 0.0), (x0, y1, 0.0)],
-        nx, ny, side_tags=side_tags)
+        nx, ny, side_tags=side_tags, order=ORDER)
 
 
 section = QuadMesh.merge([

@@ -221,7 +221,9 @@ def test_vtu_meshio_roundtrip(tmp_path):
 def test_high_order_hex_example_matches_golden(tmp_path):
     ns = run_example("high_order_hex.py", tmp_path)
     mesh = ns["mesh"]
-    assert isinstance(mesh, HexMesh) and mesh.order == 4
+    # the example's own ORDER constant is the contract -- read it back rather
+    # than pinning a literal here, so the two can never drift apart.
+    assert isinstance(mesh, HexMesh) and mesh.order == ns["ORDER"] > 1
     with open(os.path.join(tmp_path, "high_order_hex.vtu"), "rb") as f:
         got = f.read()
     with open(os.path.join(GOLDEN, "high_order_hex.vtu"), "rb") as f:

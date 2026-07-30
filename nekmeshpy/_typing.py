@@ -5,8 +5,13 @@ Dtype-parametrized ``NDArray`` aliases replace bare ``np.ndarray`` (rejected by
 for connectivity/indices, ``BoolArray`` for masks, ``StrArray`` for labels.
 
 ``Point``, ``Vec3`` and ``PointArray`` are shape-documentation aliases of
-``FloatArray`` marking a ``(3,)`` location, a ``(3,)`` vector, or a ``(P,3)``
-point array.  numpy has no static shape checking, so they document intent only.
+``FloatArray``: ``Point`` marks a single ``(3,)`` location, ``Vec3`` a single
+``(3,)`` direction, and ``PointArray`` **any** array of point coordinates whose
+trailing axis is the 3 spatial components -- with any leading shape, so ``(P,3)``,
+``(L,order-1,3)``, ``(ni+1,nj+1,3)`` and ``(E,6,(order-1)**2,3)`` are all
+``PointArray``.  The concrete shape belongs in the docstring of the field or
+parameter; the alias deliberately does not encode it.  numpy has no static shape
+checking, so all three document intent only.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ StrArray = NDArray[np.str_]         # per-element string labels (boundary names)
 # shape-documentation aliases (not shape-enforced by mypy)
 Point = NDArray[np.float64]        # a single (3,) location
 Vec3 = NDArray[np.float64]         # a single (3,) direction/vector
-PointArray = NDArray[np.float64]   # a (P,3) array of point coordinates
+PointArray = NDArray[np.float64]   # point coordinates: any leading shape + trailing 3
 
 __all__ = ["FloatArray", "IntArray", "BoolArray", "StrArray",
            "Point", "Vec3", "PointArray"]

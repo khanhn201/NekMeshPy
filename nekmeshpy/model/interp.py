@@ -74,7 +74,7 @@ def corner_indices(order: int, dim: int) -> IntArray:
     return np.array(idx, dtype=np.int64)
 
 
-def subdivide_element(corners: PointArray, order: int, dim: int) -> FloatArray:
+def subdivide_element(corners: PointArray, order: int, dim: int) -> PointArray:
     """Straight-sided order-N block: multilinear map of the reference lattice through
     the ``2**dim`` ``corners`` (given in connectivity winding order).  Returns
     ``((order+1)**dim, 3)`` in lexicographic order.  At ``order == 1`` the block is
@@ -85,7 +85,7 @@ def subdivide_element(corners: PointArray, order: int, dim: int) -> FloatArray:
                          % (2 ** dim, dim, c.shape[0]))
     params = tensor_nodes(order, dim)                 # (M, dim) in [0,1]
     m = params.shape[0]
-    out: FloatArray = np.zeros((m, 3))
+    out: PointArray = np.zeros((m, 3))
     for ci, bits in enumerate(_CORNER_IJK[dim]):
         w = np.ones(m)
         for a in range(dim):
@@ -163,7 +163,7 @@ def quad_edge_indices(side: int, order: int) -> IntArray:
 
 
 def coons_grid(cb: PointArray, ct: PointArray, cl: PointArray, cr: PointArray,
-               u: FloatArray, v: FloatArray) -> FloatArray:
+               u: FloatArray, v: FloatArray) -> PointArray:
     """Transfinite (Coons-patch) blend, factored out of ``QuadMesh.structured``.
 
     ``cb``/``ct`` are the bottom (``c0->c1``) / top (``c3->c2``) edge points sampled
@@ -181,12 +181,12 @@ def coons_grid(cb: PointArray, ct: PointArray, cl: PointArray, cr: PointArray,
                + (1 - uu) * vv * P01 + uu * vv * P11))
 
 
-def blend_ho(a: FloatArray, b: FloatArray, t: float) -> FloatArray:
+def blend_ho(a: PointArray, b: PointArray, t: float) -> PointArray:
     """``(1-t)*a + t*b`` on two index-paired high-order blocks."""
     return (1.0 - t) * a + t * b
 
 
-def _element_tangents(curved: FloatArray, order: int,
+def _element_tangents(curved: PointArray, order: int,
                       dim: int) -> tuple[FloatArray, ...]:
     """The ``dim`` parametric tangent vectors of each element's mapping, evaluated at
     every one of its ``(order+1)**dim`` GLL nodes.  Returns ``dim`` arrays of shape
@@ -211,7 +211,7 @@ def _element_tangents(curved: FloatArray, order: int,
     raise ValueError("scaled-Jacobian metric supports dim 2 or 3, got %d" % dim)
 
 
-def scaled_jacobian_ho(curved: FloatArray, order: int, dim: int) -> FloatArray:
+def scaled_jacobian_ho(curved: PointArray, order: int, dim: int) -> FloatArray:
     """Per-element minimum scaled Jacobian sampled at the ``(order+1)**dim`` GLL nodes
     of a ``curved`` block, shape ``(E,)``.
 

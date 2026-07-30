@@ -33,6 +33,9 @@ WALL_GRADING = 1.15          # >1 thins cross-section cells toward the walls
 AXIS = (1.0, 0.0, 0.0)       # sweep direction: down the duct (+x)
 CENTER = (0.0, 0.0, 0.0)
 SMOOTHING_METHOD = "bilinear"     # no-op: keep the exact (graded) Coons section
+ORDER = 2                    # polynomial order; 1 = linear. The duct is
+                             # axis-aligned, so the curved nodes land on the same
+                             # flat faces (.re2 stays linear either way)
 OUT_NAME = "rectangular_pipe"
 
 # boundary name -> Nek BC code, applied only at export
@@ -49,7 +52,7 @@ section = QuadMesh.rectangle(
     x_frac=symmetric_spacing(NX, WALL_GRADING),   # width-direction node fractions
     y_frac=symmetric_spacing(NY, WALL_GRADING),   # height-direction node fractions
     side_tags={s: "wall" for s in ("bottom", "right", "top", "left")},
-    smoothing_method=SMOOTHING_METHOD)
+    smoothing_method=SMOOTHING_METHOD, order=ORDER)
 
 mesh = HexMesh.extrude(
     section, axis=AXIS, length=LENGTH,

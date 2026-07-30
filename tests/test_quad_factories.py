@@ -156,6 +156,61 @@ def test_sphere_box_annulus_is_watertight():
     assert float(np.min(block.scaled_jacobian())) > 0.0
 
 
+def test_half_box_is_open_at_the_ground_with_face_tags():
+    qm = QuadMesh.half_box(2.0, 4, n_vertical=3, rim_tag="ground", face_tags={
+        "x_min": "inlet", "x_max": "outlet",
+        "y_min": "front", "y_max": "back", "z_max": "top"})
+    # four upright sides (4 x n_vertical each) + the flat lid
+    assert qm.n_quads == 4 * (4 * 3) + 4 * 4
+    assert np.min(qm.points[:, 2]) == pytest.approx(0.0)      # sits on z = 0
+    assert np.max(np.abs(qm.points), axis=0) == pytest.approx([2.0, 2.0, 2.0])
+    from collections import Counter
+    counts = Counter(qm.element_tags.tolist())
+    for side in ("inlet", "outlet", "front", "back"):
+        assert counts[side] == 4 * 3
+    assert counts["top"] == 4 * 4
+    # open at the rim, and every free edge is named
+    rim = qm.boundary_edges()
+    assert rim.shape[0] == 4 * 4
+    assert set(qm.boundary_tags.tolist()) == {"ground"}
+
+
+def test_hemisphere_pairs_with_half_box_by_index():
+    R, S, N, NV = 0.5, 3.0, 4, 3
+    hb = QuadMesh.half_box(S, N, n_vertical=NV, face_tags={"x_max": "outlet"})
+    hs = QuadMesh.hemisphere(R, N, n_vertical=NV, rim_tag="ground")
+    assert np.array_equal(hs.quads, hb.quads)          # identical connectivity
+    assert hs.n_points == hb.n_points
+    assert np.allclose(np.linalg.norm(hs.points, axis=1), R)   # all on the sphere
+    assert np.min(hs.points[:, 2]) > -1e-15                    # upper half only
+    assert set(hs.element_tags.tolist()) == {"hemisphere"}
+    assert set(hs.boundary_tags.tolist()) == {"ground"}
+
+
+@pytest.mark.parametrize("order", [1, 2, 3, 4])
+def test_hemisphere_high_order_nodes_lie_on_the_exact_sphere(order):
+    R = 1.25
+    hs = QuadMesh.hemisphere(R, 3, n_vertical=2, order=order)
+    for block in (hs.points, hs.lines.interior.reshape(-1, 3),
+                  hs.interior.reshape(-1, 3)):
+        if block.size:
+            assert np.max(np.abs(np.linalg.norm(block, axis=1) - R)) < 1e-13
+    # the rim stays exactly on the ground plane at every order
+    assert np.min(hs.points[:, 2]) > -1e-15
+
+
+def test_hemisphere_half_box_annulus_is_watertight():
+    from nekmeshpy import HexMesh
+    from nekmeshpy.model.fields import uniform_spacing as us
+    hb = QuadMesh.half_box(3.0, 4, n_vertical=4)
+    hs = QuadMesh.hemisphere(0.5, 4, n_vertical=4, rim_tag="ground")
+    block = HexMesh.annulus(hs, hb, radial=us(3))
+    assert block.is_watertight() and block.is_conforming()
+    assert float(np.min(block.scaled_jacobian())) > 0.0
+    # the open rim sweeps into the ground annulus at z = 0
+    assert "ground" in block.boundary_group_tags
+
+
 def _circle(radius, n):
     return LineMesh.circle(radius, n)
 
@@ -302,9 +357,15 @@ def test_annulus_rejects_radial_not_reaching_wall():
 
 
 def test_annulus_rejects_non_loop():
-    with pytest.raises(TypeError, match="must be a closed LineMesh"):
-        QuadMesh.annulus(LineMesh.open([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), _square_loop(2.0),
-                         radial=uniform_spacing(3))
+    # closedness is not a stored flag: what annulus needs is that the two rings pair
+    # index-for-index, i.e. share identical `lines`.  An open chain over the outer
+    # loop's own points has one line element fewer (no wrap row), so the radial
+    # blend rejects it structurally.
+    outer = _square_loop(2.0)
+    chain = LineMesh.open(outer.points * 0.25)
+    assert chain.n_lines == outer.n_lines - 1        # the missing wrap row
+    with pytest.raises(ValueError, match="identical connectivity"):
+        QuadMesh.annulus(chain, outer, radial=uniform_spacing(3))
 
 
 def _diameter_spine(arc, center_scale, radial):
@@ -663,9 +724,22 @@ def test_structured_rejects_open_loop():
 
 
 def test_ogrid_rejects_non_loop_boundary():
-    with pytest.raises(TypeError, match="must be a closed LineMesh"):
+    # ogrid needs a ring of exactly 4*n_side points; a 3-point chain cannot be one.
+    # (Closedness itself is no longer a stored flag -- see
+    # test_ogrid_reads_the_loop_wrap_from_connectivity below.)
+    with pytest.raises(ValueError, match=r"exactly 4\*n_side"):
         QuadMesh.ogrid(LineMesh.open([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
                        radial=uniform_spacing(3))
+
+
+def test_ogrid_reads_the_loop_wrap_from_connectivity():
+    # the structural fact behind "must be a closed loop": the boundary ring the
+    # ogrid fills is the loop's wrapping `lines`, so its perimeter is 4*n_side
+    # edges with no degree-1 end anywhere.
+    loop = _circle(0.5, 16)
+    assert loop.lines[-1].tolist() == [15, 0] and loop.boundary_points().size == 0
+    qm = QuadMesh.ogrid(loop, n_side=4, radial=uniform_spacing(3))
+    assert qm.boundary_edges().shape[0] == 16
 
 
 def test_ogrid_rejects_bad_center_scale():
@@ -788,8 +862,15 @@ def test_spined_ogrid_rejects_bad_boundary_count():
         QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
 
 
-def test_spined_ogrid_rejects_open_boundary():
-    line = LineMesh.open(np.column_stack(
-        [np.linspace(-1, 1, 16), np.zeros(16), np.zeros(16)]))
-    with pytest.raises(TypeError, match="closed"):
-        QuadMesh.spined_ogrid(line, uniform_spacing(2), center_scale=0.5)
+def test_spined_ogrid_boundary_wrap_is_structural():
+    # spined_ogrid splits its boundary at index 0 / M//2 into two A1->A2 half-arcs
+    # and welds them back; the seam ring it produces is closed because the input
+    # ring's `lines` wrap -- nothing is read from a stored flag.
+    M = 16
+    th = np.linspace(0.0, 2 * np.pi, M, endpoint=False)
+    loop = LineMesh.loop(np.column_stack([np.cos(th), np.sin(th), np.zeros(M)]))
+    assert loop.lines[-1].tolist() == [M - 1, 0]
+    assert loop.boundary_points().size == 0
+    qm = QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
+    # the filled disc's only free perimeter is the wall ring itself
+    assert qm.boundary_edges().shape[0] == M

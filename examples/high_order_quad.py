@@ -24,7 +24,7 @@ _log = logging.getLogger("nekmeshpy")
 # -- parameters --------------------------------------------------------------
 RADIUS = 2.0                 # sphere radius
 N_CELL = 4                   # cells per cube-face axis (6 * N_CELL**2 quads)
-ORDER = 5                    # polynomial order: (ORDER+1)**2 GLL nodes per quad
+ORDER = 2                    # polynomial order: (ORDER+1)**2 GLL nodes per quad
 OUT_NAME = "high_order_quad"
 
 # -- build the high-order surface --------------------------------------------

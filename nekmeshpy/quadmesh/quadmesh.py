@@ -33,11 +33,8 @@ from .._typing import (
 )
 from ..linemesh import LineMesh
 from ..model import conform
-from ..model.fields import gll_nodes, validate_layers
-from ..model.interp import (
-    quad_edge_indices,
-    tensor_nodes,
-)
+from ..model.fields import gll_nodes, reject_loop_caps, validate_layers
+from ..model.interp import quad_edge_indices
 
 #: Boundary-name sentinel meaning "not a boundary": a side carrying this name emits
 #: no boundary row.  Equal to ``""`` so it reads as "unnamed" everywhere.
@@ -47,10 +44,14 @@ NO_BOUNDARY: str = ""
 _Z_AXIS = np.array([0.0, 0.0, 1.0])
 _ORIGIN = np.array([0.0, 0.0, 0.0])
 
-# grid side name -> (quad edge side 1-4, axis, which end) for from_grid.
-_GRID_EDGES = {
-    "x_min": (4, 0, 0), "x_max": (2, 0, -1),
-    "y_min": (1, 1, 0), "y_max": (3, 1, -1),
+# ``from_grid`` side name -> the ``loft`` channel that carries it.  The grid is lofted
+# column by column (profile = the ``i`` chain, sweep = the ``j`` axis), so the two
+# ``i``-ends of the profile ride the loft's tagged **boundary points** onto local quad
+# sides 4 / 2, and the two ``j``-ends ride its ``first_tag`` / ``last_tag`` end caps
+# onto sides 1 / 3.  Entries are ``("wall", profile vertex 1-2)`` / ``("cap", which)``.
+_GRID_EDGES: dict[str, tuple[str, int]] = {
+    "x_min": ("wall", 1), "x_max": ("wall", 2),
+    "y_min": ("cap", 0), "y_max": ("cap", 1),
 }
 
 
@@ -73,9 +74,9 @@ def _quad_interior_slots(order: int) -> IntArray:
     return m[(i > 0) & (i < order) & (j > 0) & (j < order)]
 
 
-def _coons_at(bottom: FloatArray, top: FloatArray, left: FloatArray,
-              right: FloatArray, g: FloatArray, ii: IntArray,
-              jj: IntArray) -> FloatArray:
+def _coons_at(bottom: PointArray, top: PointArray, left: PointArray,
+              right: PointArray, g: FloatArray, ii: IntArray,
+              jj: IntArray) -> PointArray:
     """A loft column's transfinite (Coons) patch evaluated at the block slots whose
     lattice coordinates are ``(ii, jj)`` -- ``i`` the profile axis, ``j`` the sweep axis.
 
@@ -117,7 +118,7 @@ class QuadMesh:
         lines: LineMesh,
         quad: IntArray,
         flip: BoolArray,
-        interior: FloatArray | None = None,
+        interior: PointArray | None = None,
         boundaries: IntArray | None = None,
         boundary_tags: StrArray | Sequence[str] | None = None,
         element_tags: StrArray | Sequence[str] | None = None,
@@ -160,9 +161,9 @@ class QuadMesh:
             if self._order > 1:
                 raise ValueError(
                     "QuadMesh: order %d > 1 requires interior nodes" % self._order)
-            self.interior: FloatArray = np.zeros((Q, 0, 3), dtype=float)
+            self.interior: PointArray = np.zeros((Q, 0, 3), dtype=float)
         else:
-            ia: FloatArray = np.asarray(interior, dtype=float)
+            ia: PointArray = np.asarray(interior, dtype=float)
             if ia.shape != (Q, k, 3):
                 raise ValueError(
                     "QuadMesh: interior must be (Q,(order-1)**2,3) = (%d,%d,3), got %s"
@@ -273,7 +274,7 @@ class QuadMesh:
         return self.lines.lines
 
     @property
-    def edge_nodes(self) -> FloatArray:
+    def edge_nodes(self) -> PointArray:
         """``(Ne, order-1, 3)`` shared high-order interior nodes of each unique
         :attr:`edges` entry, in canonical (min->max corner) order.  Empty at order 1;
         a shared edge resolves to the same nodes from either incident quad."""
@@ -432,10 +433,10 @@ class QuadMesh:
         if any(m.order != order for m in meshes):
             raise ValueError("merge: all sections must share the same order")
         edges, elem_edges, flip = conform.unique_edges(quads, 2)
-        edge_nodes: FloatArray | None = None
-        interior: FloatArray | None = None
+        edge_nodes: PointArray | None = None
+        interior: PointArray | None = None
         if order > 1:
-            local: FloatArray = np.concatenate(
+            local: PointArray = np.concatenate(
                 [conform.gather_edge_nodes(m.lines.interior, m.quad, m.flip)
                  for m in meshes], axis=0)                     # (Q,4,order-1,3)
             edge_nodes = conform.scatter_edge_nodes(
@@ -455,7 +456,14 @@ class QuadMesh:
         result carries ``a``'s ``quads``, ``boundaries`` and ``boundary_tags``
         (positional BC markers follow the morph); per-quad ``element_tags`` are left
         for the consuming ``loft`` caps to assign, so a blended stack lofts directly.
-        This is the profile-positioning step behind ``HexMesh.annulus``."""
+        This is the profile-positioning step behind ``HexMesh.annulus``.
+
+        The morph is delegated one rung **down the B-rep ladder**: the shared corners
+        and the shared edge-interior nodes are exactly the edge ``LineMesh``, so
+        :meth:`LineMesh.blend <nekmeshpy.linemesh.LineMesh.blend>` produces the blended
+        edge mesh and this method only lerps what a quad owns privately -- its
+        per-quad ``interior`` -- while keeping ``a``'s ``quad`` / ``flip`` incidence
+        verbatim."""
         A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
         B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
         if A.shape[0] != B.shape[0]:
@@ -471,28 +479,25 @@ class QuadMesh:
                              "(got %d, %d)" % (a.order, b.order))
         # identical connectivity => identical edge tables, so a's and b's shared edge
         # nodes and private interiors already pair one-for-one and each morphs with the
-        # same lerp the corners get from the blended points.  The result reuses ``a``'s
-        # B-rep verbatim (its edge connectivity + per-quad edge indices / flips) -- a
-        # blend is a pure point-space morph, so nothing is re-derived.  At order 1 both
-        # entity tables are empty and this is exactly the plain point blend.
+        # same lerp the corners get from the blended points.  The shared corners *are*
+        # the edge LineMesh's points and the shared edge nodes *are* its interior, so
+        # that whole half of the morph is one ``LineMesh.blend`` of the rung below; the
+        # result reuses ``a``'s per-quad edge indices / flips verbatim -- a blend is a
+        # pure point-space morph, so nothing is re-derived.  At order 1 both entity
+        # tables are empty and this is exactly the plain point blend.
         ho = a.order > 1
-        ae, be = a.lines.interior, b.lines.interior
         ai, bi = a.interior, b.interior
-        out = []
-        for t in np.asarray(fractions, dtype=float).ravel():
-            lm = LineMesh((1.0 - t) * A + t * B, a.lines.lines, order=a.order,
-                          interior=(1.0 - t) * ae + t * be if ho else None)
-            out.append(cls(
-                lm, a.quad, a.flip,
-                (1.0 - t) * ai + t * bi if ho else None,
-                boundaries=a.boundaries, boundary_tags=a.boundary_tags,
-                order=a.order))
-        return out
+        fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
+        return [cls(lm, a.quad, a.flip,
+                    (1.0 - t) * ai + t * bi if ho else None,
+                    boundaries=a.boundaries, boundary_tags=a.boundary_tags,
+                    order=a.order)
+                for t, lm in zip(fr, LineMesh.blend(a.lines, b.lines, fr))]
 
     @classmethod
     def from_grid(
         cls,
-        P: FloatArray,
+        P: PointArray,
         *,
         edge_tags: Mapping[str, str] | None = None,
         element_tag: str = "",
@@ -506,58 +511,61 @@ class QuadMesh:
 
         ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
         each quad carries ``(order+1)**2`` straight-sided GLL nodes (a flat grid cell
-        is exact under this subdivision)."""
+        is exact under this subdivision).
+
+        Built as a :meth:`loft` of the grid's **column profiles**, each of which is
+        itself a :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` of the
+        grid's ``i`` points -- profile ``j`` is the open chain lofted from
+        ``P[:, j, :]`` running ``i = 0..ni`` -- and the sweep runs ``j = 0..nj``, so
+        the whole ladder ``HexMesh.from_grid -> from_grid -> LineMesh.loft`` is
+        composed at every rung.  That is the orientation whose column quad
+        ``[a_j, b_j, b_{j+1}, a_{j+1}]`` *is* the grid cell's CCW corner list
+        ``[(i,j), (i+1,j), (i+1,j+1), (i,j+1)]``, and it routes all four tagged sides
+        through channels ``loft`` already has: the profile's tagged **end points**
+        become the ``x_min`` / ``x_max`` walls and the sweep's caps the ``y_min`` /
+        ``y_max`` ones.  So the shared edges come out of the layer-by-layer B-rep
+        assembly rather than a ``unique_edges`` re-derivation from corners -- this rung
+        is composed from the one below like every other.
+
+        **Ordering is the loft's, carried up unchanged** -- composing the rung below
+        means accepting its numbering, so nothing is relabelled here.  The grid is
+        therefore numbered **sweep-major** (``i`` fastest): grid node ``(i, j)`` is
+        point ``j*(ni+1) + i`` and grid cell ``(i, j)`` is quad ``j*ni + i``, i.e.
+        ``points`` equals ``P.transpose(1, 0, 2).reshape(-1, 3)`` -- *not* the
+        ``P.reshape(-1, 3)`` (``j``-fastest) order this factory used historically.
+        ``boundaries`` stays lexsorted by ``(quad, side)``, so its row order follows
+        the quad ids; each tagged row still names the same physical side."""
         P = np.asarray(P, dtype=float)
         ni1, nj1, _ = P.shape
-        ni, nj = ni1 - 1, nj1 - 1
-        points = P.reshape(-1, 3)
-        ids = np.arange(ni1 * nj1, dtype=np.int64).reshape(ni1, nj1)
+        ni = ni1 - 1
+        tags = {s: n for s, n in (edge_tags or {}).items() if n}
+        for side in tags:
+            _GRID_EDGES[side]        # reject an unknown side name (KeyError)
 
-        quads = np.empty((ni * nj, 4), dtype=np.int64)
-        e = 0
-        for i in range(ni):
-            for j in range(nj):
-                quads[e] = [ids[i, j], ids[i + 1, j],
-                            ids[i + 1, j + 1], ids[i, j + 1]]   # CCW
-                e += 1
-        bnd: list[list[int]] = []
-        names: list[str] = []
-        cell = np.arange(ni * nj).reshape(ni, nj)
-        for side, name in (edge_tags or {}).items():
-            if not name:
-                continue
-            edge, axis, end = _GRID_EDGES[side]
-            strip: IntArray = cell.take(0 if end == 0 else -1, axis=axis).ravel()
-            for qid in strip:
-                bnd.append([int(qid), edge])
-                names.append(name)
+        # -- the column profile, shared by every level -----------------------
         # np.full width-infers from the fill value (dtype=np.str_ would clip to <U1)
-        etags: StrArray = np.full(quads.shape[0], element_tag)
-        # order-N: straight (bilinear) subdivision, evaluated only where the entity
-        # nodes live -- the same bilinear corner weights, restricted to the
-        # edge-interior and quad-interior slots, so a flat grid cell stays exact.
-        edges, elem_edges, flip = conform.unique_edges(quads, 2)
-        edge_nodes: FloatArray | None = None
-        interior: FloatArray | None = None
-        if order > 1:
-            params = tensor_nodes(order, 2)                     # (M,2), i fastest
-            u, v = params[:, 0], params[:, 1]
-            # weights in quad CCW corner order [(0,0),(1,0),(1,1),(0,1)]
-            W = np.stack([(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v], axis=1)
-            c = points[quads]                                   # (Q,4,3) CCW corners
-            eslots = _edge_interior_slots(order)                # (4,order-1)
-            local: FloatArray = np.einsum(
-                "mk,qkd->qmd", W[eslots.ravel()], c).reshape(
-                    quads.shape[0], 4, order - 1, 3)
-            interior = np.einsum(
-                "mk,qkd->qmd", W[_quad_interior_slots(order)], c)
-            edge_nodes = conform.scatter_edge_nodes(
-                local, elem_edges, flip, edges.shape[0],
-                conform.entity_tol(points), "QuadMesh.from_grid")
-        lm = LineMesh(points, edges, order=order, interior=edge_nodes)
-        return cls(lm, elem_edges, flip, interior,
-                   *cls._order_bnd(bnd, names),
-                   element_tags=etags, order=order)
+        line_tags: StrArray = np.full(ni, element_tag)
+        # tagged profile end points -> the two swept walls (loft: vertex 1 -> quad side
+        # 4, vertex 2 -> side 2), which is exactly x_min / x_max.
+        pbnd: list[list[int]] = []
+        pnames: list[str] = []
+        for side in ("x_min", "x_max"):
+            if side in tags:
+                vertex = _GRID_EDGES[side][1]
+                pbnd.append([0 if vertex == 1 else ni - 1, vertex])
+                pnames.append(tags[side])
+        pbnd_a: IntArray = np.asarray(pbnd, dtype=np.int64).reshape(-1, 2)
+        # each profile is itself a ``LineMesh.loft`` of its ``i`` points: the rung below
+        # builds the open ``i = 0..ni`` chain and, at order > 1, each segment's private
+        # interior as the straight GLL blend of its two endpoints.  ``loft`` here builds
+        # the sweep-direction rungs the same way and the quad interiors as the Coons
+        # patch of the two, so a flat grid cell stays exact.
+        slices = [LineMesh.loft(P[:, j, :], element_tags=line_tags,
+                                boundaries=pbnd_a, boundary_tags=pnames, order=order)
+                  for j in range(nj1)]
+        # the loft *is* the result: its sweep-major numbering is carried up unchanged.
+        return cls.loft(slices, first_tag=tags.get("y_min", ""),
+                        last_tag=tags.get("y_max", ""))
 
     # -- line -> quad sweep (LineMesh one dimension down) ---------------
     @staticmethod
@@ -600,12 +608,14 @@ class QuadMesh:
         offsets = validate_layers(layers, "extrude layers") * float(length)
         # the sweep is a rigid translation, so each slice's private high-order interior
         # nodes ride along by the same vector as its corner points -- no block anywhere.
+        # Each slice reuses ``line.lines`` verbatim, so the swept strip wraps exactly
+        # when the input curve's own connectivity does -- there is no flag to carry.
         ho = line.order > 1
         slices = [LineMesh(base + d * axis_u[None, :], line.lines,
                            element_tags=line.element_tags,
                            boundaries=line.boundaries,
                            boundary_tags=line.boundary_tags,
-                           closed=line.is_closed, order=line.order,
+                           order=line.order,
                            interior=(line.interior + (shift + d * axis_u)[None, None, :]
                                      if ho else None))
                   for d in offsets]
@@ -616,11 +626,15 @@ class QuadMesh:
         cls,
         slices: Sequence[LineMesh],
         *,
+        loop: bool = False,
         first_tag: str | Sequence[str] | StrArray = "",
         last_tag: str | Sequence[str] | StrArray = "",
     ) -> QuadMesh:
         """Loft a stack of conformal ``LineMesh`` profiles into a quad section
-        (the general primitive behind :meth:`extrude`).
+        (the general primitive behind :meth:`extrude`, and the middle rung of the
+        uniform sweep shared with
+        :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` and
+        :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`).
 
         ``slices`` is ``nz+1`` line profiles sharing the same ``lines``,
         ``element_tags``, and ``boundaries``; consecutive profiles form ``nz`` quad
@@ -629,6 +643,17 @@ class QuadMesh:
         quad in its column and tagged boundary points onto the swept wall edges;
         ``first_tag`` / ``last_tag`` name the near / far cap edges (scalar or per-line
         array).
+
+        ``loop=True`` makes the sweep **periodic**: the last profile is joined back to
+        the *first*, so ``M`` profiles give ``M`` layers instead of ``M-1``.  It falls
+        out of the layer-by-layer assembly as one extra iteration -- exactly one more
+        rung block, appended once at the end, with the first profile's lines *not*
+        duplicated -- so the seam is a genuine shared entity and the closed tube has
+        no free boundary edge in the sweep direction.  A closed sweep has no near/far
+        cap, so ``first_tag`` / ``last_tag`` with ``loop=True`` raise ``ValueError``
+        rather than being silently dropped, and no cap boundary row is emitted.
+        (Side-wall boundaries derived from the profiles' own boundary points are
+        unaffected.)
 
         The section's B-rep is assembled **layer by layer**, never re-derived from
         corner connectivity: each profile's own ``LineMesh`` is merged into the growing
@@ -640,13 +665,17 @@ class QuadMesh:
         ``scatter_edge_nodes`` reconciliation, because no shared edge is ever
         duplicated in the first place."""
         slices = list(slices)
+        if loop:
+            reject_loop_caps("QuadMesh.loft", first_tag, last_tag)
         lines = np.asarray(slices[0].lines, dtype=np.int64).reshape(-1, 2)
         L = lines.shape[0]
-        nz = len(slices) - 1
+        n_prof = len(slices)
+        # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
+        nz = n_prof if loop else n_prof - 1
         S = np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3)
-                      for s in slices], axis=0)              # (nz+1, nn, 3)
+                      for s in slices], axis=0)              # (n_prof, nn, 3)
         nn = S.shape[1]
-        points = S.reshape((nz + 1) * nn, 3)                 # global id = i*nn + v
+        points = S.reshape(n_prof * nn, 3)                   # global id = i*nn + v
 
         order = slices[0].order
         if any(s.order != order for s in slices):
@@ -665,31 +694,47 @@ class QuadMesh:
 
         # -- grow the global edge LineMesh layer by layer -------------------
         # level i's profile lines occupy [prof_off[i], prof_off[i]+L); the rungs of
-        # transition i->i+1 occupy [rung_off[i], rung_off[i]+nu).
+        # transition i->next(i) occupy [rung_off[i], rung_off[i]+nu).  ``nxt`` is the
+        # profile each layer sweeps *to*: i+1 normally, wrapping to 0 for the closing
+        # layer of a periodic sweep -- the single extra iteration below.
+        nxt: IntArray = (np.arange(1, nz + 1, dtype=np.int64) % n_prof if nz
+                         else np.zeros(0, dtype=np.int64))
         gi: FloatArray = gll_nodes(order)[1:order] if ho else np.zeros(0)
-        prof_off: IntArray = np.empty(nz + 1, dtype=np.int64)
+        prof_off: IntArray = np.empty(n_prof, dtype=np.int64)
         rung_off: IntArray = np.empty(max(nz, 0), dtype=np.int64)
         line_rows: list[IntArray] = []
-        inter_rows: list[FloatArray] = []
+        inter_rows: list[PointArray] = []
         cur = 0
-        for i in range(nz + 1):
+
+        def _append_rung(layer: int) -> None:
+            """Append the rung block of layer ``layer`` (profile ``layer`` ->
+            ``nxt[layer]``) to the growing edge mesh -- appended exactly once per
+            layer, so the seam rung of a periodic sweep is never duplicated."""
+            nonlocal cur
+            j = int(nxt[layer])
+            rung_off[layer] = cur
+            line_rows.append(np.column_stack([layer * nn + used, j * nn + used]))
+            if ho:
+                lo, hi = S[layer, used, :], S[j, used, :]
+                inter_rows.append(lo[:, None, :]
+                                  + gi[None, :, None] * (hi - lo)[:, None, :])
+            cur += nu
+
+        for i in range(n_prof):
             prof_off[i] = cur                                # merge level i's LineMesh
             line_rows.append(lines + i * nn)
             if ho:
                 inter_rows.append(np.asarray(slices[i].interior, dtype=float))
             cur += L
             if i:                                            # rungs (i-1) -> i
-                rung_off[i - 1] = cur
-                line_rows.append(np.column_stack(
-                    [(i - 1) * nn + used, i * nn + used]))
-                if ho:
-                    lo, hi = S[i - 1, used, :], S[i, used, :]
-                    inter_rows.append(lo[:, None, :]
-                                      + gi[None, :, None] * (hi - lo)[:, None, :])
-                cur += nu
+                _append_rung(i - 1)
+        if loop and nz:
+            # the one extra iteration: the closing rung (M-1) -> 0.  No profile is
+            # re-appended, so the seam shares profile 0's lines and nodes outright.
+            _append_rung(nz - 1)
         all_lines: IntArray = (np.concatenate(line_rows, axis=0) if line_rows
                                else np.zeros((0, 2), dtype=np.int64))
-        edge_nodes: FloatArray | None = (
+        edge_nodes: PointArray | None = (
             np.concatenate(inter_rows, axis=0) if ho else None)
 
         # -- quads purely by line index -------------------------------------
@@ -698,12 +743,13 @@ class QuadMesh:
         # 3 = level-(i+1) profile line l (reversed), 4 = rung at a (reversed).
         i_idx: IntArray = np.repeat(np.arange(nz, dtype=np.int64), L)
         l_idx = np.tile(np.arange(L, dtype=np.int64), nz)
+        j_idx: IntArray = nxt[i_idx] if nz else i_idx        # the swept-to profile
         av = a[l_idx]
         bv = b[l_idx]
         quad: IntArray = np.stack([
             prof_off[i_idx] + l_idx,
             rung_off[i_idx] + rung_slot[bv],
-            prof_off[i_idx + 1] + l_idx,
+            prof_off[j_idx] + l_idx,
             rung_off[i_idx] + rung_slot[av]], axis=1)
         flip: BoolArray = np.tile(
             np.array([False, False, True, True]), (nz * L, 1))
@@ -714,21 +760,21 @@ class QuadMesh:
         # along the sweep between consecutive slices.  Its boundary already lives on the
         # merged/rung lines, so the patch is evaluated only at the private interior
         # slots.
-        interior: FloatArray | None = None
+        interior: PointArray | None = None
         if ho:
             g = gll_nodes(order)
             row = order + 1
             # each profile's own high-order curve, assembled natively from the shared
             # corner points and that profile's private interior nodes
-            Scur: FloatArray = np.empty((nz + 1, L, row, 3), dtype=float)
+            Scur: PointArray = np.empty((n_prof, L, row, 3), dtype=float)
             Scur[:, :, 0, :] = S[:, a, :]
             Scur[:, :, order, :] = S[:, b, :]
             Scur[:, :, 1:order, :] = np.stack(
                 [np.asarray(s.interior, dtype=float) for s in slices], axis=0)
             bottom = Scur[i_idx, l_idx]                     # (Q,row,3) a->b at i
-            top = Scur[i_idx + 1, l_idx]                    # (Q,row,3) a->b at i+1
-            a_lo, a_hi = S[i_idx, av], S[i_idx + 1, av]     # (Q,3) sweep at a
-            b_lo, b_hi = S[i_idx, bv], S[i_idx + 1, bv]     # (Q,3) sweep at b
+            top = Scur[j_idx, l_idx]                        # (Q,row,3) a->b at next(i)
+            a_lo, a_hi = S[i_idx, av], S[j_idx, av]         # (Q,3) sweep at a
+            b_lo, b_hi = S[i_idx, bv], S[j_idx, bv]         # (Q,3) sweep at b
             gg = g[None, :, None]
             left = a_lo[:, None, :] + gg * (a_hi - a_lo)[:, None, :]   # (Q,row,3)
             right = b_lo[:, None, :] + gg * (b_hi - b_lo)[:, None, :]
@@ -750,18 +796,21 @@ class QuadMesh:
             for ii in range(nz):
                 bnd.append([ii * L + l0, qside])
                 names.append(tag)
-        # caps: scalar tags the whole cap, an array tags per section line.
-        first_caps = cls._cap_tags(first_tag, L)
-        last_caps = cls._cap_tags(last_tag, L)
-        for l0 in range(L):
-            if first_caps[l0]:
-                bnd.append([l0, 1])
-                names.append(first_caps[l0])
-        if nz:
+        # caps: scalar tags the whole cap, an array tags per section line.  A periodic
+        # sweep has no near/far cap edge at all, so it emits no cap row (and rejected
+        # the tags above).
+        if not loop:
+            first_caps = cls._cap_tags(first_tag, L)
+            last_caps = cls._cap_tags(last_tag, L)
             for l0 in range(L):
-                if last_caps[l0]:
-                    bnd.append([(nz - 1) * L + l0, 3])
-                    names.append(last_caps[l0])
+                if first_caps[l0]:
+                    bnd.append([l0, 1])
+                    names.append(first_caps[l0])
+            if nz:
+                for l0 in range(L):
+                    if last_caps[l0]:
+                        bnd.append([(nz - 1) * L + l0, 3])
+                        names.append(last_caps[l0])
         b_ord, n_ord = cls._order_bnd(bnd, names)
         lm = LineMesh(points, all_lines, order=order, interior=edge_nodes)
         return cls(lm, quad, flip, interior, b_ord, n_ord,

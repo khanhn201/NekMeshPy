@@ -24,7 +24,7 @@ _log = logging.getLogger("nekmeshpy")
 # -- parameters --------------------------------------------------------------
 RADIUS = 2.0                 # circle radius
 N_ELEM = 8                   # arc elements (corner points) around the loop
-ORDER = 5                    # polynomial order: ORDER+1 GLL nodes per element
+ORDER = 2                    # polynomial order: ORDER+1 GLL nodes per element
 OUT_NAME = "high_order_curve"
 
 # -- build the high-order loop -----------------------------------------------

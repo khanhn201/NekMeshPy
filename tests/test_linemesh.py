@@ -1,5 +1,6 @@
 """Unit tests for the 1-D mesh sibling :class:`~nekmeshpy.LineMesh`: construction
-(open vs closed as a topological property), the two tag systems (dense per-line
+(open vs closed read off the ``lines`` connectivity -- stored nowhere), the two
+tag systems (dense per-line
 ``element_tags`` + sparse tagged ``boundaries``/``boundary_tags``), the
 ``line`` / ``circle`` / ``rectangle`` / ``from_segments``
 factories (every curve meshed exactly at the points given -- no resampling), and
@@ -10,6 +11,7 @@ from collections import Counter
 
 import numpy as np
 import pytest
+from conftest import conformal
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh
 from nekmeshpy.model.fields import uniform_spacing
@@ -18,24 +20,43 @@ from nekmeshpy.model.fields import uniform_spacing
 
 def test_open_default_chain_connectivity():
     lm = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)])
-    assert lm.is_open and not lm.is_closed
     assert lm.n_points == 3
     assert lm.n_lines == 2                      # open chain: N-1 line elements
     assert lm.lines.tolist() == [[0, 1], [1, 2]]
+    # openness is the connectivity: the chain does not wrap, so both ends survive
+    assert lm.boundary_points().tolist() == [0, 2]
     assert lm.element_group_tags == []          # untagged by default
 
 
 def test_loop_default_chain_wraps():
     lm = LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)])
-    assert lm.is_closed and not lm.is_open
     assert lm.n_points == 3
     assert lm.n_lines == 3                       # closed loop: N line elements
+    # closedness lives here and nowhere else: the wrap row [2, 0] is explicit
     assert lm.lines.tolist() == [[0, 1], [1, 2], [2, 0]]
+    assert lm.boundary_points().size == 0        # a cycle has no degree-1 end
 
 
 def test_rejects_2d_points():
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
         LineMesh.open([(0, 0), (1, 0)])
+    # ``loop`` reports the same actionable error (it no longer relies on falling
+    # through to a default-connectivity branch in the container -- there is none)
+    with pytest.raises(ValueError, match=r"must be \(N,3\)"):
+        LineMesh.loop([(0, 0), (1, 0)])
+    with pytest.raises(ValueError, match=r"must be \(N,3\)"):
+        LineMesh.loft(np.array([[0.0, 0], [1.0, 0]]), loop=True)
+
+
+def test_lines_is_a_required_constructor_argument():
+    """The container never invents connectivity: ``lines`` must be handed in, and
+    ``loft`` (or a factory) is what authors it one rung up."""
+    pts = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+    with pytest.raises(TypeError, match="lines"):
+        LineMesh(pts)
+    explicit = LineMesh(pts, [[0, 1], [1, 2]])
+    assert explicit.lines.tolist() == [[0, 1], [1, 2]]
+    assert np.array_equal(explicit.lines, LineMesh.loft(pts).lines)
 
 
 def test_element_tags_length_must_match_lines():
@@ -80,7 +101,8 @@ def test_open_length():
 def test_line_grades_directly_no_resample():
     frac = np.array([0.0, 0.25, 0.5, 1.0])            # non-uniform: graded edge
     lm = LineMesh.line((0.0, 0.0, 0.0), (4.0, 0.0, 0.0), frac)
-    assert lm.is_open and lm.n_points == 4
+    assert lm.n_points == 4
+    assert lm.lines.tolist() == [[0, 1], [1, 2], [2, 3]]      # open: no wrap row
     # the graded fractions land at the exact lerped points -- meshed as given
     assert np.allclose(lm.points[:, 0], [0.0, 1.0, 2.0, 4.0])
 
@@ -95,7 +117,10 @@ def test_line_element_tag_names_every_segment():
 
 def test_circle_is_closed_loop_on_radius():
     lm = LineMesh.circle(2.0, 32)
-    assert lm.is_closed
+    # the loop actually wraps: 32 points -> 32 line elements ending [31, 0]
+    assert lm.n_lines == 32
+    assert lm.lines[-1].tolist() == [31, 0]
+    assert lm.boundary_points().size == 0
     assert lm.n_points == 32
     assert np.allclose(lm.points[:, 2], 0.0)
     assert np.allclose(np.linalg.norm(lm.points[:, :2], axis=1), 2.0)
@@ -109,10 +134,79 @@ def test_circle_normal_places_loop_in_plane():
     assert np.allclose(np.linalg.norm(lm.points - c, axis=1), 1.5)
 
 
+def test_arc_is_open_chain_on_radius():
+    # n elements -> n+1 points, both ends free (this is circle's *open* sibling)
+    lm = LineMesh.arc(2.0, 8, start_theta=0.0, end_theta=np.pi / 2.0)
+    assert lm.n_lines == 8 and lm.n_points == 9
+    assert lm.boundary_points().tolist() == [0, 8]      # open: both ends free
+    assert np.allclose(np.linalg.norm(lm.points[:, :2], axis=1), 2.0)
+    assert np.allclose(lm.points[:, 2], 0.0)
+    # evenly spaced in angle, endpoints exactly at start/end
+    th = np.arctan2(lm.points[:, 1], lm.points[:, 0])
+    assert np.allclose(th, np.linspace(0.0, np.pi / 2.0, 9))
+    assert np.allclose(lm.points[0], [2.0, 0.0, 0.0])
+    assert np.allclose(lm.points[-1], [0.0, 2.0, 0.0])
+
+
+def test_arc_runs_clockwise_when_end_theta_is_smaller():
+    lm = LineMesh.arc(1.0, 6, start_theta=np.pi, end_theta=0.0)
+    assert lm.points[0][0] == pytest.approx(-1.0)
+    assert lm.points[-1][0] == pytest.approx(1.0)
+    assert np.all(lm.points[:, 1] >= -1e-15)          # the upper half, left to right
+
+
+def test_arc_in_tilted_plane_is_planar_and_on_radius():
+    n = np.array([1.0, -2.0, 0.5])
+    n = n / np.linalg.norm(n)
+    c = np.array([0.3, -0.2, 0.7])
+    lm = LineMesh.arc(1.5, 7, center=c, normal=n, start_theta=0.4, end_theta=2.1)
+    assert np.max(np.abs((lm.points - c) @ n)) < 1e-14
+    assert np.allclose(np.linalg.norm(lm.points - c, axis=1), 1.5)
+
+
+@pytest.mark.parametrize("order", [1, 2, 3, 4])
+def test_arc_high_order_nodes_lie_on_the_exact_circle(order):
+    # every node the conformal walk yields -- corners and interior alike -- is on
+    # the true arc, not on the chord (which would miss by the sagitta ~1e-2 here)
+    lm = LineMesh.arc(3.0, 5, start_theta=-0.7, end_theta=1.9, order=order)
+    nodes, conn = conformal(lm)
+    assert conn.shape == (5, order + 1)
+    assert np.max(np.abs(np.linalg.norm(nodes, axis=1) - 3.0)) < 1e-13
+    assert lm.interior.shape == (5, order - 1, 3)
+    if order > 1:
+        assert np.max(np.abs(np.linalg.norm(
+            lm.interior.reshape(-1, 3), axis=1) - 3.0)) < 1e-13
+
+
+def test_arc_element_tags_name_every_segment():
+    lm = LineMesh.arc(1.0, 4, element_tags=["wall"] * 4)
+    assert lm.element_tags.tolist() == ["wall"] * 4
+    assert lm.element_group_tags == ["wall"]
+
+
+def test_arc_rejects_degenerate_inputs():
+    with pytest.raises(ValueError, match="n >= 1"):
+        LineMesh.arc(1.0, 0)
+    with pytest.raises(ValueError, match="start_theta != end_theta"):
+        LineMesh.arc(1.0, 4, start_theta=0.5, end_theta=0.5)
+
+
+def test_circle_output_is_not_perturbed_by_the_shared_arc_placement():
+    # circle deliberately does not delegate to arc (its step is exactly 2*pi/n);
+    # both must agree to round-off on the sub-arc they share
+    n, order = 12, 3
+    circ = LineMesh.circle(1.0, n, order=order)
+    a = LineMesh.arc(1.0, 3, start_theta=0.0, end_theta=3 * 2.0 * np.pi / n,
+                     order=order)
+    assert np.allclose(circ.points[:4], a.points, atol=1e-15)
+    assert np.allclose(circ.interior[:3], a.interior, atol=1e-15)
+
+
 def test_rectangle_corners_and_per_side_tags():
     # n=4 -> the 4 corners, CCW from lower-left, one line element per side
     lm = LineMesh.rectangle(4.0, 6.0, 4, side_tags=["bottom", "right", "top", "left"])
-    assert lm.is_closed and lm.n_points == 4 and lm.n_lines == 4
+    assert lm.n_points == 4 and lm.n_lines == 4
+    assert lm.lines.tolist() == [[0, 1], [1, 2], [2, 3], [3, 0]]   # wraps
     assert np.allclose(lm.points, [[-2, -3, 0], [2, -3, 0], [2, 3, 0], [-2, 3, 0]])
     assert lm.element_tags.tolist() == ["bottom", "right", "top", "left"]
 
@@ -122,7 +216,8 @@ def test_rectangle_discretizes_per_side_on_box():
     # corners always landing on a point (so the loop is a true rectangle)
     hb = 6.0
     lm = LineMesh.rectangle(2 * hb, 2 * hb, 32)
-    assert lm.is_closed and lm.n_points == 32 and lm.n_lines == 32
+    assert lm.n_points == 32 and lm.n_lines == 32
+    assert lm.lines[-1].tolist() == [31, 0] and lm.boundary_points().size == 0
     assert np.isclose(np.abs(lm.points[:, :2]).max(axis=1), hb).all()
     for cxy in ([-hb, -hb], [hb, -hb], [hb, hb], [-hb, hb]):
         assert np.isclose(lm.points[:, :2] - cxy, 0.0).all(axis=1).any()
@@ -145,7 +240,8 @@ def test_rectangle_in_tilted_plane_is_planar():
     c = np.array([0.2, -0.1, 0.4])
     lm = LineMesh.rectangle(3.0, 1.0, 8, center=c, normal=n)
     assert np.max(np.abs((lm.points - c) @ n)) < 1e-12   # coplanar
-    assert lm.is_closed and lm.n_points == 8
+    assert lm.n_points == 8
+    assert lm.lines[-1].tolist() == [7, 0] and lm.boundary_points().size == 0
 
 
 def test_from_segments_chains_a_loop():
@@ -153,7 +249,8 @@ def test_from_segments_chains_a_loop():
     segs = np.array([[0, 0, 0, 1, 0, 0], [1, 1, 0, 0, 1, 0],
                      [1, 0, 0, 1, 1, 0], [0, 1, 0, 0, 0, 0]], float)
     lm = LineMesh.from_segments(segs)
-    assert lm is not None and lm.is_closed
+    # the degree-based walk closes the loop structurally: every point has degree 2
+    assert lm is not None and lm.boundary_points().size == 0
     # the four square corners are recovered (the walk repeats the start to close)
     assert len(np.unique(np.round(lm.points, 9), axis=0)) == 4
     assert LineMesh.from_segments(None) is None
@@ -172,7 +269,7 @@ def test_merge_two_arcs_close_into_a_loop():
     ring = LineMesh.merge([LineMesh.open(upper),
                            LineMesh.open(lower[::-1])])
     # welded at A1 and A2 -> one closed loop of 8 unique points (2*(5-1))
-    assert ring.is_closed
+    assert ring.boundary_points().size == 0     # no degree-1 end survived
     assert ring.n_points == 8
     assert ring.n_lines == 8
     # index 0 stays A1, index 4 (M//2) is A2 -- the split points spined_ogrid needs
@@ -190,7 +287,7 @@ def test_merge_open_chains_stay_open_and_carry_tags():
                       boundaries=[[0, 1]], boundary_tags=["start"])
     b = LineMesh.open([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
     m = LineMesh.merge([a, b])
-    assert m.is_open
+    assert m.boundary_points().tolist() == [0, 2]       # the two far ends survive
     assert m.n_points == 3                              # the shared point welded
     assert m.element_tags.tolist() == ["a", "b"]        # dense tags concatenate
     assert m.boundary_group_tags == ["start"]           # sparse BC markers carried

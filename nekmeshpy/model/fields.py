@@ -119,6 +119,25 @@ def validate_layers(positions: FloatArray, who: str) -> FloatArray:
     return p
 
 
+def reject_loop_caps(who: str, *caps: object) -> None:
+    """Guard for the periodic (``loop=True``) branch of the ``loft`` sweep at every
+    rung of the ladder: a closed sweep has no near / far cap, so any non-empty
+    end-cap tag argument is necessarily a caller mistake and is rejected loudly
+    rather than silently dropped.  ``caps`` are the ``first_tag`` / ``last_tag``
+    values (each a scalar ``str`` or a per-element array-like)."""
+    for cap in caps:
+        if isinstance(cap, str):
+            named = bool(cap)
+        else:
+            arr = np.asarray(cap, dtype=np.str_).reshape(-1)
+            named = bool(arr.size) and bool(np.any(arr != ""))
+        if named:
+            raise ValueError(
+                "%s: loop=True is a periodic sweep with no near/far cap, so "
+                "first_tag/last_tag cannot be placed (got %r) -- drop the cap tags, "
+                "or use loop=False for an open stack." % (who, cap))
+
+
 # -- high-order reference nodes (Gauss-Lobatto-Legendre) ----------------
 _GLL_CACHE: dict[int, FloatArray] = {}
 

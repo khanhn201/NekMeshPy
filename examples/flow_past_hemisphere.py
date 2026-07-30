@@ -1,17 +1,21 @@
 """Flow past a hemisphere on the ground (external flow).
 
-Like ``flow_past_sphere.py`` -- a cubed-sphere shell between body and box -- but
-only the **upper half**: a hemisphere of radius ``R`` on the floor ``z=0``, domain
-filling the half-box ``[-S,S] x [-S,S] x [0,S]``.
+Like ``flow_past_sphere.py`` -- a cubed-sphere shell between body and far field,
+built with :meth:`HexMesh.annulus` -- but only the **upper half**: a hemisphere of
+radius ``R`` resting on the floor ``z=0``, the domain filling the half-box
+``[-S,S] x [-S,S] x [0,S]``.
 
-Five structured hex patches: four vertical side patches (cube faces ``+/-x`` /
-``+/-y`` with tangent ``v=+z`` restricted to ``b in [0,1]``, so their bottom edge
-sits on ``z=0``) plus the top patch ``+z``. Dropping the ``-z`` patch opens the
-hemisphere at the bottom; the side patches' ``z=0`` faces form the ground annulus.
+:meth:`QuadMesh.half_box` is ``box`` with the ``-z`` patch dropped and its four
+upright sides restricted to ``z >= 0``, so it is open at the ground rim;
+:meth:`QuadMesh.hemisphere` is that same surface projected onto the sphere, so the
+two carry identical connectivity and pair point-for-point. ``annulus`` blends the
+radial shells (clustered toward the body) and turns each surface's per-quad tags
+into the inner / outer wall faces; the **rim** edges tagged ``ground`` on the inner
+surface sweep into the shell's side faces -- the flat ground annulus at ``z=0``.
 
-Each patch is tagged at build: inner face ``hemisphere``, outer face the cube side
-it forms, each side patch's ``z=0`` face ``ground``, shared lateral faces untagged
-so :meth:`HexMesh.merge` welds them. The ceiling sits at ``z=S``.
+At ``ORDER > 1`` every node of the hemisphere patches -- corners, shared edge
+interiors and private quad interiors -- lies on the exact sphere, so the wall is
+genuinely curved rather than straight-subdivided.
 
     PYTHONPATH=. python examples/flow_past_hemisphere.py
 
@@ -20,9 +24,7 @@ Produces ``flow_past_hemisphere.re2`` / ``.rea`` and ``.vtu``.
 
 import logging
 
-import numpy as np
-
-from nekmeshpy import HexMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export
 from nekmeshpy.model.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -30,67 +32,34 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 # -- parameters --------------------------------------------------------------
 R = 0.5                      # hemisphere radius (rests on the floor z=0)
 S = 4.0                      # far-field half-box: [-S,S] x [-S,S] x [0,S]
-N_FACE = 6                  # horizontal cells per direction on each cube face
+N_FACE = 6                   # horizontal cells per direction on each patch
 N_HALF = 6                   # vertical cells over z in [0,S] on the side patches
 N_RADIAL = 12                # radial cells from hemisphere out to the box
 RADIAL_GRADING = 1.15        # >1 clusters radial layers toward the hemisphere
-ORDER = 4
+ORDER = 2                    # polynomial order; 1 = linear.  Both surfaces are
+                             # built at ORDER (annulus rejects a mismatch), so the
+                             # inner-wall nodes bow onto the true hemisphere
+                             # (curved .vtu; .re2 stays linear either way)
 OUT_NAME = "flow_past_hemisphere"
 
 # boundary name -> Nek BC code, applied only at export
 GROUPS = {"inlet": "v  ", "outlet": "O  ", "hemisphere": "W  ", "ground": "W  ",
           "top": "SYM", "front": "SYM", "back": "SYM"}
 
-# four vertical side faces: outward normal n, horizontal tangent u, vertical v=+z
-# (u x v = n), so restricting the v-coordinate b to [0,1] keeps z >= 0
-SIDES = [
-    ((1, 0, 0), (0, 1, 0)),      # +x
-    ((-1, 0, 0), (0, -1, 0)),    # -x
-    ((0, 1, 0), (-1, 0, 0)),     # +y
-    ((0, -1, 0), (1, 0, 0)),     # -y
-]
-VZ = np.array([0.0, 0.0, 1.0])
+# -- two paired surfaces: outer half box (tagged per patch) and inner hemisphere
+# half_box tags each patch with the far-field side it forms; hemisphere reuses the
+# same (N_FACE, N_HALF) connectivity, so the two pair by index for annulus.  The
+# ground rim rides on the inner surface, whose boundaries the shells inherit.
+outer = QuadMesh.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, face_tags={
+    "x_max": "outlet", "x_min": "inlet",
+    "y_max": "back", "y_min": "front", "z_max": "top"})
+inner = QuadMesh.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
+                            rim_tag="ground")
 
-# each side patch's outward cube normal -> the flow-box side name it forms
-WORLD_SIDE = {(1, 0, 0): "outlet", (-1, 0, 0): "inlet",
-              (0, 1, 0): "back", (0, -1, 0): "front"}
-
-# -- build the shell: four side patches (upper half) + the top patch ----------
-t = geometric_spacing(N_RADIAL, RADIAL_GRADING)            # 0 (sphere) .. 1 (cube)
-
-
-def patch(cube: np.ndarray, face_tags: dict[str, str]) -> HexMesh:
-    """Radial blend of a gnomonic cube-face grid ``cube`` (Ni+1, Nj+1, 3) from the
-    sphere (R*normalize) out to the cube, with build-time ``face_tags``. The k-axis
-    is radial: z_min = sphere surface, z_max = the cube (flow-box) side."""
-    sphere = R * cube / np.linalg.norm(cube, axis=-1, keepdims=True)
-    P = ((1.0 - t)[None, None, :, None] * sphere[:, :, None, :]
-         + t[None, None, :, None] * cube[:, :, None, :])   # (Ni+1, Nj+1, Nr+1, 3)
-    return HexMesh.from_grid(P, face_tags=face_tags)
-
-
-patches = []
-a_side = np.linspace(-1.0, 1.0, N_FACE + 1)
-b_side = np.linspace(0.0, 1.0, N_HALF + 1)                  # upper half only
-A_s, B_s = np.meshgrid(a_side, b_side, indexing="ij")
-for nrm, u in SIDES:
-    n = np.asarray(nrm, float)
-    u = np.asarray(u, float)
-    cube = S * (n + A_s[..., None] * u + B_s[..., None] * VZ)
-    # b=0 edge (y_min) -> the z=0 ground annulus; z_min = hemisphere, z_max = this
-    # cube side. a-axis and b=1 (shared with top) stay untagged.
-    patches.append(patch(cube, {"z_min": "hemisphere", "z_max": WORLD_SIDE[nrm],
-                                "y_min": "ground"}))
-
-# top patch (+z): full cube face at z=S
-ab = np.linspace(-1.0, 1.0, N_FACE + 1)
-A_t, B_t = np.meshgrid(ab, ab, indexing="ij")
-cube_top = S * (np.array([0.0, 0.0, 1.0])
-                + A_t[..., None] * np.array([1.0, 0.0, 0.0])
-                + B_t[..., None] * np.array([0.0, 1.0, 0.0]))
-patches.append(patch(cube_top, {"z_min": "hemisphere", "z_max": "top"}))
-
-mesh = HexMesh.merge(patches)                              # weld shared gnomonic edges
+# fill the shell hemisphere -> half box, radial clustered toward the body; inner cap
+# tagged `hemisphere`, outer cap per patch tag, rim swept into the `ground` annulus
+mesh = HexMesh.annulus(inner, outer,
+                       radial=geometric_spacing(N_RADIAL, RADIAL_GRADING))
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())

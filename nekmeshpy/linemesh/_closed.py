@@ -14,9 +14,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
-from ..model.fields import gll_nodes
-from ._plane import _in_plane_axes
+from .._typing import Point, PointArray, StrArray, Vec3
+from ._plane import _arc_interior, _arc_points, _in_plane_axes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,24 +42,27 @@ def circle(radius: float, n: int, *,
     (not the chord) -- the two endpoints are the corners in ``points`` and the
     ``order-1`` nodes strictly between them are built here, still on the exact
     circle, as the element's private ``interior``, so a high-order ``vtu`` export
-    renders the exact arc."""
+    renders the exact arc.
+
+    The open sibling is :meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`; the
+    two share the node
+    placement (``_plane._arc_points`` / ``_arc_interior``) but not the angle sampling:
+    a full turn's step is exactly ``2*pi/n`` here, whereas ``arc`` must form
+    ``(end_theta - start_theta)/n``, so ``circle`` keeps its own ``linspace`` rather
+    than delegating (see ``arc``'s docstring)."""
     from .linemesh import LineMesh
     th = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) + float(start_theta)
     c: Point = np.asarray(center, dtype=float).ravel()
     e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
-    local = radius * np.cos(th)[:, None] * e1 + radius * np.sin(th)[:, None] * e2
-    lm = LineMesh.loop(c + local, element_tags)
+    pts: PointArray = _arc_points(radius, c, e1, e2, th)
     if order == 1:
-        return lm
+        return LineMesh.loop(pts, element_tags)
     # element l spans angle th[l] .. th[l] + dth; place the interior GLL nodes on
-    # the arc (the two endpoint nodes are already the loop's corner points).
-    dth = 2.0 * np.pi / n
-    ang = th[:, None] + gll_nodes(order)[1:order][None, :] * dth   # (n, order-1)
-    arc = (radius * np.cos(ang)[:, :, None] * e1
-           + radius * np.sin(ang)[:, :, None] * e2)                # (n, order-1, 3)
-    interior: FloatArray = c + arc
-    return LineMesh(lm.points, lm.lines, lm.element_tags, lm.boundaries,
-                    lm.boundary_tags, closed=True, order=order, interior=interior)
+    # the arc (the two endpoint nodes are already the loop's corner points), so the
+    # explicit ``interior`` overrides ``loft``'s default straight chord blend.
+    interior: PointArray = _arc_interior(
+        radius, c, e1, e2, th, 2.0 * np.pi / n, order)             # (n, order-1, 3)
+    return LineMesh.loop(pts, element_tags, order=order, interior=interior)
 
 
 def rectangle(width: float, height: float, n: int, *,
@@ -87,8 +89,9 @@ def rectangle(width: float, height: float, n: int, *,
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     each element carries ``order+1`` GLL nodes on its straight side -- the two
     endpoints are the corners in ``points`` and the ``order-1`` nodes strictly
-    between them are built here as the element's private ``interior`` (read by
-    high-order ``vtu`` export)."""
+    between them are the straight GLL blend
+    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` places by default
+    (read by high-order ``vtu`` export)."""
     from .linemesh import LineMesh
     ni = int(n)
     if ni < 4 or ni % 4 != 0:
@@ -115,15 +118,8 @@ def rectangle(width: float, height: float, n: int, *,
             raise ValueError("rectangle side_tags must be 4 names "
                              "[bottom, right, top, left]")
         tags = [st[0]] * m + [st[1]] * m + [st[2]] * m + [st[3]] * m
-    lm = LineMesh.loop(pts, tags)
-    if order == 1:
-        return lm
-    a: PointArray = lm.points[lm.lines[:, 0]]
-    b: PointArray = lm.points[lm.lines[:, 1]]
-    g = gll_nodes(order)[1:order]                     # interior GLL nodes only
-    interior: FloatArray = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
-    return LineMesh(lm.points, lm.lines, lm.element_tags, lm.boundaries,
-                    lm.boundary_tags, closed=True, order=order, interior=interior)
+    # every side is straight, so ``loft``'s default straight GLL interior is exact
+    return LineMesh.loop(pts, tags, order=order)
 
 
 #: Closed-loop shape factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.

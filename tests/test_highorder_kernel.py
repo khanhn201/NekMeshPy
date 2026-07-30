@@ -254,32 +254,38 @@ def test_factory_meshes_default_to_order_one():
 
 # A LineMesh element shares only its two endpoints (owned by ``points[lines]``), so
 # its whole high-order state is the private ``interior`` block -- these drive the
-# LineMesh(...) constructor directly to pin that contract.
+# LineMesh(...) constructor directly to pin that contract.  ``lines`` is required
+# (the container never invents connectivity), so each passes the single line
+# explicitly rather than going through ``loft``/``open``.
+_ONE_LINE = [[0, 1]]
+
+
 def test_interior_at_order1_must_be_empty():
     # order 1 accepts an explicitly empty interior...
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=1, interior=np.zeros((1, 0, 3)))
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=1,
+                  interior=np.zeros((1, 0, 3)))
     assert lm.order == 1 and lm.interior.shape == (1, 0, 3)
     assert np.allclose(curved(lm), lm.points[lm.lines])
     # ...and rejects any node claiming to be interior to a linear element.
     with pytest.raises(ValueError, match=r"\(1,0,3\)"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], order=1, interior=np.zeros((1, 2, 3)))
+        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=1, interior=np.zeros((1, 2, 3)))
 
 
 def test_order_gt1_requires_interior():
     with pytest.raises(ValueError, match="interior nodes"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], order=3)
+        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=3)
 
 
 def test_interior_wrong_shape_rejected():
     with pytest.raises(ValueError, match=r"\(1,1,3\)"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], order=2, interior=np.zeros((1, 5, 3)))
+        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=2, interior=np.zeros((1, 5, 3)))
 
 
 def test_corners_come_from_points_not_the_interior():
     # the endpoints are single-sourced from points[lines]: whatever interior is
     # handed in, the assembled block's corners are the linear corners, and an
     # in-place points edit is reflected immediately.
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=2,
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=2,
                   interior=np.array([[[9.0, 9.0, 9.0]]]))
     assert np.allclose(curved(lm)[:, [0, 2], :], lm.points[lm.lines])
     lm.points[:] = lm.points * 2.0
@@ -289,7 +295,7 @@ def test_corners_come_from_points_not_the_interior():
 def test_valid_interior_line_accepted():
     # order-2 line with a straight interior midpoint
     block = subdivide_element(np.array([[0, 0, 0], [1, 0, 0]], float), 2, 1)
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=2, interior=block[None, 1:2, :])
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=2, interior=block[None, 1:2, :])
     assert lm.order == 2
     assert curved(lm).shape == (1, 3, 3)
     assert np.allclose(curved(lm), block[None])

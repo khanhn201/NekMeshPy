@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Union
 
 import numpy as np
 
-from .._typing import FloatArray, IntArray
+from .._typing import FloatArray, IntArray, PointArray
 from ..model import conform, topology
 from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
@@ -243,7 +243,7 @@ def _unwelded(n_elem: int, m: int) -> IntArray:
 
 
 def _hex_arrays(mesh: HexMesh,
-                g: PhysicalGroups) -> tuple[FloatArray, IntArray, int, IntArray]:
+                g: PhysicalGroups) -> tuple[PointArray, IntArray, int, IntArray]:
     """Hex nodes + ``bc_id``: linear un-welded ``VTK_HEXAHEDRON`` at ``order == 1``, a
     conformal (shared-node) ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per
     cell) above it, whose face nodes inherit the boundary face's tag.
@@ -289,7 +289,7 @@ def _hex_arrays(mesh: HexMesh,
     return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc2.reshape(N * 8)
 
 
-def _line_arrays(mesh: LineMesh) -> tuple[FloatArray, IntArray, int]:
+def _line_arrays(mesh: LineMesh) -> tuple[PointArray, IntArray, int]:
     """Line nodes: un-welded ``VTK_LINE`` (2 nodes) at ``order == 1``, a conformal
     (shared-node) ``VTK_LAGRANGE_CURVE`` (``order+1`` GLL nodes per cell) above it."""
     if mesh.order == 1:
@@ -302,7 +302,7 @@ def _line_arrays(mesh: LineMesh) -> tuple[FloatArray, IntArray, int]:
     return nodes, conn_ho[:, perm], _VTK_LAGRANGE_CURVE
 
 
-def _quad_arrays(mesh: QuadMesh) -> tuple[FloatArray, IntArray, int]:
+def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
     """Quad nodes: un-welded ``VTK_QUAD`` (4 CCW nodes) at ``order == 1``, a conformal
     (shared-node) ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes per cell)
     above it."""
@@ -318,7 +318,7 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[FloatArray, IntArray, int]:
 
 
 # -- the unstructured-grid writer ---------------------------------------
-def _write_vtu(fname: str, X: FloatArray, conn: IntArray, cell_type: int,
+def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
                *, bc_out: IntArray | None = None) -> None:
     """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
     ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order

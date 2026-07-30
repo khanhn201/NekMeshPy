@@ -7,7 +7,16 @@ The 2-D section is a **single** transfinite block (:meth:`QuadMesh.structured`)
 whose bottom edge is one composite curve: flat ground ``[-W,-R]``, semicircular
 bump ``-R..R``, flat ground ``[R,W]``. Keeping the semicircle mid-edge (vs a
 three-block split) avoids the degenerate corner where bump meets ground at
-``x = +/-R``; ``smoothing_method="bilinear"`` fills the grid over the bump.
+``x = +/-R``.
+
+The three pieces are built **analytically** -- two :meth:`LineMesh.line` runs and
+one :meth:`LineMesh.arc` -- and welded end to end with :meth:`LineMesh.merge`, so
+no resampling is involved: the nodes land exactly where they are asked for, the
+corners land exactly on ``x = +/-R``, and at ``ORDER > 1`` the bump's GLL nodes sit
+on the **exact** circle (``structured`` samples its transfinite map at the GLL-refined
+lattice against each edge's own nodes, so the bump is exact and its curvature bows the
+interior above it too). Sampling a polyline and calling ``LineMesh.open`` instead
+would give high-order storage with straight-subdivided -- i.e. linear -- geometry.
 
 Each edge line tags itself: bottom (ground + bump) ``wall``, ends ``inlet`` /
 ``outlet``, ceiling ``top``. The span sweep (:meth:`HexMesh.extrude`) names the caps
@@ -22,7 +31,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export, trimesh
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -31,10 +40,18 @@ R = 0.5                      # half-cylinder radius (sits on the floor y=0)
 W = 5.0                      # channel half-length (inlet at -W, outlet at +W)
 H = 3.0                      # channel height (flat ceiling)
 SPAN = 2.0                   # spanwise (z) extent
-NX = 120                     # cells along the channel (bottom edge)
+N_GROUND = 45                # cells on each flat ground run ([-W,-R] and [R,W])
+N_BUMP = 24                  # cells over the semicircular bump (-R..R); see the
+                             # note below -- the bump wants to be *finer* than the
+                             # ground, not coarser
+NX = 2 * N_GROUND + N_BUMP   # cells along the channel (bottom edge) = 114
 NY = 40                      # cells from floor/bump to ceiling
 N_SPAN = 4                   # hex layers across the span
-N_ARC = 160                  # sample points on the semicircular bump
+ORDER = 2                    # polynomial order; 1 = linear.  The bottom edge is
+                             # analytic, so its GLL nodes lie on the exact ground
+                             # lines / bump circle, and the transfinite interior is
+                             # evaluated at the refined lattice, so the bump's
+                             # curvature carries up into the channel
 OUT_NAME = "flow_past_half_cylinder"
 
 # boundary name -> Nek BC code, applied only at export
@@ -42,24 +59,42 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
           "top": "SYM", "front": "SYM", "back": "SYM"}
 
 # -- composite bottom edge: ground -> semicircular bump -> ground -------------
-theta = np.linspace(np.pi, 0.0, N_ARC)                     # -R..R over the top
-z = np.zeros(N_ARC)
-bump = np.column_stack([R * np.cos(theta), R * np.sin(theta), z])
-left_ground = np.column_stack([np.linspace(-W, -R, 40), np.zeros(40), np.zeros(40)])
-right_ground = np.column_stack([np.linspace(R, W, 40), np.zeros(40), np.zeros(40)])
-bottom_pts = np.vstack([left_ground[:-1], bump, right_ground[1:]])   # drop shared ends
-# the composite bottom (ground -> bump -> ground) has no closed-form arc length, so
-# sample it by arc length to the exact NX+1 edge points; tag the whole edge "wall"
-# at the line level so structured names the bottom side from it.
-pts = trimesh.ops.resample_polyline(bottom_pts, np.linspace(0.0, 1.0, NX + 1))   # (-W,0)->(W,0)
-bottom = LineMesh.open(pts, element_tags=["wall"] * NX)
+# Each piece is placed exactly where it belongs -- no resampling.  The flat runs are
+# (W-R)/N_GROUND = 0.1 long; the bump is deliberately finer (pi*R/N_BUMP = 0.052).
+#
+# Why the bump is refined: at x = +/-R the circle leaves the ground *vertically*, so
+# the first bump cell's bottom edge stands at 90 - (pi/N_BUMP)/2 degrees while the
+# transfinite grid lines above it are near-vertical too -- a sliver.  The skew is
+# governed by how far that cell's top node (uniform in x along the flat ceiling)
+# leans away from its bottom node, so refining the bump *shortens* the lean and
+# improves the cell.  Sweeping N_BUMP at fixed NX = 120 gives min scaled Jacobian
+# 0.107 at N_BUMP = 10, 0.147 at 18, 0.222 at 24 and 0.272 at 30: monotone above
+# ~10, so N_BUMP = 24 is the coarsest bump that still clears the 0.2 floor the tests
+# assert.  (That floor is the corner metric; scaled_jacobian(high_order=True) on the
+# same mesh reads 0.181 -- the curved wall genuinely costs quality at the GLL nodes.)
+left_ground = LineMesh.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
+                            np.linspace(0.0, 1.0, N_GROUND + 1),
+                            element_tag="wall", order=ORDER)
+# theta pi -> 0 walks the bump left to right over the top, so the three runs chain
+# in order; at ORDER > 1 the interior GLL nodes sit on the exact circle
+bump = LineMesh.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
+                    start_theta=np.pi, end_theta=0.0,
+                    element_tags=["wall"] * N_BUMP, order=ORDER)
+right_ground = LineMesh.line((R, 0.0, 0.0), (W, 0.0, 0.0),
+                             np.linspace(0.0, 1.0, N_GROUND + 1),
+                             element_tag="wall", order=ORDER)
+# weld the shared ends at x = -R and x = +R into one (-W,0) -> (W,0) chain; the whole
+# edge is tagged "wall" at the line level, so structured names the bottom side from it
+bottom = LineMesh.merge([left_ground, bump, right_ground])
 right = LineMesh.line((W, 0.0, 0.0), (W, H, 0.0),
-                      np.linspace(0.0, 1.0, NY + 1), element_tag="outlet")
+                      np.linspace(0.0, 1.0, NY + 1), element_tag="outlet",
+                      order=ORDER)
 top = LineMesh.line((W, H, 0.0), (-W, H, 0.0),
-                    np.linspace(0.0, 1.0, NX + 1), element_tag="top")
+                    np.linspace(0.0, 1.0, NX + 1), element_tag="top", order=ORDER)
 left = LineMesh.line((-W, H, 0.0), (-W, 0.0, 0.0),
-                     np.linspace(0.0, 1.0, NY + 1), element_tag="inlet")
-section = QuadMesh.structured([bottom, right, top, left], smoothing_method="bilinear")
+                     np.linspace(0.0, 1.0, NY + 1), element_tag="inlet",
+                     order=ORDER)
+section = QuadMesh.structured([bottom, right, top, left])
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the section along +z; edge names ride onto the side faces

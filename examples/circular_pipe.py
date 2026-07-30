@@ -24,7 +24,7 @@ N_RADIAL = 8                 # O-ring layers out to the wall
 CENTER_SCALE = 0.4
 RADIAL_GRADING = 0.5        # <1 clusters cells toward the wall
 AXIAL_GRADING = 1.0
-ORDER = 5                    # polynomial order; 1 = linear. High order bows the
+ORDER = 2                    # polynomial order; 1 = linear. High order bows the
                             # O-ring wall onto the true circle (curved .vtu;
                             # .re2 stays linear either way)
 AXIS = (0.0, 0.0, 1.0)

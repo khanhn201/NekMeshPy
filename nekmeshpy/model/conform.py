@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .._typing import BoolArray, FloatArray, IntArray, PointArray
+from .._typing import BoolArray, IntArray, PointArray
 from .interp import (
     _CORNER_IJK,
     corner_indices,
@@ -300,9 +300,9 @@ def entity_tol(points: PointArray) -> float:
 
 def _conformal_walk(points: PointArray, conn: IntArray, dim: int, order: int,
                     elem_edges: IntArray, edge_flip: BoolArray,
-                    edge_nodes: FloatArray, elem_faces: IntArray,
-                    face_orient: IntArray, face_nodes: FloatArray,
-                    interior: FloatArray) -> tuple[FloatArray, IntArray]:
+                    edge_nodes: PointArray, elem_faces: IntArray,
+                    face_orient: IntArray, face_nodes: PointArray,
+                    interior: PointArray) -> tuple[PointArray, IntArray]:
     """Shared body of the ``conformal_*`` walks.
 
     Numbers every node once -- corners (``points``) ++ edge interiors ++ face interiors
@@ -314,7 +314,7 @@ def _conformal_walk(points: PointArray, conn: IntArray, dim: int, order: int,
     p = points.shape[0]
     conn_ho: IntArray = np.empty((e, m), dtype=np.int64)
     conn_ho[:, corner_indices(order, dim)] = conn
-    parts: list[FloatArray] = [np.asarray(points, dtype=float)]
+    parts: list[PointArray] = [np.asarray(points, dtype=float)]
     off = p
     if order > 1:
         if dim >= 2:
@@ -342,7 +342,7 @@ def _conformal_walk(points: PointArray, conn: IntArray, dim: int, order: int,
         iids = off + (np.arange(e)[:, None] * kint + np.arange(kint)[None, :])
         conn_ho[:, _interior_slots(dim, order)] = iids
         off += e * kint
-    nodes: FloatArray = np.concatenate(parts, axis=0)
+    nodes: PointArray = np.concatenate(parts, axis=0)
     return nodes, conn_ho
 
 
@@ -354,8 +354,8 @@ def _k_from_face_width(k2: int) -> int:
     return k
 
 
-def scatter_edge_nodes(local: FloatArray, elem_edges: IntArray, edge_flip: BoolArray,
-                       n_edges: int, tol: float, who: str) -> FloatArray:
+def scatter_edge_nodes(local: PointArray, elem_edges: IntArray, edge_flip: BoolArray,
+                       n_edges: int, tol: float, who: str) -> PointArray:
     """Scatter element-local edge-interior nodes into the shared canonical table.
 
     ``local`` is ``(E, n_local_edges, order-1, 3)``: every element's own copy of its
@@ -372,7 +372,7 @@ def scatter_edge_nodes(local: FloatArray, elem_edges: IntArray, edge_flip: BoolA
     flat_eid = elem_edges.ravel()
     canon_flat = canon.reshape(flat_eid.shape[0], k, 3)
     _, first = np.unique(flat_eid, return_index=True)          # owner per edge id
-    edge_nodes: FloatArray = canon_flat[first]                 # (Ne,order-1,3)
+    edge_nodes: PointArray = canon_flat[first]                 # (Ne,order-1,3)
     if not np.allclose(canon_flat, edge_nodes[flat_eid], rtol=0.0, atol=tol):
         raise ValueError(
             "%s: non-conforming high-order edge -- incident elements disagree on a "
@@ -383,8 +383,8 @@ def scatter_edge_nodes(local: FloatArray, elem_edges: IntArray, edge_flip: BoolA
     return edge_nodes
 
 
-def scatter_face_nodes(local: FloatArray, elem_faces: IntArray, face_orient: IntArray,
-                       n_faces: int, tol: float, who: str) -> FloatArray:
+def scatter_face_nodes(local: PointArray, elem_faces: IntArray, face_orient: IntArray,
+                       n_faces: int, tol: float, who: str) -> PointArray:
     """Scatter element-local hex-face interior nodes into the shared canonical table.
 
     ``local`` is ``(E, 6, (order-1)**2, 3)`` in each hex's **element-local ``(u,v)``
@@ -402,7 +402,7 @@ def scatter_face_nodes(local: FloatArray, elem_faces: IntArray, face_orient: Int
     flat_fid = elem_faces.ravel()
     canon_flat = canon.reshape(flat_fid.shape[0], k2, 3)
     _, first = np.unique(flat_fid, return_index=True)
-    face_nodes: FloatArray = canon_flat[first]                 # (Nf,k2,3)
+    face_nodes: PointArray = canon_flat[first]                 # (Nf,k2,3)
     if not np.allclose(canon_flat, face_nodes[flat_fid], rtol=0.0, atol=tol):
         raise ValueError(
             "%s: non-conforming high-order face -- incident hexes disagree on a shared "
@@ -413,19 +413,19 @@ def scatter_face_nodes(local: FloatArray, elem_faces: IntArray, face_orient: Int
     return face_nodes
 
 
-def gather_edge_nodes(edge_nodes: FloatArray, elem_edges: IntArray,
-                      edge_flip: BoolArray) -> FloatArray:
+def gather_edge_nodes(edge_nodes: PointArray, elem_edges: IntArray,
+                      edge_flip: BoolArray) -> PointArray:
     """Gather the shared edge table back into element-local order.
 
     Exact inverse of :func:`scatter_edge_nodes`: returns
     ``(E, n_local_edges, order-1, 3)`` with each element's copy running along its own
     traversal direction (reversed wherever ``edge_flip`` is set)."""
-    nodes: FloatArray = edge_nodes[elem_edges]                 # (E,nloc,order-1,3)
+    nodes: PointArray = edge_nodes[elem_edges]                 # (E,nloc,order-1,3)
     return np.where(edge_flip[:, :, None, None], nodes[:, :, ::-1, :], nodes)
 
 
-def gather_face_nodes(face_nodes: FloatArray, elem_faces: IntArray,
-                      face_orient: IntArray) -> FloatArray:
+def gather_face_nodes(face_nodes: PointArray, elem_faces: IntArray,
+                      face_orient: IntArray) -> PointArray:
     """Gather the shared hex-face table back into element-local order.
 
     Exact inverse of :func:`scatter_face_nodes`: returns ``(E, 6, (order-1)**2, 3)`` in
@@ -433,14 +433,14 @@ def gather_face_nodes(face_nodes: FloatArray, elem_faces: IntArray,
     permutation carried by ``face_orient``."""
     k2 = face_nodes.shape[1]
     perm, _ = _perm_tables(_k_from_face_width(k2) + 1)         # canon->elem gather
-    canon: FloatArray = face_nodes[elem_faces]                 # (E,6,k2,3)
+    canon: PointArray = face_nodes[elem_faces]                 # (E,6,k2,3)
     permp = perm[face_orient]                                  # (E,6,k2)
     return np.take_along_axis(canon, np.broadcast_to(
         permp[..., None], permp.shape + (3,)), axis=2)
 
 
-def conformal_line(points: PointArray, lines: IntArray, interior: FloatArray,
-                   order: int) -> tuple[FloatArray, IntArray]:
+def conformal_line(points: PointArray, lines: IntArray, interior: PointArray,
+                   order: int) -> tuple[PointArray, IntArray]:
     """Conformal high-order view of a line mesh: ``(nodes (M,3), conn_ho (L,order+1))``.
 
     ``lines (L,2)`` is the corner connectivity and ``interior (L,order-1,3)`` each line
@@ -456,8 +456,8 @@ def conformal_line(points: PointArray, lines: IntArray, interior: FloatArray,
 
 
 def conformal_quad(points: PointArray, quads: IntArray, elem_edges: IntArray,
-                   edge_flip: BoolArray, edge_nodes: FloatArray,
-                   interior: FloatArray, order: int) -> tuple[FloatArray, IntArray]:
+                   edge_flip: BoolArray, edge_nodes: PointArray,
+                   interior: PointArray, order: int) -> tuple[PointArray, IntArray]:
     """Conformal high-order view of a quad mesh: ``(nodes (M,3), conn_ho (Q,(order+1)**2))``.
 
     ``quads (Q,4)`` is the **corner** connectivity; ``elem_edges``/``edge_flip`` are the
@@ -474,9 +474,9 @@ def conformal_quad(points: PointArray, quads: IntArray, elem_edges: IntArray,
 
 
 def conformal_hex(points: PointArray, hexes: IntArray, elem_edges: IntArray,
-                  edge_flip: BoolArray, edge_nodes: FloatArray, elem_faces: IntArray,
-                  face_orient: IntArray, face_nodes: FloatArray,
-                  interior: FloatArray, order: int) -> tuple[FloatArray, IntArray]:
+                  edge_flip: BoolArray, edge_nodes: PointArray, elem_faces: IntArray,
+                  face_orient: IntArray, face_nodes: PointArray,
+                  interior: PointArray, order: int) -> tuple[PointArray, IntArray]:
     """Conformal high-order view of a hex mesh: ``(nodes (M,3), conn_ho (E,(order+1)**3))``.
 
     ``hexes (E,8)`` is the **corner** connectivity; ``elem_edges``/``edge_flip`` index

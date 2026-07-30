@@ -28,15 +28,18 @@ from .._typing import (
 )
 from ..linemesh import LineMesh
 from ..model import conform
-from ..model.fields import gll_nodes, validate_layers
-from ..model.interp import corner_indices, tensor_nodes
+from ..model.fields import gll_nodes, reject_loop_caps, validate_layers
+from ..model.interp import corner_indices
 from ..quadmesh import NO_BOUNDARY, QuadMesh
 
 # default sweep axis / origin for extrude
 _Z_AXIS = np.array([0.0, 0.0, 1.0])
 _ORIGIN = np.array([0.0, 0.0, 0.0])
 
-# side name -> (Nek face number, axis, which end) for structured grids
+# side name -> (Nek face number, axis, which end) for structured grids.  ``from_grid``
+# now routes each side through ``QuadMesh.from_grid``'s edge tags / ``loft``'s caps, so
+# this is the *reference* mapping the composition reproduces (and the set of legal side
+# names it validates against), not a lookup it indexes a plane with.
 _GRID_SIDES = {
     "x_min": (4, 0, 0), "x_max": (2, 0, -1),
     "y_min": (1, 1, 0), "y_max": (3, 1, -1),
@@ -45,30 +48,14 @@ _GRID_SIDES = {
 
 
 # -- native (block-free) high-order helpers -----------------------------
-def _trilinear_weights(order: int) -> FloatArray:
-    """``(M,8)`` trilinear corner weights of the ``(order+1)**3`` reference lattice, in
-    the hex Nek corner order -- the exact weight expression a full straight-sided
-    block would use, exposed so a straight-sided factory can evaluate it at just the
-    entity slots instead of the whole block."""
-    params = tensor_nodes(order, 3)                       # (M,3) in [0,1], i fastest
-    u = params[:, 0]
-    v = params[:, 1]
-    w = params[:, 2]
-    return np.stack([
-        (1 - u) * (1 - v) * (1 - w), u * (1 - v) * (1 - w),
-        u * v * (1 - w), (1 - u) * v * (1 - w),
-        (1 - u) * (1 - v) * w, u * (1 - v) * w,
-        u * v * w, (1 - u) * v * w], axis=1)              # (M,8)
-
-
-def _slice_block(s: QuadMesh, order: int) -> FloatArray:
+def _slice_block(s: QuadMesh, order: int) -> PointArray:
     """``(Q,(order+1)**2,3)`` in-plane high-order block of one loft profile, assembled
     natively from that section's B-rep (shared corners ++ shared edge-interior nodes in
     element traversal order ++ private quad interiors).  A loft column's geometry is a
     straight sweep between two such in-plane blocks, so this is the only intermediate
     :meth:`HexMesh.loft` needs -- no per-element hex block is ever materialized."""
     row = order + 1
-    out: FloatArray = np.empty((s.quads.shape[0], row * row, 3), dtype=float)
+    out: PointArray = np.empty((s.quads.shape[0], row * row, 3), dtype=float)
     out[:, corner_indices(order, 2), :] = s.points[s.quads]
     out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
         s.lines.interior, s.quad, s.flip)
@@ -76,8 +63,8 @@ def _slice_block(s: QuadMesh, order: int) -> FloatArray:
     return out
 
 
-def _sweep_at(bottom: FloatArray, top: FloatArray, g: FloatArray,
-              slots: IntArray, m2: int) -> FloatArray:
+def _sweep_at(bottom: PointArray, top: PointArray, g: FloatArray,
+              slots: IntArray, m2: int) -> PointArray:
     """A loft column's straight GLL sweep evaluated at the hex block ``slots``.
 
     Hex lexicographic slot ``s`` decomposes as ``s = k*m2 + m`` (in-plane index ``m``
@@ -108,7 +95,7 @@ class HexMesh:
         quads: QuadMesh,
         hex: IntArray,
         face_orient: IntArray,
-        interior: FloatArray | None = None,
+        interior: PointArray | None = None,
         boundaries: IntArray | None = None,
         boundary_tags: StrArray | Sequence[str] | None = None,
         element_tags: StrArray | Sequence[str] | None = None,
@@ -151,9 +138,9 @@ class HexMesh:
             if self._order > 1:
                 raise ValueError(
                     "HexMesh: order %d > 1 requires interior nodes" % self._order)
-            self.interior: FloatArray = np.zeros((E, 0, 3), dtype=float)
+            self.interior: PointArray = np.zeros((E, 0, 3), dtype=float)
         else:
-            ia: FloatArray = np.asarray(interior, dtype=float)
+            ia: PointArray = np.asarray(interior, dtype=float)
             if ia.shape != (E, k, 3):
                 raise ValueError(
                     "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
@@ -259,7 +246,7 @@ class HexMesh:
         return self.quads.edges
 
     @property
-    def edge_nodes(self) -> FloatArray:
+    def edge_nodes(self) -> PointArray:
         """``(Ne, order-1, 3)`` shared high-order interior nodes of each unique
         :attr:`edges` entry, in canonical (min->max corner) order.  Empty at order 1."""
         return self.quads.edge_nodes
@@ -271,7 +258,7 @@ class HexMesh:
         return np.sort(self.quads.quads, axis=1)
 
     @property
-    def face_nodes(self) -> FloatArray:
+    def face_nodes(self) -> PointArray:
         """``(Nf, (order-1)**2, 3)`` shared high-order interior nodes of each unique
         :attr:`faces` entry, in the canonical D4-normalized frame.  Empty at order 1; a
         shared face resolves to the same nodes from either incident hex."""
@@ -400,11 +387,14 @@ class HexMesh:
         cls,
         slices: Sequence[QuadMesh],
         *,
+        loop: bool = False,
         first_tag: str | Sequence[str] | StrArray = "",
         last_tag: str | Sequence[str] | StrArray = "",
     ) -> HexMesh:
         """Loft a stack of conformal quad profiles into a hex block (the general
-        primitive behind ``extrude``).
+        primitive behind ``extrude``, and the top rung of the uniform sweep shared
+        with :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` and
+        :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>`).
 
         ``slices`` is ``nz+1`` profiles sharing the same quad connectivity,
         ``boundary_tags``, and ``element_tags``; consecutive profiles form ``nz`` hex
@@ -412,8 +402,21 @@ class HexMesh:
         last top cap (face 6) -- each a scalar or a per-quad array. Side faces are
         named from the section's ``boundary_tags`` (unnamed or ``NO_BOUNDARY`` edges
         stay untagged), and every hex inherits its quad's ``element_tags``. Points
-        are shared by construction."""
+        are shared by construction.
+
+        ``loop=True`` makes the sweep **periodic**: the last profile is joined back to
+        the *first*, so ``M`` profiles give ``M`` layers instead of ``M-1`` -- one
+        extra layer whose top corners are profile 0's own points.  No profile is
+        duplicated, so the seam faces are genuine shared entities (``unique_edges`` /
+        ``canonical_faces`` resolve them from the shared corner ids) and the closed
+        solid is watertight in the sweep direction, e.g. a solid torus lofted from
+        disc sections.  A closed sweep has no bottom/top cap, so ``first_tag`` /
+        ``last_tag`` with ``loop=True`` raise ``ValueError`` rather than being
+        silently dropped, and no cap boundary row is emitted; side faces from the
+        section's ``boundary_tags`` are unaffected."""
         slices = list(slices)
+        if loop:
+            reject_loop_caps("HexMesh.loft", first_tag, last_tag)
         quads = np.asarray(slices[0].quads, dtype=np.int64).reshape(-1, 4)
         # section (quad, side) -> name; each swept side face inherits its section edge
         sec_bnd = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
@@ -424,11 +427,17 @@ class HexMesh:
         tag_sides = bool(side_name)
         qtag = np.asarray(slices[0].element_tags, dtype=np.str_).reshape(-1)
         M = quads.shape[0]
-        nz = len(slices) - 1
+        n_prof = len(slices)
+        # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
+        nz = n_prof if loop else n_prof - 1
+        # ``nxt[i]`` is the profile layer ``i`` sweeps *to*: i+1 normally, wrapping to
+        # 0 for the closing layer of a periodic sweep.
+        nxt: IntArray = (np.arange(1, nz + 1, dtype=np.int64) % n_prof if nz
+                         else np.zeros(0, dtype=np.int64))
         S = np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3)
-                      for s in slices], axis=0)             # (nz+1, nn, 3)
+                      for s in slices], axis=0)             # (n_prof, nn, 3)
         nn = S.shape[1]
-        points = S.reshape((nz + 1) * nn, 3)                 # global id = i*nn + v
+        points = S.reshape(n_prof * nn, 3)                   # global id = i*nn + v
 
         # Decide handedness once from the first layer and flip the quad template if
         # left-handed; reject a mixed-winding section rather than invert elements.
@@ -441,20 +450,25 @@ class HexMesh:
         flip = bool(nz and signs[0] < 0)
         qw = quads[:, [0, 3, 2, 1]] if flip else quads
 
-        # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners)
-        first_caps = cls._cap_tags(first_tag, M)
-        last_caps = cls._cap_tags(last_tag, M)
+        # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners); a
+        # periodic sweep has no cap at all, so it emits none (and rejected the tags).
+        first_caps = ([""] * M if loop else cls._cap_tags(first_tag, M))
+        last_caps = ([""] * M if loop else cls._cap_tags(last_tag, M))
 
         hexes = np.empty((nz * M, 8), dtype=np.int64)
-        etags: StrArray = np.empty(nz * M, dtype=np.str_)
+        # every layer repeats the section's per-quad tags (hex ``e = i*M + q``).  Tiling
+        # keeps the section's own string width: ``np.empty(..., dtype=np.str_)`` is
+        # ``<U1`` and would clip each tag to its first character on assignment.
+        etags: StrArray = (np.tile(qtag, nz) if qtag.size
+                           else np.full(nz * M, "", dtype=np.str_))
         bnd: list[list[int]] = []
         names: list[str] = []
         e = 0
         for i in range(nz):
+            j = int(nxt[i])                     # the profile this layer sweeps to
             for q in range(M):
                 v = qw[q, :]
-                hexes[e] = np.concatenate([i * nn + v, (i + 1) * nn + v])
-                etags[e] = qtag[q] if qtag.size else ""
+                hexes[e] = np.concatenate([i * nn + v, j * nn + v])
                 if tag_sides:
                     # section side s -> hex face s, or 5-s when the quad was flipped
                     for s in (1, 2, 3, 4):
@@ -482,18 +496,19 @@ class HexMesh:
             raise ValueError("loft: all slices must share the same order")
         edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(hexes)
-        edge_nodes: FloatArray | None = None
-        face_nodes: FloatArray | None = None
-        interior: FloatArray | None = None
+        edge_nodes: PointArray | None = None
+        face_nodes: PointArray | None = None
+        interior: PointArray | None = None
         if order > 1:
             g = gll_nodes(order)
             row = order + 1
             m2 = row * row
             SC = np.stack([_slice_block(s, order) for s in slices], axis=0)
             # (nz, M, m2, 3) in-plane blocks of the bottom/top slice of each layer,
-            # flattened to hex order e = i*M + q
-            bottom = SC[:-1].reshape(nz * M, m2, 3)
-            top = SC[1:].reshape(nz * M, m2, 3)
+            # flattened to hex order e = i*M + q.  ``nxt`` picks the top slice, so the
+            # periodic closing layer sweeps back onto profile 0's own block.
+            bottom = SC[np.arange(nz, dtype=np.int64)].reshape(nz * M, m2, 3)
+            top = SC[nxt].reshape(nz * M, m2, 3)
             if flip:
                 kk = np.arange(m2)
                 trans = (kk // row) + row * (kk % row)    # transpose the in-plane grid
@@ -550,8 +565,8 @@ class HexMesh:
         non-empty scalar ``inner_tag`` / ``outer_tag`` overrides and names the whole
         wall."""
         radial = validate_layers(radial, "annulus radial")
-        A: FloatArray = np.asarray(inner.points, dtype=float).reshape(-1, 3)
-        B: FloatArray = np.asarray(outer.points, dtype=float).reshape(-1, 3)
+        A: PointArray = np.asarray(inner.points, dtype=float).reshape(-1, 3)
+        B: PointArray = np.asarray(outer.points, dtype=float).reshape(-1, 3)
         if A.shape[0] != B.shape[0]:
             raise ValueError(
                 "annulus: inner and outer surfaces must have equal point counts "
@@ -647,15 +662,15 @@ class HexMesh:
             raise ValueError("merge: all blocks must share the same order")
         edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(hexes)
-        edge_nodes: FloatArray | None = None
-        face_nodes: FloatArray | None = None
-        interior: FloatArray | None = None
+        edge_nodes: PointArray | None = None
+        face_nodes: PointArray | None = None
+        interior: PointArray | None = None
         if order > 1:
-            local_e: FloatArray = np.concatenate(
+            local_e: PointArray = np.concatenate(
                 [conform.gather_edge_nodes(mm.quads.lines.interior, mm._elem_edges,
                                            mm._edge_flip)
                  for mm in meshes], axis=0)                    # (E,12,order-1,3)
-            local_f: FloatArray = np.concatenate(
+            local_f: PointArray = np.concatenate(
                 [conform.gather_face_nodes(mm.quads.interior, mm.hex, mm.face_orient)
                  for mm in meshes], axis=0)                    # (E,6,(order-1)**2,3)
             tol = conform.entity_tol(points)
@@ -681,7 +696,16 @@ class HexMesh:
         result carries ``a``'s ``hexes``, ``boundaries`` and ``boundary_tags``
         (positional BC markers follow the morph); per-hex ``element_tags`` are left
         for the caller to assign.  The 3-D sibling of
-        :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>`."""
+        :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>`.
+
+        The morph is delegated one rung **down the B-rep ladder**: the shared corners,
+        shared edge nodes and shared face nodes are exactly the shared-face
+        ``QuadMesh`` (whose own corners and edge nodes are in turn its edge
+        ``LineMesh``), so
+        :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>` produces the blended
+        face mesh and this method only lerps what a hex owns privately -- its per-hex
+        ``interior`` -- while keeping ``a``'s ``hex`` / ``face_orient`` incidence
+        verbatim."""
         A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
         B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
         if A.shape[0] != B.shape[0]:
@@ -697,25 +721,20 @@ class HexMesh:
         # identical connectivity => identical edge / face tables, so a's and b's shared
         # edge nodes, shared face nodes and private interiors already pair one-for-one
         # and each morphs with the same lerp the corners get from the blended points.
-        # The result reuses ``a``'s B-rep verbatim (shared-face connectivity, per-hex
-        # face indices and D4 codes) -- a blend is a pure point-space morph, so nothing
-        # is re-derived.  At order 1 all three tables are empty and this is exactly the
-        # plain point blend.
+        # The shared corners, shared edge nodes and shared face nodes *are* the
+        # shared-face QuadMesh, so that whole part of the morph is one
+        # ``QuadMesh.blend`` of the rung below (which in turn delegates the corners and
+        # edge nodes to ``LineMesh.blend``); the result reuses ``a``'s per-hex face
+        # indices and D4 codes verbatim -- a blend is a pure point-space morph, so
+        # nothing is re-derived.  At order 1 all three tables are empty and this is
+        # exactly the plain point blend.
         ho = a.order > 1
-        ae, be = a.quads.lines.interior, b.quads.lines.interior
-        af, bf = a.quads.interior, b.quads.interior
         ai, bi = a.interior, b.interior
-        out: list[HexMesh] = []
-        for t in np.asarray(fractions, dtype=float).ravel():
-            edge_lm = LineMesh((1.0 - t) * A + t * B, a.quads.lines.lines,
-                               order=a.order,
-                               interior=(1.0 - t) * ae + t * be if ho else None)
-            faces = QuadMesh(edge_lm, a.quads.quad, a.quads.flip,
-                             (1.0 - t) * af + t * bf if ho else None, order=a.order)
-            out.append(cls(faces, a.hex, a.face_orient,
-                           (1.0 - t) * ai + t * bi if ho else None,
-                           a.boundaries, a.boundary_tags, order=a.order))
-        return out
+        fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
+        return [cls(faces, a.hex, a.face_orient,
+                    (1.0 - t) * ai + t * bi if ho else None,
+                    a.boundaries, a.boundary_tags, order=a.order)
+                for t, faces in zip(fr, QuadMesh.blend(a.quads, b.quads, fr))]
 
     # -- boundary queries (topological domain surface) ------------------
     @staticmethod
@@ -754,7 +773,7 @@ class HexMesh:
     @classmethod
     def from_grid(
         cls,
-        P: FloatArray,
+        P: PointArray,
         *,
         face_tags: dict[str, str] | None = None,
         element_tag: str = "",
@@ -767,70 +786,40 @@ class HexMesh:
         to every hex's ``element_tags``.
 
         ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
-        each hex carries ``(order+1)**3`` straight-sided (trilinear) GLL nodes."""
-        P = np.asarray(P, dtype=float)
-        ni1, nj1, nk1, _ = P.shape
-        ni, nj, nk = ni1 - 1, nj1 - 1, nk1 - 1
-        points = P.reshape(-1, 3)
-        ids = np.arange(ni1 * nj1 * nk1, dtype=np.int64).reshape(ni1, nj1, nk1)
+        each hex carries ``(order+1)**3`` straight-sided (trilinear) GLL nodes.
 
-        hexes = np.empty((ni * nj * nk, 8), dtype=np.int64)
-        e = 0
-        for i in range(ni):
-            for j in range(nj):
-                for k in range(nk):
-                    hexes[e] = [ids[i, j, k], ids[i + 1, j, k],
-                                ids[i + 1, j + 1, k], ids[i, j + 1, k],
-                                ids[i, j, k + 1], ids[i + 1, j, k + 1],
-                                ids[i + 1, j + 1, k + 1], ids[i, j + 1, k + 1]]
-                    e += 1
-        bnd: list[list[int]] = []
-        names: list[str] = []
-        cell = np.arange(ni * nj * nk).reshape(ni, nj, nk)
-        for side, name in (face_tags or {}).items():
-            if not name:
-                continue
-            face, axis, end = _GRID_SIDES[side]
-            plane: IntArray = cell.take(0 if end == 0 else -1, axis=axis).ravel()
-            for eid in plane:
-                bnd.append([int(eid), face])
-                names.append(name)
-        # np.full width-infers from the fill value (dtype=np.str_ would clip to <U1)
-        etags: StrArray = np.full(hexes.shape[0], element_tag)
-        # order-N: straight (trilinear) subdivision, evaluated only where the entity
-        # nodes live -- the same trilinear corner weights, restricted to the
-        # edge-interior, face-interior and cell-interior slots, so a straight grid cell
-        # stays exact and no per-hex block is ever built.
-        edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
-        canonical_conn, elem_faces, face_orient = conform.canonical_faces(hexes)
-        edge_nodes: FloatArray | None = None
-        face_nodes: FloatArray | None = None
-        interior: FloatArray | None = None
-        if order > 1:
-            W = _trilinear_weights(order)                       # (M,8)
-            c = points[hexes]                                   # (E,8,3) Nek corners
-            E = hexes.shape[0]
-            eslots = conform._edge_slots(3, order)[:, 1:-1]     # (12, order-1)
-            local_e: FloatArray = np.einsum(
-                "mk,hkd->hmd", W[eslots.ravel()], c).reshape(E, 12, order - 1, 3)
-            fslots = conform._face_interior_slots(order)        # (6, (order-1)**2)
-            local_f: FloatArray = np.einsum(
-                "mk,hkd->hmd", W[fslots.ravel()], c).reshape(
-                    E, 6, (order - 1) ** 2, 3)
-            interior = np.einsum(
-                "mk,hkd->hmd", W[conform._interior_slots(3, order)], c)
-            tol = conform.entity_tol(points)
-            edge_nodes = conform.scatter_edge_nodes(
-                local_e, elem_edges, eflip, edges.shape[0], tol, "HexMesh.from_grid")
-            face_nodes = conform.scatter_face_nodes(
-                local_f, elem_faces, face_orient, canonical_conn.shape[0], tol,
-                "HexMesh.from_grid")
-        q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
-        edge_lm = LineMesh(points, q_edges, order=order, interior=edge_nodes)
-        faces = QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
-        return cls(faces, elem_faces, face_orient, interior,
-                   *cls._order_bnd(bnd, names),
-                   element_tags=etags, order=order)
+        Built as a :meth:`loft` of the grid's **``k``-sections**: section ``k`` is
+        the :meth:`QuadMesh.from_grid <nekmeshpy.quadmesh.QuadMesh.from_grid>` of the
+        slab ``P[:, :, k, :]`` (itself a ``LineMesh`` loft), and the sweep runs
+        ``k = 0..nk``.  Every tagged side rides a channel the rung below already has:
+        the section's four ``edge_tags`` become the ``x_min`` / ``x_max`` / ``y_min`` /
+        ``y_max`` swept side faces (section side ``s`` -> hex face ``s``, which is
+        exactly the ``_GRID_SIDES`` Nek face numbering) and the sweep's caps the
+        ``z_min`` / ``z_max`` ones; ``element_tag`` rides the section's per-quad tags.
+        So corners, shared edges and shared faces all come out of the layer-by-layer
+        B-rep assembly instead of a ``unique_edges`` re-derivation.
+
+        **Ordering is the loft's, carried up unchanged** -- composing the rung below
+        means accepting its numbering, so nothing is relabelled here.  The grid is
+        numbered ``i`` fastest, ``k`` slowest: grid node ``(i, j, k)`` is point
+        ``(k*(nj+1) + j)*(ni+1) + i`` and grid cell ``(i, j, k)`` is hex
+        ``(k*nj + j)*ni + i``, i.e. ``points`` equals
+        ``P.transpose(2, 1, 0, 3).reshape(-1, 3)`` -- *not* the ``P.reshape(-1, 3)``
+        (``k``-fastest) order this factory used historically.  ``boundaries`` stays
+        lexsorted by ``(element, face)``, so its row order follows the hex ids; each
+        tagged row still names the same physical side."""
+        P = np.asarray(P, dtype=float)
+        tags = {s: n for s, n in (face_tags or {}).items() if n}
+        for side in tags:
+            _GRID_SIDES[side]        # reject an unknown side name (KeyError)
+        # x/y sides are the section's own edges; z sides are the sweep's end caps.
+        edge_tags = {s: n for s, n in tags.items() if not s.startswith("z")}
+        slices = [QuadMesh.from_grid(P[:, :, k, :], edge_tags=edge_tags,
+                                     element_tag=element_tag, order=order)
+                  for k in range(P.shape[2])]
+        # the loft *is* the result: its sweep-major numbering is carried up unchanged.
+        return cls.loft(slices, first_tag=tags.get("z_min", ""),
+                        last_tag=tags.get("z_max", ""))
 
     @staticmethod
     def _order_bnd(

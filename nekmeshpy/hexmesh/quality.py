@@ -44,7 +44,7 @@ def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
     return sj
 
 
-def _ho_block(mesh: HexMesh, order: int) -> FloatArray:
+def _ho_block(mesh: HexMesh, order: int) -> PointArray:
     """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample.
 
     The mesh's entity B-rep is walked
@@ -56,7 +56,7 @@ def _ho_block(mesh: HexMesh, order: int) -> FloatArray:
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
         mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
         mesh.quads.interior, mesh.interior, order)
-    block: FloatArray = nodes[conn_ho]
+    block: PointArray = nodes[conn_ho]
     return block
 
 

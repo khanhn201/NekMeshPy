@@ -30,6 +30,10 @@ S = 4.0                      # far-field cube half-side (domain [-S, S]^3)
 N_FACE = 12                  # cells per direction on each cube face
 N_RADIAL = 12                # radial cells from sphere out to the cube
 RADIAL_GRADING = 1.15        # >1 clusters radial layers toward the sphere
+ORDER = 2                    # polynomial order; 1 = linear. Both surfaces are
+                             # built at ORDER (annulus rejects a mismatch), so the
+                             # inner-wall nodes bow onto the true sphere (curved
+                             # .vtu; .re2 stays linear either way)
 OUT_NAME = "flow_past_sphere"
 
 # boundary name -> Nek BC code, applied only at export
@@ -39,11 +43,11 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
 # -- two closed quad surfaces: outer cube (tagged per face) and inner sphere -
 # QuadMesh.box tags each face with the far-field side it forms; QuadMesh.sphere
 # reuses the same (N_FACE) connectivity, so the two pair by index for annulus.
-cube = QuadMesh.box(S, N_FACE, face_tags={
+cube = QuadMesh.box(S, N_FACE, order=ORDER, face_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})
-sphere = QuadMesh.sphere(R, N_FACE)
+sphere = QuadMesh.sphere(R, N_FACE, order=ORDER)
 
 # fill the shell sphere -> cube, radial clustered toward the sphere; inner cap
 # tagged `sphere`, outer cap per cube-face element tag

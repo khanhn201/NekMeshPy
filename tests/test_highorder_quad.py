@@ -14,6 +14,7 @@ from conftest import GOLDEN, curved, run_example
 
 from nekmeshpy import LineMesh, QuadMesh
 from nekmeshpy.io import export
+from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.interp import corner_indices, quad_edge_indices
 
 
@@ -75,6 +76,133 @@ def test_ogrid_wall_nodes_on_the_circle(order):
     assert np.allclose(wr, r, atol=1e-9)
 
 
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_structured_stamps_its_edges_high_order_nodes(order):
+    # ``structured`` must honour the high-order nodes of the edges it is handed:
+    # a curved bottom edge (LineMesh.arc) has to land on the block's bottom side,
+    # not be replaced by the transfinite blend's straight subdivision (which would
+    # miss the arc by the chord sagitta, ~2e-2 here).
+    r, n = 1.0, 8
+    bottom = LineMesh.arc(r, n, start_theta=np.pi, end_theta=0.0, order=order)
+    right = LineMesh.line((r, 0.0, 0.0), (r, 2.0, 0.0), uniform_spacing(3),
+                          order=order)
+    top = LineMesh.line((r, 2.0, 0.0), (-r, 2.0, 0.0), uniform_spacing(n),
+                        order=order)
+    left = LineMesh.line((-r, 2.0, 0.0), (-r, 0.0, 0.0), uniform_spacing(3),
+                         order=order)
+    qm = QuadMesh.structured([bottom, right, top, left])
+    assert qm.order == order
+    cb = curved(qm)
+    idx = quad_edge_indices(1, order)                  # the bottom side's nodes
+    corner = qm.points[qm.quads]
+    rc = np.linalg.norm(corner[:, :, :2], axis=2)
+    v0, v1 = QuadMesh.EDGE_POINTS[0]
+    on_wall = np.isclose(rc[:, v0], r, atol=1e-9) & np.isclose(rc[:, v1], r, atol=1e-9)
+    assert int(np.count_nonzero(on_wall)) == n
+    wall = cb[np.where(on_wall)[0][:, None], idx[None, :], :].reshape(-1, 3)
+    assert np.max(np.abs(np.linalg.norm(wall[:, :2], axis=1) - r)) < 1e-13
+
+
+# -- region *interiors* are curved too, not a straight fill inside a curved wall --
+def _edge_chord_deviation(qm):
+    """Per shared edge, the max distance of its interior nodes from the straight
+    chord between its two corners -- 0 for a straight-subdivided edge."""
+    lm = qm.lines
+    a = lm.points[lm.lines[:, 0]]
+    b = lm.points[lm.lines[:, 1]]
+    d = b - a
+    dev = np.linalg.norm(np.cross(lm.interior - a[:, None, :], d[:, None, :]),
+                         axis=2) / np.linalg.norm(d, axis=1)[:, None]
+    return dev.max(axis=1)                               # (n_edges,)
+
+
+def _on_radius(qm, r):
+    """Mask of shared edges whose *both* corners sit at radius ``r`` (the wall)."""
+    lm = qm.lines
+    rc = np.linalg.norm(lm.points[:, :2], axis=1)
+    return np.isclose(rc, r, atol=1e-9)[lm.lines].all(axis=1)
+
+
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_ogrid_interior_edges_are_curved(order):
+    # the wall's curvature must propagate inward: each O-ring is a *blend* of the
+    # block perimeter and the wall loop, so an interior ring's tangential edges bow
+    # too.  A straight-subdivided interior (the old behaviour) leaves every non-wall
+    # edge dead on its chord at ~1e-17.
+    r = 2.0
+    loop = LineMesh.circle(r, 16, order=order)
+    qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0])        # one interior ring at t=0.5
+    dev = _edge_chord_deviation(qm)
+    wall = _on_radius(qm, r)
+    assert dev[wall].max() > 1e-2                        # the wall itself is curved
+    # the t=0.5 ring inherits ~half the wall's bow -- orders of magnitude above the
+    # 1e-17 a straight fill would give
+    assert dev[~wall].max() > 0.3 * dev[wall].max()
+
+
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_half_ogrid_interior_edges_are_curved(order):
+    # half_ogrid had no order>1 coverage at all.  Reached through spined_ogrid (the
+    # bifurcation path), which runs two half_ogrids and merges them.
+    r = 1.5
+    loop = LineMesh.circle(r, 32, order=order)
+    qm = QuadMesh.spined_ogrid(loop, [0.0, 0.4, 1.0])
+    assert qm.order == order
+    dev = _edge_chord_deviation(qm)
+    wall = _on_radius(qm, r)
+    assert dev[wall].max() > 1e-3
+    assert dev[~wall].max() > 0.3 * dev[wall].max()
+    # and the wall nodes still land on the exact circle
+    lm = qm.lines
+    wr = np.linalg.norm(lm.interior[wall].reshape(-1, 3)[:, :2], axis=1)
+    assert np.allclose(wr, r, atol=1e-9)
+
+
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_structured_interior_matches_the_analytic_coons_blend(order):
+    # ``structured`` owns an exact transfinite map, so at order N it is evaluated at
+    # the GLL-refined lattice rather than subdivided from corners.  An annular sector
+    # (two concentric arcs + two straight radial edges) makes the exact answer
+    # analytic: the straight radial sides are their own linear blend, so the patch
+    # collapses to a radial lerp of the arcs -- every node in a block column shares
+    # the bottom arc's angle, and every node in a block row shares one radius.
+    r_in, r_out, n, nr = 1.0, 2.0, 6, 3
+    inner = LineMesh.arc(r_in, n, start_theta=0.0, end_theta=np.pi / 2, order=order)
+    outer = LineMesh.arc(r_out, n, start_theta=np.pi / 2, end_theta=0.0, order=order)
+    ip, op = inner.points, outer.points
+    right = LineMesh.line(ip[-1], op[0], uniform_spacing(nr + 1), order=order)
+    left = LineMesh.line(op[-1], ip[0], uniform_spacing(nr + 1), order=order)
+    qm = QuadMesh.structured([inner, right, outer, left])
+    assert qm.order == order
+    row = order + 1
+    blk = curved(qm).reshape(-1, row, row, 3)            # (Q, j, i, 3), i fastest
+    ang = np.arctan2(blk[..., 1], blk[..., 0])
+    rad = np.linalg.norm(blk[..., :2], axis=-1)
+    assert np.max(np.abs(ang - ang[:, 0:1, :])) < 1e-13  # angle depends on i only
+    assert np.max(np.abs(rad - rad[:, :, 0:1])) < 1e-13  # radius depends on j only
+    assert r_in - 1e-12 <= rad.min() and rad.max() <= r_out + 1e-12
+    # interior edges genuinely bow (the whole point): non-wall edges are off-chord
+    dev = _edge_chord_deviation(qm)
+    assert dev[~(_on_radius(qm, r_in) | _on_radius(qm, r_out))].max() > 1e-3
+
+
+def test_structured_rejects_a_non_chain_edge():
+    # the overlay maps line k onto the k-th interval of the side, so an edge whose
+    # lines are not the consecutive chain would be stamped in the wrong place
+    edges = [LineMesh.line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), uniform_spacing(3),
+                           order=2),
+             LineMesh.line((1.0, 0.0, 0.0), (1.0, 1.0, 0.0), uniform_spacing(2),
+                           order=2),
+             LineMesh.line((1.0, 1.0, 0.0), (0.0, 1.0, 0.0), uniform_spacing(3),
+                           order=2),
+             LineMesh.line((0.0, 1.0, 0.0), (0.0, 0.0, 0.0), uniform_spacing(2),
+                           order=2)]
+    scrambled = LineMesh(edges[0].points, [[0, 2], [2, 1], [1, 3]], order=2,
+                         interior=np.zeros((3, 1, 3)))
+    with pytest.raises(ValueError, match="consecutive chain"):
+        QuadMesh.structured([scrambled, edges[1], edges[2], edges[3]])
+
+
 @pytest.mark.parametrize("order", [2, 3])
 def test_annulus_interior_rings_are_high_order_curved(order):
     # the radial blend is a genuine high-order blend: an *interior* ring's
@@ -133,7 +261,7 @@ def test_high_order_smoothing_rejected(method):
 
 def test_high_order_noop_smoothing_allowed():
     # the no-op strategies (bilinear/tfi/none) leave every node in place, so they
-    # stay allowed at any order (e.g. circular_pipe.py runs order 5 + "bilinear").
+    # stay allowed at any order (e.g. circular_pipe.py runs order 2 + "bilinear").
     loop = LineMesh.circle(2.0, 16, order=3)
     for method in ("bilinear", "tfi", "none"):
         qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
@@ -287,7 +415,9 @@ def test_vtu_meshio_roundtrip(tmp_path):
 def test_high_order_quad_example_matches_golden(tmp_path):
     ns = run_example("high_order_quad.py", tmp_path)
     mesh = ns["mesh"]
-    assert isinstance(mesh, QuadMesh) and mesh.order == 5
+    # the example's own ORDER constant is the contract -- read it back rather
+    # than pinning a literal here, so the two can never drift apart.
+    assert isinstance(mesh, QuadMesh) and mesh.order == ns["ORDER"] > 1
     with open(os.path.join(tmp_path, "high_order_quad.vtu"), "rb") as f:
         got = f.read()
     with open(os.path.join(GOLDEN, "high_order_quad.vtu"), "rb") as f:

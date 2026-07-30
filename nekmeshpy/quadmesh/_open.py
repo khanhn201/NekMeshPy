@@ -24,8 +24,9 @@ import numpy as np
 from .._typing import FloatArray, IntArray, Point, PointArray, StrArray
 from ..linemesh import LineMesh
 from ..linemesh._open import line
-from ..model.fields import validate_layers
-from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate
+from ..model.fields import gll_nodes, validate_layers
+from ..model.interp import coons_grid
+from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,6 +64,100 @@ def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
     return structured(edges, smoothing_method=smoothing_method)
 
 
+def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
+    """``(L,)`` map from the edge's line index to the point interval ``i`` it spans.
+
+    ``structured`` reads an edge's nodes straight off ``edge.points`` in index order,
+    so line ``k`` must join two consecutive points; this returns the lower index of
+    each line's interval (``lines[k] == (i, i+1)`` or ``(i+1, i)``) so a wall overlay
+    can find the quad that line ``k`` bounds.  Raises if the edge is not a simple
+    consecutive chain (which ``structured`` already assumes for its point order)."""
+    lines: IntArray = np.asarray(edge.lines, dtype=np.int64).reshape(-1, 2)
+    lo: IntArray = np.minimum(lines[:, 0], lines[:, 1])
+    hi: IntArray = np.maximum(lines[:, 0], lines[:, 1])
+    n = edge.points.shape[0] - 1
+    if (lines.shape[0] != n or not np.array_equal(hi, lo + 1)
+            or not np.array_equal(np.sort(lo), np.arange(n, dtype=np.int64))):
+        raise ValueError(
+            "structured %s edge must be a simple consecutive chain (line k joining "
+            "points k and k+1) -- its point order is what sets the grid's node "
+            "distribution; build it with LineMesh.open/line/arc (or merge chains "
+            "end to end) rather than re-indexing its lines" % name)
+    return lo
+
+
+def _refined_params(n: int, order: int) -> FloatArray:
+    """The ``n*order+1`` transfinite parameters of an ``n``-interval edge at order N.
+
+    Interval ``i``'s node ``a`` sits at ``(i + g[a]) / n`` for the GLL nodes ``g`` on
+    ``[0,1]``.  At ``order == 1`` that is ``g = [0, 1]`` and the result is exactly
+    ``linspace(0, 1, n+1)`` -- the corner grid, unchanged."""
+    if order == 1:
+        return np.linspace(0.0, 1.0, n + 1)
+    g = gll_nodes(order)
+    inner: FloatArray = (np.arange(n, dtype=float)[:, None] + g[None, :order]).ravel()
+    return np.concatenate([inner / n, [1.0]])
+
+
+def _refined_chain(edge: LineMesh, name: str) -> PointArray:
+    """An edge's own nodes in point-index order: ``(n*order+1, 3)``.
+
+    These are the exact samples of the edge curve at :func:`_refined_params` -- read
+    off the edge's B-rep rather than interpolated -- so an analytic edge
+    (:meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`) enters the transfinite
+    blend on its true geometry.  Each line's private ``interior`` is reversed where the
+    line runs against the edge's point order."""
+    pts: PointArray = edge.points
+    order = edge.order
+    if order == 1:
+        return pts
+    lo = _chain_intervals(edge, name)
+    lines: IntArray = np.asarray(edge.lines, dtype=np.int64).reshape(-1, 2)
+    inner: PointArray = edge.interior                  # (L, order-1, 3)
+    out: PointArray = np.empty(((pts.shape[0] - 1) * order + 1, 3), dtype=float)
+    out[::order] = pts
+    for k in range(lines.shape[0]):
+        i = int(lo[k])
+        blk = inner[k] if lines[k, 0] == i else inner[k][::-1]
+        out[i * order + 1:i * order + order] = blk
+    return out
+
+
+def _straight_interior(pos: PointArray, lines: IntArray,
+                       order: int) -> PointArray:
+    """``(L,order-1,3)`` straight GLL interiors of the chain ``lines`` over ``pos``."""
+    g = gll_nodes(order)[1:order]
+    a, b = pos[lines[:, 0]], pos[lines[:, 1]]
+    return a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
+
+
+def _blended_ring(pos: PointArray, wall: LineMesh, tau: float,
+                  peri_pos: PointArray, peri_inner: PointArray) -> LineMesh:
+    """The O-ring curve at radial fraction ``tau``, as a ``LineMesh`` to overlay.
+
+    The ring is the wall curve blended toward the straight block perimeter -- the same
+    lerp the ring's corners get, applied to the private ``interior`` nodes as well, so
+    an intermediate ring inherits its share of the wall's curvature instead of being a
+    straight chord between blended corners.  This is what
+    :func:`annulus` gets from :meth:`LineMesh.blend
+    <nekmeshpy.linemesh.LineMesh.blend>`; the rings here cannot use ``blend`` directly
+    because ``half_ogrid`` snaps its two end points onto exact spine samples, so the
+    curve is re-anchored on ``pos`` (the ring's true corner positions) with a linear
+    correction that vanishes wherever no snapping happened.  At ``tau == 1`` it
+    reproduces ``wall`` exactly."""
+    lines: IntArray = wall.lines
+    order = wall.order
+    if order == 1:
+        return LineMesh(pos, lines, order=1)
+    inner: PointArray = (1.0 - tau) * peri_inner + tau * wall.interior
+    drift: PointArray = pos - ((1.0 - tau) * peri_pos + tau * wall.points)
+    g = gll_nodes(order)[1:order]
+    d0, d1 = drift[lines[:, 0]], drift[lines[:, 1]]
+    inner = (inner + (1.0 - g)[None, :, None] * d0[:, None, :]
+             + g[None, :, None] * d1[:, None, :])
+    return LineMesh(pos, lines, order=order, interior=inner)
+
+
 def structured(edges: list[LineMesh], *,
                boundary_tags: Mapping[str, str] | None = None,
                smoothing_method: str | None = None) -> QuadMesh:
@@ -79,6 +174,14 @@ def structured(edges: list[LineMesh], *,
     ``boundary_tags`` (keyed by ``"bottom"`` / ``"right"`` / ``"top"`` /
     ``"left"``) overrides that -- a non-empty entry replaces the side's tag, a
     present-but-empty entry suppresses the side.
+
+    The order comes from the edges (all four must agree).  At ``order > 1`` each
+    edge's own private high-order ``interior`` is **stamped onto the matching side**
+    of the boundary quads, exactly as ``ogrid`` / ``half_ogrid`` do, so an analytic
+    edge (:meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`,
+    :meth:`circle <nekmeshpy.linemesh.LineMesh.circle>`) is meshed on its true curve
+    rather than straight-subdivided between its points; the transfinite interior
+    stays a straight order-N fill.
     """
     from .quadmesh import QuadMesh
     if len(edges) != 4:
@@ -87,7 +190,7 @@ def structured(edges: list[LineMesh], *,
     bottom, right, top, left = edges
     for nm, e in (("bottom", bottom), ("right", right),
                   ("top", top), ("left", left)):
-        _check_boundary(e, "structured " + nm + " edge", False, 2)
+        _check_boundary(e, "structured " + nm + " edge", 2)
     order = bottom.order
     if any(e.order != order for e in edges):
         raise ValueError("structured: all four edges must share the same order")
@@ -118,21 +221,19 @@ def structured(edges: list[LineMesh], *,
                 "structured: edges must form a closed loop in CCW order "
                 "[bottom, right, top, left] with shared corners; "
                 "gap %.3g at %s" % (gap, lbl))
-    # orient the two edge families so both run c0->c1 (u) / c0->c3 (v)
-    cb = bottom.points                                     # c0 -> c1
-    ct = top.points[::-1]                                  # c3 -> c2
-    cl = left.points[::-1]                                 # c0 -> c3
-    cr = right.points                                      # c1 -> c2
-    P00, P10, P01, P11 = cb[0], cb[-1], ct[0], ct[-1]      # shared corners
-
-    u = np.linspace(0.0, 1.0, nx + 1)[:, None, None]       # (nx+1,1,1)
-    v = np.linspace(0.0, 1.0, ny + 1)[None, :, None]       # (1,ny+1,1)
-    # Coons blend: (edge terms) - (bilinear corner correction)
-    S = ((1 - v) * cb[:, None, :] + v * ct[:, None, :]
-         + (1 - u) * cl[None, :, :] + u * cr[None, :, :]
-         - ((1 - u) * (1 - v) * P00 + u * (1 - v) * P10
-            + (1 - u) * v * P01 + u * v * P11))
-    points = S.reshape(-1, 3)                              # id(i,j) = i*row + j
+    # Sample the transfinite map at the order-N lattice: at order 1 that is the plain
+    # corner grid, at order N the GLL-refined one.  Every node -- interior edges and
+    # element interiors included -- therefore lands on the true Coons surface spanned
+    # by the four edges, instead of on a straight subdivision of a corner-only grid.
+    # Both edge families are oriented to run with the lattice: bottom/top c0->c1 and
+    # c3->c2 along u, left/right c0->c3 and c1->c2 along v, so ``top``/``left`` (stored
+    # c2->c3 / c3->c0) are reversed.
+    S = coons_grid(_refined_chain(bottom, "bottom"),
+                   _refined_chain(top, "top")[::-1],
+                   _refined_chain(left, "left")[::-1],
+                   _refined_chain(right, "right"),
+                   _refined_params(nx, order), _refined_params(ny, order))
+    points = S[::order, ::order].reshape(-1, 3)            # id(i,j) = i*row + j
     row = ny + 1
 
     # quads in i-major / j-minor order (i in [0,nx), j in [0,ny))
@@ -170,10 +271,29 @@ def structured(edges: list[LineMesh], *,
         for q, s in rows:
             bnd.append([q, s])
             names.append(nm)
-    # elevate to order N first (a no-op at order 1), then smooth: a repositioning
-    # smoother rejects order > 1 (high-order smoothing is not implemented).
-    qm = _elevate(
-        QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names)), order)
+    qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
+    if order > 1:
+        # Every node already exists in ``S``; cut it into per-element blocks and let
+        # the B-rep tables fall out.  No overlay is needed -- the boundary rows of the
+        # lattice *are* the edges' own nodes, so the walls are exact for free, and
+        # unlike a stamp-the-walls-on elevation the interior edges are curved too.
+        # Quad (i,j) = quad id i*ny + j spans lattice rows i*order..(i+1)*order and
+        # columns j*order..(j+1)*order; its local (i,j) axes are the global ones.
+        qi = np.repeat(np.arange(nx, dtype=np.int64), ny)
+        qj = np.tile(np.arange(ny, dtype=np.int64), nx)
+        a: IntArray = np.arange(order + 1, dtype=np.int64)
+        blk: PointArray = S[(qi[:, None, None] * order + a[None, :, None]),
+                            (qj[:, None, None] * order + a[None, None, :])]
+        # (Q,a,b,3) -> lexicographic (i fastest) slot b*(order+1) + a
+        blocks: PointArray = blk.transpose(0, 2, 1, 3).reshape(
+            quads.shape[0], (order + 1) ** 2, 3)
+        lm, elem_edges, flip, interior = entities_from_blocks(
+            blocks, quads, points, order, "QuadMesh.structured")
+        qm = QuadMesh(lm, elem_edges, flip, interior,
+                      qm.boundaries, qm.boundary_tags,
+                      element_tags=qm.element_tags, order=order)
+    # smooth last: a repositioning smoother rejects order > 1 (high-order smoothing
+    # is not implemented).
     return _apply_smoothing(qm, smoothing_method)
 
 
@@ -202,7 +322,7 @@ def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
         raise ValueError("ogrid needs center_scale in (0, 1)")
     radial = validate_layers(radial, "ogrid radial")
     n_radial = radial.size - 1
-    bpts = _check_boundary(boundary, "ogrid boundary", True, 3)
+    bpts = _check_boundary(boundary, "ogrid boundary", 3)
     # wall ring = the boundary loop itself, meshed exactly: it must already carry
     # P = 4*n_side points (the caller sizes it, e.g. circle(R, 4*n_side)).  Block
     # corners are 4 of those pulled toward the centroid and bilinearly filled;
@@ -279,13 +399,28 @@ def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
             bnd.append([wall_q0 + m, 1])
             names.append(nm)
     qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
-    # order-N: the wall ring (side 1 of the outer ring quads) follows the exact
-    # boundary loop, the interior stays a straight order-N fill (overlay ignored at
-    # order 1, where _elevate is a no-op).  Elevate first, then smooth: a
-    # repositioning smoother rejects order > 1 (high-order smoothing not implemented).
-    overlays: list[Overlay] = [
-        (wall_q0 + np.arange(P, dtype=np.int64), 1, boundary)]
-    qm = _elevate(qm, boundary.order, overlays)
+    # order-N: overlay **every** O-ring, not just the wall, so each ring carries its
+    # blended share of the wall's curvature and the curvature reaches the block
+    # perimeter instead of dying one layer in.  The ring quad is
+    # [b[k], b[kn], a[kn], a[k]] with b the outer layer, so ring m is block m-1's
+    # side 1 *and* block m's side 3 -- both incident copies must be stamped or
+    # ``scatter_edge_nodes`` rightly reports a non-conforming edge.  Ring 0 (the
+    # straight block perimeter) already matches its bilinear guess; the wall
+    # (tau == 1) is the last ring and reproduces the boundary loop exactly.
+    order = boundary.order
+    overlays: list[Overlay] = []
+    if order > 1:
+        peri_inner = _straight_interior(peri_pos, boundary.lines, order)
+        q0 = n_side * n_side
+        ks: IntArray = np.arange(P, dtype=np.int64)
+        rings = [_blended_ring(layers[r + 1], boundary, float(tau),
+                               peri_pos, peri_inner)
+                 for r, tau in enumerate(fracs)]
+        for r, ring_lm in enumerate(rings):
+            overlays.append((q0 + r * P + ks, 1, ring_lm))          # outer side
+            if r + 1 < n_radial:
+                overlays.append((q0 + (r + 1) * P + ks, 3, ring_lm))  # inner side
+    qm = _elevate(qm, order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
 
@@ -312,7 +447,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     arc's per-segment ``element_tags``; a non-empty scalar ``wall_tag`` overrides
     that for the whole wall."""
     from .quadmesh import QuadMesh
-    apts = _check_boundary(arc, "half_ogrid arc", False, 5)   # (na,3) backing array
+    apts = _check_boundary(arc, "half_ogrid arc", 5)   # (na,3) backing array
     na = apts.shape[0]
     if (na - 1) % 4 != 0:
         raise ValueError("half_ogrid: arc must have 4*Ntheta+1 points (Ntheta >= 1)")
@@ -326,7 +461,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     # spine is meshed exactly: its points must be sampled monotonically along the
     # diameter, A1 (fraction 0) -> A2 (fraction 1) -- Nr north caps, then the 2Nt+1
     # center fan, then Nr south caps (see half_ogrid docstring for the fractions).
-    sp = _check_boundary(spine, "half_ogrid spine", False, 2)
+    sp = _check_boundary(spine, "half_ogrid spine", 2)
     n_spine = 2 * Nt + 1 + 2 * Nr
     if sp.shape[0] != n_spine:
         raise ValueError(
@@ -373,6 +508,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     peripts = points[peri, :]
 
     lid = [peri]
+    ring_pts: list[PointArray] = []
     for r in range(Nr):
         tau = radial[r + 1]                 # radial[0] == 0 is the block perimeter
         pts = (1 - tau) * peripts + tau * apts
@@ -381,6 +517,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
         base = points.shape[0]
         points = np.vstack([points, pts])
         lid.append(base + np.arange(pts.shape[0]))
+        ring_pts.append(pts)
 
     for r in range(Nr):
         a = lid[r]
@@ -403,13 +540,26 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
             names.append(nm)
     qm = QuadMesh.from_corners(points, np.array(quads, dtype=np.int64),
                                *QuadMesh._order_bnd(bnd, names))
-    # order-N: the wall arc (side 3 of the outer ring quads) follows the exact arc;
-    # the interior stays a straight order-N fill (overlay ignored at order 1, where
-    # _elevate is a no-op).  Elevate first, then smooth: a repositioning smoother
-    # rejects order > 1 (high-order smoothing not implemented).
-    overlays: list[Overlay] = [
-        (wall_q0 + np.arange(4 * Nt, dtype=np.int64), 3, arc)]
-    qm = _elevate(qm, arc.order, overlays)
+    # order-N: overlay **every** ring, not just the wall arc, so the arc's curvature
+    # is blended inward instead of dying one layer in.  The ring quad here is
+    # [a[k], a[k+1], b[k+1], b[k]] with b the outer layer, so the outer curve is
+    # side 3 (as the wall always was) and the inner curve is side 1 -- ring m is
+    # block m-1's side 3 *and* block m's side 1, and both incident copies must be
+    # stamped for the shared edge to conform.  ``_blended_ring`` re-anchors each ring
+    # on its snapped spine end points; the wall (tau == 1) reproduces ``arc`` exactly.
+    order = arc.order
+    overlays: list[Overlay] = []
+    if order > 1:
+        peri_inner = _straight_interior(peripts, arc.lines, order)
+        q0 = ni * nj
+        ks: IntArray = np.arange(4 * Nt, dtype=np.int64)
+        rings = [_blended_ring(ring_pts[r], arc, float(radial[r + 1]),
+                               peripts, peri_inner) for r in range(Nr)]
+        for r, ring_lm in enumerate(rings):
+            overlays.append((q0 + r * (4 * Nt) + ks, 3, ring_lm))          # outer
+            if r + 1 < Nr:
+                overlays.append((q0 + (r + 1) * (4 * Nt) + ks, 1, ring_lm))  # inner
+    qm = _elevate(qm, order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
 
@@ -438,7 +588,7 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
     ``smoothing_method`` repositions each half's interior before the merge."""
     from ..trimesh.ops import resample_polyline
     from .quadmesh import QuadMesh
-    bpts = _check_boundary(boundary, "spined_ogrid boundary", True, 8)
+    bpts = _check_boundary(boundary, "spined_ogrid boundary", 8)
     M = bpts.shape[0]
     if M % 8 != 0:
         raise ValueError(
@@ -459,7 +609,7 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
                          s_s + radial[1:] * (1.0 - s_s)])
     # default spine: the straight A1..A2 chord (boundary's two split points)
     sp = (bpts[[0, nh], :] if spine is None
-          else _check_boundary(spine, "spined_ogrid spine", False, 2))
+          else _check_boundary(spine, "spined_ogrid spine", 2))
     spn1 = resample_polyline(sp, fr)
     spn2 = resample_polyline(sp[::-1, :], fr)
 
@@ -470,7 +620,7 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
     # exact wall geometry natively -- no curved block anywhere.
     seg = boundary._seg_tags()
     o = boundary.order
-    inner: FloatArray = boundary.interior
+    inner: PointArray = boundary.interior
     arc1 = LineMesh.open(bpts[0:nh + 1, :],
                          element_tags=None if seg is None else seg[0:nh],
                          order=o, interior=inner[0:nh])
@@ -519,8 +669,8 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
     loft's near / far caps.  Gives ``N x (radial.size - 1)`` quads."""
     from .quadmesh import QuadMesh
     radial = validate_layers(radial, "annulus radial")
-    A: FloatArray = _check_boundary(inner, "annulus inner", True, 3)   # (N,3)
-    B: FloatArray = _check_boundary(outer, "annulus outer", True, 3)   # (N,3)
+    A: PointArray = _check_boundary(inner, "annulus inner", 3)   # (N,3)
+    B: PointArray = _check_boundary(outer, "annulus outer", 3)   # (N,3)
     if A.shape[0] != B.shape[0]:
         raise ValueError(
             "annulus: inner and outer loops must have equal point counts "

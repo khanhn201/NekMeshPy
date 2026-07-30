@@ -53,7 +53,7 @@ def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
     return np.where(good, sj, 0.0)
 
 
-def _ho_block(mesh: QuadMesh, order: int) -> FloatArray:
+def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
     """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample.
 
     The mesh's entity B-rep is walked
@@ -64,7 +64,7 @@ def _ho_block(mesh: QuadMesh, order: int) -> FloatArray:
     nodes, conn_ho = conform.conformal_quad(
         mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
         mesh.interior, order)
-    block: FloatArray = nodes[conn_ho]
+    block: PointArray = nodes[conn_ho]
     return block
 
 

@@ -46,8 +46,15 @@ N_SLICES_MAIN = 12            # cross-sections per main leg (hex layers = this -
 N_SLICES_BRANCH = 10          # cross-sections in the branch
 CENTER_SCALE = 0.5            # inner square-core size (fraction of the diameter)
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
-SMOOTHING_METHOD = "bilinear"    # per-section interior repositioning
-SMOOTH_ITERS = 8              # post-assembly untangle/polish sweeps (0 = off)
+SMOOTHING_METHOD = None    # per-section interior repositioning
+ORDER = 2                     # polynomial order; 1 = linear.  The seam arcs and
+                              # openings are meshed at ORDER, so .vtu renders the
+                              # curved walls (.re2 stays linear either way)
+# post-assembly untangle/polish sweeps (0 = off).  hexmesh.smoothing.smooth is
+# order-1 only (it moves corner nodes and would leave the curved nodes behind), so
+# it is switched off at ORDER > 1; the call below is kept so a reader can set
+# ORDER = 1 + SMOOTH_ITERS = 8 to exercise the STL-constrained wall polish.
+SMOOTH_ITERS = 0
 SMOOTH_LAMBDA = 0.5
 N_SURF = 48                   # tris per ring on the analytic wall (smoothing target)
 OUT_NAME = "circular_pipe_tjunction"
@@ -62,9 +69,13 @@ M = 2 * N_HALF                # points per full cross-section ring
 def arc_main_lower():
     """Main lower wall in plane ``x = 0`` (seam of the two main legs): the
     ``z <= 0`` semicircle of ``y^2 + z^2 = R^2``.  Constant-speed in angle, so the
-    arc-length-even samples are exactly the angle-even points (built analytically)."""
-    a = np.linspace(0.0, -np.pi, N_HALF + 1)
-    return np.column_stack([np.zeros_like(a), R * np.cos(a), R * np.sin(a)])
+    arc-length-even samples are exactly the angle-even points -- i.e. exactly what
+    :meth:`LineMesh.arc` places.  ``normal = -x`` gives the in-plane frame
+    ``e1 = +y``, ``e2 = -z``, so sweeping ``theta`` from ``0`` to ``pi`` walks
+    ``+y -> -z -> -y``; at ``ORDER > 1`` every GLL node lands on the exact circle
+    (an explicit point array would only be straight-subdivided between samples)."""
+    return LineMesh.arc(R, N_HALF, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+                        start_theta=0.0, end_theta=np.pi, order=ORDER)
 
 
 def arc_collar(xside):
@@ -72,11 +83,23 @@ def arc_collar(xside):
     branch): ``y^2+z^2 = x^2+y^2 = R^2``, ``z >= 0`` gives
     ``(xside*sqrt(R^2-y^2), y, sqrt(R^2-y^2))`` for ``y`` from ``+R -> -R``.  This
     Viviani curve has no closed-form arc length, so sample it densely and resample
-    by arc length to the exact ``N_HALF+1`` seam points."""
+    by arc length to the exact ``N_HALF+1`` seam points.  Unlike the main lower wall
+    there is no analytic factory for it, so at ``ORDER > 1`` its interior GLL nodes
+    are straight-subdivided between those samples -- honest for a numerically
+    sampled curve, and the reason ``N_HALF`` (not the order) sets its accuracy."""
     y = np.linspace(R, -R, 400)
     r = np.sqrt(np.maximum(R * R - y * y, 0.0))
     p = np.column_stack([xside * r, y, r])
-    return trimesh.ops.resample_polyline(p, np.linspace(0.0, 1.0, N_HALF + 1))
+    return LineMesh.open(
+        trimesh.ops.resample_polyline(p, np.linspace(0.0, 1.0, N_HALF + 1)),
+        order=ORDER)
+
+
+def reverse_arc(a):
+    """An open arc traversed the other way, carrying its high-order geometry: both
+    the element order and each element's own node order flip."""
+    return LineMesh.open(a.points[::-1], order=a.order,
+                         interior=None if a.order == 1 else a.interior[::-1, ::-1, :])
 
 
 def join_arcs(p, q):
@@ -84,7 +107,7 @@ def join_arcs(p, q):
     (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
     :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
     crossing."""
-    return LineMesh.merge([LineMesh.open(p), LineMesh.open(q[::-1])])
+    return LineMesh.merge([p, reverse_arc(q)])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------
@@ -93,17 +116,20 @@ def opening_main(x0):
     -y (index ``N_HALF``) -> +z, so its lower half matches ``arc_main_lower``
     index-for-index and its upper half the collar arc. ``normal = -x`` gives the
     in-plane frame ``e1 = +y``, ``e2 = -z``, so point ``k`` lands on
-    ``(0, R cos, -R sin)`` -- the required clockwise traversal from ``+y``."""
-    return LineMesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0)).points
+    ``(0, R cos, -R sin)`` -- the required clockwise traversal from ``+y``.
+    At ``ORDER > 1`` every GLL node lands on the exact circle."""
+    return LineMesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+                           order=ORDER)
 
 
 def opening_branch(z0):
     """Circle of radius ``R`` in plane ``z = z0``, traversed +y (index 0) -> -x ->
     -y -> +x, so its ``x <= 0`` half matches ``aLB`` and its ``x >= 0`` half
     ``aRB``. ``normal = +z`` gives ``e1 = +x``, ``e2 = +y``; the ``start_theta =
-    pi/2`` phase turns ``(cos, sin)`` into ``(-sin, cos)`` so index 0 is ``+y``."""
+    pi/2`` phase turns ``(cos, sin)`` into ``(-sin, cos)`` so index 0 is ``+y``.
+    At ``ORDER > 1`` every GLL node lands on the exact circle."""
     return LineMesh.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
-                           start_theta=np.pi / 2).points
+                           start_theta=np.pi / 2, order=ORDER)
 
 
 # -- leg builder: blend opening -> seam, O-grid each station across the spine --
@@ -112,8 +138,7 @@ def leg_slices(open_ring, seam_ring, n_slices):
     disc :meth:`QuadMesh.spined_ogrid`-ed over its natural straight A1..A2 diameter
     (two half-discs welded along it). End stations keep the raw algebraic fill;
     interior ones use ``SMOOTHING_METHOD``."""
-    loops = LineMesh.blend(LineMesh.loop(open_ring), seam_ring,
-                           np.linspace(0.0, 1.0, n_slices))
+    loops = LineMesh.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_slices))
     slices = []
     for s, loop in enumerate(loops):
         m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None

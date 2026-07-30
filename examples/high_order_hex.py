@@ -29,7 +29,7 @@ R = 1.0                      # inner sphere radius
 S = 3.0                      # outer cube half-side
 N_FACE = 2                   # cells per cube-face axis (6 * N_FACE**2 surface quads)
 N_RADIAL = 2                 # radial shell layers sphere -> cube
-ORDER = 4                    # polynomial order: (ORDER+1)**3 GLL nodes per hex
+ORDER = 2                    # polynomial order: (ORDER+1)**3 GLL nodes per hex
 OUT_NAME = "high_order_hex"
 
 # boundary name -> Nek BC code, applied only at export

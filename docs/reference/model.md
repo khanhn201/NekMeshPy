@@ -1,7 +1,10 @@
 # `model`
 
 The mesh-agnostic model: the shared-point `Mesh`, physical groups, topology
-checks, and sizing fields.
+checks, and sizing fields. The order-N kernel — `model.interp` (numerics over GLL
+reference nodes) and `model.conform` (topology / orientation / reconciliation
+behind the B-rep) — is internal; see
+[Concepts](../user/concepts.md#high-order-order-n-elements).
 
 ## `model.mesh`
 

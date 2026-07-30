@@ -35,7 +35,9 @@ N_THETA = 24                 # azimuthal cells around the cylinder
 N_RADIAL = 24                # radial cells from cylinder out to the box
 RADIAL_GRADING = 1.2        # >1 clusters radial layers toward the cylinder
 N_SPAN = 4                   # hex layers across the span
-ORDER = 5                    # polynomial order; 1 = linear. High order bows the
+ORDER = 2                    # polynomial order; 1 = linear. High order bows the
+                             # ring's inner wall onto the true circle (curved
+                             # .vtu; .re2 stays linear either way)
 SMOOTHING_METHOD = None  # per-section interior repositioning
 OUT_NAME = "flow_past_cylinder"
 

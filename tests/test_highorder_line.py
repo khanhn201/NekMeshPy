@@ -152,7 +152,9 @@ def test_vtu_high_order_is_lagrange_curve(tmp_path):
 def test_high_order_curve_example_matches_golden(tmp_path):
     ns = run_example("high_order_curve.py", tmp_path)
     mesh = ns["mesh"]
-    assert isinstance(mesh, LineMesh) and mesh.order == 5
+    # the example's own ORDER constant is the contract -- read it back rather
+    # than pinning a literal here, so the two can never drift apart.
+    assert isinstance(mesh, LineMesh) and mesh.order == ns["ORDER"] > 1
     with open(os.path.join(tmp_path, "high_order_curve.vtu"), "rb") as f:
         got = f.read()
     with open(os.path.join(GOLDEN, "high_order_curve.vtu"), "rb") as f:

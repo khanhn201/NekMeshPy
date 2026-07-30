@@ -23,11 +23,44 @@ It is then available via `smoothing_method="my_method"` and appears in the
 
 ## A new cross-section factory
 
-Add a `QuadMesh` classmethod that fills a boundary loop with quads and returns a
-`QuadMesh` carrying `boundaries` / `boundary_tags`. Follow the existing factories:
-read wall tags from the input `LineMesh` at the lowest level, accept a scalar
-override arg (upper overrides lower), and build **natively in 3-D** — never flatten
-to `xy`.
+Factories are **plain free functions** (no `cls` / `self`) that live beside the
+container and are bound onto the class by the package `__init__`. Adding one touches
+exactly one file: write the function in `quadmesh/_open.py` (region fills, open
+curves) or `quadmesh/_closed.py` (parametric closed surfaces) and add one entry to
+that module's `FACTORIES` dict. The binding loop in `quadmesh/__init__.py` picks it
+up, so `QuadMesh.my_factory(...)` works with no edit to `quadmesh.py`. Line factories
+work the same way in `linemesh/_open.py` / `_closed.py`. Internal toolkit code calls
+the free function directly (`from ._open import ogrid`) — `mypy` pins
+`files=["nekmeshpy"]` and cannot see the dynamically bound names.
+
+Return a `QuadMesh` carrying `boundaries` / `boundary_tags`. Follow the existing
+factories: read wall tags from the input `LineMesh` at the lowest level, accept a
+scalar override arg (upper overrides lower), and build **natively in 3-D** — never
+flatten to `xy`.
+
+### Supporting `order=N`
+
+Take an `order: int = 1` keyword and decide which of the two node-placement
+strategies your factory offers (see
+[Concepts](../user/concepts.md#true-geometry-vs-straight-subdivision)):
+
+- **Analytic shape you own** — evaluate the shape at the interior GLL parameters and
+  pass the resulting nodes explicitly (`LineMesh.circle` / `LineMesh.arc` hand `loft` an
+  `interior` computed on the exact arc; `QuadMesh.sphere` / `QuadMesh.hemisphere`
+  project the cube's / half box's whole B-rep — `points`, `lines.interior`, `interior` —
+  radially). Apply the map **entity-wise**, never to a reassembled per-element block: a
+  shared edge must land in the same place seen from either incident element.
+- **Region fill from given points** — build the linear mesh, then call
+  `_elevate(qm, order, overlays)` from `quadmesh/_helpers.py`. It fills a straight
+  tensor-subdivided interior and stamps any `Overlay` `(quad ids, local side, curve)`
+  you pass onto that side, so a curved input wall survives elevation. Pass one overlay
+  per bounding wall (`structured` does all four sides; `ogrid` / `half_ogrid` their
+  outer ring), mapping each curve interval to the element it bounds. Elevate
+  **before** smoothing, so a repositioning smoother sees the true order and raises
+  cleanly.
+
+Reject a mismatched `order` across your inputs, and remember `order == 1` must be a
+byte-exact no-op — the golden regression depends on it.
 
 ## A new geometry mesher
 
