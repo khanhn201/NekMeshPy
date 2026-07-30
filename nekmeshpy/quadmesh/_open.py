@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import CurvedBlock, FloatArray, IntArray, Point, PointArray, StrArray
+from .._typing import FloatArray, IntArray, Point, PointArray, StrArray
 from ..linemesh import LineMesh
 from ..linemesh._open import line
 from ..model.fields import validate_layers
@@ -284,7 +284,7 @@ def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
     # order 1, where _elevate is a no-op).  Elevate first, then smooth: a
     # repositioning smoother rejects order > 1 (high-order smoothing not implemented).
     overlays: list[Overlay] = [
-        (wall_q0 + np.arange(P, dtype=np.int64), 1, boundary.curved)]
+        (wall_q0 + np.arange(P, dtype=np.int64), 1, boundary)]
     qm = _elevate(qm, boundary.order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
@@ -408,7 +408,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     # _elevate is a no-op).  Elevate first, then smooth: a repositioning smoother
     # rejects order > 1 (high-order smoothing not implemented).
     overlays: list[Overlay] = [
-        (wall_q0 + np.arange(4 * Nt, dtype=np.int64), 3, arc.curved)]
+        (wall_q0 + np.arange(4 * Nt, dtype=np.int64), 3, arc)]
     qm = _elevate(qm, arc.order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
@@ -465,17 +465,18 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
 
     # split the loop (and its per-segment tags) into the two half arcs: arc1 runs
     # A1 -> A2 over segments [0, nh), arc2 runs A2 -> A1 over segments [nh, M).
-    # order-N: the loop's per-segment curved blocks split the same way, so each
-    # half arc carries its exact wall geometry.
+    # order-N: the loop's per-line private ``interior`` nodes split the same way (a
+    # line element shares nothing but its endpoints), so each half arc carries its
+    # exact wall geometry natively -- no curved block anywhere.
     seg = boundary._seg_tags()
     o = boundary.order
-    cv: CurvedBlock | None = boundary.curved
+    inner: FloatArray = boundary.interior
     arc1 = LineMesh.open(bpts[0:nh + 1, :],
                          element_tags=None if seg is None else seg[0:nh],
-                         order=o, curved=None if cv is None else cv[0:nh])
+                         order=o, interior=inner[0:nh])
     arc2 = LineMesh.open(np.vstack([bpts[nh:M, :], bpts[0:1, :]]),
                          element_tags=None if seg is None else seg[nh:M],
-                         order=o, curved=None if cv is None else cv[nh:M])
+                         order=o, interior=inner[nh:M])
     h1 = half_ogrid(arc1, LineMesh.open(spn1), radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
     h2 = half_ogrid(arc2, LineMesh.open(spn2), radial, center_scale=center_scale,

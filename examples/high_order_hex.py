@@ -46,14 +46,19 @@ sphere = QuadMesh.sphere(R, N_FACE, order=ORDER)
 # -- fill the shell sphere -> cube -------------------------------------------
 mesh = HexMesh.annulus(sphere, cube, radial=np.linspace(0.0, 1.0, N_RADIAL + 1))
 
-# inner-wall nodes sit on the true sphere, to machine precision
-from nekmeshpy.model.interp import hex_face_indices  # noqa: E402
-
-fidx = hex_face_indices(5, ORDER)                    # face 5 = inner (sphere) wall
+# inner-wall nodes sit on the true sphere, to machine precision.  The wall is a
+# set of *shared faces* in the hex B-rep, so read it straight off the entities:
+# ``mesh.hex`` maps each hex's 6 local faces to face ids in ``mesh.quads`` (the
+# QuadMesh of unique faces), whose own B-rep holds the corner points, the shared
+# edge nodes, and each face's private interior nodes.
 rc = np.linalg.norm(mesh.points[mesh.hexes], axis=2)
 inner = np.all(np.isclose(rc[:, HexMesh.FACE_POINTS[4]], R, atol=1e-9), axis=1)
-wall = mesh.curved[np.where(inner)[0][:, None], fidx[None, :], :]
-radii = np.linalg.norm(wall.reshape(-1, 3), axis=1)
+faces = mesh.quads                                   # shared-face B-rep
+fid = mesh.hex[inner, 4]                             # face 5 = inner (sphere) wall
+radii = np.linalg.norm(np.vstack([
+    faces.points[faces.quads[fid]].reshape(-1, 3),          # face corners
+    faces.lines.interior[faces.quad[fid]].reshape(-1, 3),   # shared edge nodes
+    faces.interior[fid].reshape(-1, 3)]), axis=1)           # private face nodes
 _log.info("order-%d shell: %d hexes, %d nodes/hex",
           mesh.order, mesh.n_hexes, (ORDER + 1) ** 3)
 _log.info("inner-wall node radius: min=%.15f max=%.15f (target %.1f)",

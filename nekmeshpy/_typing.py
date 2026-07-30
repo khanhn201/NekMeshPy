@@ -23,7 +23,6 @@ StrArray = NDArray[np.str_]         # per-element string labels (boundary names)
 Point = NDArray[np.float64]        # a single (3,) location
 Vec3 = NDArray[np.float64]         # a single (3,) direction/vector
 PointArray = NDArray[np.float64]   # a (P,3) array of point coordinates
-CurvedBlock = NDArray[np.float64]  # per-element high-order nodes (E,(N+1)^d,3)
 
 __all__ = ["FloatArray", "IntArray", "BoolArray", "StrArray",
-           "Point", "Vec3", "PointArray", "CurvedBlock"]
+           "Point", "Vec3", "PointArray"]

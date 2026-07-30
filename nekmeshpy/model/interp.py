@@ -1,21 +1,20 @@
 """Shared order-N interpolation kernel (tensor-product Lagrange on GLL nodes).
 
-The high-order geometry of every container rides as a per-element ``curved`` block
-of shape ``(E, (N+1)**d, 3)`` in **lexicographic (i,j,k) order with i fastest** at
-the :func:`~nekmeshpy.model.fields.gll_nodes` reference positions.  This module holds
-the dimension-general primitives that build and combine those blocks, so the order-N
-logic lives in one place and each factory contributes only its geometry map:
+Order-N geometry is stored as an entity B-rep (see :mod:`nekmeshpy.model.conform`);
+where a *per-element* view is needed -- the ``(E,(N+1)**d,3)`` node block in
+**lexicographic (i,j,k) order with i fastest** at the
+:func:`~nekmeshpy.model.fields.gll_nodes` reference positions -- it is gathered
+transiently from that B-rep.  This module holds the dimension-general primitives that
+build and combine such blocks, so the order-N logic lives in one place and each
+factory contributes only its geometry map:
 
 * :func:`tensor_nodes` -- the ``(N+1)**d`` reference lattice.
 * :func:`corner_indices` -- the ``2**d`` corner slots in the element's connectivity
   winding order (line ``[v0,v1]``, quad CCW, hex Nek).  Corners are owned by
-  ``points[conn]``; the non-corner nodes are decomposed into topological entities by
-  :mod:`nekmeshpy.model.conform`, which splits a full block into edge / face / interior
-  tables and reassembles it (the conformal storage behind every container's ``curved``).
+  ``points[conn]``; the non-corner nodes are decomposed into topological entities
+  (shared edges / faces + private interiors) by :mod:`nekmeshpy.model.conform`.
 * :func:`subdivide_element` -- straight multilinear subdivision through the corners
-  (the internal "elevate" atom; the workhorse for straight-sided factories).
-* :func:`subdivide_quads` / :func:`subdivide_hexes` -- the vectorized quad-/hex-mesh
-  forms of the above.
+  (the "elevate" atom for straight-sided factories).
 * :func:`quad_edge_indices` / :func:`hex_edge_indices` -- the block slots along a quad
   side / hex edge, for overlaying a true boundary curve and for entity decomposition.
 * :func:`hex_face_indices` -- the block slots on a hex face, for tagging boundary nodes.
@@ -32,7 +31,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .._typing import CurvedBlock, FloatArray, IntArray, PointArray
+from .._typing import FloatArray, IntArray, PointArray
 from .fields import gll_nodes, lagrange_derivative_matrix
 
 # Corner parametric tuples (0 = node 0, 1 = node N along that axis) in the
@@ -75,7 +74,7 @@ def corner_indices(order: int, dim: int) -> IntArray:
     return np.array(idx, dtype=np.int64)
 
 
-def subdivide_element(corners: PointArray, order: int, dim: int) -> CurvedBlock:
+def subdivide_element(corners: PointArray, order: int, dim: int) -> FloatArray:
     """Straight-sided order-N block: multilinear map of the reference lattice through
     the ``2**dim`` ``corners`` (given in connectivity winding order).  Returns
     ``((order+1)**dim, 3)`` in lexicographic order.  At ``order == 1`` the block is
@@ -86,7 +85,7 @@ def subdivide_element(corners: PointArray, order: int, dim: int) -> CurvedBlock:
                          % (2 ** dim, dim, c.shape[0]))
     params = tensor_nodes(order, dim)                 # (M, dim) in [0,1]
     m = params.shape[0]
-    out: CurvedBlock = np.zeros((m, 3))
+    out: FloatArray = np.zeros((m, 3))
     for ci, bits in enumerate(_CORNER_IJK[dim]):
         w = np.ones(m)
         for a in range(dim):
@@ -94,55 +93,6 @@ def subdivide_element(corners: PointArray, order: int, dim: int) -> CurvedBlock:
             w *= u if bits[a] else (1.0 - u)
         out += w[:, None] * c[ci]
     return out
-
-
-def straight_edges(corners_a: PointArray, corners_b: PointArray,
-                   order: int) -> CurvedBlock:
-    """Per-line high-order block ``(L, order+1, 3)`` for ``L`` **straight** segments
-    ``corners_a[l] -> corners_b[l]``: the GLL nodes placed on each straight edge.
-    The dim-1 vectorized form of :func:`subdivide_element`; its endpoint nodes are
-    exactly ``corners_a`` / ``corners_b`` (corner-consistent for a ``LineMesh``)."""
-    g = gll_nodes(order)                              # (order+1,) in [0,1]
-    a = np.asarray(corners_a, dtype=float).reshape(-1, 3)
-    b = np.asarray(corners_b, dtype=float).reshape(-1, 3)
-    return a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
-
-
-def subdivide_quads(points: PointArray, quads: IntArray,
-                    order: int) -> CurvedBlock:
-    """Straight-sided order-N block for a whole quad mesh: bilinear subdivision of
-    each quad's four CCW corners onto the reference lattice.  Returns
-    ``(Q, (order+1)**2, 3)`` in lexicographic order (``i`` fastest), corner-consistent
-    with ``points[quads]`` by construction.  The vectorized :func:`subdivide_element`
-    over every quad -- the workhorse behind order-N region fills."""
-    c = points[quads]                                     # (Q,4,3) CCW corners
-    params = tensor_nodes(order, 2)                       # (M,2) in [0,1], i fastest
-    u = params[:, 0]
-    v = params[:, 1]
-    # weights in _CORNER_IJK[2] order [(0,0),(1,0),(1,1),(0,1)] == quad CCW
-    W = np.stack([(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v], axis=1)
-    return np.einsum("mk,qkd->qmd", W, c)                 # (Q,M,3)
-
-
-def subdivide_hexes(points: PointArray, hexes: IntArray,
-                    order: int) -> CurvedBlock:
-    """Straight-sided order-N block for a whole hex mesh: trilinear subdivision of
-    each hex's eight Nek-order corners onto the reference lattice.  Returns
-    ``(H, (order+1)**3, 3)`` in lexicographic order (``i`` fastest), corner-consistent
-    with ``points[hexes]`` by construction.  The vectorized :func:`subdivide_element`
-    over every hex."""
-    c = points[hexes]                                     # (H,8,3) Nek corners
-    params = tensor_nodes(order, 3)                       # (M,3) in [0,1], i fastest
-    u = params[:, 0]
-    v = params[:, 1]
-    w = params[:, 2]
-    # weights in _CORNER_IJK[3] order (bottom quad CCW, then top quad CCW)
-    W = np.stack([
-        (1 - u) * (1 - v) * (1 - w), u * (1 - v) * (1 - w),
-        u * v * (1 - w), (1 - u) * v * (1 - w),
-        (1 - u) * (1 - v) * w, u * (1 - v) * w,
-        u * v * w, (1 - u) * v * w], axis=1)              # (M,8)
-    return np.einsum("mk,hkd->hmd", W, c)                 # (H,M,3)
 
 
 def hex_face_indices(face: int, order: int) -> IntArray:
@@ -231,12 +181,12 @@ def coons_grid(cb: PointArray, ct: PointArray, cl: PointArray, cr: PointArray,
                + (1 - uu) * vv * P01 + uu * vv * P11))
 
 
-def blend_ho(a: CurvedBlock, b: CurvedBlock, t: float) -> CurvedBlock:
+def blend_ho(a: FloatArray, b: FloatArray, t: float) -> FloatArray:
     """``(1-t)*a + t*b`` on two index-paired high-order blocks."""
     return (1.0 - t) * a + t * b
 
 
-def _element_tangents(curved: CurvedBlock, order: int,
+def _element_tangents(curved: FloatArray, order: int,
                       dim: int) -> tuple[FloatArray, ...]:
     """The ``dim`` parametric tangent vectors of each element's mapping, evaluated at
     every one of its ``(order+1)**dim`` GLL nodes.  Returns ``dim`` arrays of shape
@@ -261,7 +211,7 @@ def _element_tangents(curved: CurvedBlock, order: int,
     raise ValueError("scaled-Jacobian metric supports dim 2 or 3, got %d" % dim)
 
 
-def scaled_jacobian_ho(curved: CurvedBlock, order: int, dim: int) -> FloatArray:
+def scaled_jacobian_ho(curved: FloatArray, order: int, dim: int) -> FloatArray:
     """Per-element minimum scaled Jacobian sampled at the ``(order+1)**dim`` GLL nodes
     of a ``curved`` block, shape ``(E,)``.
 

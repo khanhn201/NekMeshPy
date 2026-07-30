@@ -14,9 +14,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import Point, PointArray, StrArray, Vec3
+from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
 from ..model.fields import gll_nodes
-from ..model.interp import straight_edges
 from ._plane import _in_plane_axes
 
 if TYPE_CHECKING:
@@ -41,7 +40,10 @@ def circle(radius: float, n: int, *,
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     each arc element carries ``order+1`` GLL nodes placed on the **true circle**
-    (not the chord), so a high-order ``vtu`` export renders the exact arc."""
+    (not the chord) -- the two endpoints are the corners in ``points`` and the
+    ``order-1`` nodes strictly between them are built here, still on the exact
+    circle, as the element's private ``interior``, so a high-order ``vtu`` export
+    renders the exact arc."""
     from .linemesh import LineMesh
     th = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) + float(start_theta)
     c: Point = np.asarray(center, dtype=float).ravel()
@@ -50,14 +52,15 @@ def circle(radius: float, n: int, *,
     lm = LineMesh.loop(c + local, element_tags)
     if order == 1:
         return lm
-    # element l spans angle th[l] .. th[l] + dth; place GLL nodes on the arc.
+    # element l spans angle th[l] .. th[l] + dth; place the interior GLL nodes on
+    # the arc (the two endpoint nodes are already the loop's corner points).
     dth = 2.0 * np.pi / n
-    ang = th[:, None] + gll_nodes(order)[None, :] * dth          # (n, order+1)
+    ang = th[:, None] + gll_nodes(order)[1:order][None, :] * dth   # (n, order-1)
     arc = (radius * np.cos(ang)[:, :, None] * e1
-           + radius * np.sin(ang)[:, :, None] * e2)              # (n, order+1, 3)
-    curved: PointArray = c + arc
+           + radius * np.sin(ang)[:, :, None] * e2)                # (n, order-1, 3)
+    interior: FloatArray = c + arc
     return LineMesh(lm.points, lm.lines, lm.element_tags, lm.boundaries,
-                    lm.boundary_tags, closed=True, order=order, curved=curved)
+                    lm.boundary_tags, closed=True, order=order, interior=interior)
 
 
 def rectangle(width: float, height: float, n: int, *,
@@ -82,8 +85,10 @@ def rectangle(width: float, height: float, n: int, *,
     line elements; ``side_tags=None`` leaves the loop untagged.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
-    each element carries ``order+1`` GLL nodes on its straight side (the
-    ``curved`` block read by high-order ``vtu`` export)."""
+    each element carries ``order+1`` GLL nodes on its straight side -- the two
+    endpoints are the corners in ``points`` and the ``order-1`` nodes strictly
+    between them are built here as the element's private ``interior`` (read by
+    high-order ``vtu`` export)."""
     from .linemesh import LineMesh
     ni = int(n)
     if ni < 4 or ni % 4 != 0:
@@ -113,10 +118,12 @@ def rectangle(width: float, height: float, n: int, *,
     lm = LineMesh.loop(pts, tags)
     if order == 1:
         return lm
-    curved = straight_edges(lm.points[lm.lines[:, 0]],
-                            lm.points[lm.lines[:, 1]], order)
+    a: PointArray = lm.points[lm.lines[:, 0]]
+    b: PointArray = lm.points[lm.lines[:, 1]]
+    g = gll_nodes(order)[1:order]                     # interior GLL nodes only
+    interior: FloatArray = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
     return LineMesh(lm.points, lm.lines, lm.element_tags, lm.boundaries,
-                    lm.boundary_tags, closed=True, order=order, curved=curved)
+                    lm.boundary_tags, closed=True, order=order, interior=interior)
 
 
 #: Closed-loop shape factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.

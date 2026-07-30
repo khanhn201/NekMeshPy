@@ -24,7 +24,6 @@ import numpy as np
 
 from .._typing import (
     BoolArray,
-    CurvedBlock,
     FloatArray,
     IntArray,
     Point,
@@ -36,9 +35,8 @@ from ..linemesh import LineMesh
 from ..model import conform
 from ..model.fields import gll_nodes, validate_layers
 from ..model.interp import (
-    blend_ho,
-    corner_indices,
-    subdivide_quads,
+    quad_edge_indices,
+    tensor_nodes,
 )
 
 #: Boundary-name sentinel meaning "not a boundary": a side carrying this name emits
@@ -56,6 +54,49 @@ _GRID_EDGES = {
 }
 
 
+# -- entity slots of the lexicographic quad block -----------------------
+def _edge_interior_slots(order: int) -> IntArray:
+    """``(4, order-1)`` lexicographic (``i`` fastest) block slots strictly inside each
+    CCW local edge, in **element traversal order** (that edge's start corner -> end
+    corner) -- the frame
+    :func:`~nekmeshpy.model.conform.scatter_edge_nodes` expects."""
+    return np.stack([quad_edge_indices(s, order)[1:-1] for s in (1, 2, 3, 4)])
+
+
+def _quad_interior_slots(order: int) -> IntArray:
+    """``((order-1)**2,)`` lexicographic block slots strictly interior to the quad
+    (interior on **both** axes) -- the private per-quad nodes, in the same ascending
+    slot order the container's ``interior`` is stored in."""
+    row = order + 1
+    m: IntArray = np.arange(row * row, dtype=np.int64)
+    i, j = m % row, m // row
+    return m[(i > 0) & (i < order) & (j > 0) & (j < order)]
+
+
+def _coons_at(bottom: FloatArray, top: FloatArray, left: FloatArray,
+              right: FloatArray, g: FloatArray, ii: IntArray,
+              jj: IntArray) -> FloatArray:
+    """A loft column's transfinite (Coons) patch evaluated at the block slots whose
+    lattice coordinates are ``(ii, jj)`` -- ``i`` the profile axis, ``j`` the sweep axis.
+
+    ``bottom`` / ``top`` are the ``(Q, order+1, 3)`` profile curves at the column's two
+    bounding levels; ``left`` / ``right`` the straight GLL sweeps at its two profile
+    corners.  Returns ``(Q, len(ii), 3)``: the same elementwise expression the full
+    ``(Q, order+1, order+1, 3)`` patch uses, restricted to the requested slots, so the
+    entity nodes are bit-identical to the corresponding slices of that patch."""
+    uu = g[ii].reshape(1, -1, 1)
+    vv = g[jj].reshape(1, -1, 1)
+    bo, tp = bottom[:, ii, :], top[:, ii, :]
+    lf, rt = left[:, jj, :], right[:, jj, :]
+    P00, P10 = bottom[:, 0], bottom[:, -1]
+    P01, P11 = top[:, 0], top[:, -1]
+    return ((1 - vv) * bo + vv * tp + (1 - uu) * lf + uu * rt
+            - ((1 - uu) * (1 - vv) * P00[:, None, :]
+               + uu * (1 - vv) * P10[:, None, :]
+               + (1 - uu) * vv * P01[:, None, :]
+               + uu * vv * P11[:, None, :]))
+
+
 class QuadMesh:
     """A quadrilateral surface / cross-section mesh in **B-rep** form.
 
@@ -65,8 +106,8 @@ class QuadMesh:
     ``flip`` ``(Q,4)`` orientation bit, and private per-quad ``interior`` nodes.  A
     shared edge is thus literally one stored object referenced by every incident quad
     (structural conformality), exactly as corners are one row of ``points``.  The
-    familiar ``points`` ``(P,3)`` / ``quads`` ``(Q,4)`` CCW connectivity / ``curved``
-    views are **derived** on read; build from corners with :meth:`from_corners`.  Also
+    familiar ``points`` ``(P,3)`` / ``quads`` ``(Q,4)`` CCW connectivity views are
+    **derived** on read; build from corners with :meth:`from_corners`.  Also
     carries a dense per-quad ``element_tags`` and a sparse tagged-boundary list
     ``boundaries`` ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a parallel
     ``boundary_tags``."""
@@ -93,11 +134,13 @@ class QuadMesh:
         ``element_tags`` ``(Q,)`` and a tagged-boundary list ``boundaries`` ``(Nbc,2)``
         = ``[quad id, side 1-4]`` with a parallel ``boundary_tags``.
 
-        ``.points`` / ``.quads`` / ``.curved`` are **derived** views over this B-rep, so
-        a shared edge is literally one stored object referenced by every incident quad
-        (structural conformality).  Prefer :meth:`from_corners` to build from corner
-        points + quad connectivity; the factories all route through it.  ``re2`` export
-        stays linear; only ``vtu`` reads the curved nodes."""
+        ``.points`` / ``.quads`` are **derived** views over this B-rep, so a shared
+        edge is literally one stored object referenced by every incident quad
+        (structural conformality).  :meth:`from_corners` is the linear
+        corner -> B-rep bridge for callers that only hold corner connectivity; a
+        caller that already owns the edge ``LineMesh`` (``loft``, ``blend``, the
+        section factories) builds through here directly and nothing is re-derived.
+        ``re2`` export stays linear; only ``vtu`` reads the high-order nodes."""
         if not isinstance(lines, LineMesh):
             raise TypeError("QuadMesh: lines must be a LineMesh, got %s"
                             % type(lines).__name__)
@@ -147,7 +190,7 @@ class QuadMesh:
 
         # corner connectivity is derived from quad/flip and immutable post-construction
         # (point moves don't change it), so memoize it once.
-        self._quads: IntArray = self._derive_quads()
+        self._corners: IntArray = self._derive_corners()
 
     # local quad edges (CCW); row e is edge e+1
     EDGE_POINTS = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)
@@ -162,38 +205,37 @@ class QuadMesh:
         element_tags: StrArray | Sequence[str] | None = None,
         *,
         order: int = 1,
-        curved: CurvedBlock | None = None,
     ) -> QuadMesh:
-        """Build a ``QuadMesh`` from corner ``points`` ``(P,3)`` + CCW ``quads``
-        ``(Q,4)`` connectivity -- the corner -> B-rep bridge every factory routes
-        through.  Decomposes the shared edges with
-        ``conform.unique_edges`` (lossless, so ``.quads`` round-trips
-        the input exactly) and, at ``order > 1``, validates + scatters the ``curved``
-        block ``(Q,(order+1)**2,3)`` via ``conform.split`` (shape +
-        corner-consistency, owner-wins edge nodes).  Same signature and semantics as the
-        old array constructor."""
+        """Build a **linear** ``QuadMesh`` from corner ``points`` ``(P,3)`` + CCW
+        ``quads`` ``(Q,4)`` connectivity -- the corner -> B-rep bridge every factory
+        routes through.  Decomposes the shared edges with ``conform.unique_edges``
+        (lossless, so ``.quads`` round-trips the input exactly).
+
+        Corners are all a linear mesh has, so this is an ``order == 1`` constructor:
+        at ``order > 1`` there is no way to invent the shared edge / private interior
+        nodes without silently straight-subdividing, so it raises.  Build with a
+        factory (``ogrid`` / ``structured`` / ``box`` / ``sphere`` / ``loft`` / ...) at
+        ``order=N``, which places those nodes on the true geometry, or construct
+        ``QuadMesh(lines, quad, flip, interior, ..., order=N)`` directly from the
+        entity fields if you already hold them."""
+        if order != 1:
+            raise ValueError(
+                "QuadMesh.from_corners builds the linear (order 1) B-rep from corner "
+                "points alone; got order=%d, whose shared edge / private interior "
+                "nodes it cannot know. Build with a factory at order=%d (e.g. "
+                "QuadMesh.ogrid(..., order=%d) or QuadMesh.loft(slices) from order-%d "
+                "profiles), which places those nodes on the true geometry, or "
+                "construct QuadMesh(lines, quad, flip, interior=..., order=%d) "
+                "directly from the entity fields."
+                % (order, order, order, order, order))
         pts: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
         conn: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
-        interior: FloatArray | None
-        if order > 1:
-            t = conform.split(order, curved, pts, conn, 2, "QuadMesh")
-            edges, elem_edges, flip = t.edges, t.elem_edges, t.edge_flip
-            eb: CurvedBlock = np.empty((edges.shape[0], order + 1, 3), dtype=float)
-            eb[:, corner_indices(order, 1), :] = pts[edges]
-            eb[:, 1:order, :] = t.edge_nodes
-            lm = LineMesh(pts, edges, order=order, curved=eb)
-            interior = t.interior
-        else:
-            # order 1: split still validates curved (corner-consistency) but returns
-            # empty tables, so take the real edge topology from unique_edges.
-            conform.split(order, curved, pts, conn, 2, "QuadMesh")
-            edges, elem_edges, flip = conform.unique_edges(conn, 2)
-            lm = LineMesh(pts, edges)
-            interior = None
-        return cls(lm, elem_edges, flip, interior, boundaries, boundary_tags,
-                   element_tags, order=order)
+        edges, elem_edges, flip = conform.unique_edges(conn, 2)
+        lm = LineMesh(pts, edges)
+        return cls(lm, elem_edges, flip, None, boundaries, boundary_tags,
+                   element_tags, order=1)
 
-    def _derive_quads(self) -> IntArray:
+    def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(Q,4)`` recovered from the edge indices + flip: column
         ``k`` of quad ``q`` is the directed **start** of its local edge ``k`` --
         ``lines.lines[quad[q,k], 1 if flip[q,k] else 0]``.  Lossless inverse of
@@ -203,25 +245,6 @@ class QuadMesh:
         eid = self.quad                                # (Q,4) edge ids
         start = np.where(self.flip, ln[eid, 1], ln[eid, 0])   # (Q,4)
         return start.astype(np.int64)
-
-    def _tables(self) -> conform.EntityTables:
-        """A transient :class:`~nekmeshpy.model.conform.EntityTables` assembled from the
-        stored B-rep fields -- the vehicle for the tested ``assemble`` / ``to_conformal``
-        readers (not storage).  Faces are empty (a quad mesh has no shared faces)."""
-        order = self._order
-        Q = self.quad.shape[0]
-        k = max(order - 1, 0)
-        return conform.EntityTables(
-            order=order, dim=2,
-            edges=self.lines.lines,
-            edge_nodes=self.lines.interior,
-            elem_edges=self.quad,
-            edge_flip=self.flip,
-            faces=np.zeros((0, 4), np.int64),
-            face_nodes=np.zeros((0, k * k, 3), float),
-            elem_faces=np.zeros((Q, 0), np.int64),
-            face_orient=np.zeros((Q, 0), np.int64),
-            interior=self.interior)
 
     @property
     def order(self) -> int:
@@ -240,16 +263,7 @@ class QuadMesh:
         """``(Q,4)`` CCW corner connectivity, derived (memoized) from the stored edge
         indices + flip.  Read-only; the B-rep ``quad`` / ``flip`` are the source of
         truth."""
-        return self._quads
-
-    @property
-    def curved(self) -> CurvedBlock:
-        """The full high-order node block ``(Q, (order+1)**2, 3)`` in lexicographic GLL
-        order (``i`` fastest), reassembled on read from the authoritative corners
-        ``points[quads]`` and the stored shared-edge / private-interior nodes -- so
-        corners are never duplicated and an in-place ``points`` edit is reflected.  At
-        order 1 it holds the 4 corners."""
-        return conform.assemble(self._tables(), self.points, self.quads)
+        return self._corners
 
     @property
     def edges(self) -> IntArray:
@@ -259,19 +273,11 @@ class QuadMesh:
         return self.lines.lines
 
     @property
-    def edge_nodes(self) -> CurvedBlock:
+    def edge_nodes(self) -> FloatArray:
         """``(Ne, order-1, 3)`` shared high-order interior nodes of each unique
         :attr:`edges` entry, in canonical (min->max corner) order.  Empty at order 1;
         a shared edge resolves to the same nodes from either incident quad."""
         return self.lines.interior
-
-    def to_conformal(self) -> tuple[PointArray, IntArray]:
-        """Conformal high-order view ``(nodes (M,3), conn (Q,(order+1)**2))``: every
-        node (corner, shared edge-interior, private interior) numbered once in one
-        global array with dense per-quad connectivity into it -- the high-order analog
-        of ``points`` + ``quads``.  At order 1 this is ``points`` + ``quads`` in
-        lexicographic block order."""
-        return conform.to_conformal(self._tables(), self.points, self.quads)
 
     @property
     def n_points(self) -> int:
@@ -308,7 +314,7 @@ class QuadMesh:
         order 1 the two agree."""
         from . import quality
         if high_order:
-            return quality.scaled_jacobian_ho(self.curved, self.order)
+            return quality.scaled_jacobian_ho(self, self.order)
         return quality.scaled_jacobian(self.points, self.quads)
 
     def quality_summary(self, *, high_order: bool = False) -> dict[str, Any]:
@@ -316,7 +322,7 @@ class QuadMesh:
         ``high_order`` flag)."""
         from . import quality
         if high_order:
-            return quality.summary_ho(self.curved, self.order)
+            return quality.summary_ho(self, self.order)
         return quality.summary(self.points, self.quads)
 
     @staticmethod
@@ -417,17 +423,28 @@ class QuadMesh:
         names = np.concatenate(name_list) if name_list else np.empty(0, dtype=np.str_)
         b_ord, n_ord = cls._order_bnd(bnd, names)
 
-        # order-N: concatenate the per-quad curved blocks (same quad order) and
-        # re-pin corners to the welded points so the block stays corner-consistent.
+        # order-N: the private per-quad interiors just concatenate, but the shared edge
+        # tables must be rebuilt against the *merged* topology -- gather each block's
+        # nodes into its own element traversal order, concatenate in merged element
+        # order, then re-scatter.  That scatter is the conformal-weld guard: two blocks
+        # that disagree on a welded shared edge raise instead of silently welding.
         order = meshes[0].order if meshes else 1
         if any(m.order != order for m in meshes):
             raise ValueError("merge: all sections must share the same order")
-        curved: CurvedBlock | None = None
+        edges, elem_edges, flip = conform.unique_edges(quads, 2)
+        edge_nodes: FloatArray | None = None
+        interior: FloatArray | None = None
         if order > 1:
-            curved = np.concatenate([m.curved for m in meshes], axis=0)
-            curved[:, corner_indices(order, 2), :] = points[quads]
-        return cls.from_corners(points, quads, b_ord, n_ord, element_tags=etags,
-                                order=order, curved=curved)
+            local: FloatArray = np.concatenate(
+                [conform.gather_edge_nodes(m.lines.interior, m.quad, m.flip)
+                 for m in meshes], axis=0)                     # (Q,4,order-1,3)
+            edge_nodes = conform.scatter_edge_nodes(
+                local, elem_edges, flip, edges.shape[0],
+                conform.entity_tol(points), "QuadMesh.merge")
+            interior = np.concatenate([m.interior for m in meshes], axis=0)
+        lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+        return cls(lm, elem_edges, flip, interior, b_ord, n_ord,
+                   element_tags=etags, order=order)
 
     @classmethod
     def blend(cls, a: QuadMesh, b: QuadMesh,
@@ -452,12 +469,24 @@ class QuadMesh:
         if a.order != b.order:
             raise ValueError("blend: sections must have the same order "
                              "(got %d, %d)" % (a.order, b.order))
+        # identical connectivity => identical edge tables, so a's and b's shared edge
+        # nodes and private interiors already pair one-for-one and each morphs with the
+        # same lerp the corners get from the blended points.  The result reuses ``a``'s
+        # B-rep verbatim (its edge connectivity + per-quad edge indices / flips) -- a
+        # blend is a pure point-space morph, so nothing is re-derived.  At order 1 both
+        # entity tables are empty and this is exactly the plain point blend.
+        ho = a.order > 1
+        ae, be = a.lines.interior, b.lines.interior
+        ai, bi = a.interior, b.interior
         out = []
         for t in np.asarray(fractions, dtype=float).ravel():
-            cb = blend_ho(a.curved, b.curved, float(t))
-            out.append(cls.from_corners(
-                (1.0 - t) * A + t * B, a.quads, boundaries=a.boundaries,
-                boundary_tags=a.boundary_tags, order=a.order, curved=cb))
+            lm = LineMesh((1.0 - t) * A + t * B, a.lines.lines, order=a.order,
+                          interior=(1.0 - t) * ae + t * be if ho else None)
+            out.append(cls(
+                lm, a.quad, a.flip,
+                (1.0 - t) * ai + t * bi if ho else None,
+                boundaries=a.boundaries, boundary_tags=a.boundary_tags,
+                order=a.order))
         return out
 
     @classmethod
@@ -504,10 +533,31 @@ class QuadMesh:
                 names.append(name)
         # np.full width-infers from the fill value (dtype=np.str_ would clip to <U1)
         etags: StrArray = np.full(quads.shape[0], element_tag)
-        curved: CurvedBlock | None = (
-            subdivide_quads(points, quads, order) if order > 1 else None)
-        return cls.from_corners(points, quads, *cls._order_bnd(bnd, names),
-                                element_tags=etags, order=order, curved=curved)
+        # order-N: straight (bilinear) subdivision, evaluated only where the entity
+        # nodes live -- the same bilinear corner weights, restricted to the
+        # edge-interior and quad-interior slots, so a flat grid cell stays exact.
+        edges, elem_edges, flip = conform.unique_edges(quads, 2)
+        edge_nodes: FloatArray | None = None
+        interior: FloatArray | None = None
+        if order > 1:
+            params = tensor_nodes(order, 2)                     # (M,2), i fastest
+            u, v = params[:, 0], params[:, 1]
+            # weights in quad CCW corner order [(0,0),(1,0),(1,1),(0,1)]
+            W = np.stack([(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v], axis=1)
+            c = points[quads]                                   # (Q,4,3) CCW corners
+            eslots = _edge_interior_slots(order)                # (4,order-1)
+            local: FloatArray = np.einsum(
+                "mk,qkd->qmd", W[eslots.ravel()], c).reshape(
+                    quads.shape[0], 4, order - 1, 3)
+            interior = np.einsum(
+                "mk,qkd->qmd", W[_quad_interior_slots(order)], c)
+            edge_nodes = conform.scatter_edge_nodes(
+                local, elem_edges, flip, edges.shape[0],
+                conform.entity_tol(points), "QuadMesh.from_grid")
+        lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+        return cls(lm, elem_edges, flip, interior,
+                   *cls._order_bnd(bnd, names),
+                   element_tags=etags, order=order)
 
     # -- line -> quad sweep (LineMesh one dimension down) ---------------
     @staticmethod
@@ -543,18 +593,21 @@ class QuadMesh:
         layers.  The line's ``element_tags`` ride onto the swept quads and its tagged
         boundary points onto the side-wall edges; ``first_tag`` / ``last_tag`` name
         the near / far cap edges."""
-        base = np.asarray(line.points, dtype=float).reshape(-1, 3) \
-            + np.asarray(origin, dtype=float)
+        shift: Vec3 = np.asarray(origin, dtype=float)
+        base = np.asarray(line.points, dtype=float).reshape(-1, 3) + shift
         axis_u: Vec3 = np.asarray(axis, dtype=float)
         axis_u = axis_u / np.linalg.norm(axis_u)
         offsets = validate_layers(layers, "extrude layers") * float(length)
-        lc = line.curved
+        # the sweep is a rigid translation, so each slice's private high-order interior
+        # nodes ride along by the same vector as its corner points -- no block anywhere.
+        ho = line.order > 1
         slices = [LineMesh(base + d * axis_u[None, :], line.lines,
                            element_tags=line.element_tags,
                            boundaries=line.boundaries,
                            boundary_tags=line.boundary_tags,
                            closed=line.is_closed, order=line.order,
-                           curved=None if lc is None else lc + d * axis_u[None, None, :])
+                           interior=(line.interior + (shift + d * axis_u)[None, None, :]
+                                     if ho else None))
                   for d in offsets]
         return cls.loft(slices, first_tag=first_tag, last_tag=last_tag)
 
@@ -575,7 +628,17 @@ class QuadMesh:
         ``[a_i, b_i, b_{i+1}, a_{i+1}]``.  The line's ``element_tags`` ride onto every
         quad in its column and tagged boundary points onto the swept wall edges;
         ``first_tag`` / ``last_tag`` name the near / far cap edges (scalar or per-line
-        array)."""
+        array).
+
+        The section's B-rep is assembled **layer by layer**, never re-derived from
+        corner connectivity: each profile's own ``LineMesh`` is merged into the growing
+        global edge mesh (its ``lines`` and their private ``interior`` nodes carry
+        through untouched), then the *rung* lines joining that level's points to the
+        previous level's are appended (their ``interior`` is the straight GLL blend
+        between the two corner points).  A quad is then just its four line indices plus
+        four ``flip`` bits -- no ``unique_edges`` dedupe and no owner-wins
+        ``scatter_edge_nodes`` reconciliation, because no shared edge is ever
+        duplicated in the first place."""
         slices = list(slices)
         lines = np.asarray(slices[0].lines, dtype=np.int64).reshape(-1, 2)
         L = lines.shape[0]
@@ -585,29 +648,83 @@ class QuadMesh:
         nn = S.shape[1]
         points = S.reshape((nz + 1) * nn, 3)                 # global id = i*nn + v
 
+        order = slices[0].order
+        if any(s.order != order for s in slices):
+            raise ValueError("loft: all slices must share the same order")
+        ho = order > 1
+
         a = lines[:, 0]
         b = lines[:, 1]
-        # quad row for (layer i, line l) = i*L + l; vertices [a_i, b_i, b_{i+1}, a_{i+1}]
+        # only points actually carried by a profile line get a rung (an isolated point
+        # borders no quad, so a rung there would be a dangling edge).
+        used: IntArray = (np.unique(lines.ravel()) if L
+                          else np.zeros(0, dtype=np.int64))
+        nu = used.shape[0]
+        rung_slot: IntArray = np.full(nn, -1, dtype=np.int64)
+        rung_slot[used] = np.arange(nu, dtype=np.int64)
+
+        # -- grow the global edge LineMesh layer by layer -------------------
+        # level i's profile lines occupy [prof_off[i], prof_off[i]+L); the rungs of
+        # transition i->i+1 occupy [rung_off[i], rung_off[i]+nu).
+        gi: FloatArray = gll_nodes(order)[1:order] if ho else np.zeros(0)
+        prof_off: IntArray = np.empty(nz + 1, dtype=np.int64)
+        rung_off: IntArray = np.empty(max(nz, 0), dtype=np.int64)
+        line_rows: list[IntArray] = []
+        inter_rows: list[FloatArray] = []
+        cur = 0
+        for i in range(nz + 1):
+            prof_off[i] = cur                                # merge level i's LineMesh
+            line_rows.append(lines + i * nn)
+            if ho:
+                inter_rows.append(np.asarray(slices[i].interior, dtype=float))
+            cur += L
+            if i:                                            # rungs (i-1) -> i
+                rung_off[i - 1] = cur
+                line_rows.append(np.column_stack(
+                    [(i - 1) * nn + used, i * nn + used]))
+                if ho:
+                    lo, hi = S[i - 1, used, :], S[i, used, :]
+                    inter_rows.append(lo[:, None, :]
+                                      + gi[None, :, None] * (hi - lo)[:, None, :])
+                cur += nu
+        all_lines: IntArray = (np.concatenate(line_rows, axis=0) if line_rows
+                               else np.zeros((0, 2), dtype=np.int64))
+        edge_nodes: FloatArray | None = (
+            np.concatenate(inter_rows, axis=0) if ho else None)
+
+        # -- quads purely by line index -------------------------------------
+        # quad row for (layer i, line l) = i*L + l; corners [a_i, b_i, b_{i+1}, a_{i+1}].
+        # local edge 1 = level-i profile line l (forward), 2 = rung at b (forward),
+        # 3 = level-(i+1) profile line l (reversed), 4 = rung at a (reversed).
         i_idx: IntArray = np.repeat(np.arange(nz, dtype=np.int64), L)
         l_idx = np.tile(np.arange(L, dtype=np.int64), nz)
         av = a[l_idx]
         bv = b[l_idx]
-        quads = np.stack([i_idx * nn + av, i_idx * nn + bv,
-                          (i_idx + 1) * nn + bv, (i_idx + 1) * nn + av], axis=1)
+        quad: IntArray = np.stack([
+            prof_off[i_idx] + l_idx,
+            rung_off[i_idx] + rung_slot[bv],
+            prof_off[i_idx + 1] + l_idx,
+            rung_off[i_idx] + rung_slot[av]], axis=1)
+        flip: BoolArray = np.tile(
+            np.array([False, False, True, True]), (nz * L, 1))
         etags: StrArray = np.asarray(slices[0].element_tags, dtype=np.str_)[l_idx]
 
-        # order-N: each column quad is a transfinite (Coons) patch -- curved along
-        # the profile line (from the slices' curved blocks), straight along the
-        # sweep between consecutive slices.
-        order = slices[0].order
-        if any(s.order != order for s in slices):
-            raise ValueError("loft: all slices must share the same order")
-        curved: CurvedBlock | None = None
-        if order > 1:
+        # order-N: each column quad is a transfinite (Coons) patch -- curved along the
+        # profile line (from the slices' own points + private interior nodes), straight
+        # along the sweep between consecutive slices.  Its boundary already lives on the
+        # merged/rung lines, so the patch is evaluated only at the private interior
+        # slots.
+        interior: FloatArray | None = None
+        if ho:
             g = gll_nodes(order)
             row = order + 1
-            Scur = np.stack([np.asarray(s.curved, dtype=float)
-                             for s in slices], axis=0)     # (nz+1, L, row, 3)
+            # each profile's own high-order curve, assembled natively from the shared
+            # corner points and that profile's private interior nodes
+            Scur: FloatArray = np.empty((nz + 1, L, row, 3), dtype=float)
+            Scur[:, :, 0, :] = S[:, a, :]
+            Scur[:, :, order, :] = S[:, b, :]
+            Scur[:, :, 1:order, :] = np.stack(
+                [np.asarray(s.interior, dtype=float) for s in slices], axis=0)
             bottom = Scur[i_idx, l_idx]                     # (Q,row,3) a->b at i
             top = Scur[i_idx + 1, l_idx]                    # (Q,row,3) a->b at i+1
             a_lo, a_hi = S[i_idx, av], S[i_idx + 1, av]     # (Q,3) sweep at a
@@ -615,18 +732,9 @@ class QuadMesh:
             gg = g[None, :, None]
             left = a_lo[:, None, :] + gg * (a_hi - a_lo)[:, None, :]   # (Q,row,3)
             right = b_lo[:, None, :] + gg * (b_hi - b_lo)[:, None, :]
-            uu = g.reshape(1, row, 1, 1)                    # profile axis
-            vv = g.reshape(1, 1, row, 1)                    # sweep axis
-            P00, P10 = bottom[:, 0], bottom[:, -1]
-            P01, P11 = top[:, 0], top[:, -1]
-            S_uv = ((1 - vv) * bottom[:, :, None, :] + vv * top[:, :, None, :]
-                    + (1 - uu) * left[:, None, :, :] + uu * right[:, None, :, :]
-                    - ((1 - uu) * (1 - vv) * P00[:, None, None, :]
-                       + uu * (1 - vv) * P10[:, None, None, :]
-                       + (1 - uu) * vv * P01[:, None, None, :]
-                       + uu * vv * P11[:, None, None, :]))   # (Q, profile, sweep, 3)
-            # lexicographic i-fastest: profile index fastest -> transpose sweep out
-            curved = S_uv.transpose(0, 2, 1, 3).reshape(quads.shape[0], row * row, 3)
+            islots = _quad_interior_slots(order)
+            interior = _coons_at(bottom, top, left, right, g,
+                                 islots % row, islots // row)
 
         # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
         sec_b = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
@@ -655,5 +763,6 @@ class QuadMesh:
                     bnd.append([(nz - 1) * L + l0, 3])
                     names.append(last_caps[l0])
         b_ord, n_ord = cls._order_bnd(bnd, names)
-        return cls.from_corners(points, quads, b_ord, n_ord, element_tags=etags,
-                                order=order, curved=curved)
+        lm = LineMesh(points, all_lines, order=order, interior=edge_nodes)
+        return cls(lm, quad, flip, interior, b_ord, n_ord,
+                   element_tags=etags, order=order)

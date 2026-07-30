@@ -1,4 +1,4 @@
-"""Phase 3 tests: order-N ``QuadMesh`` factories/combinators and the
+"""Order-N ``QuadMesh`` factories/combinators and the
 ``VTK_LAGRANGE_QUADRILATERAL`` export.
 
 Same two invariants as the line phase: geometric truth (curved nodes sit on the
@@ -10,7 +10,7 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, run_example
+from conftest import GOLDEN, curved, run_example
 
 from nekmeshpy import LineMesh, QuadMesh
 from nekmeshpy.io import export
@@ -23,26 +23,32 @@ def test_sphere_nodes_lie_on_the_true_sphere(order):
     r = 3.0
     s = QuadMesh.sphere(r, 3, order=order)
     assert s.order == order
-    assert s.curved is not None
-    assert s.curved.shape == (s.n_quads, (order + 1) ** 2, 3)
-    radii = np.linalg.norm(s.curved.reshape(-1, 3), axis=1)
+    cb = curved(s)                                       # B-rep -> per-quad block
+    assert cb.shape == (s.n_quads, (order + 1) ** 2, 3)
+    radii = np.linalg.norm(cb.reshape(-1, 3), axis=1)
     assert np.allclose(radii, r, atol=1e-12)             # every node on the sphere
+    # shared edge nodes and private interiors are on the sphere too
+    assert np.allclose(np.linalg.norm(s.edge_nodes.reshape(-1, 3), axis=1), r,
+                       atol=1e-12)
+    assert np.allclose(np.linalg.norm(s.interior.reshape(-1, 3), axis=1), r,
+                       atol=1e-12)
     # corner sub-slice coincides with the linear corner points
     corners = corner_indices(order, 2)
-    assert np.allclose(s.curved[:, corners, :], s.points[s.quads])
+    assert np.allclose(cb[:, corners, :], s.points[s.quads])
 
 
 @pytest.mark.parametrize("order", [2, 4])
 def test_box_nodes_on_flat_faces(order):
     b = QuadMesh.box(1.0, 2, order=order)
     assert b.order == order
-    assert b.curved.shape == (b.n_quads, (order + 1) ** 2, 3)
+    cb = curved(b)
+    assert cb.shape == (b.n_quads, (order + 1) ** 2, 3)
     # every node of a box lies on the |coord| == 1 cube surface (one face-normal
     # component is +-1 to machine precision)
-    c = np.abs(b.curved)
+    c = np.abs(cb)
     assert np.all(np.isclose(np.max(c, axis=2), 1.0, atol=1e-12))
     corners = corner_indices(order, 2)
-    assert np.allclose(b.curved[:, corners, :], b.points[b.quads])
+    assert np.allclose(cb[:, corners, :], b.points[b.quads])
 
 
 # -- region walls: ogrid / annulus curved nodes ride the true loop ------
@@ -53,19 +59,18 @@ def test_ogrid_wall_nodes_on_the_circle(order):
     # no smoothing: the wall overlay stamps the true arc regardless (a repositioning
     # smoother is rejected at order > 1 -- see test_high_order_smoothing_rejected).
     qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
-    assert qm.order == order and qm.curved is not None
+    assert qm.order == order
+    cb = curved(qm)
     # the outermost ring of quads carries wall nodes on side 1; every node there
     # must sit on the true circle
     idx = quad_edge_indices(1, order)
-    walls = qm.curved is not None
-    assert walls
     # collect all nodes that lie on the wall arc: pick quads whose side-1 corners
     # are both at radius r
     corner = qm.points[qm.quads]
     rc = np.linalg.norm(corner[:, :, :2], axis=2)
     v0, v1 = QuadMesh.EDGE_POINTS[0]
     on_wall = np.isclose(rc[:, v0], r, atol=1e-9) & np.isclose(rc[:, v1], r, atol=1e-9)
-    wall_nodes = qm.curved[np.where(on_wall)[0][:, None], idx[None, :], :]
+    wall_nodes = cb[np.where(on_wall)[0][:, None], idx[None, :], :]
     wr = np.linalg.norm(wall_nodes.reshape(-1, 3)[:, :2], axis=1)
     assert np.allclose(wr, r, atol=1e-9)
 
@@ -83,7 +88,7 @@ def test_annulus_interior_rings_are_high_order_curved(order):
     idx = quad_edge_indices(1, order)            # side-1 (tangential) node indices
     # first quad of layer 1: its side-1 (bottom) edge is the middle ring (t=0.5),
     # the average of the inner and outer arcs -> still curved.
-    edge = qm.curved[L, idx, :]                   # (order+1, 3) nodes along the edge
+    edge = curved(qm)[L, idx, :]                   # (order+1, 3) nodes along the edge
     a, b = edge[0], edge[-1]
     d = b - a
     dist = np.linalg.norm(np.cross(edge[1:-1] - a, d), axis=1) / np.linalg.norm(d)
@@ -96,7 +101,8 @@ def test_annulus_wall_nodes_on_both_rings(order):
     inner = LineMesh.circle(r_in, 16, order=order)
     outer = LineMesh.circle(r_out, 16, order=order)
     qm = QuadMesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
-    assert qm.order == order and qm.curved is not None
+    assert qm.order == order
+    cb = curved(qm)
     corner = qm.points[qm.quads]
     rc = np.linalg.norm(corner[:, :, :2], axis=2)
     # inner wall on side 1, outer wall on side 3
@@ -105,7 +111,7 @@ def test_annulus_wall_nodes_on_both_rings(order):
         v0, v1 = QuadMesh.EDGE_POINTS[side - 1]
         on = np.isclose(rc[:, v0], radius, atol=1e-9) & \
             np.isclose(rc[:, v1], radius, atol=1e-9)
-        nodes = qm.curved[np.where(on)[0][:, None], idx[None, :], :]
+        nodes = cb[np.where(on)[0][:, None], idx[None, :], :]
         rr = np.linalg.norm(nodes.reshape(-1, 3)[:, :2], axis=1)
         assert np.allclose(rr, radius, atol=1e-9)
 
@@ -141,9 +147,10 @@ def test_rectangle_nodes_corner_consistent(order):
                             3, 2, order=order)
     assert qm.order == order
     corners = corner_indices(order, 2)
-    assert np.allclose(qm.curved[:, corners, :], qm.points[qm.quads])
+    cb = curved(qm)
+    assert np.allclose(cb[:, corners, :], qm.points[qm.quads])
     # planar: every node stays at z=0
-    assert np.allclose(qm.curved[..., 2], 0.0)
+    assert np.allclose(cb[..., 2], 0.0)
 
 
 # -- combinators: blend / loft / merge / from_grid ---------------------
@@ -155,7 +162,7 @@ def test_from_grid_order_n_corner_consistent():
     qm = QuadMesh.from_grid(grid, order=3)
     assert qm.order == 3
     corners = corner_indices(3, 2)
-    assert np.allclose(qm.curved[:, corners, :], qm.points[qm.quads])
+    assert np.allclose(curved(qm)[:, corners, :], qm.points[qm.quads])
 
 
 def test_blend_morphs_quad_curved_blocks():
@@ -163,9 +170,13 @@ def test_blend_morphs_quad_curved_blocks():
     b = QuadMesh.sphere(3.0, 2, order=3)
     lo, mid, hi = QuadMesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
-    assert np.allclose(lo.curved, a.curved)
-    assert np.allclose(hi.curved, b.curved)
-    assert np.allclose(mid.curved, 0.5 * (a.curved + b.curved))
+    ca, cbb = curved(a), curved(b)
+    assert np.allclose(curved(lo), ca)
+    assert np.allclose(curved(hi), cbb)
+    assert np.allclose(curved(mid), 0.5 * (ca + cbb))
+    # the shared edge / private interior tables take the same lerp
+    assert np.allclose(mid.edge_nodes, 0.5 * (a.edge_nodes + b.edge_nodes))
+    assert np.allclose(mid.interior, 0.5 * (a.interior + b.interior))
 
 
 def test_blend_rejects_mismatched_order():
@@ -191,10 +202,12 @@ def test_order1_factories_are_linear_no_op():
                QuadMesh.annulus(LineMesh.circle(1.0, 12),
                                 LineMesh.circle(2.0, 12),
                                 radial=[0.0, 1.0])):
-        # order 1 still materializes the 4-corner block, corner-consistent
+        # order 1: every high-order table is empty, the walk is just the corners
         assert qm.order == 1
-        assert qm.curved.shape == (qm.n_quads, 4, 3)
-        assert np.allclose(qm.curved[:, corner_indices(1, 2), :],
+        assert qm.edge_nodes.shape == (qm.edges.shape[0], 0, 3)
+        assert qm.interior.shape == (qm.n_quads, 0, 3)
+        assert curved(qm).shape == (qm.n_quads, 4, 3)
+        assert np.allclose(curved(qm)[:, corner_indices(1, 2), :],
                            qm.points[qm.quads])
 
 
@@ -256,7 +269,10 @@ def test_vtu_high_order_is_lagrange_quad(tmp_path):
     p = str(tmp_path / "ho.vtu")
     export.quad_to_vtu(QuadMesh.box(1.0, 1, order=3), p)
     assert _vtu_cell_types(p) == {"70"}                  # VTK_LAGRANGE_QUADRILATERAL
-    assert _vtu_num_points(p) == 96                      # 6 faces x 16 nodes
+    # conformal (welded) numbering: shared corners and shared edge-interior nodes
+    # are written once.  A closed cube surface at order 3 has 8 corners
+    # + 12 edges x (3-1) edge nodes + 6 faces x (3-1)^2 private interiors = 56.
+    assert _vtu_num_points(p) == 56
 
 
 def test_vtu_meshio_roundtrip(tmp_path):

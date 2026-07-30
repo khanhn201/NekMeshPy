@@ -185,25 +185,30 @@ high-order layer mirrors the corner layer, where a shared corner is one node in
 
 Sharing is decided by **corner ids** (structural / exact conformality), not by a
 coordinate search: two elements meeting on an edge or face resolve to the *same*
-high-order nodes. A `curved=` block whose incident copies disagree on a shared entity
-is rejected at construction (a non-conforming input is a loud error, not a silent weld).
+high-order nodes. Element-local copies of a shared entity that disagree beyond
+tolerance are rejected when they are reconciled
+(`conform.scatter_edge_nodes` / `scatter_face_nodes`): a non-conforming input is a loud
+error, not a silent weld.
 
-`mesh.curved` is a **read-only view** always materialized at shape
-`(E, (order+1)^d, 3)` — reassembled on each read from the authoritative corners
-`points[conn]` and the entity tables. Even at `order == 1` it holds the `2^d` corner
-nodes (line `(E,2,3)`, quad `(E,4,3)`, hex `(E,8,3)`); the `2^d` corner sub-slice always
-equals `points[conn]` (the corner-consistency invariant), and because corners are read
-fresh from `points`, an in-place `mesh.points[:] = X` edit is reflected automatically.
-At `order == 1` every entity table is empty and the view is just `points[conn]`, so the
-order-1 path — `.re2`, quality, topology, `merge`, and the order-1 VTK writers — reads
-only `points`/corner connectivity and order-1 meshes stay byte-for-byte unchanged (this
-is what keeps the golden regression pinned).
+That decomposition **is** the storage — there is no per-element node block anywhere.
+The containers hold the entities natively: `LineMesh.interior`;
+`QuadMesh.lines` (the shared-edge `LineMesh`, whose `interior` holds the edge nodes) /
+`quad` / `flip` / `interior`; `HexMesh.quads` (the shared-face `QuadMesh`) / `hex` /
+`face_orient` / `interior`, with the convenience views `.edges` / `.edge_nodes`
+(quad, hex) and `.faces` / `.face_nodes` (hex). Corners are single-sourced by
+`points[conn]` and never duplicated, so the corner-consistency invariant is
+*structural* and an in-place `mesh.points[:] = X` edit is picked up everywhere for
+free. At `order == 1` every entity table is empty, so the order-1 path — `.re2`,
+quality, topology, `merge`, and the order-1 VTK writers — reads only `points` / corner
+connectivity and order-1 meshes stay byte-for-byte unchanged (this is what keeps the
+golden regression pinned).
 
-`mesh.to_conformal()` exposes the conformal model directly as
-`(nodes (M,3), conn (E,(N+1)^d))` — every node numbered once in one global array with
-dense per-element connectivity into it, the high-order analog of `points` + `quads`.
-The entity tables are also readable via `.edges` / `.edge_nodes` (quad, hex) and
-`.faces` / `.face_nodes` (hex).
+The conformal walks `conform.conformal_line` / `conformal_quad` / `conformal_hex`
+expose the conformal model directly as `(nodes (M,3), conn_ho (E,(N+1)^d))` — every
+node numbered once in one global array with dense per-element connectivity into it, the
+high-order analog of `points` + `quads`. This is the single node numbering the `.vtu`
+writer and the order-N quality metrics read; `nodes[conn_ho]` is the transient
+per-element block when one is needed.
 
 Both `element_tags` and `boundary_tags` propagate exactly as in the linear case;
 the extra nodes are geometry only and carry no tags of their own.

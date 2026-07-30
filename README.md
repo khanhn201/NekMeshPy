@@ -81,10 +81,13 @@ render Lagrange cells reliably in ParaView and VisIt.
 The high-order nodes are stored **conformally**, decomposed by topology into shared
 edge/face entities plus per-element interiors (module `nekmeshpy.model.conform`): two
 elements meeting on an edge or face resolve to the *same* nodes, decided by corner ids
-(not a coordinate search). `mesh.to_conformal()` returns `(nodes, conn)` — one global
-node array with dense per-element connectivity, the high-order analog of
-`points` + `quads`; the tables are also readable via `.edges`/`.edge_nodes` and (hex)
-`.faces`/`.face_nodes`.
+(not a coordinate search). That decomposition **is** the storage: the containers hold
+it natively (`LineMesh.interior`; `QuadMesh.lines`/`quad`/`flip`/`interior`;
+`HexMesh.quads`/`hex`/`face_orient`/`interior`), readable as `.edges`/`.edge_nodes` and
+(hex) `.faces`/`.face_nodes`. The conformal walks
+`conform.conformal_line`/`_quad`/`_hex` return `(nodes, conn_ho)` — one global node
+array with dense per-element connectivity, the high-order analog of `points` + `quads`
+— and that is what the `.vtu` writer and the order-N quality metrics read.
 
 ```python
 loop  = LineMesh.circle(radius=2.0, n=8, order=5)   # 6 GLL nodes / arc, on the circle

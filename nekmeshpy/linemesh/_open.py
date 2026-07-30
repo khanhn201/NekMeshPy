@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import FloatArray, Point
-from ..model.interp import straight_edges
+from .._typing import FloatArray, Point, PointArray
+from ..model.fields import gll_nodes
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,7 +33,9 @@ def line(start: Point, end: Point, fractions: float | FloatArray, *,
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     each line element carries ``order+1`` GLL nodes placed on the straight
-    segment (the ``curved`` block, read by high-order ``vtu`` export)."""
+    segment -- the two endpoints are the corners in ``points``, and the
+    ``order-1`` nodes strictly between them are built here as the element's
+    private ``interior`` (read by high-order ``vtu`` export)."""
     from .linemesh import LineMesh
     frac = np.atleast_1d(np.asarray(fractions, dtype=float))
     s: Point = np.asarray(start, dtype=float).ravel()
@@ -43,10 +45,12 @@ def line(start: Point, end: Point, fractions: float | FloatArray, *,
     lm = LineMesh.open(pts, element_tags=tags)
     if order == 1:
         return lm
-    curved = straight_edges(lm.points[lm.lines[:, 0]],
-                            lm.points[lm.lines[:, 1]], order)
+    a: PointArray = lm.points[lm.lines[:, 0]]
+    b: PointArray = lm.points[lm.lines[:, 1]]
+    g = gll_nodes(order)[1:order]                    # interior GLL nodes only
+    interior: FloatArray = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
     return LineMesh(lm.points, lm.lines, lm.element_tags, lm.boundaries,
-                    lm.boundary_tags, closed=False, order=order, curved=curved)
+                    lm.boundary_tags, closed=False, order=order, interior=interior)
 
 
 #: Open-curve factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.

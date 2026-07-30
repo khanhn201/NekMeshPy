@@ -30,8 +30,13 @@ OUT_NAME = "high_order_quad"
 # -- build the high-order surface --------------------------------------------
 mesh = QuadMesh.sphere(RADIUS, N_CELL, order=ORDER)
 
-# every curved node sits on the true sphere, to machine precision
-radii = np.linalg.norm(mesh.curved.reshape(-1, 3), axis=1)
+# every curved node sits on the true sphere, to machine precision.  The entity
+# B-rep numbers each node once: corner ``points``, the shared ``edge_nodes``, and
+# each quad's private ``interior``.
+radii = np.linalg.norm(np.vstack([
+    mesh.points,
+    mesh.edge_nodes.reshape(-1, 3),
+    mesh.interior.reshape(-1, 3)]), axis=1)
 _log.info("order-%d sphere: %d quads, %d nodes/quad",
           mesh.order, mesh.quads.shape[0], (ORDER + 1) ** 2)
 _log.info("node radius: min=%.15f max=%.15f (target %.1f)",

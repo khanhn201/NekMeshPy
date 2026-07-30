@@ -90,17 +90,29 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     **every** ``(order+1)**2`` node of each face is projected onto the true sphere
     (not just the corners), so the high-order surface is the exact sphere -- the
-    motivating high-order case."""
+    motivating high-order case.
+
+    The projection is applied **entity-wise** straight onto the cube's B-rep -- its
+    corner ``points``, its shared edge-interior table and its private per-quad
+    ``interior`` -- never to a reassembled per-quad block.  Radial projection is
+    node-wise, so a shared edge lands in the same place seen from either incident
+    quad and the result stays structurally conformal with nothing to reconcile."""
+    from ..linemesh import LineMesh
     from .quadmesh import QuadMesh
     cube = box(1.0, n, order=order)
-    pts = radius * cube.points / np.linalg.norm(cube.points, axis=1, keepdims=True)
+
+    def project(a: FloatArray) -> FloatArray:
+        """Push every node of ``a`` (last axis = xyz) radially onto the sphere."""
+        return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
+
     etags = np.full(cube.n_quads, element_tag)
-    if order == 1:
-        return QuadMesh.from_corners(pts, cube.quads, element_tags=etags)
-    cb = np.asarray(cube.curved, dtype=float)
-    curved = radius * cb / np.linalg.norm(cb, axis=2, keepdims=True)
-    return QuadMesh.from_corners(pts, cube.quads, element_tags=etags,
-                                 order=order, curved=curved)
+    # the cube's B-rep is reused verbatim (same topology, same edge numbering); only
+    # the node coordinates move, so there is nothing to re-derive or reconcile.
+    lines = LineMesh(project(cube.points), cube.lines.lines, order=order,
+                     interior=project(cube.lines.interior) if order > 1 else None)
+    return QuadMesh(lines, cube.quad, cube.flip,
+                    project(cube.interior) if order > 1 else None,
+                    element_tags=etags, order=order)
 
 
 #: Closed-surface factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.

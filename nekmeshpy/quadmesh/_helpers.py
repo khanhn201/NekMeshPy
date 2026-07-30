@@ -11,20 +11,19 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import CurvedBlock, IntArray, PointArray
+from .._typing import FloatArray, IntArray, PointArray
 from ..linemesh import LineMesh
-from ..model.interp import (
-    corner_indices,
-    quad_edge_indices,
-    subdivide_quads,
-)
+from ..model import conform
+from ..model.interp import tensor_nodes
 
 if TYPE_CHECKING:
     from .quadmesh import QuadMesh
 
-#: One wall overlay: ``(quad ids, quad side 1-4, per-edge curved nodes)`` -- the
-#: true boundary curve to stamp onto those quads' side, replacing the straight guess.
-Overlay = tuple[IntArray, int, CurvedBlock]
+#: One wall overlay: ``(quad ids, quad side 1-4, wall curve)`` -- the true boundary
+#: ``LineMesh`` whose line ``k`` is the exact geometry of ``quad_ids[k]``'s named side,
+#: replacing that side's straight guess.  Its ``interior`` nodes are the payload; its
+#: ``points``/``lines`` give the traversal direction to match against the quad's.
+Overlay = tuple[IntArray, int, LineMesh]
 
 
 def _elevate(qm: QuadMesh, order: int,
@@ -32,30 +31,62 @@ def _elevate(qm: QuadMesh, order: int,
     """Return the order-N form of a linear (post-smoothing) region ``qm``.
 
     At ``order == 1`` returns ``qm`` unchanged (the golden no-op).  Otherwise the
-    interior is straight-subdivided (:func:`~nekmeshpy.model.interp.subdivide_quads`)
-    and each ``overlays`` entry stamps a true boundary curve onto the named quad side
-    (auto-oriented to the side's ``start->end`` corner), so region walls follow the
-    exact loop while the interior stays a straight order-N fill.  Corner nodes are
-    pinned to ``points[quads]`` so the block stays corner-consistent."""
+    high-order nodes are built **natively as B-rep entities** -- no
+    ``(Q,(order+1)**2,3)`` block is ever materialized:
+
+    * every quad's four element-local edge interiors and its private quad interior are
+      filled by straight (bilinear) subdivision of its CCW corners -- the same
+      ``tensor_nodes(order, 2)`` weights a full straight-sided block would use,
+      evaluated only at the entity slots;
+    * each ``overlays`` entry then **overwrites** the element-local edge interior of the
+      named side with the wall curve's own private ``interior`` nodes (reversed where
+      the quad traverses that boundary line the other way), so region walls follow the
+      exact loop while the interior stays a straight order-N fill;
+    * the element-local edge copies are reconciled into the shared canonical table by
+      :func:`~nekmeshpy.model.conform.scatter_edge_nodes` (owner-wins + verify).
+
+    Corners are never stored -- they stay single-sourced by ``points[quads]``."""
     if order == 1:
         return qm
-    from .quadmesh import QuadMesh
-    curved: CurvedBlock = subdivide_quads(qm.points, qm.quads, order)
-    for quad_ids, side, blocks in (overlays or []):
-        idx = quad_edge_indices(side, order)
+    from .quadmesh import QuadMesh, _edge_interior_slots, _quad_interior_slots
+    points: PointArray = qm.points
+    quads: IntArray = qm.quads
+    nq = quads.shape[0]
+    params = tensor_nodes(order, 2)                     # (M,2) in [0,1], i fastest
+    u, v = params[:, 0], params[:, 1]
+    # weights in quad CCW corner order [(0,0),(1,0),(1,1),(0,1)]
+    W = np.stack([(1 - u) * (1 - v), u * (1 - v), u * v, (1 - u) * v], axis=1)
+    c = points[quads]                                   # (Q,4,3) CCW corners
+    eslots = _edge_interior_slots(order)                # (4,order-1) traversal order
+    local: FloatArray = np.einsum(
+        "mk,qkd->qmd", W[eslots.ravel()], c).reshape(nq, 4, order - 1, 3)
+    interior: FloatArray = np.einsum(
+        "mk,qkd->qmd", W[_quad_interior_slots(order)], c)
+
+    for quad_ids, side, wall in (overlays or []):
+        ends: PointArray = wall.points[wall.lines]      # (L,2,3) directed endpoints
+        inner: FloatArray = wall.interior               # (L,order-1,3) private nodes
         v0 = QuadMesh.EDGE_POINTS[side - 1, 0]
-        for k in range(int(np.asarray(quad_ids).shape[0])):
-            q = int(quad_ids[k])
-            edge = np.asarray(blocks[k], dtype=float).reshape(-1, 3)
-            start = qm.points[qm.quads[q, v0]]
-            if (np.linalg.norm(edge[0] - start)
-                    > np.linalg.norm(edge[-1] - start)):
-                edge = edge[::-1]
-            curved[q, idx, :] = edge
-    curved[:, corner_indices(order, 2), :] = qm.points[qm.quads]
-    return QuadMesh.from_corners(qm.points, qm.quads, qm.boundaries, qm.boundary_tags,
-                                 element_tags=qm.element_tags, order=order,
-                                 curved=curved)
+        ids: IntArray = np.asarray(quad_ids, dtype=np.int64).ravel()
+        for k in range(ids.shape[0]):
+            q = int(ids[k])
+            start = points[quads[q, v0]]
+            # the quad's side runs start->end; reverse the wall curve when it is
+            # stored the other way round, exactly as the old side-stamp did.
+            if (np.linalg.norm(ends[k, 0] - start)
+                    > np.linalg.norm(ends[k, 1] - start)):
+                local[q, side - 1] = inner[k][::-1]
+            else:
+                local[q, side - 1] = inner[k]
+
+    edges, elem_edges, flip = conform.unique_edges(quads, 2)
+    edge_nodes = conform.scatter_edge_nodes(
+        local, elem_edges, flip, edges.shape[0],
+        conform.entity_tol(points), "QuadMesh._elevate")
+    lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+    return QuadMesh(lm, elem_edges, flip, interior,
+                    qm.boundaries, qm.boundary_tags,
+                    element_tags=qm.element_tags, order=order)
 
 
 def _apply_smoothing(qm: QuadMesh, smoothing_method: str | None) -> QuadMesh:

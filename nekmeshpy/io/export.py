@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Union
 import numpy as np
 
 from .._typing import FloatArray, IntArray
-from ..model import topology
+from ..model import conform, topology
 from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
 from ..model.physical import PhysicalGroup, PhysicalGroups
@@ -231,21 +231,39 @@ def _lagrange_quad_perm(order: int) -> IntArray:
 
 
 # -- node-array builders (for the .vtu writer) --------------------------
-# Each returns per-element (un-welded) node coordinates already in VTK node order,
-# the nodes-per-cell, and the VTK cell-type id; the hex builder also returns the
-# flat per-node ``bc_id``.
+# Each returns the ``.vtu`` point array, the per-cell connectivity into it already in
+# VTK node order, and the VTK cell-type id; the hex builder also returns the per-node
+# ``bc_id``.  At ``order == 1`` the nodes stay **un-welded** (one block per element,
+# connectivity = consecutive blocks) -- byte-for-byte the historical output.  At
+# ``order > 1`` the conformal walk (:mod:`nekmeshpy.model.conform`) emits **shared**
+# nodes: a node on an edge / face between two elements is written once.
+def _unwelded(n_elem: int, m: int) -> IntArray:
+    """Consecutive-block connectivity ``(n_elem, m)`` for un-welded node arrays."""
+    return np.arange(n_elem * m, dtype=np.int64).reshape(n_elem, m)
+
+
 def _hex_arrays(mesh: HexMesh,
-                g: PhysicalGroups) -> tuple[FloatArray, int, int, IntArray]:
-    """Un-welded hex nodes + ``bc_id``: linear ``VTK_HEXAHEDRON`` at ``order == 1``,
-    a curved ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes) above it (face
-    nodes inherit the boundary face's tag)."""
+                g: PhysicalGroups) -> tuple[FloatArray, IntArray, int, IntArray]:
+    """Hex nodes + ``bc_id``: linear un-welded ``VTK_HEXAHEDRON`` at ``order == 1``, a
+    conformal (shared-node) ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per
+    cell) above it, whose face nodes inherit the boundary face's tag.
+
+    ``bc_id`` precedence is the un-welded writer's rule, applied in the shared-node
+    numbering: the boundary rows are scattered in ``mesh.boundaries`` order and the
+    **last row to touch a node wins** (this is exactly how two boundary faces sharing an
+    edge *within* one hex have always been resolved).  Welding widens the same rule
+    across elements: an untagged element never writes, so a node shared by a tagged face
+    and an untagged neighbour keeps its tag; where two *differently* tagged faces of
+    different elements meet, the single shared node necessarily carries one of the two
+    tags -- the later boundary row's."""
     if mesh.order > 1:
         order = mesh.order
         perm = _lagrange_hex_perm(order)
-        blocks = np.asarray(mesh.curved, dtype=float)    # (N, m3, 3) lexicographic
-        N, m, _ = blocks.shape
-        X = blocks[:, perm, :].reshape(N * m, 3)
-        bc: IntArray = np.zeros((N, m), dtype=np.int64)
+        nodes, conn_ho = conform.conformal_hex(
+            mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
+            mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
+            mesh.quads.interior, mesh.interior, order)
+        bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
         face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
         for i in range(mesh.boundaries.shape[0]):
             elem = int(mesh.boundaries[i, 0])
@@ -254,12 +272,12 @@ def _hex_arrays(mesh: HexMesh,
             if grp is None:
                 _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
                 continue
-            bc[elem, face_idx[face]] = grp.tag
-        return X, m, _VTK_LAGRANGE_HEXAHEDRON, bc[:, perm].reshape(N * m)
+            bc[conn_ho[elem, face_idx[face]]] = grp.tag
+        return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
     elements = mesh.points[mesh.hexes]                   # (N,8,3) per-element coords
     N = elements.shape[0]
     X = elements.reshape(N * 8, 3)
-    bc = np.zeros((N, 8), dtype=np.int64)
+    bc2: IntArray = np.zeros((N, 8), dtype=np.int64)
     for i in range(mesh.boundaries.shape[0]):
         elem = int(mesh.boundaries[i, 0])
         face = int(mesh.boundaries[i, 1])
@@ -267,49 +285,48 @@ def _hex_arrays(mesh: HexMesh,
         if grp is None:
             _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
             continue
-        bc[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
-    return X, 8, _VTK_HEXAHEDRON, bc.reshape(N * 8)
+        bc2[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+    return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc2.reshape(N * 8)
 
 
-def _line_arrays(mesh: LineMesh) -> tuple[FloatArray, int, int]:
-    """Un-welded line nodes: ``VTK_LINE`` (2 nodes) at ``order == 1``, a
-    ``VTK_LAGRANGE_CURVE`` (``order+1`` GLL nodes) above it."""
+def _line_arrays(mesh: LineMesh) -> tuple[FloatArray, IntArray, int]:
+    """Line nodes: un-welded ``VTK_LINE`` (2 nodes) at ``order == 1``, a conformal
+    (shared-node) ``VTK_LAGRANGE_CURVE`` (``order+1`` GLL nodes per cell) above it."""
     if mesh.order == 1:
         blocks = mesh.points[mesh.lines]                 # (L,2,3)
-        perm = np.array([0, 1], dtype=np.int64)
-        cell_type = _VTK_LINE
-    else:
-        blocks = np.asarray(mesh.curved, dtype=float)    # (L,order+1,3) ascending
-        perm = _lagrange_curve_perm(mesh.order)
-        cell_type = _VTK_LAGRANGE_CURVE
-    L, m, _ = blocks.shape
-    return blocks[:, perm, :].reshape(L * m, 3), m, cell_type
+        L, m, _ = blocks.shape
+        return blocks.reshape(L * m, 3), _unwelded(L, m), _VTK_LINE
+    nodes, conn_ho = conform.conformal_line(
+        mesh.points, mesh.lines, mesh.interior, mesh.order)
+    perm = _lagrange_curve_perm(mesh.order)
+    return nodes, conn_ho[:, perm], _VTK_LAGRANGE_CURVE
 
 
-def _quad_arrays(mesh: QuadMesh) -> tuple[FloatArray, int, int]:
-    """Un-welded quad nodes: ``VTK_QUAD`` (4 CCW nodes) at ``order == 1``, a
-    ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes) above it."""
+def _quad_arrays(mesh: QuadMesh) -> tuple[FloatArray, IntArray, int]:
+    """Quad nodes: un-welded ``VTK_QUAD`` (4 CCW nodes) at ``order == 1``, a conformal
+    (shared-node) ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes per cell)
+    above it."""
     if mesh.order == 1:
         blocks = mesh.points[mesh.quads]                 # (Q,4,3)
-        perm = np.array([0, 1, 2, 3], dtype=np.int64)
-        cell_type = _VTK_QUAD
-    else:
-        blocks = np.asarray(mesh.curved, dtype=float)    # (Q,(N+1)^2,3) lexicographic
-        perm = _lagrange_quad_perm(mesh.order)
-        cell_type = _VTK_LAGRANGE_QUADRILATERAL
-    Q, m, _ = blocks.shape
-    return blocks[:, perm, :].reshape(Q * m, 3), m, cell_type
+        Q, m, _ = blocks.shape
+        return blocks.reshape(Q * m, 3), _unwelded(Q, m), _VTK_QUAD
+    nodes, conn_ho = conform.conformal_quad(
+        mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
+        mesh.interior, mesh.order)
+    perm = _lagrange_quad_perm(mesh.order)
+    return nodes, conn_ho[:, perm], _VTK_LAGRANGE_QUADRILATERAL
 
 
 # -- the unstructured-grid writer ---------------------------------------
-def _write_vtu(fname: str, X: FloatArray, m: int, cell_type: int,
+def _write_vtu(fname: str, X: FloatArray, conn: IntArray, cell_type: int,
                *, bc_out: IntArray | None = None) -> None:
-    """XML VTK unstructured grid (``.vtu``): ``X`` is per-element un-welded nodes
-    (``m`` per cell, contiguous), so connectivity is just consecutive blocks.
-    ``bc_out``, if given, is written as ``bc_id`` PointData.  The XML container
-    renders VTK Lagrange cells reliably in ParaView / VisIt."""
+    """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
+    ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order
+    (consecutive blocks when the nodes are un-welded, shared ids when conformal).
+    ``bc_out``, if given, is one value per point, written as ``bc_id`` PointData.  The
+    XML container renders VTK Lagrange cells reliably in ParaView / VisIt."""
     P = X.shape[0]
-    N = P // m
+    N, m = conn.shape
     with open(fname, "w") as fid:
         fid.write('<?xml version="1.0"?>\n')
         fid.write('<VTKFile type="UnstructuredGrid" version="1.0" '
@@ -327,8 +344,7 @@ def _write_vtu(fname: str, X: FloatArray, m: int, cell_type: int,
         fid.write('        <DataArray type="Int64" Name="connectivity" '
                   'format="ascii">\n')
         for e in range(N):
-            base = m * e
-            fid.write("          %s\n" % " ".join(str(base + c) for c in range(m)))
+            fid.write("          %s\n" % " ".join(str(int(c)) for c in conn[e]))
         fid.write("        </DataArray>\n")
         fid.write('        <DataArray type="Int64" Name="offsets" format="ascii">\n')
         for e in range(1, N + 1):
@@ -359,8 +375,8 @@ def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
 
     At ``order == 1`` each hex is a linear ``VTK_HEXAHEDRON``; at ``order > 1`` a
     ``VTK_LAGRANGE_HEXAHEDRON`` carrying the hex's ``(order+1)**3`` curved GLL nodes."""
-    X, m, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
-    _write_vtu(fname, X, m, cell_type, bc_out=bc_out)
+    X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
+    _write_vtu(fname, X, conn, cell_type, bc_out=bc_out)
     return mesh
 
 
@@ -369,8 +385,8 @@ def line_to_vtu(mesh: LineMesh, fname: str) -> LineMesh:
     node block per line element).  At ``order == 1`` each element is a ``VTK_LINE`` (2
     nodes); at ``order > 1`` a ``VTK_LAGRANGE_CURVE`` carrying the element's
     ``order+1`` GLL nodes -- so a high-order ``circle`` renders as its true arc."""
-    X, m, cell_type = _line_arrays(mesh)
-    _write_vtu(fname, X, m, cell_type)
+    X, conn, cell_type = _line_arrays(mesh)
+    _write_vtu(fname, X, conn, cell_type)
     return mesh
 
 
@@ -380,8 +396,8 @@ def quad_to_vtu(mesh: QuadMesh, fname: str) -> QuadMesh:
     at ``order > 1`` a ``VTK_LAGRANGE_QUADRILATERAL`` carrying the element's
     ``(order+1)**2`` GLL nodes -- so a high-order ``sphere`` renders as its true
     surface."""
-    X, m, cell_type = _quad_arrays(mesh)
-    _write_vtu(fname, X, m, cell_type)
+    X, conn, cell_type = _quad_arrays(mesh)
+    _write_vtu(fname, X, conn, cell_type)
     return mesh
 
 

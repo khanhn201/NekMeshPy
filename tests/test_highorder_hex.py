@@ -1,4 +1,4 @@
-"""Phase 4 tests: order-N ``HexMesh`` factories/combinators, the
+"""Order-N ``HexMesh`` factories/combinators, the
 ``VTK_LAGRANGE_HEXAHEDRON`` export + node permutation, and the invariant that
 ``re2`` export stays linear regardless of order.
 
@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, run_example
+from conftest import GOLDEN, curved, hex_from_entities, run_example
 
 from nekmeshpy import HexMesh, QuadMesh
 from nekmeshpy.io import export
@@ -34,16 +34,17 @@ def _shell(order, n_face=2, n_radial=2):
 @pytest.mark.parametrize("order", [2, 3, 4])
 def test_annulus_inner_wall_on_true_sphere(order):
     hm = _shell(order)
-    assert hm.order == order and hm.curved is not None
-    assert hm.curved.shape == (hm.n_hexes, (order + 1) ** 3, 3)
+    assert hm.order == order
+    cb = curved(hm)                                  # B-rep -> per-hex block
+    assert cb.shape == (hm.n_hexes, (order + 1) ** 3, 3)
     # corner-consistency across the whole block
-    cc = hm.curved[:, corner_indices(order, 3), :]
+    cc = cb[:, corner_indices(order, 3), :]
     assert np.allclose(cc, hm.points[hm.hexes], atol=1e-9)
     # face 5 (inner cap) nodes of the innermost hexes lie on radius 1
     rc = np.linalg.norm(hm.points[hm.hexes], axis=2)
     inner = np.all(np.isclose(rc[:, HexMesh.FACE_POINTS[4]], 1.0, atol=1e-9), axis=1)
     fidx = hex_face_indices(5, order)
-    nodes = hm.curved[np.where(inner)[0][:, None], fidx[None, :], :]
+    nodes = cb[np.where(inner)[0][:, None], fidx[None, :], :]
     r = np.linalg.norm(nodes.reshape(-1, 3), axis=1)
     assert np.allclose(r, 1.0, atol=1e-9)
 
@@ -55,12 +56,13 @@ def test_extrude_order_n_corner_consistent(order):
                              3, 2, order=order)
     hb = HexMesh.extrude(sec, length=4.0, layers=[0.0, 0.5, 1.0],
                          first_tag="in", last_tag="out")
-    assert hb.order == order and hb.curved is not None
-    cc = hb.curved[:, corner_indices(order, 3), :]
+    assert hb.order == order
+    cb = curved(hb)
+    cc = cb[:, corner_indices(order, 3), :]
     assert np.allclose(cc, hb.points[hb.hexes], atol=1e-9)
     # planar section swept along +z -> every node has integer-free straight geometry;
     # here just assert the block is a straight subdivision (mid nodes between corners)
-    assert hb.curved.shape == (hb.n_hexes, (order + 1) ** 3, 3)
+    assert cb.shape == (hb.n_hexes, (order + 1) ** 3, 3)
 
 
 # -- from_grid order-N (trilinear) --------------------------------------
@@ -72,20 +74,30 @@ def test_from_grid_order_n_corner_consistent():
     grid = np.stack([X, Y, Z], axis=-1)
     fg = HexMesh.from_grid(grid, order=4)
     assert fg.order == 4
-    cc = fg.curved[:, corner_indices(4, 3), :]
+    cc = curved(fg)[:, corner_indices(4, 3), :]
     assert np.allclose(cc, fg.points[fg.hexes], atol=1e-9)
 
 
 # -- blend / merge ------------------------------------------------------
 def test_blend_morphs_hex_curved_blocks():
     a = _shell(3, n_face=1, n_radial=1)
-    b = HexMesh.from_corners(a.points * 2.0, a.hexes, a.boundaries, a.boundary_tags,
-                             order=3, curved=np.asarray(a.curved) * 2.0)
+    # a uniformly scaled copy, built natively from a's own entity tables
+    b = hex_from_entities(a.points * 2.0, a.hexes,
+                          edge_nodes=a.edge_nodes * 2.0,
+                          face_nodes=a.face_nodes * 2.0,
+                          interior=a.interior * 2.0,
+                          boundaries=a.boundaries,
+                          boundary_tags=a.boundary_tags, order=3)
     lo, mid, hi = HexMesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
-    assert np.allclose(lo.curved, a.curved)
-    assert np.allclose(hi.curved, b.curved)
-    assert np.allclose(mid.curved, 0.5 * (np.asarray(a.curved) + np.asarray(b.curved)))
+    ca, cbb = curved(a), curved(b)
+    assert np.allclose(curved(lo), ca)
+    assert np.allclose(curved(hi), cbb)
+    assert np.allclose(curved(mid), 0.5 * (ca + cbb))
+    # the shared edge / face / private interior tables take the same lerp
+    assert np.allclose(mid.edge_nodes, 0.5 * (a.edge_nodes + b.edge_nodes))
+    assert np.allclose(mid.face_nodes, 0.5 * (a.face_nodes + b.face_nodes))
+    assert np.allclose(mid.interior, 0.5 * (a.interior + b.interior))
 
 
 def test_blend_rejects_mismatched_order():
@@ -108,10 +120,13 @@ def test_order1_factories_are_linear_no_op():
     X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
     grid = np.stack([X, Y, Z], axis=-1)
     for hm in (_shell(1), HexMesh.from_grid(grid)):
-        # order 1 still materializes the 8-corner block, corner-consistent
+        # order 1: every high-order table is empty, the walk is just the corners
         assert hm.order == 1
-        assert hm.curved.shape == (hm.n_hexes, 8, 3)
-        assert np.allclose(hm.curved[:, corner_indices(1, 3), :],
+        assert hm.edge_nodes.shape == (hm.edges.shape[0], 0, 3)
+        assert hm.face_nodes.shape == (hm.faces.shape[0], 0, 3)
+        assert hm.interior.shape == (hm.n_hexes, 0, 3)
+        assert curved(hm).shape == (hm.n_hexes, 8, 3)
+        assert np.allclose(curved(hm)[:, corner_indices(1, 3), :],
                            hm.points[hm.hexes])
 
 

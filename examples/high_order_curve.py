@@ -30,8 +30,11 @@ OUT_NAME = "high_order_curve"
 # -- build the high-order loop -----------------------------------------------
 mesh = LineMesh.circle(RADIUS, N_ELEM, order=ORDER)
 
-# every curved node sits on the true circle, to machine precision
-radii = np.linalg.norm(mesh.curved.reshape(-1, 3), axis=1)
+# every curved node sits on the true circle, to machine precision.  A LineMesh's
+# high-order state is just its corner ``points`` plus each line's private
+# ``interior`` block -- together, every node of the mesh, each numbered once.
+radii = np.linalg.norm(
+    np.vstack([mesh.points, mesh.interior.reshape(-1, 3)]), axis=1)
 _log.info("order-%d circle: %d elements, %d nodes/element",
           mesh.order, mesh.lines.shape[0], ORDER + 1)
 _log.info("node radius: min=%.15f max=%.15f (target %.1f)",

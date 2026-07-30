@@ -1,11 +1,12 @@
-"""Phase 1 tests for the order-N infrastructure: the GLL reference-node helpers
+"""Tests for the order-N infrastructure: the GLL reference-node helpers
 (``model.fields``), the shared tensor-product kernel (``model.interp``), and the
-container ``order``/``curved`` plumbing.  The load-bearing property is that at
+container ``order`` / entity-B-rep plumbing.  The load-bearing property is that at
 ``order == 1`` every primitive reduces **exactly** to the existing linear data --
 that is the golden-invariant contract."""
 
 import numpy as np
 import pytest
+from conftest import curved
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh
 from nekmeshpy.model.fields import (
@@ -114,7 +115,7 @@ def test_scaled_jacobian_ho_quad_reduces_at_order1():
 
     box = QuadMesh.box(1.0, (2, 2, 2))                    # order-1 closed surface
     corner = qq.scaled_jacobian(box.points, box.quads)
-    ho = scaled_jacobian_ho(box.curved, box.order, dim=2)
+    ho = scaled_jacobian_ho(curved(box), box.order, dim=2)
     assert np.allclose(corner, ho, atol=1e-12)
 
 
@@ -127,7 +128,7 @@ def test_scaled_jacobian_ho_hex_reduces_at_order1():
                         smoothing_method="bilinear")
     blk = HexMesh.extrude(qm, axis=(0, 0, 1), length=5.0, layers=uniform_spacing(6))
     corner = hq.scaled_jacobian(blk.points, blk.hexes)
-    ho = scaled_jacobian_ho(blk.curved, blk.order, dim=3)
+    ho = scaled_jacobian_ho(curved(blk), blk.order, dim=3)
     assert np.allclose(corner, ho, atol=1e-12)
 
 
@@ -214,64 +215,84 @@ def test_blend_ho_endpoints_and_midpoint():
 
 
 # -- container plumbing / validation ------------------------------------
-def test_default_order_is_one_and_curved_materialized():
-    # order 1 now always materializes the 2^d corner block (never None),
-    # corner-consistent with points[conn].
+def test_default_order_is_one_and_brep_is_empty():
+    # order 1: every entity table of the B-rep is empty and the conformal walk is
+    # just the corners, i.e. points[conn] in connectivity order.
     lm = LineMesh.open([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
-    assert lm.order == 1 and lm.curved.shape == (2, 2, 3)
-    assert np.allclose(lm.curved, lm.points[lm.lines])
+    assert lm.order == 1 and lm.interior.shape == (2, 0, 3)
+    assert curved(lm).shape == (2, 2, 3)
+    assert np.allclose(curved(lm), lm.points[lm.lines])
+
     qm = QuadMesh.from_grid(_unit_grid())
-    assert qm.order == 1 and qm.curved.shape == (qm.n_quads, 4, 3)
-    assert np.allclose(qm.curved[:, corner_indices(1, 2), :], qm.points[qm.quads])
+    assert qm.order == 1
+    assert qm.edge_nodes.shape == (qm.edges.shape[0], 0, 3)
+    assert qm.interior.shape == (qm.n_quads, 0, 3)
+    cb = curved(qm)
+    assert cb.shape == (qm.n_quads, 4, 3)
+    assert np.allclose(cb[:, corner_indices(1, 2), :], qm.points[qm.quads])
+
     hm = HexMesh.from_grid(_unit_hex_grid())
-    assert hm.order == 1 and hm.curved.shape == (hm.n_hexes, 8, 3)
-    assert np.allclose(hm.curved[:, corner_indices(1, 3), :], hm.points[hm.hexes])
+    assert hm.order == 1
+    assert hm.edge_nodes.shape == (hm.edges.shape[0], 0, 3)
+    assert hm.face_nodes.shape == (hm.faces.shape[0], 0, 3)
+    assert hm.interior.shape == (hm.n_hexes, 0, 3)
+    hb = curved(hm)
+    assert hb.shape == (hm.n_hexes, 8, 3)
+    assert np.allclose(hb[:, corner_indices(1, 3), :], hm.points[hm.hexes])
 
 
 def test_factory_meshes_default_to_order_one():
     circ = LineMesh.circle(1.0, 8)
-    assert circ.order == 1 and circ.curved.shape == (8, 2, 3)
-    assert np.allclose(circ.curved, circ.points[circ.lines])
+    assert circ.order == 1 and circ.interior.shape == (8, 0, 3)
+    assert np.allclose(curved(circ), circ.points[circ.lines])
     og = QuadMesh.ogrid(circ, 2, np.array([0.0, 0.5, 1.0]))
-    assert og.order == 1 and og.curved.shape == (og.n_quads, 4, 3)
+    assert og.order == 1
+    assert og.edge_nodes.shape == (og.edges.shape[0], 0, 3)
+    assert og.interior.shape == (og.n_quads, 0, 3)
+    assert curved(og).shape == (og.n_quads, 4, 3)
 
 
-# The factories don't forward order/curved yet (Phase 2+); the constructor is the
-# Phase 1 plumbing site, so these drive LineMesh(...) directly.
-def test_curved_at_order1_accepted_when_corner_consistent():
-    # order 1 with a supplied corner block is now validated (not rejected): a
-    # corner-consistent block is accepted...
-    good = np.array([[[0, 0, 0], [1, 0, 0]]], dtype=float)
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=1, curved=good)
-    assert lm.order == 1 and np.allclose(lm.curved, good)
-    # ...but corners that disagree with points[lines] are rejected.
-    with pytest.raises(ValueError, match="corners disagree"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], order=1, curved=np.zeros((1, 2, 3)))
+# A LineMesh element shares only its two endpoints (owned by ``points[lines]``), so
+# its whole high-order state is the private ``interior`` block -- these drive the
+# LineMesh(...) constructor directly to pin that contract.
+def test_interior_at_order1_must_be_empty():
+    # order 1 accepts an explicitly empty interior...
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=1, interior=np.zeros((1, 0, 3)))
+    assert lm.order == 1 and lm.interior.shape == (1, 0, 3)
+    assert np.allclose(curved(lm), lm.points[lm.lines])
+    # ...and rejects any node claiming to be interior to a linear element.
+    with pytest.raises(ValueError, match=r"\(1,0,3\)"):
+        LineMesh([[0, 0, 0], [1, 0, 0]], order=1, interior=np.zeros((1, 2, 3)))
 
 
-def test_order_gt1_requires_curved():
-    with pytest.raises(ValueError, match="requires a curved block"):
+def test_order_gt1_requires_interior():
+    with pytest.raises(ValueError, match="interior nodes"):
         LineMesh([[0, 0, 0], [1, 0, 0]], order=3)
 
 
-def test_curved_wrong_shape_rejected():
-    with pytest.raises(ValueError, match=r"\(1,3,3\)"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], order=2, curved=np.zeros((1, 5, 3)))
+def test_interior_wrong_shape_rejected():
+    with pytest.raises(ValueError, match=r"\(1,1,3\)"):
+        LineMesh([[0, 0, 0], [1, 0, 0]], order=2, interior=np.zeros((1, 5, 3)))
 
 
-def test_curved_corner_mismatch_rejected():
-    # order-2 line, but the endpoint nodes don't match points[lines]
-    bad = np.array([[[0, 0, 0], [0.5, 0, 0], [9, 9, 9]]], dtype=float)
-    with pytest.raises(ValueError, match="corners disagree"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], order=2, curved=bad)
+def test_corners_come_from_points_not_the_interior():
+    # the endpoints are single-sourced from points[lines]: whatever interior is
+    # handed in, the assembled block's corners are the linear corners, and an
+    # in-place points edit is reflected immediately.
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=2,
+                  interior=np.array([[[9.0, 9.0, 9.0]]]))
+    assert np.allclose(curved(lm)[:, [0, 2], :], lm.points[lm.lines])
+    lm.points[:] = lm.points * 2.0
+    assert np.allclose(curved(lm)[:, [0, 2], :], lm.points[lm.lines])
 
 
-def test_valid_curved_line_accepted():
-    # order-2 line with a straight interior midpoint: corner-consistent
-    curved = subdivide_element(np.array([[0, 0, 0], [1, 0, 0]], float), 2, 1)
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=2, curved=curved[None])
+def test_valid_interior_line_accepted():
+    # order-2 line with a straight interior midpoint
+    block = subdivide_element(np.array([[0, 0, 0], [1, 0, 0]], float), 2, 1)
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], order=2, interior=block[None, 1:2, :])
     assert lm.order == 2
-    assert lm.curved is not None and lm.curved.shape == (1, 3, 3)
+    assert curved(lm).shape == (1, 3, 3)
+    assert np.allclose(curved(lm), block[None])
 
 
 # -- helpers ------------------------------------------------------------
