@@ -18,7 +18,7 @@ section  = QuadMesh.ogrid(boundary, n_side=6, radial=uniform_spacing(4))
 mesh     = HexMesh.extrude(section, axis=(0, 0, 1), length=5.0,
                            layers=uniform_spacing(40),
                            first_tag="inlet", last_tag="outlet")
-export.to_re2(mesh, "pipe", groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "})
+export.to_re2(mesh, "pipe.re2", groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "})
 ```
 
 ## Where to go next

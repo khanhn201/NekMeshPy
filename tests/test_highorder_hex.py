@@ -160,8 +160,8 @@ def test_high_order_quality_non_degenerate_on_curved_shell(order):
 def test_re2_is_order_invariant(tmp_path):
     lin = _shell(1)
     ho = _shell(4)
-    export.to_re2(lin, str(tmp_path / "lin"), groups=GROUPS)
-    export.to_re2(ho, str(tmp_path / "ho"), groups=GROUPS)
+    export.to_re2(lin, str(tmp_path / "lin.re2"), groups=GROUPS)
+    export.to_re2(ho, str(tmp_path / "ho.re2"), groups=GROUPS)
     a = open(tmp_path / "lin.re2", "rb").read()
     b = open(tmp_path / "ho.re2", "rb").read()
     assert a == b                                        # curved nodes never reach re2

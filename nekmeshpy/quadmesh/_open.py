@@ -24,6 +24,7 @@ import numpy as np
 from .._typing import FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
 from ..linemesh._assemble import loft as line_loft
+from ..linemesh._morph import reverse as line_reverse
 from ..linemesh._open import line
 from ..model.fields import gll_nodes, validate_layers
 from ..model.interp import coons_grid
@@ -70,10 +71,11 @@ def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
     """``(L,)`` map from the edge's line index to the point interval ``i`` it spans.
 
     ``structured`` reads an edge's nodes straight off ``edge.points`` in index order,
-    so line ``k`` must join two consecutive points; this returns the lower index of
-    each line's interval (``lines[k] == (i, i+1)`` or ``(i+1, i)``) so a wall overlay
-    can find the quad that line ``k`` bounds.  Raises if the edge is not a simple
-    consecutive chain (which ``structured`` already assumes for its point order)."""
+    and ``half_ogrid`` reads its spine's samples the same way, so line ``k`` must join
+    two consecutive points; this returns the lower index of each line's interval
+    (``lines[k] == (i, i+1)`` or ``(i+1, i)``) so an overlay can find the quad that
+    line ``k`` bounds.  Raises if the edge is not a simple consecutive chain (which
+    both factories already assume for their point order)."""
     lines: IntArray = np.asarray(edge.lines, dtype=np.int64).reshape(-1, 2)
     lo: IntArray = np.minimum(lines[:, 0], lines[:, 1])
     hi: IntArray = np.maximum(lines[:, 0], lines[:, 1])
@@ -81,10 +83,10 @@ def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
     if (lines.shape[0] != n or not np.array_equal(hi, lo + 1)
             or not np.array_equal(np.sort(lo), np.arange(n, dtype=np.int64))):
         raise ValueError(
-            "structured %s edge must be a simple consecutive chain (line k joining "
-            "points k and k+1) -- its point order is what sets the grid's node "
-            "distribution; build it with LineMesh.loft/line/arc (or merge chains "
-            "end to end) rather than re-indexing its lines" % name)
+            "%s must be a simple consecutive chain (line k joining points k and k+1) "
+            "-- its point order is what sets the node distribution; build it with "
+            "LineMesh.loft/line/arc/curve (or merge chains end to end) rather than "
+            "re-indexing its lines" % name)
     return lo
 
 
@@ -160,6 +162,20 @@ def _blended_ring(pos: PointArray, wall: LineMesh, tau: float,
     return LineMesh(pos, lines, order=order, interior=inner)
 
 
+def _sub_chain(chain: LineMesh, segs: IntArray, seg2line: IntArray) -> LineMesh:
+    """The sub-``LineMesh`` of ``chain`` holding point intervals ``segs``, in that order.
+
+    ``seg2line`` maps a point interval ``i`` (the span ``i -> i+1``) to the line index
+    that carries it, so the result's line ``k`` is the true geometry -- endpoints *and*
+    private ``interior`` -- of interval ``segs[k]``.  Handed to ``_elevate`` as an
+    :data:`~nekmeshpy.quadmesh._helpers.Overlay` payload, which matches each line
+    against its quad's side by endpoint and reverses it where the two disagree, so the
+    intervals need not be listed in ascending order."""
+    idx: IntArray = seg2line[np.asarray(segs, dtype=np.int64)]
+    return LineMesh(chain.points, chain.lines[idx], order=chain.order,
+                    interior=chain.interior[idx])
+
+
 def structured(edges: list[LineMesh], *,
                boundary_tags: Mapping[str, str] | None = None,
                smoothing_method: str | None = None) -> QuadMesh:
@@ -230,10 +246,10 @@ def structured(edges: list[LineMesh], *,
     # Both edge families are oriented to run with the lattice: bottom/top c0->c1 and
     # c3->c2 along u, left/right c0->c3 and c1->c2 along v, so ``top``/``left`` (stored
     # c2->c3 / c3->c0) are reversed.
-    S = coons_grid(_refined_chain(bottom, "bottom"),
-                   _refined_chain(top, "top")[::-1],
-                   _refined_chain(left, "left")[::-1],
-                   _refined_chain(right, "right"),
+    S = coons_grid(_refined_chain(bottom, "structured bottom edge"),
+                   _refined_chain(top, "structured top edge")[::-1],
+                   _refined_chain(left, "structured left edge")[::-1],
+                   _refined_chain(right, "structured right edge"),
                    _refined_params(nx, order), _refined_params(ny, order))
     points = S[::order, ::order].reshape(-1, 3)            # id(i,j) = i*row + j
     row = ny + 1
@@ -445,7 +461,12 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     (spanning the inner block), the north caps are ``(1-radial[r])*sN`` and the south
     caps ``sS + radial[r]*(1-sS)`` for ``r = 1..Nradial`` -- so the full point set is
     just those fractions in ascending order (north caps rise ``0 -> sN``, the fan
-    ``sN -> sS``, the south caps ``sS -> 1``).  The ``arc`` wall is named from the
+    ``sN -> sS``, the south caps ``sS -> 1``).  At ``order > 1`` the spine's own
+    private ``interior`` nodes are the seam geometry too: its point intervals partition
+    the half-disk's flat side one-for-one, so each is overlaid onto the seam edge it
+    spans and a curved spine is meshed exactly rather than straight-subdivided between
+    its samples.  It must therefore carry the same ``order`` as ``arc``.
+    The ``arc`` wall is named from the
     arc's per-segment ``element_tags``; a non-empty scalar ``wall_tag`` overrides
     that for the whole wall."""
     from .quadmesh import QuadMesh
@@ -471,6 +492,12 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
             "(got %d); sample the spine curve monotonically A1 -> A2 as [north caps, "
             "center fan, south caps] (see half_ogrid docstring)"
             % (n_spine, sp.shape[0]))
+    if spine.order != arc.order:
+        raise ValueError(
+            "half_ogrid spine and arc must share an order (got spine order %d, arc "
+            "order %d); the spine's own nodes are the seam geometry, so a lower-order "
+            "spine cannot describe a higher-order seam"
+            % (spine.order, arc.order))
 
     north = sp[0:Nr][::-1]                      # A1 -> block; reverse to inner-first
     fe = sp[Nr:Nr + 2 * Nt + 1]                 # the center fan, sN..sS
@@ -561,8 +588,51 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
             overlays.append((q0 + r * (4 * Nt) + ks, 3, ring_lm))          # outer
             if r + 1 < Nr:
                 overlays.append((q0 + (r + 1) * (4 * Nt) + ks, 1, ring_lm))  # inner
+        # ...and overlay the seam with the spine's *own* nodes, so a curved spine is
+        # meshed exactly at order N too rather than straight-subdivided between its
+        # samples.  Each seam edge is single-incidence (the half-disk's flat side), and
+        # the spine's point intervals partition it exactly: intervals [0, Nr) are the
+        # north radial edges (outermost first, so reversed), [Nr, Nr+ni) the inner
+        # block's j == 0 row, and [Nr+ni, ...) the south radial edges.
+        seg2line: IntArray = np.argsort(_chain_intervals(spine, "half_ogrid spine"))
+        rs: IntArray = np.arange(Nr, dtype=np.int64)
+        overlays += [
+            (q0 + rs * (4 * Nt), 4,                       # north caps, block -> A1
+             _sub_chain(spine, rs[::-1], seg2line)),
+            (np.arange(ni, dtype=np.int64) * nj, 1,       # the center fan, A1 -> A2
+             _sub_chain(spine, np.arange(Nr, Nr + ni, dtype=np.int64), seg2line)),
+            (q0 + rs * (4 * Nt) + (4 * Nt - 1), 2,        # south caps, block -> A2
+             _sub_chain(spine, Nr + ni + rs, seg2line)),
+        ]
     qm = _elevate(qm, order, overlays)
     return _apply_smoothing(qm, smoothing_method)
+
+
+def spine_fractions(n_theta: int, radial: FloatArray,
+                    center_scale: float = 0.5) -> FloatArray:
+    """The normalized ``A1 -> A2`` positions of the ``2*n_theta+1 + 2*Nradial`` spine
+    points that :func:`half_ogrid` and :func:`spined_ogrid` require, in ascending
+    order: ``Nradial`` north caps, the ``2*n_theta+1`` center fan, then ``Nradial``
+    south caps (see :func:`half_ogrid` for what each region is).
+
+    Neither factory resamples a spine for you -- both mesh it exactly at the points
+    given -- so this is how a caller **derives** the sampling to prove: evaluate its
+    own spine curve at these fractions (with
+    :meth:`LineMesh.curve <nekmeshpy.linemesh.LineMesh.curve>` for an analytic spine,
+    or ``trimesh.ops.resample_polyline`` for a scanned one) and hand the result in.
+    Keeping the formula here rather than in every caller is what stops the two from
+    drifting apart."""
+    nt = int(n_theta)
+    if nt < 1:
+        raise ValueError("spine_fractions needs n_theta >= 1, got %d" % nt)
+    if not 0.0 < center_scale < 1.0:
+        raise ValueError("spine_fractions needs center_scale in (0, 1)")
+    rad = validate_layers(radial, "spine_fractions radial")
+    s_n, s_s = (1.0 - center_scale) / 2, (1.0 + center_scale) / 2
+    fr: FloatArray = np.concatenate([((1.0 - rad[1:]) * s_n)[::-1],
+                                     np.linspace(s_n, s_s, 2 * nt + 1),
+                                     s_s + rad[1:] * (1.0 - s_s)])
+    return fr
 
 
 def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
@@ -572,23 +642,33 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
     """Full-disk O-grid over a closed ``boundary`` split along a spine diameter
     into two :func:`half_ogrid` halves welded along the spine -- the clean way to
     O-grid a disk that has a natural ``A1..A2`` seam (a saddle-split vessel or pipe
-    cross-section), so the caller need not hand-roll the arc split, spine sampling
-    and merge.
+    cross-section), so the caller need not hand-roll the arc split and merge.
 
     ``boundary`` is a closed loop of ``M = 8*Ntheta`` points with index ``0`` at
     ``A1`` and index ``M//2`` at ``A2`` (the two spine ends); it is split into the
-    two ``A1 -> A2`` / ``A2 -> A1`` half-arcs, each meshed exactly.  ``spine`` is the
-    open ``A1 -> A2`` diameter curve at any sampling (possibly curved / deviating);
-    it is resampled by arc length at the fractions each :func:`half_ogrid` half needs,
-    so it is meshed exactly too and the two halves share it point-for-point.  Omit it
-    (``spine=None``, the default) to use the straight chord between ``A1`` and ``A2``
-    -- the common case for a planar disc; pass a curve only to bow the seam.
+    two ``A1 -> A2`` / ``A2 -> A1`` half-arcs, each meshed exactly.
+
+    ``spine`` is the open ``A1 -> A2`` diameter curve and is **meshed exactly at the
+    points given** -- like every other curve in the toolkit, it is never resampled or
+    reordered on the caller's behalf.  It must therefore carry exactly the
+    :func:`spine_fractions` sampling that :func:`half_ogrid` consumes
+    (``2*Ntheta+1 + 2*Nradial`` points, ascending ``A1 -> A2``); anything else is a
+    loud ``ValueError`` rather than a silent reinterpolation.  Derive it with
+    ``spine_fractions(M // 8, radial, center_scale)`` and evaluate your own curve
+    there, at ``boundary``'s order (a curved spine's own high-order nodes *are* the
+    seam geometry, so the two orders must match).  The second half consumes
+    :meth:`LineMesh.reverse <nekmeshpy.linemesh.LineMesh.reverse>` of that same mesh,
+    so both halves share the seam bit-for-bit and the merge welds an exact
+    coincidence rather than a near one.
+
+    Omit it (``spine=None``, the default) to use the straight chord between ``A1``
+    and ``A2``, which this factory owns as a shape and so can place exactly itself --
+    the common case for a planar disc; pass a curve only to bow the seam.
 
     ``radial`` and ``center_scale`` are as in :func:`half_ogrid`.  Wall names come
     from ``boundary``'s per-line ``element_tags`` (split onto the two arcs); a
     non-empty scalar ``wall_tag`` overrides that for the whole wall.
     ``smoothing_method`` repositions each half's interior before the merge."""
-    from ..trimesh.ops import resample_polyline
     bpts = _check_boundary(boundary, "spined_ogrid boundary", 8)
     M = bpts.shape[0]
     if M % 8 != 0:
@@ -601,18 +681,24 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
         raise ValueError("spined_ogrid needs center_scale in (0, 1)")
     radial = validate_layers(radial, "spined_ogrid radial")
 
-    # spine sampled monotonically A1 -> A2 as [north caps, center fan, south caps]
-    # (see half_ogrid); resample the given spine curve by arc length at those fractions
-    # so it is meshed exactly and each half indexes it identically.
-    s_n, s_s = (1.0 - center_scale) / 2, (1.0 + center_scale) / 2
-    fr = np.concatenate([((1.0 - radial[1:]) * s_n)[::-1],
-                         np.linspace(s_n, s_s, 2 * Nt + 1),
-                         s_s + radial[1:] * (1.0 - s_s)])
-    # default spine: the straight A1..A2 chord (boundary's two split points)
-    sp = (bpts[[0, nh], :] if spine is None
-          else _check_boundary(spine, "spined_ogrid spine", 2))
-    spn1 = resample_polyline(sp, fr)
-    spn2 = resample_polyline(sp[::-1, :], fr)
+    # The spine is meshed exactly at the points given -- nothing is resampled here.
+    # A caller-supplied spine must already carry the [north caps, center fan, south
+    # caps] sampling half_ogrid consumes; only the default straight chord is a shape
+    # this factory owns, so only that one may be placed here.
+    fr = spine_fractions(Nt, radial, center_scale)
+    if spine is None:
+        spine = line(bpts[0, :], bpts[nh, :], fr, order=boundary.order)
+    elif spine.points.shape[0] != fr.shape[0]:
+        raise ValueError(
+            "spined_ogrid spine must have exactly 2*Ntheta+1 + 2*Nradial = %d points "
+            "ascending A1 -> A2 (got %d); it is meshed exactly at the points given, "
+            "never resampled -- evaluate your spine curve at "
+            "spine_fractions(%d, radial, center_scale)"
+            % (fr.shape[0], spine.points.shape[0], Nt))
+    # the second half traverses A2 -> A1; ``reverse`` relabels rather than re-placing,
+    # so both halves see bit-identical seam coordinates (and, at order > 1, carries the
+    # spine's own interior nodes with it instead of re-subdividing them straight).
+    spine2 = line_reverse(spine)
 
     # split the loop (and its per-segment tags) into the two half arcs: arc1 runs
     # A1 -> A2 over segments [0, nh), arc2 runs A2 -> A1 over segments [nh, M).
@@ -627,12 +713,19 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
     arc2 = line_loft(np.vstack([bpts[nh:M, :], bpts[0:1, :]]),
                          interior=inner[nh:M],
                          element_tags=None if seg is None else seg[nh:M], order=o)
-    h1 = half_ogrid(arc1, line_loft(spn1), radial, center_scale=center_scale,
+    h1 = half_ogrid(arc1, spine, radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
-    h2 = half_ogrid(arc2, line_loft(spn2), radial, center_scale=center_scale,
+    h2 = half_ogrid(arc2, spine2, radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
     return merge([h1, h2])
 
+
+#: Section helpers bound onto ``QuadMesh`` as ``staticmethod``s.  These answer a
+#: question *about* a factory's input contract and return plain arrays rather than a
+#: mesh, which is what keeps them out of ``FACTORIES``.
+HELPERS: dict[str, Callable[..., FloatArray]] = {
+    "spine_fractions": spine_fractions,
+}
 
 #: Open-region section factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.
 FACTORIES: dict[str, Callable[..., QuadMesh]] = {

@@ -54,3 +54,7 @@ examples/*.vtk
 examples/*.vtu
 examples/*.msh
 examples/*.png
+/*.f[0-9][0-9][0-9][0-9][0-9]
+/*.nek5000
+examples/*.f[0-9][0-9][0-9][0-9][0-9]
+examples/*.nek5000

@@ -19,7 +19,7 @@ genuinely curved rather than straight-subdivided.
 
     PYTHONPATH=. python examples/flow_past_hemisphere.py
 
-Produces ``flow_past_hemisphere.re2`` / ``.rea`` and ``.vtu``.
+Produces ``flow_past_hemisphere.re2`` and ``.vtu``.
 """
 
 import logging
@@ -63,6 +63,6 @@ mesh = HexMesh.annulus(inner, outer,
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

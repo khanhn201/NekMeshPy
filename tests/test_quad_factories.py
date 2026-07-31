@@ -800,15 +800,79 @@ def test_spined_ogrid_valid_and_tagged():
 
 
 def test_spined_ogrid_default_spine_equals_explicit_chord():
-    # omitting spine must use the straight A1..A2 chord (boundary's two split points)
+    # omitting spine must use the straight A1..A2 chord (boundary's two split points).
+    # The spine is meshed exactly at the points given -- never resampled -- so the
+    # "equivalent explicit chord" is that chord sampled at spine_fractions, which is
+    # exactly what the factory itself places for spine=None.
+    Nt = 2
+    loop = _circle_loop(Nt)
+    radial = uniform_spacing(2)
+    fr = QuadMesh.spine_fractions(Nt, radial, 0.5)
+    chord = LineMesh.line(loop.points[0], loop.points[4 * Nt], fr)
+    auto = QuadMesh.spined_ogrid(loop, radial, center_scale=0.5)
+    explicit = QuadMesh.spined_ogrid(loop, radial, spine=chord, center_scale=0.5)
+    assert np.array_equal(np.asarray(auto.points), np.asarray(explicit.points))
+    assert np.array_equal(np.asarray(auto.quads), np.asarray(explicit.quads))
+
+
+# -- the spine is meshed exactly, never resampled ----------------------------
+
+def test_spined_ogrid_rejects_wrong_length_spine():
+    # a 2-point chord is no longer silently resampled onto the required sampling;
+    # the error names the helper that derives it
     Nt = 2
     loop = _circle_loop(Nt)
     chord = LineMesh.loft(loop.points[[0, 4 * Nt], :])
-    auto = QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
-    explicit = QuadMesh.spined_ogrid(loop, uniform_spacing(2), spine=chord,
-                                     center_scale=0.5)
-    assert np.allclose(np.asarray(auto.points), np.asarray(explicit.points))
-    assert np.array_equal(np.asarray(auto.quads), np.asarray(explicit.quads))
+    with pytest.raises(ValueError, match="spine_fractions"):
+        QuadMesh.spined_ogrid(loop, uniform_spacing(2), spine=chord,
+                              center_scale=0.5)
+
+
+def test_spine_fractions_shape_and_ordering():
+    Nt, radial, cs = 3, uniform_spacing(4), 0.4
+    fr = np.asarray(QuadMesh.spine_fractions(Nt, radial, cs))
+    Nr = len(radial) - 1
+    assert fr.shape == (2 * Nt + 1 + 2 * Nr,)
+    assert np.all(np.diff(fr) > 0.0)                  # strictly ascending A1 -> A2
+    assert fr[0] == 0.0 and fr[-1] == 1.0             # spans the full chord exactly
+
+
+def test_spine_fractions_rejects_bad_n_theta():
+    with pytest.raises(ValueError, match="n_theta >= 1"):
+        QuadMesh.spine_fractions(0, uniform_spacing(2), 0.5)
+
+
+@pytest.mark.parametrize("cs", [0.0, 1.0, -0.2, 1.5])
+def test_spine_fractions_rejects_bad_center_scale(cs):
+    with pytest.raises(ValueError, match=r"center_scale in \(0, 1\)"):
+        QuadMesh.spine_fractions(2, uniform_spacing(2), cs)
+
+
+def test_spined_ogrid_curved_spine_is_meshed_exactly():
+    # the "meshed exactly, not resampled" property: a bowed spine sampled at
+    # spine_fractions appears verbatim in the merged disc's points, to the bit.
+    Nt, radial, cs = 3, uniform_spacing(3), 0.5
+    loop = _circle_loop(Nt)
+    A1, A2 = loop.points[0], loop.points[4 * Nt]
+    fr = np.asarray(QuadMesh.spine_fractions(Nt, radial, cs))
+    pts = A1 + fr[:, None] * (A2 - A1)
+    pts[:, 2] = 0.35 * np.sin(np.pi * fr)             # +z bow, pinned at both ends
+    spine = LineMesh.loft(pts)
+    qm = QuadMesh.spined_ogrid(loop, radial, spine=spine, center_scale=cs)
+
+    assert not np.any(np.isnan(np.asarray(qm.points)))
+    assert qm.n_quads == 2 * (2 * Nt * Nt + 4 * Nt * radial[1:].size)
+    P = np.asarray(qm.points)
+    # every spine point is a point of the mesh: the given coordinates are used, not
+    # a resampling of them.  Most land bit-for-bit; a few center-fan nodes are
+    # rebuilt by the fan blend and land within a couple of ulp -- nowhere near the
+    # ~1e-2 a resampling of a bowed spine would cost.
+    dev = np.array([np.min(np.linalg.norm(P - p, axis=1)) for p in pts])
+    assert dev.max() < 1e-15
+    assert dev[0] == 0.0 and dev[-1] == 0.0           # both spine ends exactly
+    assert np.count_nonzero(dev == 0.0) > len(dev) // 2
+    # and the bow really left the plane
+    assert np.max(np.abs(P[:, 2])) == pytest.approx(np.max(np.abs(pts[:, 2])))
 
 
 def test_spined_ogrid_matches_two_half_ogrids():

@@ -46,7 +46,7 @@ block   = HexMesh.extrude(section, axis=(0, 0, 1), length=5.0,
 
 # Boundaries are named at build time; map each name -> Nek BC code at export.
 codes = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-export.to_re2(block, "pipe", groups=codes)     # native Nek5000/NekRS (.re2 + .rea)
+export.to_re2(block, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
 export.write(block, "pipe.vtu", groups=codes)  # anything meshio supports
 
 assert block.is_watertight()                   # closed, leak-tight, single body
@@ -95,7 +95,9 @@ Every factory takes an optional `order=N` (default `1`): each element then carri
 `(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's re2 has no
 high-order format yet), so a mesh exports byte-identically at any order, while `.vtu`
 emits VTK Lagrange cells (68 / 70 / 72) that ParaView and VisIt render as curved
-geometry.
+geometry. To hand the curved geometry to Nek itself, use `export.to_fld`, which writes
+the Nek field format (`<prefix>0.f00001`, `fields="X"`) — that one *does* store the
+full `lx1³` GLL block per element.
 
 **The B-rep ladder is the storage.** There is no per-element node block anywhere and
 no `.curved` facade: each container holds the rung below it plus what it privately
@@ -114,12 +116,15 @@ the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.
 
 **Curved geometry is not automatic.** Factories that own an analytic shape place the
 extra nodes on it — `LineMesh.circle` / `LineMesh.arc` on the exact arc,
+`LineMesh.curve` on any analytic parametrization you hand it (it calls your callable on
+the whole node lattice, corners *and* interiors),
 `QuadMesh.sphere` / `QuadMesh.hemisphere` projecting every node onto the exact sphere —
 the region fills (`ogrid` / `half_ogrid` / `structured`) carry their input walls'
 curvature into the interior as well as onto the wall, and the combinators (`extrude` /
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
 (`LineMesh.loft`, `from_grid`) has only those points to go on and
-straight-subdivides between them: high order in storage, linear in geometry. Order-N
+straight-subdivides between them: high order in storage, linear in geometry — so pass
+`LineMesh.curve` a closed form rather than sampling it into an array. Order-N
 smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
 above order 1 rather than degrading silently.
 
@@ -148,5 +153,6 @@ CI runs all three on Python 3.9–3.12. `tests/golden/` freezes the output of
 
 - [ ] Periodic boundary
 - [x] High-order / curved elements — `order=N` on the factories (GLL nodes, curved
-  `.vtu`; `.re2` stays linear). See [`examples/high_order_*.py`](examples).
+  `.vtu` + Nek field file; `.re2` stays linear). See
+  [`examples/high_order_*.py`](examples).
 - [ ] Solid–fluid conjugate mesh

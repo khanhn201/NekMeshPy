@@ -38,6 +38,19 @@ explicitly:
   through the constructor with its `lines` spelled out.
 - `LineMesh.line(start, end, fractions, …)` — straight edge sampled at the given
   fractions (a direct lerp, meshed exactly).
+- `LineMesh.curve(f, fractions, order=1, element_tags=…)` — an open curve
+  meshed on its own analytic parametrization, the general sibling of
+  {meth}`~nekmeshpy.linemesh.LineMesh.arc`. `f` maps a `(K,)` parameter array to
+  `(K,3)` points and is called once with the **whole** node lattice — corners and the
+  private high-order interior nodes alike — so nothing lands on a chord. `fractions`
+  are the parameter values themselves, passed to `f` verbatim (`len(fractions) - 1`
+  elements): for an `f` written on `[0,1]` they are exactly the normalized fractions
+  `LineMesh.line` takes, an `f` on any other interval is sampled in its own units, and
+  a descending sequence runs the curve backwards. They grade the nodes per element:
+  above order 1 an element's interior rides the GLL nodes of its own span. For nodes
+  spaced evenly by arc length, pass {meth}`LineMesh.arclength_fractions
+  <nekmeshpy.linemesh.LineMesh.arclength_fractions>`. See
+  [true geometry vs straight subdivision](#true-geometry-vs-straight-subdivision).
 - `LineMesh.circle(radius, n, center=…, normal=…, start_theta=0.0)` — closed ring
   in the plane with the given `normal` (default `+z`); `start_theta` rotates the
   first point off `+e1`.
@@ -57,7 +70,17 @@ explicitly:
 
 Every factory meshes its points **exactly** — there is no resampling API; the
 caller hands in an exactly-sized, correctly-oriented curve. The ordered ops treat
-points in index order as a path/loop (`.length`).
+points in index order as a path/loop (`.length`). That holds for curves handed to a
+section factory too: {meth}`~nekmeshpy.quadmesh.QuadMesh.spined_ogrid` used to
+arc-length-resample its `spine`, and no longer does — a caller-supplied spine must
+carry exactly the `2*Ntheta+1 + 2*Nradial` points ascending `A1 -> A2` that
+`half_ogrid` consumes, or it is a loud `ValueError`. Derive that sampling from
+{meth}`QuadMesh.spine_fractions <nekmeshpy.quadmesh.QuadMesh.spine_fractions>`
+(`n_theta`, `radial`, `center_scale` → the normalized fractions) and evaluate your own
+spine curve there, at the boundary's order — above order 1 the spine's own private
+interior nodes *are* the seam geometry, so the two orders must match (a mismatch is a
+`ValueError`). Omitting `spine` still gives the straight `A1..A2` chord, which the
+factory owns as a shape and places itself at `boundary.order`.
 
 Because closedness is not a stored flag, the section factories constrain their input
 through the facts they actually need instead: `ogrid` an exact `4*n_side` point ring,
@@ -317,7 +340,11 @@ anywhere other than on the straight line between the corners.
 
 - **Placed on the true shape.** `LineMesh.circle` and `LineMesh.arc` evaluate the exact
   arc at the interior GLL angles, so each element's nodes lie on the circle rather than
-  its chord. `QuadMesh.sphere` and `QuadMesh.hemisphere` project **every** node of the
+  its chord. {meth}`~nekmeshpy.linemesh.LineMesh.curve` generalizes that to any curve you
+  can write down: it builds the parameter values of *every* node of the chain — the
+  `n+1` corners and each element's `order-1` interior nodes — and calls your callable
+  once on the whole lattice, so no node is ever placed by interpolating between
+  others. `QuadMesh.sphere` and `QuadMesh.hemisphere` project **every** node of the
   cubed sphere / half box — corners, shared edge nodes and private quad interiors alike
   — radially, so the whole surface is exact, not just its corners. Straight-sided
   analytic shapes (`LineMesh.line`, `LineMesh.rectangle`, `QuadMesh.box` /
@@ -327,7 +354,45 @@ anywhere other than on the straight line between the corners.
   nothing but those points to go on, so the nodes between them are the straight
   blend: `LineMesh.loft`, `QuadMesh.from_grid` / `HexMesh.from_grid`. Sampling a
   curve into points and calling `LineMesh.loft` thus *throws the curve away* above
-  order 1 — pass the analytic `arc` / `circle` instead.
+  order 1 — pass the analytic `arc` / `circle` instead, or
+  {meth}`~nekmeshpy.linemesh.LineMesh.curve` when the closed form is neither:
+
+  ```python
+  # the intersection of two equal-radius cylinders is a planar ellipse
+  ellipse = lambda t: np.column_stack([R * np.sin(t), R * np.cos(t), R * np.sin(t)])
+  fr = LineMesh.arclength_fractions(ellipse, n=12, t_range=(0.0, np.pi))
+  collar = LineMesh.curve(ellipse, fr, order=3)
+  ```
+
+  The sampling is the caller's to prove: `curve` meshes exactly at the parameter values
+  given — `t_range=(0.0, np.pi)` above lives on the helper, not on the factory, because
+  the `fractions` already carry the domain. {meth}`LineMesh.arclength_fractions
+  <nekmeshpy.linemesh.LineMesh.arclength_fractions>` inverts a
+  chord-length table of `samples` dense evaluations into the parameter values that space
+  the nodes evenly along the curve, ready to hand straight to `curve` unscaled. Only
+  *where along* the curve each node sits
+  inherits that table's discretization error — the node itself is still placed by
+  evaluating the callable, never by interpolating the table, so it lies on the curve to
+  machine precision. Raise `samples` for more even spacing, not for a more accurate
+  curve. `arc` stays a separate factory rather than a wrapper: for a circular arc the
+  angles are known outright, so it needs no inversion and is exact to the last ulp.
+  The result is always an open chain; for a closed parametric loop, mesh it and weld
+  the ends with {meth}`~nekmeshpy.linemesh.LineMesh.merge`. A curve with **no** closed
+  form — a scanned polyline — has nothing to evaluate. A *closed* scanned loop can still
+  be given one by refitting it, which is what `examples/bifurcation.py` does: its
+  `fourier_ring` takes the rFFT of `x`/`y`/`z` against the uniform ring parameter, keeps
+  the lower half of the modes (dropping the STL facet noise a high-order wall would
+  otherwise resolve faithfully) and feeds that series to `curve`. An **open** scanned
+  arc gets the same treatment in a basis chosen for its endpoints: `_arc_curve` refits
+  the arc's deviation from its own chord as a truncated **sine** series in the
+  normalized arc-length parameter, and because every `sin(k*pi*s)` vanishes at both
+  ends the endpoints stay bit-exact however many modes are kept — which is what lets
+  the bifurcation's three shared seam arcs be refit once, globally, and still weld at
+  the triple points. Where no refit applies,
+  resample with `trimesh.ops.resample_polyline` and accept the chord.
+  `examples/circular_pipe_tjunction.py` is the worked
+  analytic case: its T-junction collar was a 400-point sampled polyline whose interior
+  nodes sat 2.6% of `R` off the true ellipse at order 2, and is now exact at any order.
 - **Region fills carry the wall's curvature inward.** `structured` owns an exact
   transfinite map, so above order 1 it evaluates that map at the GLL-refined lattice
   against each edge's own nodes: every node it emits — corner, edge and interior alike —
@@ -336,7 +401,11 @@ anywhere other than on the straight line between the corners.
   map, so each O-ring is instead a `blend` of the block perimeter and the wall loop (the
   same mechanism `annulus` uses) and inherits its share of the wall's curvature; the
   elements are curved tangentially and straight radially, which is what a radial blend
-  should give. In every region fill a quad's private interior is the transfinite patch of
+  should give. `half_ogrid` stamps the same channel along its **seam** as well: the
+  spine's point intervals partition the half-disk's flat side one-for-one (north radial
+  caps, the inner block's `j == 0` row, south radial caps), so each is overlaid with the
+  spine's own nodes and a bowed spine is meshed exactly rather than straight-subdivided
+  between its samples. In every region fill a quad's private interior is the transfinite patch of
   that element's own four edge curves, so a curved side bows the nodes inside it rather
   than leaving a straight fill within a curved boundary.
 - **Carried through unchanged.** The pure combinators move existing nodes rather than
@@ -393,10 +462,12 @@ code / integer id only at **export**, via the `groups=` argument:
 
 ```python
 from nekmeshpy import export
-export.to_re2(mesh, "part", groups={"wall": "W  ", "inlet": "v  "})
+export.to_re2(mesh, "part.re2", groups={"wall": "W  ", "inlet": "v  "})
 ```
 
-`.re2` element ids are written **1-based**; all internal indices are 0-based.
+Every writer takes the **full output filename, extension included** — `to_re2`
+writes exactly the binary `.re2` it is given and nothing else. `.re2` element ids
+are written **1-based**; all internal indices are 0-based.
 
 ## See also
 

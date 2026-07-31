@@ -20,7 +20,11 @@ module         arity    delta contents
 being generic over any input, which is what keeps them separate from ``_lift``.  Each
 module ends in a registry -- ``FACTORIES`` for the ``staticmethod``-bound combinators,
 ``METHODS`` for the instance-method-bound queries -- and this package binds them onto
-the class below, so callers write ``QuadMesh.ogrid(...)`` / ``qm.boundary_edges()``
+the class below.  ``_open`` carries a third one, ``HELPERS``: also ``staticmethod``-bound,
+but for functions that answer a question *about* a factory's input contract and return a
+plain array rather than a mesh, which is what keeps them out of ``FACTORIES``
+(``QuadMesh.spine_fractions``, the sampling a ``spined_ogrid``/``half_ogrid`` spine must
+carry -- neither factory resamples one).  So callers write ``QuadMesh.ogrid(...)`` / ``qm.boundary_edges()``
 while adding an operation touches only the sibling module (the function plus one
 registry entry), never the container or this file.  The shared ``_apply_smoothing`` /
 ``_check_boundary`` / ``_elevate`` factory internals live in ``_helpers.py``.
@@ -32,13 +36,15 @@ from ._lift import FACTORIES as _LIFT_FACTORIES
 from ._morph import FACTORIES as _MORPH_FACTORIES
 from ._morph import METHODS as _MORPH_METHODS
 from ._open import FACTORIES as _OPEN_FACTORIES
+from ._open import HELPERS as _OPEN_HELPERS
 from ._query import METHODS as _QUERY_METHODS
 from .quadmesh import NO_BOUNDARY, QuadMesh
 
 # The combinators are plain free functions (no ``cls``); bind as ``staticmethod`` so
 # ``QuadMesh.ogrid(boundary, ...)`` passes no implicit first argument.
 for _name, _fn in {**_CLOSED_FACTORIES, **_OPEN_FACTORIES, **_ASSEMBLE_FACTORIES,
-                   **_LIFT_FACTORIES, **_MORPH_FACTORIES}.items():
+                   **_LIFT_FACTORIES, **_MORPH_FACTORIES,
+                   **_OPEN_HELPERS}.items():
     setattr(QuadMesh, _name, staticmethod(_fn))
 
 # The queries and the unary placements take the mesh (or bare connectivity) first.

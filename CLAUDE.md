@@ -14,7 +14,7 @@ python -m pytest                             # full suite (conftest pins the Agg
 pytest tests/test_api.py::test_to_mesh_groups   # single test
 pytest -k re2                                    # by keyword
 
-PYTHONPATH=. python examples/bifurcation.py     # run a concrete mesher (writes .re2/.rea/.vtu in cwd)
+PYTHONPATH=. python examples/bifurcation.py     # run a concrete mesher (writes .re2/.vtu in cwd)
 
 sphinx-build -b html -n -W --keep-going docs docs/_build/html   # docs (matches CI exactly)
 ```
@@ -35,7 +35,7 @@ a local pass:
 ## The golden-regression invariant (read before editing anything numeric)
 
 `tests/` freezes the output of `examples/bifurcation.py` in `tests/golden/`. The
-tests assert it **byte-for-byte**: `.rea` and the `.re2` boundary block are byte-exact,
+tests assert it **byte-for-byte**: the `.re2` boundary block is byte-exact,
 `.re2` coordinates match to `1e-12`, and `.vtu` is byte-identical. The numerics were
 ported verbatim from a reference MATLAB/Octave implementation, so "results unchanged"
 is a hard constraint — most refactors here are expected to be output-preserving.
@@ -44,7 +44,7 @@ After any change that could touch geometry/numerics, verify:
 
 ```bash
 cd /tmp && PYTHONPATH=<repo> python <repo>/examples/bifurcation.py
-for f in bifurcation.re2 bifurcation.rea bifurcation.vtu; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
+for f in bifurcation.re2 bifurcation.vtu; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
 ```
 
 The pipe examples have **no** goldens (tolerance-only quality tests), so they may
@@ -108,6 +108,64 @@ and the imports in sync when adding/removing public names.
   `LineMesh.line(start, end, fractions, *, element_tag=…)` (open straight edge placed exactly at
   `start + f*(end-start)` for each normalized-arc-length `f` — the graded-edge sibling of
   `circle`/`rectangle`; `element_tag` names every line element),
+  `LineMesh.curve(f, fractions, *, order=1, element_tags=…)` (open; the
+  **general sibling of `LineMesh.arc`** — meshes a
+  curve on its own analytic parametrization. `f` maps a `(K,)` parameter array to `(K,3)` points
+  and is called **once with the whole node lattice** — corners *and* the private high-order
+  `interior` GLL nodes — so nothing is ever placed on a chord. This is what closes the
+  straight-GLL-subdivision trap below: reach for it whenever the curve has a closed form that is
+  not a circular arc (an ellipse, a helix, a cylinder–cylinder intersection) instead of sampling
+  it into an array and calling `LineMesh.loft`. `fractions` are the **parameter values themselves**,
+  passed to `f` verbatim — no normalization, no remapping: node `k` is `f(fractions[k])` and
+  there are `len(fractions)-1` elements. The caller states the domain by choosing the values: for
+  an `f` written on `[0,1]` they are exactly the normalized fractions the sibling `LineMesh.line`
+  takes, and an `f` written on any other interval is sampled in its own units
+  (`curve(f, np.linspace(0.0, np.pi, n+1))`); a descending sequence is the supported way to
+  reverse the traversal. The grading is honored **per element** at `order > 1`:
+  element `i`'s private `interior` rides the GLL nodes of its own `fractions[i]..fractions[i+1]`
+  span (`_refined_lattice`), which the old `n`-only form could not express. Even **arc-length**
+  spacing is now an explicit caller step rather than a mode: the helper
+  `LineMesh.arclength_fractions(f, n, *, t_range=(0.0, 1.0), samples=1001)` returns the `(n+1,)`
+  **parameter values** spanning `t_range`, evenly spaced by arc length, to hand straight to
+  `curve` unscaled. It keeps a `t_range` where `curve` has none because it genuinely needs a
+  domain: it inverts a cumulative **chord**-length table of `samples`
+  dense evaluations of `f` over that interval; only the node *positions along* the curve inherit that
+  table's discretization error — every node still lies on the curve to machine precision, because
+  `curve` places it by evaluating `f` and never by interpolating the table, so raising `samples`
+  improves the evenness of the spacing, not the accuracy of the curve. It is bound onto
+  `LineMesh` as a `staticmethod` through a **`HELPERS` registry** in `linemesh/_open.py`, the
+  twin of `quadmesh/_open.py`'s and kept out of `FACTORIES` for the same reason (it returns a
+  plain array, not a mesh) — the toolkit-wide rule made consistent: a factory meshes exactly at
+  the points given and the caller proves the sampling, which is why `spined_ogrid` stopped
+  resampling its spine too. `arc` is **not**
+  reimplemented on top of it: `arc` places its nodes without an inversion and to the last ulp.
+  The result is always an open chain — for a closed parametric loop, mesh it here and weld the
+  ends with `LineMesh.merge` (`bifurcation.py::fourier_wall`). For a curve with **no** closed
+  form (a scanned polyline) there is nothing to evaluate — but a *closed* scanned loop can be
+  given one by refitting it: `bifurcation.py::fourier_ring` rFFTs `x`/`y`/`z` against the
+  uniform ring parameter, keeps the lower half of the modes (dropping the STL facet noise a
+  high-order wall would otherwise resolve faithfully) and hands the resulting series to
+  `LineMesh.curve`. An **open** scanned arc refits in the basis its endpoints demand:
+  `bifurcation.py::_arc_curve` expands the arc's deviation from its own chord as a truncated
+  **sine** series in the normalized arc-length parameter (a type-I DST of dense
+  uniform-arc-length samples, truncated to the modes the mesh can resolve), then meshes it
+  with `LineMesh.curve` + `LineMesh.arclength_fractions`. Every `sin(k*pi*s)` vanishes at both
+  ends, so `A1`/`A2` stay **bit-exact** for any truncation — which is what lets the three
+  *shared* seam arcs be refit **once, globally** and handed to both legs that see each one, so
+  the blocks still weld. (A per-leg refit could not: it would mix the two arcs that leg
+  happens to see. Leaving the seam ring on `LineMesh.loft` instead was the other trap — it
+  straight-subdivides, and that one station carried 63° of corner at its element joints while
+  every Fourier station sat within 0.2°.) Where even that does not apply, use
+  `trimesh.ops.resample_polyline` and
+  accept the chord (bifurcation's *spine* still does, deliberately: a flat half-disc seam
+  needs no bow). Worked example: `circular_pipe_tjunction.py::arc_collar`, where the
+  T-junction collar — the intersection of two equal-radius cylinders, hence a pair of **planar
+  ellipses**, `p(t) = (xside*R sin t, R cos t, R sin t)`, `t: 0 → π`, in the plane
+  `x = xside*z` with semi-axes `R*sqrt(2)` and `R` — used to be a 400-point sampled polyline
+  lofted straight, putting the interior GLL nodes 1.3e-2 off the true curve at order 2 (2.6% of
+  `R`); it is now `LineMesh.curve(f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
+  order=ORDER)`, meshed in the ellipse's own `t` units and exact to machine precision at any
+  order),
   `LineMesh.circle(radius, n, *, center=…, normal=…, start_theta=0.0, element_tags=…)` (closed;
   places `n` evenly-spaced points in the plane with the given `normal`, default `+z`, point `k` at
   angle `2πk/n + start_theta` so `start_theta` rotates the whole loop to align its index 0 with
@@ -220,7 +278,12 @@ profile stack, a block about to be `merge`d); a factory that can *construct* in 
 
 Each module ends with a registry — `FACTORIES: dict[str, Callable[..., <Class>]]` for
 the `staticmethod`-bound combinators, `METHODS` for the instance-method-bound queries
-and the unary placements (`mesh.translate(v)`, not `LineMesh.translate(mesh, v)`) —
+and the unary placements (`mesh.translate(v)`, not `LineMesh.translate(mesh, v)`), plus
+a third one, `HELPERS`, in **both** `linemesh/_open.py` and `quadmesh/_open.py`: also
+`staticmethod`-bound, but for functions that answer a question *about* a factory's input
+contract and return a plain array rather than a mesh, which is what keeps them out of
+`FACTORIES` (`LineMesh.arclength_fractions`, `QuadMesh.spine_fractions` — the two
+samplings a caller must prove now that neither factory resamples) —
 and the package `__init__` merges the dicts and binds every entry. There is no import
 cycle to break: the container never imports its operation modules, so they import it
 directly at module level.
@@ -242,12 +305,35 @@ directly at module level.
   `QuadMesh.half_ogrid` (half-disc O-grid bounded by a wall arc + a spine diameter),
   `QuadMesh.spined_ogrid(boundary, radial, *, spine=None, center_scale=, wall_tag=, smoothing_method=)`
   (full-disk O-grid over a closed `boundary` loop with a natural `A1..A2` seam: it splits the loop
-  at index `0`/`M//2` into two `A1->A2` half-arcs, resamples the `spine` curve by arc length at the
-  fractions each half needs — so a curved spine is meshed exactly and both halves share it
-  point-for-point — runs two `half_ogrid`s and `merge`s them. `spine=None` (the default) uses the
-  straight `A1..A2` chord `boundary.points[[0, M//2]]` — the common case for a planar disc
-  (`circular_pipe_tjunction.py`); pass a curve only to bow the seam (`bifurcation.py`). The caller
-  hands in only the loop (and optional spine) instead of hand-rolling the split/sample/merge),
+  at index `0`/`M//2` into two `A1->A2` half-arcs, runs two `half_ogrid`s and `merge`s them, so
+  the caller hands in only the loop (and optional spine) instead of hand-rolling the
+  split/merge. The **spine is meshed exactly at the points given** — this factory used to
+  arc-length-resample whatever you handed it, and was the one place violating the toolkit-wide
+  exact-points rule above; it no longer resamples anything. A caller-supplied spine must
+  therefore carry exactly `2*Ntheta+1 + 2*Nradial` points ascending `A1 -> A2` (the `[north
+  caps, center fan, south caps]` sampling `half_ogrid` consumes) or it is a loud `ValueError`
+  rather than a silent reinterpolation. Derive that sampling with the new public helper
+  `QuadMesh.spine_fractions(n_theta, radial, center_scale)` — it returns the normalized
+  fractions, so callers evaluate their own curve there (`LineMesh.curve` for an analytic spine,
+  `trimesh.ops.resample_polyline` for a scanned one) instead of copy-pasting the formula. It is
+  bound onto `QuadMesh` as a `staticmethod` through the **`HELPERS` registry** in
+  `quadmesh/_open.py`, kept distinct from `FACTORIES` because it returns a plain array rather
+  than a mesh. The second half consumes `LineMesh.reverse()` of that *same* spine mesh, so both
+  halves share the seam bit-for-bit — previously two independent resamples agreed only to ~4e-16
+  and the `merge` welded by tolerance. `spine=None` (the default) still gives the straight
+  `A1..A2` chord `boundary.points[[0, M//2]]`, which the factory owns as a shape and so places
+  itself via `linemesh._open.line` — the common case for a planar disc
+  (`circular_pipe_tjunction.py`); pass a curve only to bow the seam (`bifurcation.py`).
+  **A curved spine's high-order nodes are the seam geometry**: at `order > 1` the spine's point
+  intervals partition the half-disk's flat side one-for-one, so `half_ogrid` overlays each onto
+  the seam edge it spans — intervals `[0, Nradial)` the north radial caps (outermost first, hence
+  reversed), `[Nradial, Nradial+2*Ntheta)` the inner block's `j == 0` row, the rest the south
+  radial caps — through the same `Overlay` channel `_elevate` already uses for the O-rings, so a
+  bowed seam is meshed exactly instead of straight-subdivided between spine points (measured at
+  order 2: interior seam nodes went from 4.7e-3 off the true spine to 5.6e-17). The spine must
+  therefore carry the **same `order` as the arc** — a mismatch is a loud `ValueError` — and
+  `spined_ogrid`'s default straight chord is built at `boundary.order`. Order 1 is untouched
+  (the bifurcation goldens stayed byte-identical)),
   `QuadMesh.annulus` (ring O-grid between two loops —
   built as a radial `QuadMesh.loft` of blended rings, the sibling of `HexMesh.annulus` one
   dimension down; the periodic ring topology rides in the loops' wrapping `lines`, so there is no
@@ -441,6 +527,16 @@ line between corners:
 - **on the true shape**: `LineMesh.circle`/`LineMesh.arc` (interior GLL nodes evaluated
   at the exact arc angles — `_plane._arc_points`/`_arc_interior` — and handed to `loft`
   as an explicit `interior`, overriding its default chord blend),
+  `LineMesh.curve` (the same trick for an arbitrary analytic parametrization: `_refined_lattice`
+  builds the `n*order+1` **parameter values** of **every** node of the chain — element `i`'s node
+  `a` at `fr[i] + g[a]*(fr[i+1] - fr[i])` for the caller's `fractions` `fr` (the parameter values
+  themselves, in `f`'s own units) and the GLL nodes `g`
+  — and `f` is called **once** on that whole
+  lattice, so the corners and each element's private `interior` are all true-curve points, and
+  the grading rides *into* the lattice instead of being assumed uniform. This
+  is the escape hatch from the straight-subdivision bullet below for any curve with a closed
+  form; `LineMesh.arclength_fractions` perturbs only *where along* the curve the nodes sit, never
+  whether they are on it),
   `QuadMesh.sphere`/`QuadMesh.hemisphere` (radial projection applied **entity-wise** to
   the cube's / half box's whole B-rep — `points`, `lines.interior`, `interior` — never to
   a reassembled block, so a shared edge lands identically from either quad).
@@ -450,7 +546,8 @@ line between corners:
   `LineMesh.loft` (each line's interior = the straight blend of its two
   endpoints), `QuadMesh.from_grid`/`HexMesh.from_grid`. Sampling a curve into points and
   calling `LineMesh.loft` therefore *loses* the curve at `order > 1`; hand in the
-  analytic `arc`/`circle` instead.
+  analytic `arc`/`circle` instead, or `LineMesh.curve` when the closed form is neither
+  (only a genuinely form-less curve — a scanned polyline — is stuck with the chord).
 - **region fills — curved throughout, by two different mechanisms.** Both propagate the
   input wall's curvature into the *interior*, not just onto the boundary elements:
   - `structured` owns an exact global transfinite map, so at `order > 1` it simply
@@ -472,7 +569,9 @@ line between corners:
     ring must be stamped (ring `m` is block `m−1`'s outer side *and* block `m`'s inner
     side); stamping one leaves the other straight and `scatter_edge_nodes` rejects the
     mesh. Each element is then curved tangentially and straight radially — exactly
-    `annulus`'s behaviour, which is right for a radial blend.
+    `annulus`'s behaviour, which is right for a radial blend. `half_ogrid` stamps the
+    same channel a second time along its **seam**, one overlay per spine point interval
+    (see `spined_ogrid` above), so a curved spine bows the flat side too.
   - Underneath both, `_elevate` derives each quad's private `interior` as the
     **transfinite (Coons) patch of that element's own four edge curves**, evaluated
     *after* the overlays (`_coons_at`), instead of a bilinear fill from its corners. A
@@ -504,6 +603,18 @@ silently producing a straight interior.
 
 **Export.** `.re2` **stays linear** — Nek's re2 has no high-order format yet, so
 `to_re2` reads only the 8 corners and a mesh exports byte-identically at any order.
+**`to_fld` is the high-order Nek export**: the field-file format
+(`<prefix>0.f00001`) *does* store a full `lx1*ly1*lz1` GLL block per element, so it is
+the only Nek writer that preserves an `order = N` geometry. The per-element node
+ordering it wants is lexicographic `i` fastest — exactly what the `conform.conformal_*`
+walk produces — so the block goes out **with no permutation**; only the corners would
+survive a wrong one, which is why a permutation bug there is invisible at order 1.
+Layout: a 132-byte `#std` header
+(`"#std %1d %2d %2d %2d %10d %10d %20.13E %9d %6d %6d %s\n"`, space-padded), the
+`6.54321` float32 endian tag, an `int32` 1-based element map, then per element all `x`,
+all `y`, all `z`, then the 3-D trailing metadata block (per element, per component,
+`min` then `max`, **always** float32 whatever `wdsz` is). Only `fields="X"` is written —
+a mesh carries geometry and nothing else — and `wdsz` picks float64/float32 coordinates.
 The `.vtu` (XML VTK) writer becomes high-order at `order > 1`, emitting VTK Lagrange
 cells (`VTK_LAGRANGE_CURVE=68` / `_QUADRILATERAL=70` / `_HEXAHEDRON=72`) whose `(N+1)^d`
 nodes/cell index the **conformal (welded)** node array from the `conform.conformal_*`
@@ -513,6 +624,26 @@ inherit the face's `bc_id` via `hex_face_indices`. The writer
 (`to_vtu`/`line_to_vtu`/`quad_to_vtu`) builds its node arrays via
 `_hex_arrays`/`_line_arrays`/`_quad_arrays` and emits through `_write_vtu`; there is
 **no legacy ASCII `.vtk` writer** — only `.re2` and `.vtu`.
+
+**The `.vtu` writer relabels GLL → equispaced on the way out** (`_to_equispaced`, called
+by all three `_*_arrays` builders). VTK's Lagrange cells are *defined* on an equispaced
+node lattice — there is no GLL cell type (`VTK_BEZIER_*` takes control points, also not
+GLL) — so shipping the toolkit's GLL nodes verbatim declares the wrong parametrization
+and the reader reconstructs a **different polynomial**: measured on a unit cube at order
+3, VTK renders the *identity* map with a 7.4e-2 excursion, one hump per element — the
+visible crease at element joints. It is a **change of nodal basis, not a resample**: each
+element's polynomial is one object, re-read at `order+1` different parameters per axis
+(`lagrange_matrix(gll_nodes(order), uniform_spacing(order))` applied along each axis of
+the `(E,(N+1)^d,3)` block), so the geometry survives to float round-off and only the
+*labels* move. Shared entities stay consistent because the interpolation is a tensor
+product and the two lattices agree at `0.0`/`1.0`: a node on a shared edge/face is
+evaluated at the boundary parameter transversely, which selects that entity's own nodes
+alone, so both incident elements compute the same value (~1e-16 apart) and the scatter is
+well-defined. **At `order <= 2` the two lattices are equal and the function short-circuits**
+— which is why the order-2 `high_order_*.vtu` goldens stayed byte-identical when this
+landed, and why the artifact only ever appeared from order 3 on. Measured on
+`LineMesh.circle(1.0, 8, order=N)` round-tripped through `vtkXMLUnstructuredGridReader`,
+max `|r-1|`: order 3 `1.23e-2 → 1.97e-4`, order 4 `7.95e-4 → 1.46e-6`.
 
 **Order-N quality is opt-in** (defaults stay corner-based so pinned quality numbers
 hold): `quadmesh.quality.scaled_jacobian_ho(mesh, order)` /
@@ -532,16 +663,20 @@ appears.
 branches on `order`: `to_re2`, quality, topology, `merge`, `FACE_POINTS` and the `.vtu`
 order-1 writer read only `points`/`conn` (the order-1 VTK path reads `points[conn]` in
 Nek/CCW order), and the combinators' entity interpolation/concatenation degenerates to
-the plain point blend against empty tables. The golden `bifurcation.*` (built with
-defaults) is byte-identical, and treating any golden diff at default order as a bug
-still holds. See `examples/high_order_{curve,quad,hex}.py`.
+the plain point blend against empty tables — so a mesh built at the library default
+`order=1` is bit-identical to the pre-high-order toolkit. (`examples/bifurcation.py`
+itself now ships at `ORDER = 3` with both smoothers off, so its goldens are a high-order `.vtu` and the
+unchanged linear `.re2`; they are still frozen byte-for-byte and a diff from a
+refactor is still a bug.) See `examples/high_order_{curve,quad,hex}.py`.
 
 ### Physical groups & export
 
 `PhysicalGroups` maps name ↔ tag ↔ Nek BC code; pass `groups=` to the factories to control
 `.re2` boundary codes without touching the exporter (`PhysicalGroups.duct()`,
 `.from_tags()`, `.nek_default()` are presets). `.re2` element ids are 1-based on write;
-all internal indices are 0-based.
+all internal indices are 0-based. `to_re2` writes **only** the binary `.re2` — there is
+no `.rea` writer and no `io/templates/` — and, like `to_vtu`, it takes the **full output
+filename including the extension** (`to_re2(mesh, "pipe.re2")`); nothing is appended.
 
 ## Conventions
 

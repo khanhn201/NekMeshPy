@@ -45,7 +45,6 @@ include = ["nekmeshpy*"]
 
 [tool.setuptools.package-data]
 nekmeshpy = ["py.typed"]
-"nekmeshpy.io" = ["templates/*.rea"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

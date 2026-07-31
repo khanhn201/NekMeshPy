@@ -15,7 +15,7 @@ box's lower-left corner, pairing the loops index-for-index), carried through
 
     PYTHONPATH=. python examples/flow_past_plate.py
 
-Produces ``flow_past_plate.re2`` / ``.rea`` and ``flow_past_plate.vtu``.
+Produces ``flow_past_plate.re2`` and ``flow_past_plate.vtu``.
 """
 
 import logging
@@ -88,6 +88,6 @@ mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))
