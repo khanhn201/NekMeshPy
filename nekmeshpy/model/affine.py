@@ -22,6 +22,7 @@ vector is bit-exact (and translating by ``0`` is a strict no-op), which is what 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Optional
 
 import numpy as np
 
@@ -33,7 +34,10 @@ ORIGIN: Point = np.array([0.0, 0.0, 0.0])
 Z_AXIS: Vec3 = np.array([0.0, 0.0, 1.0])
 
 # An affine map: ``(matrix, offset)``, with ``matrix=None`` meaning pure translation.
-Affine = tuple[FloatArray | None, Vec3]
+# This is a *runtime* assignment, not an annotation, so ``from __future__ import
+# annotations`` does not defer it: spelling the union ``FloatArray | None`` here would
+# evaluate PEP 604 eagerly and raise ``TypeError`` on the Python 3.9 CI leg.
+Affine = tuple[Optional[FloatArray], Vec3]
 
 
 def apply(P: PointArray, matrix: FloatArray | None, offset: Vec3) -> PointArray:

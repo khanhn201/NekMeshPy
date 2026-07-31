@@ -99,5 +99,6 @@ stores the full `lx1³` GLL block per element. `bifurcation.py` writes one along
 ## Tested via the toolkit
 
 The scripts double as integration tests: `tests/conftest.py` runs them with
-`runpy.run_path` and inspects the `mesh` global (plus the byte-exact golden
-`.re2`/`.vtu` for the bifurcation). They must keep producing a valid mesh.
+`runpy.run_path` and inspects the `mesh` global (plus the golden `.re2`/`.vtu` for
+the bifurcation — coordinates to `1e-12`, topology and tags byte-exact). They must
+keep producing a valid mesh.

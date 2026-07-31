@@ -35,21 +35,32 @@ a local pass:
 ## The golden-regression invariant (read before editing anything numeric)
 
 `tests/` freezes the output of `examples/bifurcation.py` in `tests/golden/`. The
-tests assert it **byte-for-byte**: the `.re2` boundary block is byte-exact,
-`.re2` coordinates match to `1e-12`, and `.vtu` is byte-identical. The numerics were
-ported verbatim from a reference MATLAB/Octave implementation, so "results unchanged"
-is a hard constraint — most refactors here are expected to be output-preserving.
+contract is **geometry to a tolerance, topology and tags exactly**: coordinates
+(`.re2` and the `.vtu` `Points` block) match to `1e-12`, while everything discrete —
+connectivity, element/node numbering, VTK cell types, `bc_id`, the `.re2` boundary
+block — is compared byte-for-byte. The numerics were ported verbatim from a reference
+MATLAB/Octave implementation, so "results unchanged" is a hard constraint; most
+refactors here are expected to be output-preserving.
+
+**Floats are deliberately not byte-compared.** The CI matrix reproduces the mesh
+bit-for-bit across CPython 3.9–3.12 / numpy 2.0–2.5 / scipy 1.13–1.18 (all four legs
+give the same md5), but a *differently built* interpreter does not: a cp314 wheel of
+the same numpy 2.5.1 + scipy 1.18.0 as the 3.12 leg shifts every coordinate by up to
+7.3e-13 — float-association noise, in the same class as the `spsolve`-vs-backslash
+residual `RE2_TOL` already exists for. A byte-exact float golden would therefore be
+valid on exactly one interpreter build and red everywhere else.
 
 After any change that could touch geometry/numerics, verify:
 
 ```bash
 cd /tmp && PYTHONPATH=<repo> python <repo>/examples/bifurcation.py
-for f in bifurcation.re2 bifurcation.vtu; do cmp -s "$f" "<repo>/tests/golden/$f" && echo "$f OK"; done
+python -m pytest <repo>/tests/test_regression.py    # coords to 1e-12 + exact structure
 ```
 
 The pipe examples have **no** goldens (tolerance-only quality tests), so they may
 change; the bifurcation must not. When a change is meant to be pure (rename,
-restructure), treat a golden diff as a bug.
+restructure), treat *any* golden diff beyond that float noise — and any diff at all in
+the discrete data — as a bug.
 
 ## Architecture
 
@@ -666,8 +677,8 @@ Nek/CCW order), and the combinators' entity interpolation/concatenation degenera
 the plain point blend against empty tables — so a mesh built at the library default
 `order=1` is bit-identical to the pre-high-order toolkit. (`examples/bifurcation.py`
 itself now ships at `ORDER = 3` with both smoothers off, so its goldens are a high-order `.vtu` and the
-unchanged linear `.re2`; they are still frozen byte-for-byte and a diff from a
-refactor is still a bug.) See `examples/high_order_{curve,quad,hex}.py`.
+unchanged linear `.re2`; they are still frozen — coordinates to `1e-12`, everything
+discrete byte-for-byte — and a diff from a refactor is still a bug.) See `examples/high_order_{curve,quad,hex}.py`.
 
 ### Physical groups & export
 

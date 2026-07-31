@@ -147,11 +147,15 @@ python -m pytest                     # golden-regression + algorithm tests
 ```
 
 CI runs all three on Python 3.9–3.12. `tests/golden/` freezes the output of
-`examples/bifurcation.py` byte-for-byte, so a golden diff from a refactor is a bug.
+`examples/bifurcation.py` — coordinates to `1e-12`, connectivity/cell types/boundary
+tags byte-for-byte — so a golden diff from a refactor is a bug.
 
 ## Roadmap
 
 - [ ] Periodic boundary
+- [ ] Function based operations
+- [ ] Rework tagging system
+- [ ] Rework smoothing
 - [x] High-order / curved elements — `order=N` on the factories (GLL nodes, curved
   `.vtu` + Nek field file; `.re2` stays linear). See
   [`examples/high_order_*.py`](examples).
