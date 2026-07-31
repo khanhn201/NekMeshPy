@@ -16,7 +16,8 @@ are built on the toolkit and live in [`examples/`](examples), not the library.
 - **[Concepts](https://khanhn201.github.io/NekMeshPy/user/concepts.html)** — the line→quad→hex ladder, tags, section factories, smoothing.
 - **[How-to recipes](https://khanhn201.github.io/NekMeshPy/user/howto.html)** — O-grid pipe, external flow, sphere shell, structured duct.
 - **[API reference](https://khanhn201.github.io/NekMeshPy/reference/)** — every public module, class, and function.
-- **[Developer guide](https://khanhn201.github.io/NekMeshPy/developer/architecture.html)** — architecture, extension points, conventions, contributing.
+- **[Architecture](https://khanhn201.github.io/NekMeshPy/user/architecture.html)** — how the toolkit is laid out and why.
+- **[Conventions](https://khanhn201.github.io/NekMeshPy/user/conventions.html)** — typing, naming, and the invariants the code holds to.
 
 ## Install
 
@@ -72,8 +73,8 @@ for a guided tour of each.
 `loft` is one primitive at three dimensions — `LineMesh.loft` (each profile a single
 point, the rungs *are* the lines), `QuadMesh.loft` (profiles are `LineMesh`es) and
 `HexMesh.loft` (profiles are `QuadMesh`es) — with `extrude` the straight special case
-at each rung, and `LineMesh.open` / `LineMesh.loop` thin wrappers over
-`LineMesh.loft(…, loop=False/True)`.
+at each rung, and `LineMesh.loft` itself the only thing that authors 1-D
+connectivity (`loop=False` chain / `loop=True` ring).
 
 Pass `loop=True` for a **periodic** sweep: the last profile joins back to the first,
 so `M` profiles give `M` layers and the seam is a genuine shared entity (no
@@ -117,7 +118,7 @@ extra nodes on it — `LineMesh.circle` / `LineMesh.arc` on the exact arc,
 the region fills (`ogrid` / `half_ogrid` / `structured`) carry their input walls'
 curvature into the interior as well as onto the wall, and the combinators (`extrude` /
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
-(`LineMesh.open`/`loop`/`loft`, `from_grid`) has only those points to go on and
+(`LineMesh.loft`, `from_grid`) has only those points to go on and
 straight-subdivides between them: high order in storage, linear in geometry. Order-N
 smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
 above order 1 rather than degrading silently.
@@ -140,9 +141,8 @@ mypy                                 # type-checks the whole nekmeshpy package
 python -m pytest                     # golden-regression + algorithm tests
 ```
 
-CI runs all three on Python 3.9–3.12. See the
-[contributing guide](https://khanhn201.github.io/NekMeshPy/developer/contributing.html)
-for the workflow and the golden-regression invariant.
+CI runs all three on Python 3.9–3.12. `tests/golden/` freezes the output of
+`examples/bifurcation.py` byte-for-byte, so a golden diff from a refactor is a bug.
 
 ## Roadmap
 

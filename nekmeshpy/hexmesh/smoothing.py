@@ -17,6 +17,7 @@ import scipy.sparse as sp
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..trimesh import ops
 from . import quality
+from ._query import _unique_edges, classify_points, weld
 
 if TYPE_CHECKING:
     from ..trimesh import TriMesh
@@ -56,10 +57,10 @@ def smooth(
     qfloor = quality_floor or 0.2
     Oxyz, Otri = surface.points, surface.tris
 
-    X, HC, nu = mesh.weld()
+    X, HC, nu = weld(mesh)
     he = np.array([[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
                    [0, 4], [1, 5], [2, 6], [3, 7]], dtype=np.int64)
-    E = mesh._unique_edges(HC, he)
+    E = _unique_edges(HC, he)
     A = sp.coo_matrix((np.ones(E.shape[0] * 2),
                        (np.concatenate([E[:, 0], E[:, 1]]),
                         np.concatenate([E[:, 1], E[:, 0]]))), shape=(nu, nu)).tocsr()
@@ -68,7 +69,7 @@ def smooth(
     Avg = sp.diags(1.0 / deg) @ A
     adj = _adjacency_lists(E, nu)
     NH = _incidence_lists(HC, nu)
-    is_wall, is_fixed = mesh.classify_points(wall)
+    is_wall, is_fixed = classify_points(mesh, wall)
     free = ~is_fixed
     wtri = _wall_tri_neighbourhoods(X, is_wall, Oxyz, Otri)
 

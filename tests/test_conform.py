@@ -266,7 +266,7 @@ def test_line_merge_rejects_mismatched_order():
 
 
 def test_order1_line_conformal():
-    lm = LineMesh.open([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
+    lm = LineMesh.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
     nodes, conn = conformal(lm)
     assert np.allclose(nodes, lm.points)
     assert np.array_equal(conn, lm.lines)

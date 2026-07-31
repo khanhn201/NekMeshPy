@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
+from ._assemble import loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 
 if TYPE_CHECKING:
@@ -38,14 +39,13 @@ def line(start: Point, end: Point, fractions: float | FloatArray, *,
     ``order-1`` nodes strictly between them are the straight GLL blend
     :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` places by default
     (read by high-order ``vtu`` export)."""
-    from .linemesh import LineMesh
     frac = np.atleast_1d(np.asarray(fractions, dtype=float))
     s: Point = np.asarray(start, dtype=float).ravel()
     e: Point = np.asarray(end, dtype=float).ravel()
     pts = s + frac[:, None] * (e - s)
     tags = [element_tag] * (pts.shape[0] - 1) if element_tag else None
     # the segment is straight, so ``loft``'s default straight GLL interior is exact
-    return LineMesh.loft(pts, loop=False, element_tags=tags, order=order)
+    return loft(pts, loop=False, element_tags=tags, order=order)
 
 
 def arc(radius: float, n: int, *,
@@ -68,7 +68,7 @@ def arc(radius: float, n: int, *,
     curve to hand to :meth:`QuadMesh.structured <nekmeshpy.quadmesh.QuadMesh.structured>` (or to
     weld into a composite edge with
     :meth:`LineMesh.merge <nekmeshpy.linemesh.LineMesh.merge>`) instead of sampling
-    points and calling :meth:`LineMesh.open <nekmeshpy.linemesh.LineMesh.open>`,
+    points and calling :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`,
     which can only subdivide straight between the samples.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1`` each
@@ -82,7 +82,6 @@ def arc(radius: float, n: int, *,
     -- and ``(s + 2*pi) - s`` is not ``2*pi`` in floating point for a general ``s``,
     so delegating would move ``circle``'s nodes by a ulp.  The two share the node
     placement instead (``_plane._arc_points`` / ``_arc_interior``)."""
-    from .linemesh import LineMesh
     ni = int(n)
     if ni < 1:
         raise ValueError("arc needs n >= 1 elements, got %d" % ni)
@@ -94,12 +93,13 @@ def arc(radius: float, n: int, *,
     th: FloatArray = np.linspace(s, e, ni + 1)
     pts: PointArray = _arc_points(radius, c, e1, e2, th)
     if order == 1:
-        return LineMesh.open(pts, element_tags)
+        return loft(pts, element_tags=element_tags)
     # element l spans th[l] .. th[l] + dth; its private interior rides the exact arc,
     # overriding ``loft``'s default straight chord blend.
     interior: PointArray = _arc_interior(
         radius, c, e1, e2, th[:-1], (e - s) / ni, order)     # (n, order-1, 3)
-    return LineMesh.open(pts, element_tags, order=order, interior=interior)
+    return loft(pts, interior=interior, element_tags=element_tags,
+                         order=order)
 
 
 #: Open-curve factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.

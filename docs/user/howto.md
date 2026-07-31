@@ -80,5 +80,6 @@ mesh = HexMesh.merge([block_a, block_b])   # welds coincident boundary points on
 
 A `TriMesh` surface (`data/car.{vtx,tri}`) is cut into legs via seam fields, each
 leg filled with `half_ogrid`, extruded/merged, and smoothed. →
-`examples/bifurcation.py` (the golden-regression case; see
-{doc}`../developer/contributing`).
+`examples/bifurcation.py` — the golden-regression case: its `.re2` / `.rea` / `.vtu`
+output is frozen byte-for-byte in `tests/golden/`, so any change that moves it is a
+bug unless deliberately re-based.

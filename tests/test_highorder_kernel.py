@@ -218,7 +218,7 @@ def test_blend_ho_endpoints_and_midpoint():
 def test_default_order_is_one_and_brep_is_empty():
     # order 1: every entity table of the B-rep is empty and the conformal walk is
     # just the corners, i.e. points[conn] in connectivity order.
-    lm = LineMesh.open([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
+    lm = LineMesh.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
     assert lm.order == 1 and lm.interior.shape == (2, 0, 3)
     assert curved(lm).shape == (2, 2, 3)
     assert np.allclose(curved(lm), lm.points[lm.lines])

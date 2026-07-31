@@ -1,6 +1,6 @@
 """Open-region :class:`~nekmeshpy.QuadMesh` section factories: fills that take a
 boundary / edges and mesh the bounded region (``structured`` / ``rectangle`` /
-``ogrid`` / ``half_ogrid`` / ``annulus``).
+``ogrid`` / ``half_ogrid`` / ``spined_ogrid``).
 
 These are plain free functions returning a ``QuadMesh``; ``quadmesh/__init__.py``
 binds each entry of ``FACTORIES`` onto the class, so callers use ``QuadMesh.ogrid(...)``
@@ -21,11 +21,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import FloatArray, IntArray, Point, PointArray, StrArray
+from .._typing import FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
+from ..linemesh._assemble import loft as line_loft
 from ..linemesh._open import line
 from ..model.fields import gll_nodes, validate_layers
 from ..model.interp import coons_grid
+from ._assemble import merge
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
 
 if TYPE_CHECKING:
@@ -81,7 +83,7 @@ def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
         raise ValueError(
             "structured %s edge must be a simple consecutive chain (line k joining "
             "points k and k+1) -- its point order is what sets the grid's node "
-            "distribution; build it with LineMesh.open/line/arc (or merge chains "
+            "distribution; build it with LineMesh.loft/line/arc (or merge chains "
             "end to end) rather than re-indexing its lines" % name)
     return lo
 
@@ -587,7 +589,6 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
     non-empty scalar ``wall_tag`` overrides that for the whole wall.
     ``smoothing_method`` repositions each half's interior before the merge."""
     from ..trimesh.ops import resample_polyline
-    from .quadmesh import QuadMesh
     bpts = _check_boundary(boundary, "spined_ogrid boundary", 8)
     M = bpts.shape[0]
     if M % 8 != 0:
@@ -621,87 +622,16 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
     seg = boundary._seg_tags()
     o = boundary.order
     inner: PointArray = boundary.interior
-    arc1 = LineMesh.open(bpts[0:nh + 1, :],
-                         element_tags=None if seg is None else seg[0:nh],
-                         order=o, interior=inner[0:nh])
-    arc2 = LineMesh.open(np.vstack([bpts[nh:M, :], bpts[0:1, :]]),
-                         element_tags=None if seg is None else seg[nh:M],
-                         order=o, interior=inner[nh:M])
-    h1 = half_ogrid(arc1, LineMesh.open(spn1), radial, center_scale=center_scale,
+    arc1 = line_loft(bpts[0:nh + 1, :], interior=inner[0:nh],
+                         element_tags=None if seg is None else seg[0:nh], order=o)
+    arc2 = line_loft(np.vstack([bpts[nh:M, :], bpts[0:1, :]]),
+                         interior=inner[nh:M],
+                         element_tags=None if seg is None else seg[nh:M], order=o)
+    h1 = half_ogrid(arc1, line_loft(spn1), radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
-    h2 = half_ogrid(arc2, LineMesh.open(spn2), radial, center_scale=center_scale,
+    h2 = half_ogrid(arc2, line_loft(spn2), radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
-    return QuadMesh.merge([h1, h2])
-
-
-def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
-            smoothing_method: str | None = None,
-            inner_tag: str = "", outer_tag: str = "",
-            ) -> QuadMesh:
-    """Ring O-grid filling the region between an inner and an outer closed loop
-    -- e.g. a circular body inside a square far-field box.
-
-    The two loops are paired by index: they must carry the same number of points
-    ``N``, and point ``i`` of ``inner`` joins radially to point ``i`` of
-    ``outer`` (no resampling; build the outer loop with the same point count and
-    aligned index 0, e.g. a ``LineMesh.rectangle(w, h, N)`` box against a
-    ``LineMesh.circle(r, N, start_theta=...)`` body).  ``radial`` are the ring positions with
-    the initial position explicit (strictly increasing in ``[0, 1]``,
-    ``radial[0]`` = inner ring, last = ``1`` = outer loop), giving
-    ``radial.size - 1`` ring layers.  ``smoothing_method`` relaxes the ring
-    interior with the inner/outer rings held fixed.
-
-    Boundary tags come from the loops' per-line ``element_tags`` (each ring edge
-    tagged from the matching loop segment, so a named box splits the outer ring
-    into distinct sides).  A non-empty scalar ``inner_tag`` / ``outer_tag``
-    overrides that for the whole inner / outer ring.
-
-    The rings are always a genuine high-order blend: ``LineMesh.blend`` interpolates
-    the two loops' curved blocks (``blend_ho``) so every ring carries curved
-    tangential edges, and :meth:`loft` sweeps them radially -- the sibling of
-    :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>` one dimension down.
-    A repositioning ``smoothing_method`` (``conduction`` / ``winslow``) relaxes the
-    corner grid, which cannot ride a curved block, so it is rejected at ``order > 1``
-    (high-order smoothing is not implemented -- use ``order=1`` or drop the smoother);
-    at ``order 1`` it relaxes the ring interior as usual.
-
-    Built by :meth:`loft`-ing the blended rings; the inner / outer rings are the
-    loft's near / far caps.  Gives ``N x (radial.size - 1)`` quads."""
-    from .quadmesh import QuadMesh
-    radial = validate_layers(radial, "annulus radial")
-    A: PointArray = _check_boundary(inner, "annulus inner", 3)   # (N,3)
-    B: PointArray = _check_boundary(outer, "annulus outer", 3)   # (N,3)
-    if A.shape[0] != B.shape[0]:
-        raise ValueError(
-            "annulus: inner and outer loops must have equal point counts "
-            "(got %d, %d); build both with the same count, "
-            "e.g. LineMesh.rectangle(w, h, N) against circle(r, N)"
-            % (A.shape[0], B.shape[0]))
-    if float(np.min(np.linalg.norm(B - A, axis=1))) <= 0.0:
-        raise ValueError("annulus: inner and outer loops touch or cross")
-    order = inner.order
-    if outer.order != order:
-        raise ValueError("annulus: inner and outer loops must share the same order")
-
-    # tags from each loop's per-segment element_tags; a non-empty scalar
-    # inner_tag / outer_tag overrides that for the whole ring.
-    inner_caps: str | StrArray = (
-        inner_tag if inner_tag
-        else (inner.element_tags if inner.element_group_tags else ""))
-    outer_caps: str | StrArray = (
-        outer_tag if outer_tag
-        else (outer.element_tags if outer.element_group_tags else ""))
-
-    # Blend the loops (carrying their curved blocks) and loft directly -- ring k =
-    # blend_ho(inner, outer, t_k), so a high-order annulus is curved throughout, not
-    # just on the two walls; loft builds the curved Coons columns.  blend copies the
-    # ring topology but drops element_tags (the wall tags ride in inner_caps /
-    # outer_caps as the loft's cap tags).  A requested repositioning smoother rejects
-    # order > 1 (high-order smoothing not implemented); at order 1 it relaxes the
-    # linear loft as before.
-    rings = LineMesh.blend(inner, outer, radial)
-    qm = QuadMesh.loft(rings, first_tag=inner_caps, last_tag=outer_caps)
-    return _apply_smoothing(qm, smoothing_method)
+    return merge([h1, h2])
 
 
 #: Open-region section factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.
@@ -711,5 +641,4 @@ FACTORIES: dict[str, Callable[..., QuadMesh]] = {
     "ogrid": ogrid,
     "half_ogrid": half_ogrid,
     "spined_ogrid": spined_ogrid,
-    "annulus": annulus,
 }

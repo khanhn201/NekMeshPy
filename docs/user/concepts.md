@@ -33,10 +33,9 @@ explicitly:
   [sweep primitive](#loft-the-uniform-sweep-primitive): each "profile" is a single
   point, so the rungs joining them *are* the line elements. `loop=False` gives the
   consecutive chain, `loop=True` appends the single closing rung `[N-1, 0]`.
-- `LineMesh.open` — consecutive chain; a thin wrapper over `loft(…, loop=False)`.
-- `LineMesh.loop` — chain that wraps to the start; a thin wrapper over
-  `loft(…, loop=True)`. (Note the unavoidable collision between this factory name
-  and the `loop=` keyword.)
+  It is the **only** connectivity-authoring entry point: a chain is
+  `loft(points)`, a ring `loft(points, loop=True)`, and anything else comes in
+  through the constructor with its `lines` spelled out.
 - `LineMesh.line(start, end, fractions, …)` — straight edge sampled at the given
   fractions (a direct lerp, meshed exactly).
 - `LineMesh.circle(radius, n, center=…, normal=…, start_theta=0.0)` — closed ring
@@ -49,8 +48,6 @@ explicitly:
   to the inner loop's point count and rotate the inner `circle` with `start_theta`
   so index 0 meets the lower-left corner, and the two loops pair index-for-index in
   `annulus` (the radial spokes need not be straight).
-- `LineMesh.from_segments` — chain unordered segments into the largest closed
-  loop (or `None`).
 - `LineMesh.merge` — weld coincident **topological end points** (degree-1 chain
   ends; never interior points), the 1-D sibling of `QuadMesh.merge`/`HexMesh.merge`.
   The welded connectivity is the answer: if no degree-1 end survives the result
@@ -148,6 +145,43 @@ ring; `structured` / `half_ogrid` blend the 3-D edge points directly. (`ogrid` /
 (conformal slices → index arithmetic, no weld); `merge` is the one place seam
 points are coordinate-welded.
 
+## Placing a finished mesh: `translate` / `rotate` / `scale`
+
+All three containers carry the same four affine placements, as instance methods
+returning a **new** mesh:
+
+| method | does |
+|---|---|
+| `mesh.translate(vector)` | shift rigidly by a `(3,)` displacement — **bit-exact** (the offset is added without a matrix), so translating by `0` returns identical coordinates |
+| `mesh.rotate(angle, axis=(0,0,1), center=(0,0,0))` | rotate by `angle` **radians** about the line through `center` along `axis` (right-handed; `axis` need not be normalized) |
+| `mesh.scale(factor, center=(0,0,0))` | scale about `center` by a scalar or a `(3,)` per-axis vector (every factor must be positive) |
+| `mesh.transform(matrix, offset=(0,0,0))` | the general case the other three wrap: `p @ matrix.T + offset` |
+
+Only coordinates move: connectivity, `element_tags`, `boundaries` and `boundary_tags`
+ride through verbatim, so a placed mesh keeps its numbering and its BC markers. The map
+reaches **every** node, private high-order `interior` tables included — a rotated
+{meth}`~nekmeshpy.linemesh.LineMesh.circle` is still an exact circle, and a rigid map
+leaves `scaled_jacobian` untouched.
+
+```python
+ring = LineMesh.circle(1.0, 16, center=(3.0, 0.0, 0.0), order=3)
+profiles = [ring.rotate(2 * np.pi * k / 12, axis=(0, 1, 0)) for k in range(12)]
+torus = QuadMesh.loft(profiles, loop=True)          # a periodic sweep of placed rings
+```
+
+`LineMesh` additionally has {meth}`~nekmeshpy.linemesh.LineMesh.reverse` — the same
+curve traversed the other way (`i → N-1-i`). It moves nothing; it relabels, carrying
+the high-order `interior` with it. Reach for it instead of
+`LineMesh.loft(curve.points[::-1])`, which silently straight-subdivides the interior and
+loses the curve at `order > 1`. Reversing one of two shared-endpoint arcs before
+{meth}`~nekmeshpy.linemesh.LineMesh.merge` is how a seam ring gets closed without the
+traversal crossing itself.
+
+Use them to place something already built — a revolved profile stack, a block about to
+be {meth}`~nekmeshpy.hexmesh.HexMesh.merge`d onto its neighbour. A factory that can
+*construct* in position (`circle(center=…, normal=…)`, `extrude(origin=…)`) still
+should; `HexMesh.extrude` is itself a stack of `translate`d slices.
+
 (loft-the-uniform-sweep-primitive)=
 ## `loft`: the uniform sweep primitive
 
@@ -161,8 +195,9 @@ B-rep ladder, each taking a `loop: bool = False` flag:
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.loft` | a `LineMesh` | rung **lines** + the quads |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.loft` | a `QuadMesh` | rung **faces** + the hexes |
 
-`extrude` is the straight special case at each rung, and `LineMesh.open` /
-`LineMesh.loop` are thin wrappers over `LineMesh.loft`.
+`extrude` is the straight special case at each rung; at the bottom rung
+`LineMesh.loft` *is* the constructor of a chain (`loop=False`) or a ring
+(`loop=True`).
 
 **`loop=True` makes the sweep periodic**: the last profile joins back to the
 **first**, so `M` profiles give `M` layers instead of `M-1`. It is one extra
@@ -290,9 +325,9 @@ anywhere other than on the straight line between the corners.
   geometry of a straight side, and a flat grid cell is exact under tensor subdivision.
 - **Straight GLL subdivision.** Anything built from an explicit array of points has
   nothing but those points to go on, so the nodes between them are the straight
-  blend: `LineMesh.open` / `loop` / `loft`, `QuadMesh.from_grid` /
-  `HexMesh.from_grid`. Sampling a curve into points and calling `LineMesh.open` thus
-  *throws the curve away* above order 1 — pass the analytic `arc` / `circle` instead.
+  blend: `LineMesh.loft`, `QuadMesh.from_grid` / `HexMesh.from_grid`. Sampling a
+  curve into points and calling `LineMesh.loft` thus *throws the curve away* above
+  order 1 — pass the analytic `arc` / `circle` instead.
 - **Region fills carry the wall's curvature inward.** `structured` owns an exact
   transfinite map, so above order 1 it evaluates that map at the GLL-refined lattice
   against each edge's own nodes: every node it emits — corner, edge and interior alike —
@@ -366,5 +401,5 @@ export.to_re2(mesh, "part", groups={"wall": "W  ", "inlet": "v  "})
 ## See also
 
 - {doc}`howto` — these concepts applied to concrete geometries.
-- {doc}`../developer/architecture` — why the toolkit / examples split exists.
+- {doc}`architecture` — why the toolkit / examples split exists.
 - {doc}`../reference/index` — the full API.

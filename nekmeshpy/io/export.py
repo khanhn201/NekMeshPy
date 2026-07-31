@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Union
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+from ..hexmesh._query import weld as hex_weld
 from ..model import conform, topology
 from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
@@ -65,7 +66,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
 def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
-    X, HC, _ = mesh.weld()
+    X, HC, _ = hex_weld(mesh)
     g = _as_groups(mesh, groups)
     b = mesh.boundaries
     bnames = mesh.boundary_tags
@@ -256,15 +257,11 @@ def _hex_arrays(mesh: HexMesh,
     and an untagged neighbour keeps its tag; where two *differently* tagged faces of
     different elements meet, the single shared node necessarily carries one of the two
     tags -- the later boundary row's."""
-    if mesh.order > 1:
-        order = mesh.order
-        perm = _lagrange_hex_perm(order)
-        nodes, conn_ho = conform.conformal_hex(
-            mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-            mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-            mesh.quads.interior, mesh.interior, order)
-        bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
-        face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
+    if mesh.order == 1:
+        elements = mesh.points[mesh.hexes]               # (N,8,3) per-element coords
+        N = elements.shape[0]
+        X = elements.reshape(N * 8, 3)
+        bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
         for i in range(mesh.boundaries.shape[0]):
             elem = int(mesh.boundaries[i, 0])
             face = int(mesh.boundaries[i, 1])
@@ -272,12 +269,16 @@ def _hex_arrays(mesh: HexMesh,
             if grp is None:
                 _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
                 continue
-            bc[conn_ho[elem, face_idx[face]]] = grp.tag
-        return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
-    elements = mesh.points[mesh.hexes]                   # (N,8,3) per-element coords
-    N = elements.shape[0]
-    X = elements.reshape(N * 8, 3)
-    bc2: IntArray = np.zeros((N, 8), dtype=np.int64)
+            bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+        return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
+    order = mesh.order
+    perm = _lagrange_hex_perm(order)
+    nodes, conn_ho = conform.conformal_hex(
+        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
+        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
+        mesh.quads.interior, mesh.interior, order)
+    bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
+    face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
     for i in range(mesh.boundaries.shape[0]):
         elem = int(mesh.boundaries[i, 0])
         face = int(mesh.boundaries[i, 1])
@@ -285,8 +286,8 @@ def _hex_arrays(mesh: HexMesh,
         if grp is None:
             _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
             continue
-        bc2[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
-    return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc2.reshape(N * 8)
+        bc[conn_ho[elem, face_idx[face]]] = grp.tag
+    return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
 
 
 def _line_arrays(mesh: LineMesh) -> tuple[PointArray, IntArray, int]:
@@ -409,7 +410,7 @@ def summary(mesh: HexMesh) -> None:
     for name in mesh.boundary_group_tags:
         _log.info("  %-14s: %d faces",
                   name, int(np.sum(mesh.boundary_tags == name)))
-    rep = topology.hex_report(*mesh.weld()[:2])
+    rep = topology.hex_report(*hex_weld(mesh)[:2])
     _log.info("  watertight=%s  conformal=%s  components=%d  "
               "non-manifold faces=%d  hanging points=%d",
               rep["watertight"], rep["conformal"], rep["n_components"],

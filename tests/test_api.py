@@ -48,8 +48,8 @@ def test_section_smoothing_registry_extensible():
 
     assert "noop_test" in SECTION_METHODS
     qm = QuadMesh.structured(
-        [LineMesh.open([(0, 0, 0), (1, 0, 0)]), LineMesh.open([(1, 0, 0), (1, 1, 0)]),
-         LineMesh.open([(1, 1, 0), (0, 1, 0)]), LineMesh.open([(0, 1, 0), (0, 0, 0)])])
+        [LineMesh.loft([(0, 0, 0), (1, 0, 0)]), LineMesh.loft([(1, 0, 0), (1, 1, 0)]),
+         LineMesh.loft([(1, 1, 0), (0, 1, 0)]), LineMesh.loft([(0, 1, 0), (0, 0, 0)])])
     set_section_smoothing(qm, "noop_test")
     assert calls.get("hit") is True
     del SECTION_METHODS["noop_test"]

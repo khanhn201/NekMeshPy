@@ -47,7 +47,7 @@ The 2-D section meshers (`QuadMesh.ogrid` / `structured` / `half_ogrid` /
 `spined_ogrid` / `annulus`) are toolkit primitives; the scripts supply a boundary and sweep/stack
 them. Tags flow down the pipeline **`LineMesh` → `QuadMesh` edges → `HexMesh`
 faces**: a boundary loop carries a tag per line element
-(`LineMesh.loop([…], element_tags=[…])`), which is copied onto section edges — how
+(`LineMesh.loft([…], element_tags=[…], loop=True)`), which is copied onto section edges — how
 `flow_past_cylinder.py` splits its far field into `inlet`/`outlet`/`top`/`bottom`
 via `LineMesh.rectangle(w, h, N, side_tags=[…])`. Sections can also tag edges directly
 (`structured(boundary_tags=…)`, `annulus(inner_tag=…, outer_tag=…)`) and patches
@@ -63,7 +63,7 @@ element carries `(N+1)` Gauss–Lobatto–Legendre nodes per parametric directio
 (line `N+1`, quad `(N+1)²`, hex `(N+1)³`), placed on the **true** geometry the
 factory owns — a circle's or arc's nodes lie on the exact circle, a shell's
 inner-wall nodes on the exact sphere. Curvature is not automatic, though: a
-factory fed a bare point array (`LineMesh.open`, `from_grid`) has only those
+factory fed a bare point array (`LineMesh.loft`, `from_grid`) has only those
 points to go on and subdivides straight between them, so hand in the analytic
 curve rather than samples of it. The library default is `1` (plain linear elements), but
 **every example declares its own `ORDER` constant** at the top and threads it into

@@ -90,16 +90,9 @@ def arc_collar(xside):
     y = np.linspace(R, -R, 400)
     r = np.sqrt(np.maximum(R * R - y * y, 0.0))
     p = np.column_stack([xside * r, y, r])
-    return LineMesh.open(
+    return LineMesh.loft(
         trimesh.ops.resample_polyline(p, np.linspace(0.0, 1.0, N_HALF + 1)),
         order=ORDER)
-
-
-def reverse_arc(a):
-    """An open arc traversed the other way, carrying its high-order geometry: both
-    the element order and each element's own node order flip."""
-    return LineMesh.open(a.points[::-1], order=a.order,
-                         interior=None if a.order == 1 else a.interior[::-1, ::-1, :])
 
 
 def join_arcs(p, q):
@@ -107,7 +100,7 @@ def join_arcs(p, q):
     (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
     :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
     crossing."""
-    return LineMesh.merge([p, reverse_arc(q)])
+    return LineMesh.merge([p, q.reverse()])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------

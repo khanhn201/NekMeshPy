@@ -15,7 +15,7 @@ no resampling is involved: the nodes land exactly where they are asked for, the
 corners land exactly on ``x = +/-R``, and at ``ORDER > 1`` the bump's GLL nodes sit
 on the **exact** circle (``structured`` samples its transfinite map at the GLL-refined
 lattice against each edge's own nodes, so the bump is exact and its curvature bows the
-interior above it too). Sampling a polyline and calling ``LineMesh.open`` instead
+interior above it too). Sampling a polyline and calling ``LineMesh.loft`` instead
 would give high-order storage with straight-subdivided -- i.e. linear -- geometry.
 
 Each edge line tags itself: bottom (ground + bump) ``wall``, ends ``inlet`` /

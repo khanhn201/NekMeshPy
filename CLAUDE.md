@@ -90,20 +90,21 @@ and the imports in sync when adding/removing public names.
   the explicit wrap row `[N-1, 0]` and therefore leave no degree-1 end (`boundary_points()` is
   empty). `LineMesh` trusts its connectivity exactly as `QuadMesh`/`HexMesh` do — and it never
   *invents* it: **`lines` is a required constructor argument**, there is no "consecutive chain"
-  default and therefore nothing in the container that could imply a wrap. Callers either own their
-  `lines` outright (`from_segments`' chained loop, `merge`'s rewelded lines, `blend`'s copy of
+  default and therefore nothing in the container that could imply a wrap. All three containers
+  take the **same constructor argument order** — `(rung below, incidence, [orientation,] interior,
+  boundaries, boundary_tags, element_tags, *, order)`: `LineMesh(points, lines, interior, …)`,
+  `QuadMesh(lines, quad, flip, interior, …)`, `HexMesh(quads, hex, face_orient, interior, …)`.
+  A line element has no orientation bit, so it simply has no `flip`/`face_orient` slot. Callers either own their
+  `lines` outright (`merge`'s rewelded lines, `blend`'s copy of
   `a.lines`, the quad/hex edge `LineMesh`es built from `conform.unique_edges` or the layer-by-layer
-  append) or author them one rung up with `LineMesh.loft`. Factories build the wrap where it
+  append) or author them with `LineMesh.loft`, which is the **only** connectivity-authoring entry
+  point — there is no `open`/`loop`/`from_segments` sugar over it. Factories build the wrap where it
   belongs:
   `LineMesh.loft(points, *, loop=False, …)` (the **bottom rung of the uniform sweep primitive** —
   see *loft is the sweep primitive at every rung* below — each "profile" is a single point so the
   rungs *are* the line elements: `loop=False` gives the consecutive chain, `loop=True` appends the
   single closing rung `[N-1, 0]`. At `order > 1` an omitted `interior` is filled with the straight
   GLL blend between each line's endpoints, which is what the straight-sided factories want),
-  `LineMesh.open` (consecutive chain — a thin wrapper over `loft(..., loop=False)`),
-  `LineMesh.loop` (chain that wraps — a thin wrapper over `loft(..., loop=True)`, which builds the
-  `[N-1, 0]` row; note the unavoidable collision between the `loop` *factory* name and the `loop=`
-  *kwarg*),
   `LineMesh.line(start, end, fractions, *, element_tag=…)` (open straight edge placed exactly at
   `start + f*(end-start)` for each normalized-arc-length `f` — the graded-edge sibling of
   `circle`/`rectangle`; `element_tag` names every line element),
@@ -119,8 +120,9 @@ and the imports in sync when adding/removing public names.
   left]` names the four sides. It is the far-field outer loop for `annulus`: pass `n` equal to the
   inner loop's point count and rotate the inner `circle` with `start_theta` to the lower-left
   corner, and the two loops pair index-for-index — the radial spokes need not be straight),
-  `LineMesh.from_segments` (chain unordered segments into the
-  largest closed loop, or `None`). `LineMesh.merge(meshes, *, tol=…)` is the 1-D
+  Ordering an unordered segment soup into a ring is a *surface* op, not a container
+  constructor, so it lives beside its only caller as `trimesh.ops._chain_segments`, which ends in
+  `LineMesh.loft(..., loop=True)`. `LineMesh.merge(meshes, *, tol=…)` is the 1-D
   sibling of `QuadMesh.merge`/`HexMesh.merge`: it welds coincident **topological end points**
   (degree-1 chain ends) — never interior points — concatenating `element_tags`/`boundaries`. The
   welded connectivity *is* the answer: if no degree-1 end survives the result is a loop. Two
@@ -163,31 +165,75 @@ and the imports in sync when adding/removing public names.
   `QuadMesh` and `HexMesh` also carry a dense `element_tags` and sparse `boundaries`/
   `boundary_tags`, mirroring `LineMesh` one/two dimensions up.
 
-### Factory model (also gmsh-named)
+### Module layout: one axis pair, three identical packages
 
-The factories are **plain free functions split across files by open-vs-closed**, then
-**bound onto the container class in the package `__init__`** (`setattr(Class, name,
-staticmethod(fn))`), so `LineMesh.circle(...)` / `QuadMesh.ogrid(...)` stay reachable as
-class methods while the container files (`linemesh.py` / `quadmesh.py`) stay **pure data
-containers with no factory code and no factory base classes** — nothing to edit there
-when a shape is added. Core constructors + queries stay in `linemesh.py` / `quadmesh.py`;
-parametric closed shapes live in each package's `_closed.py` (line `circle`/`rectangle`;
-quad `box`/`sphere`) and region-fills / open curves in `_open.py` (line `line`; quad
-`structured`/`rectangle`/`ogrid`/`half_ogrid`/`annulus`), with `quadmesh/_helpers.py`
-holding the shared `_apply_smoothing`/`_check_boundary`. Each module ends with a
-`FACTORIES: dict[str, Callable[..., <Class>]]` registry; the package `__init__` merges
-the two dicts (`{**_CLOSED, **_OPEN}`) and binds every entry. A factory that needs a core
-constructor does a lazy in-body `from .<core> import <Class>` (breaks the import cycle:
-the package imports the core to bind onto it).
+Each container package is split the same way. `<type>.py` is a **pure data container**
+— storage, validation, `from_corners`, and the derived views, with no operation code and
+no base classes. Everything that *acts* on a finished mesh is a **plain free function**
+(no `cls`/`self`) in a sibling module, **bound onto the class in the package `__init__`**
+(`setattr(Class, name, staticmethod(fn))`), so `LineMesh.circle(...)` /
+`QuadMesh.ogrid(...)` / `mesh.is_watertight()` all stay reachable as methods.
 
-- **Adding a factory** touches **only** the matching `_closed.py`/`_open.py`: add the
-  free function (no `cls`/`self`) and one `FACTORIES` entry. The container file and the
-  `__init__` binding loop need no edit.
+The siblings are split by two orthogonal axes: **arity** (fixed vs variable/n-ary) and
+**rung delta** (how far up or down the line → quad → hex ladder the operation moves):
+
+| module | arity | Δ | contents |
+|---|---|---|---|
+| `_assemble.py` | **n-ary** | +1 / 0 | `loft`, `merge` |
+| `_lift.py` | fixed | +1 | quad `extrude`/`annulus`/`from_grid`; hex `extrude`/`annulus`/`from_grid` |
+| `_morph.py` | fixed | 0 | binary `blend`; **unary** `translate`/`rotate`/`scale`/`transform` |
+| `_query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
+| `_open.py` / `_closed.py` | fixed | +1 | shape factories (own a *shape model*, hence separate from `_lift` — `annulus` owns none, so it is a `_lift` at both rungs) |
+
+`_assemble` is the load-bearing boundary: **`loft` and `merge` are the only operations
+that manufacture a global point/element index space** (`loft`'s `prof_off`/`rung_off`
+and `i*nn + v`; `merge`'s `remap`/`survivors`/`point_id`). Every fixed-arity operation
+either reuses an existing numbering (`blend` keeps `a`'s verbatim) or delegates here
+(`extrude`/`annulus`/`from_grid` all end in a `loft` call and carry its numbering up
+unchanged). That is the question to ask when placing a new operation: *does it invent a
+numbering?* → `_assemble`; *does it change rung?* → `_lift`; *neither?* → `_morph`.
+The Δ = −1 cell (a block's boundary **as** a `QuadMesh`) is empty at every rung today.
+
+**`LineMesh.reverse()`** is the other unary Δ0 op: the same curve traversed the other
+way, `i → N-1-i`. It moves no coordinate — it relabels — and carries the high-order
+`interior` with it (flipped on **both** axes), which is exactly what
+`LineMesh.loft(mesh.points[::-1])` silently gets wrong: with no explicit `interior`,
+`loft` refills it with straight chords and the curve is lost at `order > 1`. Tags and
+`boundaries` are remapped (line `l → L-1-l`, side `s → 3-s`) so a tagged end point stays
+on the same physical point. It is 1-D only: a quad/hex has no single traversal direction
+(the analogous operation there is an orientation flip, a different thing).
+
+**The unary Δ0 cell is the affine placements** — `translate(vector)` / `rotate(angle, axis=,
+center=)` (radians, right-handed, Rodrigues) / `scale(factor, center=)` (scalar or per-axis)
+and the general `transform(matrix, offset)` they all wrap. Each returns a **new** mesh with
+only coordinates moved: incidence, `element_tags`, `boundaries` and `boundary_tags` ride
+through verbatim, and the map reaches **every** coordinate table, so a curved element keeps
+its shape (a rotated `LineMesh.circle` stays an exact circle). Like `blend` they are composed
+downward — `HexMesh` maps its shared-face `QuadMesh` and lerps nothing but its own `interior`;
+`QuadMesh` maps its shared-edge `LineMesh`. The `(matrix, offset)` pairs come from
+`model/affine.py` (`translation`/`rotation`/`scaling` + `apply`), which imports no container.
+A **pure translation carries `matrix=None`** so `apply` adds the offset without a matmul: it
+is bit-exact, which is what lets both `extrude`s place their slices through `translate` and
+keep the goldens byte-identical. Reach for these when placing a finished mesh (a revolved
+profile stack, a block about to be `merge`d); a factory that can *construct* in position
+(`circle(center=…, normal=…)`) still should.
+
+Each module ends with a registry — `FACTORIES: dict[str, Callable[..., <Class>]]` for
+the `staticmethod`-bound combinators, `METHODS` for the instance-method-bound queries
+and the unary placements (`mesh.translate(v)`, not `LineMesh.translate(mesh, v)`) —
+and the package `__init__` merges the dicts and binds every entry. There is no import
+cycle to break: the container never imports its operation modules, so they import it
+directly at module level.
+
+- **Adding an operation** touches **only** the matching sibling module: add the free
+  function (no `cls`/`self`) and one `FACTORIES`/`METHODS` entry. The container file and
+  the `__init__` binding loop need no edit.
 - **mypy** pins `files=["nekmeshpy"]`, so only toolkit code is checked and the
   dynamically-bound `LineMesh.circle` etc. are invisible to it. **Internal toolkit code
-  must call the free functions directly** (e.g. `from ..linemesh._open import line`),
-  never `LineMesh.line`/`QuadMesh.structured`; external callers (examples/tests/users)
-  use the bound `LineMesh.circle(...)` sugar.
+  must call the free functions directly** (e.g. `from ..linemesh._open import line`,
+  `from ..quadmesh._morph import blend as quad_blend`), never `LineMesh.line` /
+  `QuadMesh.blend` / `mesh.weld()`; external callers (examples/tests/users) use the
+  bound `LineMesh.circle(...)` / `mesh.is_watertight()` sugar.
 
 - **Sections** are `QuadMesh` classmethods: `QuadMesh.structured` (transfinite grid from four
   open `LineMesh` edges), `QuadMesh.rectangle(corners, nx, ny, *, x_frac=, y_frac=, side_tags=)`
@@ -298,9 +344,9 @@ The quad rung assembles **layer by layer** (append profile `i`'s own lines +
 `interior` verbatim, then the rung lines joining level `i` to level `i-1`; a quad is
 then just four line indices + four `flip` bits — no `unique_edges` dedupe, no
 owner-wins reconciliation, because no shared edge is ever duplicated). The line rung
-is that same pattern one dimension down, which is why `LineMesh.open`/`LineMesh.loop`
-are **thin wrappers** over `LineMesh.loft` (`loop=False` / `loop=True`) rather than
-connectivity-generating code in the container. `HexMesh.loft` instead builds the
+is that same pattern one dimension down, which is why `LineMesh.loft` is the sole
+author of 1-D connectivity (`loop=False` chain / `loop=True` ring) — the container
+itself generates none. `HexMesh.loft` instead builds the
 corner table and derives its B-rep with `unique_edges` → `canonical_faces` →
 `scatter_*`; `loop=True` works there because the seam faces resolve from the shared
 corner ids like any other face.
@@ -401,9 +447,9 @@ line between corners:
   Straight-sided analytic shapes are exact trivially: `LineMesh.line`,
   `LineMesh.rectangle`, `QuadMesh.box`/`half_box` (planar patches).
 - **straight GLL subdivision**: anything built from an explicit point array —
-  `LineMesh.open`/`loop`/`loft` (each line's interior = the straight blend of its two
+  `LineMesh.loft` (each line's interior = the straight blend of its two
   endpoints), `QuadMesh.from_grid`/`HexMesh.from_grid`. Sampling a curve into points and
-  calling `LineMesh.open` therefore *loses* the curve at `order > 1`; hand in the
+  calling `LineMesh.loft` therefore *loses* the curve at `order > 1`; hand in the
   analytic `arc`/`circle` instead.
 - **region fills — curved throughout, by two different mechanisms.** Both propagate the
   input wall's curvature into the *interior*, not just onto the boundary elements:

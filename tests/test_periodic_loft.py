@@ -21,26 +21,17 @@ R0, RSEC = 3.0, 1.0          # torus major / minor radius
 NSEC, NRING = 8, 12          # sections around the axis / points around a section
 
 
-def _rot_y(pts, ang):
-    """Rotate ``(...,3)`` points by ``ang`` about the +y axis."""
-    c, s = np.cos(ang), np.sin(ang)
-    R = np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
-    return np.asarray(pts, dtype=float) @ R.T
-
-
 def _ring_profiles(order=1, nsec=NSEC, nring=NRING):
     """``nsec`` closed section rings of a torus about the +y axis, one per angle
-    ``2*pi*k/nsec`` -- index-paired, so they loft directly."""
-    out = []
-    for k in range(nsec):
-        ang = 2.0 * np.pi * k / nsec
-        ring = LineMesh.circle(RSEC, nring, center=(R0, 0.0, 0.0),
-                               element_tags=["wall"] * nring, order=order)
-        interior = (_rot_y(ring.interior.reshape(-1, 3), ang).reshape(
-            ring.interior.shape) if order > 1 else None)
-        out.append(LineMesh(_rot_y(ring.points, ang), ring.lines,
-                            ring.element_tags, order=order, interior=interior))
-    return out
+    ``2*pi*k/nsec`` -- index-paired, so they loft directly.
+
+    Placing them is exactly the rung-preserving ``rotate``: it maps the ring's
+    high-order ``interior`` by the same rigid map as its corners, so each profile
+    stays an exact circle."""
+    ring = LineMesh.circle(RSEC, nring, center=(R0, 0.0, 0.0),
+                           element_tags=["wall"] * nring, order=order)
+    return [ring.rotate(2.0 * np.pi * k / nsec, axis=(0.0, 1.0, 0.0))
+            for k in range(nsec)]
 
 
 def _disc_profiles(order=1, nsec=NSEC, nring=8):
@@ -53,10 +44,10 @@ def _disc_profiles(order=1, nsec=NSEC, nring=8):
 @pytest.mark.parametrize("order", [1, 3])
 def test_line_loft_loop_is_the_loop_factory(order):
     """One dimension down each profile is a single point and the rungs *are* the
-    lines, so ``loft(loop=True)`` reproduces ``LineMesh.loop`` exactly."""
+    lines, so ``loft(loop=True)`` is what makes the curve closed at all."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.5]])
     lofted = LineMesh.loft(P, loop=True, order=order)
-    factory = LineMesh.loop(P, order=order)
+    factory = LineMesh.loft(P, order=order, loop=True)
     assert np.array_equal(lofted.points, factory.points)
     assert np.array_equal(lofted.lines, factory.lines)
     assert np.array_equal(lofted.interior, factory.interior)
@@ -69,7 +60,7 @@ def test_line_loft_loop_is_the_loop_factory(order):
 def test_line_loft_open_is_the_open_factory(order):
     P = np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.5]])
     lofted = LineMesh.loft(P, loop=False, order=order)
-    factory = LineMesh.open(P, order=order)
+    factory = LineMesh.loft(P, order=order)
     assert np.array_equal(lofted.points, factory.points)
     assert np.array_equal(lofted.lines, factory.lines)
     assert np.array_equal(lofted.interior, factory.interior)
@@ -158,10 +149,7 @@ def test_quad_loft_loop_emits_no_cap_rows_but_keeps_side_walls():
     tagged boundary points are unaffected."""
     chain = LineMesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
                           first_tag="left", last_tag="right")
-    profiles = [LineMesh(chain.points + np.array([0.0, 0.0, z]), chain.lines,
-                         chain.element_tags, chain.boundaries,
-                         chain.boundary_tags)
-                for z in (0.0, 1.0, 2.0, 3.0)]
+    profiles = [chain.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0, 3.0)]
     closed = QuadMesh.loft(profiles, loop=True)
     # 4 layers x 2 lines, one side-wall edge per layer per tagged end point
     assert closed.n_quads == 4 * 2

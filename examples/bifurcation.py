@@ -211,14 +211,17 @@ def _arc_resample(V, arcverts, iA1, n):
     if arcverts[0] != iA1:
         arcverts = arcverts[::-1]
     pts = trimesh.ops.resample_polyline(V[arcverts, :], np.linspace(0.0, 1.0, n))
-    return LineMesh.open(pts, order=ORDER)
+    return LineMesh.loft(pts, order=ORDER)
 
 
 def _ring(p, q):
     """Close two shared-endpoint ``A1 -> A2`` arcs into one loop by welding them at
     ``A1`` and ``A2`` (:meth:`LineMesh.merge`); ``q`` is reversed so the traversal
-    runs ``A1 -> A2`` down ``p`` then ``A2 -> A1`` back up ``q`` without crossing."""
-    return LineMesh.merge([p, LineMesh.open(q.points[::-1], order=ORDER)])
+    runs ``A1 -> A2`` down ``p`` then ``A2 -> A1`` back up ``q`` without crossing.
+
+    ``reverse`` carries ``q``'s high-order nodes with it; re-lofting its points
+    would straight-subdivide them and lose the curve at ``ORDER > 1``."""
+    return LineMesh.merge([p, q.reverse()])
 
 
 def seam_rings(V, faces, gloops, n_half):
@@ -253,7 +256,7 @@ def seam_rings(V, faces, gloops, n_half):
     bcP = _arc_resample(V, arcBC, iA1, n_half + 1)
 
     rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
-    spine = LineMesh.open((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
+    spine = LineMesh.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
     return rings, A1, A2, spine
 
 
@@ -304,8 +307,8 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
         slices.append(QuadMesh.spined_ogrid(
-            LineMesh.loop(R, element_tags=["wall"] * M, order=ORDER), radial,
-            spine=LineMesh.open(spn, order=ORDER), center_scale=center_scale,
+            LineMesh.loft(R, element_tags=["wall"] * M, order=ORDER, loop=True), radial,
+            spine=LineMesh.loft(spn, order=ORDER), center_scale=center_scale,
             smoothing_method=m))
     return slices
 

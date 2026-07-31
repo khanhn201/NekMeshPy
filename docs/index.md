@@ -27,27 +27,19 @@ export.to_re2(mesh, "pipe", groups={"wall": "W  ", "inlet": "v  ", "outlet": "O 
 - **{doc}`user/concepts`** — the line→quad→hex ladder, tag systems, factories,
   smoothing, export.
 - **{doc}`user/howto`** — recipes distilled from `examples/`.
+- **{doc}`user/architecture`** — how the toolkit is laid out and why.
+- **{doc}`user/conventions`** — typing, naming, and the invariants the code holds to.
 - **{doc}`reference/index`** — auto-generated API reference.
-- **{doc}`developer/architecture`** — architecture, extension points, conventions,
-  contributing.
 
 ```{toctree}
 :hidden:
-:caption: User guide
+:caption: Guide
 
 user/getting-started
 user/concepts
 user/howto
-```
-
-```{toctree}
-:hidden:
-:caption: Developer guide
-
-developer/architecture
-developer/extending
-developer/conventions
-developer/contributing
+user/architecture
+user/conventions
 ```
 
 ```{toctree}
