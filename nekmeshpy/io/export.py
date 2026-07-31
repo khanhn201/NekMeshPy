@@ -1,15 +1,16 @@
 """Export / generic-view free functions for a ``HexMesh``.
 
-Exports to a shared-point ``Mesh``, meshio, or native Nek ``.re2``/``.rea`` and
-VTK XML (``.vtu``). The ``.vtu`` writer emits high-order VTK Lagrange cells at
-``order > 1``; ``.re2`` always stays linear. The ``groups`` parameter maps each
+Exports to a shared-point ``Mesh``, meshio, native Nek ``.re2`` / field file
+(``<prefix>0.f00001``), or VTK XML (``.vtu``). Each writer takes the **full** output
+filename, extension included. The ``.vtu`` writer emits high-order VTK Lagrange cells
+at ``order > 1`` and the Nek field writer emits the full GLL node block; ``.re2``
+always stays linear. The ``groups`` parameter maps each
 boundary name to a Nek BC code and tag.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import struct
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Union
@@ -17,7 +18,9 @@ from typing import TYPE_CHECKING, Any, Union
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+from ..hexmesh._query import weld as hex_weld
 from ..model import conform, topology
+from ..model.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
 from ..model.physical import PhysicalGroup, PhysicalGroups
@@ -35,8 +38,6 @@ _VTK_LAGRANGE_QUADRILATERAL = 70
 _VTK_HEXAHEDRON = 12
 _VTK_LAGRANGE_HEXAHEDRON = 72
 
-# .rea header/footer templates
-_TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 _log = logging.getLogger("nekmeshpy")
 
 # accepted types for the ``groups`` export parameter
@@ -65,7 +66,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
 def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
-    X, HC, _ = mesh.weld()
+    X, HC, _ = hex_weld(mesh)
     g = _as_groups(mesh, groups)
     b = mesh.boundaries
     bnames = mesh.boundary_tags
@@ -119,21 +120,16 @@ def _str_to_double(s: str) -> float:
 
 
 def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
-    """Write ``<filename>.re2`` (binary) and ``<filename>.rea`` (ASCII)."""
+    """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
+    included -- nothing is appended).  The mesh is written **linear** at any order:
+    Nek's re2 has no high-order format, so only the 8 corners of each hex are
+    emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     boundaries = mesh.boundaries
     bnames = mesh.boundary_tags
     num_elem = elements.shape[0]
-    with open(filename + ".rea", "w") as fh:
-        with open(os.path.join(_TEMPLATES, "header.rea"), "r") as hf:
-            fh.write(hf.read())
-        fh.write("**MESH DATA** 6 lines are X,Y,Z;X,Y,Z. Columns corners 1-4;5-8\n")
-        fh.write("      %8i   %8i   %8i NELT,NDIM,NELV\n" % (-num_elem, 3, num_elem))
-        with open(os.path.join(_TEMPLATES, "footer.rea"), "r") as ff:
-            fh.write(ff.read())
-        fh.write("\n")
-    with open(filename + ".re2", "wb") as fid:
+    with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
         fid.write(header.ljust(80).encode("ascii"))
         fid.write(struct.pack("<f", np.float32(6.54321)))
@@ -157,6 +153,57 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             else:
                 _log.warning("unknown boundary name: %s", name)
             fid.write(buf2.tobytes())
+    return mesh
+
+
+_FLD_ETAG = 6.54321        # endian-identification float32, as in ``.re2``
+
+
+def to_fld(mesh: HexMesh, filename: str, *,
+           time: float = 0.0, istep: int = 0, wdsz: int = 8) -> HexMesh:
+    """Write the binary Nek5000 field file (``<prefix>0.f00001``) to ``filename``
+    (the **full** name -- nothing is appended).
+
+    This is the **high-order** geometry export.  Unlike ``.re2``, which has no
+    high-order format and so ships only the 8 corners of each hex, the field format
+    stores a full ``lx1*ly1*lz1`` block of **GLL** nodes per element -- exactly what
+    this toolkit's B-rep holds at ``order = N`` (``lx1 = N+1``).  The nodes are
+    written in Nek's own per-element lexicographic order (``i`` fastest, then ``j``,
+    then ``k``), which is the ordering the ``conform.conformal_*`` walk already
+    produces, so the block is handed over without a permutation.
+
+    Only ``fields = "X"`` is written: a mesh carries geometry and nothing else, so
+    there is no solution data to emit.  The file is little-endian; ``wdsz`` selects
+    single (``4``) or double (``8``) precision for the coordinates.  The trailing
+    per-element min/max metadata block that Nek writes for 3-D files is emitted too,
+    always in single precision.
+
+    Format reference: Nek5000's ``#std`` header + endian tag + ``int32`` element map
+    + field data + min/max metadata.
+    """
+    if wdsz not in (4, 8):
+        raise ValueError("wdsz must be 4 (single) or 8 (double), got %r" % (wdsz,))
+    order = mesh.order
+    nodes, conn_ho = conform.conformal_hex(
+        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
+        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
+        mesh.quads.interior, mesh.interior, order)
+    blocks = nodes[conn_ho]                       # (E, (order+1)**3, 3), i fastest
+    nel = blocks.shape[0]
+    lx1 = order + 1
+    fields = "X"
+    header = ("#std %1d %2d %2d %2d %10d %10d %20.13E %9d %6d %6d %s\n"
+              % (wdsz, lx1, lx1, lx1, nel, nel, time, istep, 0, 1, fields))
+    real = "<f8" if wdsz == 8 else "<f4"
+    with open(filename, "wb") as fid:
+        fid.write(header.ljust(132).encode("ascii"))
+        fid.write(struct.pack("<f", np.float32(_FLD_ETAG)))
+        fid.write(np.arange(1, nel + 1, dtype="<i4").tobytes())
+        # per element, all x, then all y, then all z
+        fid.write(np.ascontiguousarray(blocks.transpose(0, 2, 1)).astype(real).tobytes())
+        # 3-D metadata: per element, per component, min then max -- always float32
+        minmax: FloatArray = np.stack([blocks.min(axis=1), blocks.max(axis=1)], axis=-1)
+        fid.write(minmax.astype("<f4").tobytes())
     return mesh
 
 
@@ -214,8 +261,14 @@ def _lagrange_curve_perm(order: int) -> IntArray:
 def _lagrange_quad_perm(order: int) -> IntArray:
     """Map our lexicographic (``i`` fastest, index ``i + (order+1)*j``) quad nodes to
     the VTK Lagrange-quadrilateral order: 4 corners, then the four edges
-    (bottom / right / top / left, each start->end), then the interior nodes
-    (``i`` fastest)."""
+    (bottom / right / top / left), then the interior nodes (``i`` fastest).
+
+    The corners run CCW but **the edges do not**: ``PointIndexFromIJK`` in VTK's
+    ``vtkHigherOrderQuadrilateral`` numbers the top edge by ascending ``i`` and the
+    left edge by ascending ``j``, i.e. both in the *axis* direction rather than in the
+    CCW traversal direction.  Reversing them (which is what a CCW reading suggests) is
+    a no-op at ``order == 2`` -- each edge run is a single node -- and only corrupts
+    the cell from ``order == 3`` on."""
     n = order
     row = n + 1
 
@@ -224,8 +277,8 @@ def _lagrange_quad_perm(order: int) -> IntArray:
     corners = [idx(0, 0), idx(n, 0), idx(n, n), idx(0, n)]
     e0 = [idx(i, 0) for i in range(1, n)]
     e1 = [idx(n, j) for j in range(1, n)]
-    e2 = [idx(i, n) for i in range(n - 1, 0, -1)]
-    e3 = [idx(0, j) for j in range(n - 1, 0, -1)]
+    e2 = [idx(i, n) for i in range(1, n)]
+    e3 = [idx(0, j) for j in range(1, n)]
     interior = [idx(i, j) for j in range(1, n) for i in range(1, n)]
     return np.array(corners + e0 + e1 + e2 + e3 + interior, dtype=np.int64)
 
@@ -242,6 +295,44 @@ def _unwelded(n_elem: int, m: int) -> IntArray:
     return np.arange(n_elem * m, dtype=np.int64).reshape(n_elem, m)
 
 
+def _to_equispaced(nodes: PointArray, conn_ho: IntArray,
+                   order: int, dim: int) -> PointArray:
+    """Re-place the conformal node array on **equispaced** parameters.
+
+    VTK's Lagrange cells are *defined* on an equispaced node lattice -- there is no
+    GLL cell type in VTK (``VTK_BEZIER_*`` takes control points, also not GLL).  The
+    toolkit stores GLL nodes, so handing them over verbatim tells the reader the wrong
+    parametrization and it reconstructs a different polynomial: measured on a unit cube
+    at order 3, VTK renders the *identity* map with a 7.4e-2 excursion, one hump per
+    element -- the visible crease at element joints.  At ``order == 2`` the two lattices
+    coincide, which is why the artifact only appears from order 3 on.
+
+    This is a change of nodal basis, not a resampling loss: each element's polynomial is
+    one object, and it is re-read at ``order+1`` different parameters per axis, so the
+    geometry is preserved exactly (to float round-off) and only the *labels* change.
+
+    Shared entities stay consistent because the interpolation is a tensor product and
+    the uniform/GLL lattices agree at ``0.0``/``1.0``: a node on a shared edge or face is
+    evaluated at the boundary parameter in the transverse directions, which selects that
+    entity's own nodes alone.  Both incident elements therefore compute the same value
+    from the same data (differing only in float summation order, ~1e-16), so scattering
+    into the shared array is well-defined whichever element writes last.
+    """
+    g = gll_nodes(order)
+    u = uniform_spacing(order)
+    if np.array_equal(g, u):                 # order <= 2: nothing to relabel
+        return nodes
+    A: FloatArray = lagrange_matrix(g, u)    # (order+1, order+1) basis change, per axis
+    row = order + 1
+    # (E, row**dim, 3) lexicographic (``i`` fastest) -> axis-per-direction, slowest first
+    blocks = nodes[conn_ho].reshape((conn_ho.shape[0],) + (row,) * dim + (3,))
+    for axis in range(1, dim + 1):
+        blocks = np.moveaxis(np.tensordot(A, blocks, axes=([1], [axis])), 0, axis)
+    out: PointArray = nodes.copy()
+    out[conn_ho] = blocks.reshape(conn_ho.shape[0], row ** dim, 3)
+    return out
+
+
 def _hex_arrays(mesh: HexMesh,
                 g: PhysicalGroups) -> tuple[PointArray, IntArray, int, IntArray]:
     """Hex nodes + ``bc_id``: linear un-welded ``VTK_HEXAHEDRON`` at ``order == 1``, a
@@ -256,15 +347,11 @@ def _hex_arrays(mesh: HexMesh,
     and an untagged neighbour keeps its tag; where two *differently* tagged faces of
     different elements meet, the single shared node necessarily carries one of the two
     tags -- the later boundary row's."""
-    if mesh.order > 1:
-        order = mesh.order
-        perm = _lagrange_hex_perm(order)
-        nodes, conn_ho = conform.conformal_hex(
-            mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-            mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-            mesh.quads.interior, mesh.interior, order)
-        bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
-        face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
+    if mesh.order == 1:
+        elements = mesh.points[mesh.hexes]               # (N,8,3) per-element coords
+        N = elements.shape[0]
+        X = elements.reshape(N * 8, 3)
+        bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
         for i in range(mesh.boundaries.shape[0]):
             elem = int(mesh.boundaries[i, 0])
             face = int(mesh.boundaries[i, 1])
@@ -272,12 +359,16 @@ def _hex_arrays(mesh: HexMesh,
             if grp is None:
                 _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
                 continue
-            bc[conn_ho[elem, face_idx[face]]] = grp.tag
-        return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
-    elements = mesh.points[mesh.hexes]                   # (N,8,3) per-element coords
-    N = elements.shape[0]
-    X = elements.reshape(N * 8, 3)
-    bc2: IntArray = np.zeros((N, 8), dtype=np.int64)
+            bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+        return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
+    order = mesh.order
+    perm = _lagrange_hex_perm(order)
+    nodes, conn_ho = conform.conformal_hex(
+        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
+        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
+        mesh.quads.interior, mesh.interior, order)
+    bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
+    face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
     for i in range(mesh.boundaries.shape[0]):
         elem = int(mesh.boundaries[i, 0])
         face = int(mesh.boundaries[i, 1])
@@ -285,8 +376,9 @@ def _hex_arrays(mesh: HexMesh,
         if grp is None:
             _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
             continue
-        bc2[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
-    return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc2.reshape(N * 8)
+        bc[conn_ho[elem, face_idx[face]]] = grp.tag
+    nodes = _to_equispaced(nodes, conn_ho, order, 3)
+    return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
 
 
 def _line_arrays(mesh: LineMesh) -> tuple[PointArray, IntArray, int]:
@@ -299,6 +391,7 @@ def _line_arrays(mesh: LineMesh) -> tuple[PointArray, IntArray, int]:
     nodes, conn_ho = conform.conformal_line(
         mesh.points, mesh.lines, mesh.interior, mesh.order)
     perm = _lagrange_curve_perm(mesh.order)
+    nodes = _to_equispaced(nodes, conn_ho, mesh.order, 1)
     return nodes, conn_ho[:, perm], _VTK_LAGRANGE_CURVE
 
 
@@ -314,6 +407,7 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
         mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
         mesh.interior, mesh.order)
     perm = _lagrange_quad_perm(mesh.order)
+    nodes = _to_equispaced(nodes, conn_ho, mesh.order, 2)
     return nodes, conn_ho[:, perm], _VTK_LAGRANGE_QUADRILATERAL
 
 
@@ -409,7 +503,7 @@ def summary(mesh: HexMesh) -> None:
     for name in mesh.boundary_group_tags:
         _log.info("  %-14s: %d faces",
                   name, int(np.sum(mesh.boundary_tags == name)))
-    rep = topology.hex_report(*mesh.weld()[:2])
+    rep = topology.hex_report(*hex_weld(mesh)[:2])
     _log.info("  watertight=%s  conformal=%s  components=%d  "
               "non-manifold faces=%d  hanging points=%d",
               rep["watertight"], rep["conformal"], rep["n_components"],

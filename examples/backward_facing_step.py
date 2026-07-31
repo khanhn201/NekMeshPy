@@ -11,7 +11,7 @@ names the end caps ``front`` / ``back``.
 
     PYTHONPATH=. python examples/backward_facing_step.py
 
-Produces ``backward_facing_step.re2`` / ``.rea`` and ``backward_facing_step.vtu``.
+Produces ``backward_facing_step.re2`` and ``backward_facing_step.vtu``.
 """
 
 import logging
@@ -72,6 +72,6 @@ mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

@@ -1,6 +1,13 @@
 """Golden regression tests: the default surface pipeline must keep reproducing
-the validated MATLAB/Octave reference to machine precision, and its ASCII
-exports must stay byte-identical.
+the validated MATLAB/Octave reference.
+
+The contract is **geometry to a tolerance, topology and tags exactly**: every
+coordinate in the ``.re2`` / ``.vtu`` exports matches the golden within ``RE2_TOL``,
+while connectivity, element/node numbering, VTK cell types and the boundary blocks
+are compared byte-for-byte.  Floats are deliberately *not* byte-compared -- the CI
+matrix reproduces the mesh bit-for-bit, but a differently built interpreter shifts
+coordinates by ~1e-13 (see :func:`test_vtu_coords_match_golden`), which says nothing
+about correctness.
 
 These pin the numerics so every generalization refactor is safe.
 """
@@ -19,9 +26,9 @@ RE2_TOL = 1e-12
 
 def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
-    assert mesh.hexes.shape == (4800, 8)         # (N,8) shared-point connectivity
-    assert mesh.points.shape == (5467, 3)
-    assert mesh.boundaries.shape[0] == 1360
+    assert mesh.hexes.shape == (7200, 8)         # (N,8) shared-point connectivity
+    assert mesh.points.shape == (8137, 3)
+    assert mesh.boundaries.shape[0] == 1840
 
 
 def test_tag_face_counts(built_mesh):
@@ -29,7 +36,7 @@ def test_tag_face_counts(built_mesh):
     names = mesh.boundary_tags
     counts = {n: int(np.sum(names == n)) for n in
               ("wall", "trunk_outlet", "top_outlet_1", "top_outlet_2")}
-    assert counts["wall"] == 960
+    assert counts["wall"] == 1440
     assert counts["trunk_outlet"] == 80
     assert counts["top_outlet_1"] == 80
     assert counts["top_outlet_2"] == 80
@@ -38,17 +45,22 @@ def test_tag_face_counts(built_mesh):
 def test_scaled_jacobian_quality(built_mesh):
     X, HC, _ = built_mesh["mesh"].weld()
     sj = quality.scaled_jacobian(X, HC)
-    # values for the exact-mesh pipeline (seam rings conformalized without the
-    # spline that used to smooth the leg openings); still no inverted elements
-    assert float(np.min(sj)) == pytest.approx(0.0281, abs=1e-3)
-    assert float(np.mean(sj)) == pytest.approx(0.9080, abs=1e-3)
+    # values for the order-3 pipeline whose wall is refit analytically before meshing:
+    # each private station ring as a truncated-Fourier loop (``fourier_ring``) and each
+    # of the three *shared* seam arcs as a truncated sine series with its endpoints
+    # pinned (``_arc_curve``).  Low-passing away the STL facet noise un-pinches the
+    # worst wall elements, so the floor is well above the 0.0281 of the order-1 chord
+    # wall it replaced.  Corner metric, so the high-order nodes do not enter it; still
+    # no inverted elements.
+    assert float(np.min(sj)) == pytest.approx(0.1207, abs=1e-3)
+    assert float(np.mean(sj)) == pytest.approx(0.9117, abs=1e-3)
     assert float(np.min(sj)) > 0.0   # no inverted elements
 
 
 def test_re2_coords_match_golden(built_mesh):
     ne, coords, _ = read_re2_coords(built_mesh["re2"])
     gne, gcoords, _ = read_re2_coords(os.path.join(GOLDEN, "bifurcation.re2"))
-    assert ne == gne == 4800
+    assert ne == gne == 7200
     assert coords.shape == gcoords.shape
     assert np.max(np.abs(coords - gcoords)) < RE2_TOL
 
@@ -59,17 +71,46 @@ def test_re2_boundary_block_identical(built_mesh):
     assert bnd == gbnd           # BC block is exact integers/codes
 
 
-def test_rea_byte_identical(built_mesh):
-    with open(built_mesh["rea"], "rb") as f:
-        got = f.read()
-    with open(os.path.join(GOLDEN, "bifurcation.rea"), "rb") as f:
-        ref = f.read()
+def _split_vtu(path):
+    """Split a ``.vtu`` into ``(points, everything_else)``.
+
+    The file holds exactly one float array -- the ascii ``Points`` block -- and is
+    otherwise markup plus the integer ``connectivity`` / ``offsets`` / ``types`` /
+    ``bc_id`` arrays.  Returning the two separately lets the coordinates be compared
+    numerically while every other byte stays pinned exactly.
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    head, open_tag, tail = raw.partition(b"<Points>")
+    body, close_tag, tail = tail.partition(b"</Points>")
+    s = body.index(b'ascii">') + len(b'ascii">')
+    e = body.index(b"</DataArray>")
+    pts = np.array(body[s:e].split(), dtype=float).reshape(-1, 3)
+    return pts, head + open_tag + body[:s] + body[e:] + close_tag + tail
+
+
+def test_vtu_structure_byte_identical(built_mesh):
+    """Everything but the coordinates -- markup, connectivity, offsets, VTK cell
+    types, ``bc_id`` -- is byte-exact.  That is where a refactor bug shows up:
+    element/node numbering, the high-order Lagrange node permutation, and the
+    boundary ids are all integers and cannot drift."""
+    _, got = _split_vtu(built_mesh["vtu"])
+    _, ref = _split_vtu(os.path.join(GOLDEN, "bifurcation.vtu"))
     assert got == ref
 
 
-def test_vtu_byte_identical(built_mesh):
-    with open(built_mesh["vtu"], "rb") as f:
-        got = f.read()
-    with open(os.path.join(GOLDEN, "bifurcation.vtu"), "rb") as f:
-        ref = f.read()
-    assert got == ref
+def test_vtu_coords_match_golden(built_mesh):
+    """Coordinates to ``RE2_TOL``, the same bound the ``.re2`` coordinates get.
+
+    A byte-exact float comparison is not a property this pipeline has: the CI matrix
+    (CPython 3.9-3.12, numpy 2.0-2.5, scipy 1.13-1.18) reproduces the mesh
+    bit-for-bit, but a *differently built* interpreter -- measured on a cp314 wheel
+    of the same numpy/scipy as the 3.12 leg -- shifts every coordinate by up to
+    7.3e-13.  That is float-association noise in the same class as the
+    ``spsolve``-vs-backslash residual ``RE2_TOL`` was chosen for, so it gets the same
+    bound rather than a golden that is only valid on one build.
+    """
+    got, _ = _split_vtu(built_mesh["vtu"])
+    ref, _ = _split_vtu(os.path.join(GOLDEN, "bifurcation.vtu"))
+    assert got.shape == ref.shape == (202249, 3)
+    assert np.max(np.abs(got - ref)) < RE2_TOL

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._typing import Point, PointArray, StrArray, Vec3
+from ._assemble import loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 
 if TYPE_CHECKING:
@@ -50,19 +51,19 @@ def circle(radius: float, n: int, *,
     a full turn's step is exactly ``2*pi/n`` here, whereas ``arc`` must form
     ``(end_theta - start_theta)/n``, so ``circle`` keeps its own ``linspace`` rather
     than delegating (see ``arc``'s docstring)."""
-    from .linemesh import LineMesh
     th = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) + float(start_theta)
     c: Point = np.asarray(center, dtype=float).ravel()
     e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
     pts: PointArray = _arc_points(radius, c, e1, e2, th)
     if order == 1:
-        return LineMesh.loop(pts, element_tags)
+        return loft(pts, loop=True, element_tags=element_tags)
     # element l spans angle th[l] .. th[l] + dth; place the interior GLL nodes on
     # the arc (the two endpoint nodes are already the loop's corner points), so the
     # explicit ``interior`` overrides ``loft``'s default straight chord blend.
     interior: PointArray = _arc_interior(
         radius, c, e1, e2, th, 2.0 * np.pi / n, order)             # (n, order-1, 3)
-    return LineMesh.loop(pts, element_tags, order=order, interior=interior)
+    return loft(pts, loop=True, interior=interior,
+                         element_tags=element_tags, order=order)
 
 
 def rectangle(width: float, height: float, n: int, *,
@@ -92,7 +93,6 @@ def rectangle(width: float, height: float, n: int, *,
     between them are the straight GLL blend
     :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` places by default
     (read by high-order ``vtu`` export)."""
-    from .linemesh import LineMesh
     ni = int(n)
     if ni < 4 or ni % 4 != 0:
         raise ValueError("rectangle n must be a positive multiple of 4, "
@@ -119,7 +119,7 @@ def rectangle(width: float, height: float, n: int, *,
                              "[bottom, right, top, left]")
         tags = [st[0]] * m + [st[1]] * m + [st[2]] * m + [st[3]] * m
     # every side is straight, so ``loft``'s default straight GLL interior is exact
-    return LineMesh.loop(pts, tags, order=order)
+    return loft(pts, loop=True, element_tags=tags, order=order)
 
 
 #: Closed-loop shape factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.

@@ -156,6 +156,22 @@ def test_trimesh_boundary_helpers():
     assert tri.boundary_points().tolist() == [0, 1, 2]
 
 
+def test_chain_segments_builds_a_closed_loop():
+    # Ordering an unordered segment soup into a ring is a *surface* op (it is how a
+    # marched isocontour arrives), so it lives in trimesh.ops beside its only caller
+    # and hands the ordered points to LineMesh.loft(..., loop=True).
+    from nekmeshpy.trimesh.ops import _chain_segments
+    # four segments of a unit square, given unordered, chain into a closed loop
+    segs = np.array([[0, 0, 0, 1, 0, 0], [1, 1, 0, 0, 1, 0],
+                     [1, 0, 0, 1, 1, 0], [0, 1, 0, 0, 0, 0]], float)
+    lm = _chain_segments(segs)
+    # the degree-based walk closes the loop structurally: every point has degree 2
+    assert lm is not None and lm.boundary_points().size == 0
+    # the four square corners are recovered (the walk repeats the start to close)
+    assert len(np.unique(np.round(lm.points, 9), axis=0)) == 4
+    assert _chain_segments(None) is None
+
+
 def test_quadmesh_boundary_helpers():
     # two quads sharing edge (1,4); every point is on the perimeter
     points = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0],

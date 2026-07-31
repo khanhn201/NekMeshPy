@@ -11,6 +11,7 @@ import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
+from ..linemesh._assemble import loft as line_loft
 
 if TYPE_CHECKING:
     from .trimesh import TriMesh
@@ -129,6 +130,77 @@ def order_boundary_loop(surface: TriMesh, lv: IntArray) -> IntArray:
 
 
 # -- isocontours --------------------------------------------------------
+def _chain_segments(segs: FloatArray) -> LineMesh | None:
+    """Chain unordered 3-D segments ``(S,6)`` into a single closed ordered loop (the
+    largest connected component), or ``None`` if they form no loop.
+
+    Marching a scalar field over triangles emits its level set as an unordered soup
+    of segments, so this ordering walk is a *surface* operation, not a ``LineMesh``
+    constructor: it lives beside its only caller and hands the ordered points to
+    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` with ``loop=True``, which
+    is what authors the wrapping ``lines``."""
+    if segs is None or len(segs) == 0:
+        return None
+    segs = np.asarray(segs, dtype=float)
+    ns = segs.shape[0]
+    pts_raw = np.vstack([segs[:, 0:3], segs[:, 3:6]])
+
+    # weld coincident endpoints on a scale-relative grid
+    scl = float(np.max(pts_raw.max(axis=0) - pts_raw.min(axis=0)))
+    tol = 1e-6 * scl if scl > 0 else 1.0
+    key = np.round(pts_raw / tol).astype(np.int64)
+    _, ic = np.unique(key, axis=0, return_inverse=True)
+    ic = ic.ravel()
+    npts = int(ic.max()) + 1
+
+    coord = np.zeros((npts, 3))
+    cnt = np.zeros(npts)
+    for i in range(2 * ns):
+        coord[ic[i], :] += pts_raw[i, :]
+        cnt[ic[i]] += 1
+    coord = coord / cnt[:, None]
+
+    # node -> incident neighbours and each node pair -> its segment indices,
+    # so the walk finds the next segment by incidence.
+    seg_ids = np.column_stack([ic[:ns], ic[ns:]])
+    adj: list[list[int]] = [[] for _ in range(npts)]
+    pair_segs: dict[tuple[int, int], list[int]] = {}
+    for s in range(ns):
+        i, j = int(seg_ids[s, 0]), int(seg_ids[s, 1])
+        adj[i].append(j)
+        adj[j].append(i)
+        pair_segs.setdefault((i, j) if i <= j else (j, i), []).append(s)
+
+    visited_seg = np.zeros(ns, dtype=bool)
+    loops = []
+    for s in range(ns):
+        if visited_seg[s]:
+            continue
+        start = int(seg_ids[s, 0])
+        cur = int(seg_ids[s, 1])
+        visited_seg[s] = True
+        order = [start, cur]
+        while cur != start:
+            found = False
+            for nb in adj[cur]:
+                for s2 in pair_segs[(cur, nb) if cur <= nb else (nb, cur)]:
+                    if visited_seg[s2]:
+                        continue
+                    visited_seg[s2] = True
+                    cur = nb
+                    order.append(cur)
+                    found = True
+                    break
+                if found:
+                    break
+            if not found:
+                break
+        loops.append(line_loft(coord[order, :], loop=True))
+    if not loops:
+        return None
+    return max(loops, key=len)
+
+
 def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> LineMesh | None:
     """Extract {u == level} as the largest closed ``LineMesh`` loop, or ``None``."""
     xyz, tri = surface.points, surface.tris
@@ -150,7 +222,7 @@ def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> LineMes
         if len(pts) == 2:
             segs[ns, :] = np.concatenate([pts[0], pts[1]])
             ns += 1
-    return LineMesh.from_segments(segs[:ns, :])
+    return _chain_segments(segs[:ns, :])
 
 
 def extract_rings(

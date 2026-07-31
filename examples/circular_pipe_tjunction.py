@@ -18,7 +18,7 @@ the origin. Same three-leg construction as the bifurcation:
 
     PYTHONPATH=. python examples/circular_pipe_tjunction.py
 
-Produces ``circular_pipe_tjunction.re2`` / ``.rea`` and ``.vtu``.
+Produces ``circular_pipe_tjunction.re2`` and ``.vtu``.
 """
 
 import logging
@@ -32,7 +32,6 @@ from nekmeshpy import (
     TriMesh,
     export,
     smoothing,
-    trimesh,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -47,7 +46,7 @@ N_SLICES_BRANCH = 10          # cross-sections in the branch
 CENTER_SCALE = 0.5            # inner square-core size (fraction of the diameter)
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
 SMOOTHING_METHOD = None    # per-section interior repositioning
-ORDER = 2                     # polynomial order; 1 = linear.  The seam arcs and
+ORDER = 4                     # polynomial order; 1 = linear.  The seam arcs and
                               # openings are meshed at ORDER, so .vtu renders the
                               # curved walls (.re2 stays linear either way)
 # post-assembly untangle/polish sweeps (0 = off).  hexmesh.smoothing.smooth is
@@ -79,27 +78,31 @@ def arc_main_lower():
 
 
 def arc_collar(xside):
-    """One half of the intersection collar (seam between a main leg and the
-    branch): ``y^2+z^2 = x^2+y^2 = R^2``, ``z >= 0`` gives
-    ``(xside*sqrt(R^2-y^2), y, sqrt(R^2-y^2))`` for ``y`` from ``+R -> -R``.  This
-    Viviani curve has no closed-form arc length, so sample it densely and resample
-    by arc length to the exact ``N_HALF+1`` seam points.  Unlike the main lower wall
-    there is no analytic factory for it, so at ``ORDER > 1`` its interior GLL nodes
-    are straight-subdivided between those samples -- honest for a numerically
-    sampled curve, and the reason ``N_HALF`` (not the order) sets its accuracy."""
-    y = np.linspace(R, -R, 400)
-    r = np.sqrt(np.maximum(R * R - y * y, 0.0))
-    p = np.column_stack([xside * r, y, r])
-    return LineMesh.open(
-        trimesh.ops.resample_polyline(p, np.linspace(0.0, 1.0, N_HALF + 1)),
+    """One half of the intersection collar (seam between a main leg and the branch):
+    the ``z >= 0`` branch of ``y^2+z^2 = x^2+y^2 = R^2``.  Two equal-radius cylinders
+    meet in a pair of **planar ellipses**, so this curve has the closed form
+    ``p(t) = (xside*R sin t, R cos t, R sin t)``, ``t: 0 -> pi`` -- it lies in the
+    plane ``x = xside*z`` with semi-axes ``R*sqrt(2)`` and ``R``.
+
+    :meth:`LineMesh.curve` evaluates that form at every node, corners *and* the
+    interior GLL nodes, so the collar is exact to machine precision at any ``ORDER``.
+    Its arc length has no closed form, so the even-by-arc-length grading is an
+    explicit first step: :meth:`LineMesh.arclength_fractions` inverts a chord table
+    over ``t: 0 -> pi`` into the ``t`` values themselves, and ``curve`` evaluates the
+    ellipse at exactly those parameters -- it neither normalizes nor remaps them, so
+    the helper's output is handed straight on and the domain is stated once.  Only
+    *where along* the ellipse the nodes sit inherits that table's discretization
+    error -- every node still lands on the true ellipse to machine precision, because
+    it is placed by evaluating the closed form and never by interpolating the table.
+    (Sampling this into an array and calling ``LineMesh.loft`` instead would
+    straight-subdivide it and put the interior nodes ~2.6% of ``R`` off the curve.)"""
+    def f(t):
+        return np.column_stack(
+            [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
+
+    return LineMesh.curve(
+        f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
         order=ORDER)
-
-
-def reverse_arc(a):
-    """An open arc traversed the other way, carrying its high-order geometry: both
-    the element order and each element's own node order flip."""
-    return LineMesh.open(a.points[::-1], order=a.order,
-                         interior=None if a.order == 1 else a.interior[::-1, ::-1, :])
 
 
 def join_arcs(p, q):
@@ -107,7 +110,7 @@ def join_arcs(p, q):
     (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
     :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
     crossing."""
-    return LineMesh.merge([p, reverse_arc(q)])
+    return LineMesh.merge([p, q.reverse()])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------
@@ -224,5 +227,5 @@ if SMOOTH_ITERS > 0:
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
 
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

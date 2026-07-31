@@ -11,7 +11,7 @@ export emits ``VTK_LAGRANGE_HEXAHEDRON`` cells that render the curved shell.
 
     PYTHONPATH=. python examples/high_order_hex.py
 
-Produces ``high_order_hex.re2`` / ``.rea`` (linear corners) and ``high_order_hex.vtu``
+Produces ``high_order_hex.re2`` (linear corners) and ``high_order_hex.vtu``
 (high-order Lagrange hexahedra).
 """
 
@@ -65,6 +65,6 @@ _log.info("inner-wall node radius: min=%.15f max=%.15f (target %.1f)",
           radii.min(), radii.max(), R)
 
 # -- export ------------------------------------------------------------------
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)          # linear corners (Nek)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)          # linear corners (Nek)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # high-order Lagrange hexes (XML)
-_log.info("wrote %s.re2 / .rea / .vtu", OUT_NAME)
+_log.info("wrote %s.re2 / .vtu", OUT_NAME)

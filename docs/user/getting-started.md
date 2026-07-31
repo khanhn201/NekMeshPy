@@ -60,7 +60,7 @@ Boundary **names** map to Nek BC codes (or integer ids) only at export.
 
 ```python
 codes = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-export.to_re2(mesh, "pipe", groups=codes)     # native Nek5000/NekRS (.re2 + .rea)
+export.to_re2(mesh, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
 export.to_vtu(mesh, "pipe.vtu", groups=codes) # ParaView / VisIt (XML VTK)
 export.write(mesh, "pipe.msh", groups=codes)  # anything meshio supports
 ```

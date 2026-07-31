@@ -27,6 +27,13 @@ behind the B-rep) — is internal; see
    :members:
 ```
 
+## `model.affine`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.affine
+   :members:
+```
+
 ## `model.fields`
 
 ```{eval-rst}

@@ -48,7 +48,7 @@ def test_structured_uses_edge_nodes_verbatim():
     # section's bottom row exactly (honoured on the boundary, blended inward).
     nx, ny = 8, 4
     xb = np.linspace(-1, 1, nx + 1)
-    bottom = LineMesh.open(np.column_stack(                                # nx+1 pts
+    bottom = LineMesh.loft(np.column_stack(                                # nx+1 pts
         [xb, 0.3 * np.sin(np.pi * (xb + 1) / 2), np.zeros(nx + 1)]))
     top = LineMesh.line((1, 1, 0), (-1, 1, 0), uniform_spacing(nx))
     right = LineMesh.line((1, bottom.points[-1, 1], 0), (1, 1, 0), uniform_spacing(ny))
@@ -239,8 +239,8 @@ def test_ogrid_smoothing_method_repositions():
 
 
 def _square_loop(half):
-    return LineMesh.loop([(-half, -half, 0.0), (half, -half, 0.0),
-                      (half, half, 0.0), (-half, half, 0.0)])
+    return LineMesh.loft([(-half, -half, 0.0), (half, -half, 0.0),
+                      (half, half, 0.0), (-half, half, 0.0)], loop=True)
 
 
 def _far_box(half, n, side_tags=None):
@@ -362,7 +362,7 @@ def test_annulus_rejects_non_loop():
     # loop's own points has one line element fewer (no wrap row), so the radial
     # blend rejects it structurally.
     outer = _square_loop(2.0)
-    chain = LineMesh.open(outer.points * 0.25)
+    chain = LineMesh.loft(outer.points * 0.25)
     assert chain.n_lines == outer.n_lines - 1        # the missing wrap row
     with pytest.raises(ValueError, match="identical connectivity"):
         QuadMesh.annulus(chain, outer, radial=uniform_spacing(3))
@@ -378,14 +378,14 @@ def _diameter_spine(arc, center_scale, radial):
                          np.linspace(s_n, s_s, 2 * nt + 1),
                          s_s + radial[1:] * (1.0 - s_s)])
     e1, e2 = arc.points[0], arc.points[-1]
-    return LineMesh.open(e1 + fr[:, None] * (e2 - e1))
+    return LineMesh.loft(e1 + fr[:, None] * (e2 - e1))
 
 
 def test_half_ogrid_valid():
     Nt, Nr = 2, 2
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)                # semicircle A1(-1,0)..A2(1,0)
-    arc = LineMesh.open(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
+    arc = LineMesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))   # the diameter A1..A2
     qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
     assert qm.n_quads == 2 * Nt * Nt + 4 * Nt * Nr
@@ -456,7 +456,7 @@ def _saddle_loop(n, amp=0.4):
     """A genuinely non-planar closed loop: the unit circle lifted by
     ``z = amp*cos(2 theta)`` (a saddle / Pringle), sampled densely."""
     th = np.linspace(0.0, 2 * np.pi, n, endpoint=False)
-    return LineMesh.loop(np.column_stack([np.cos(th), np.sin(th), amp * np.cos(2 * th)]))
+    return LineMesh.loft(np.column_stack([np.cos(th), np.sin(th), amp * np.cos(2 * th)]), loop=True)
 
 
 def test_ogrid_on_curvy_boundary_stays_nonplanar():
@@ -491,7 +491,7 @@ def test_annulus_on_curvy_boundaries_stays_nonplanar():
     # the curved surface rather than collapsing onto a plane.
     inner = _saddle_loop(24, amp=0.4)
     outer = _saddle_loop(24, amp=0.4)
-    outer = LineMesh.loop(2.0 * outer.points)        # scaled-out saddle, same 24 points
+    outer = LineMesh.loft(2.0 * outer.points, loop=True)        # scaled-out saddle, same 24 points
     qm = QuadMesh.annulus(inner, outer, radial=uniform_spacing(4),
                           smoothing_method="conduction")
     X = np.asarray(qm.points)
@@ -516,10 +516,10 @@ def test_rectangle_far_field_in_tilted_plane():
 def test_loop_element_tags_length_validated():
     # a closed 3-point loop has 3 line elements; element_tags must match
     with pytest.raises(ValueError, match="element_tags length .* must match lines"):
-        LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags=["a", "b"])
+        LineMesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags=["a", "b"], loop=True)
     # a matching count (one per line element) is accepted
-    assert LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
-                     element_tags=["a", "b", "c"]).element_tags.tolist() == ["a", "b", "c"]
+    assert LineMesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
+                     element_tags=["a", "b", "c"], loop=True).element_tags.tolist() == ["a", "b", "c"]
 
 
 def test_unnamed_rectangle_far_field_stays_untagged():
@@ -600,7 +600,7 @@ def test_ogrid_wall_tag_overrides_boundary_element_tags():
 def _tagged_arc(Nt, tags):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
-    return LineMesh.open(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]),
+    return LineMesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]),
                          element_tags=tags)
 
 
@@ -688,9 +688,9 @@ def test_annulus_inner_tag_overrides_loop_element_tags():
 def test_linemesh_rejects_2d_input():
     # boundaries must be 3-D (N,3); a 2-D (N,2) array is rejected
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
-        LineMesh.open([(0, 0), (1, 0)])
+        LineMesh.loft([(0, 0), (1, 0)])
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
-        LineMesh.loop([(0, 0), (1, 0), (1, 1)])
+        LineMesh.loft([(0, 0), (1, 0), (1, 1)], loop=True)
 
 
 def test_structured_rejects_wrong_edge_count():
@@ -701,9 +701,9 @@ def test_structured_rejects_wrong_edge_count():
 def test_structured_rejects_mismatched_edge_counts():
     # bottom (4 pts) and top (3 pts) disagree on nx -> rejected (no resampling)
     edges = [LineMesh.line((-1, -1, 0), (1, -1, 0), uniform_spacing(3)),   # 4 pts
-             LineMesh.open([(1, -1, 0), (1, 1, 0)]),
+             LineMesh.loft([(1, -1, 0), (1, 1, 0)]),
              LineMesh.line((1, 1, 0), (-1, 1, 0), uniform_spacing(2)),     # 3 pts
-             LineMesh.open([(-1, 1, 0), (-1, -1, 0)])]
+             LineMesh.loft([(-1, 1, 0), (-1, -1, 0)])]
     with pytest.raises(ValueError, match="bottom and top .* equal point counts"):
         QuadMesh.structured(edges)
 
@@ -717,8 +717,8 @@ def test_structured_rejects_non_linemesh_edge():
 
 def test_structured_rejects_open_loop():
     # four edges that do not share corners -> not a closed loop
-    edges = [LineMesh.open([(0, 0, 0), (1, 0, 0)]), LineMesh.open([(1, 0, 0), (1, 1, 0)]),
-             LineMesh.open([(1, 1, 0), (0, 1, 0)]), LineMesh.open([(0, 1, 0), (0.5, 0.5, 0)])]
+    edges = [LineMesh.loft([(0, 0, 0), (1, 0, 0)]), LineMesh.loft([(1, 0, 0), (1, 1, 0)]),
+             LineMesh.loft([(1, 1, 0), (0, 1, 0)]), LineMesh.loft([(0, 1, 0), (0.5, 0.5, 0)])]
     with pytest.raises(ValueError, match="closed loop"):
         QuadMesh.structured(edges)
 
@@ -728,7 +728,7 @@ def test_ogrid_rejects_non_loop_boundary():
     # (Closedness itself is no longer a stored flag -- see
     # test_ogrid_reads_the_loop_wrap_from_connectivity below.)
     with pytest.raises(ValueError, match=r"exactly 4\*n_side"):
-        QuadMesh.ogrid(LineMesh.open([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
+        QuadMesh.ogrid(LineMesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
                        radial=uniform_spacing(3))
 
 
@@ -755,26 +755,26 @@ def test_ogrid_rejects_bad_radial():
 def _semicircle_arc(Nt):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
-    return LineMesh.open(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
+    return LineMesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
 
 
 def test_half_ogrid_rejects_bad_arc_count():
-    arc = LineMesh.open(np.column_stack([np.linspace(-1, 1, 6), np.zeros(6), np.zeros(6)]))
-    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
+    arc = LineMesh.loft(np.column_stack([np.linspace(-1, 1, 6), np.zeros(6), np.zeros(6)]))
+    spine = LineMesh.loft([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="4.Ntheta"):
         QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
 
 
 def test_half_ogrid_rejects_non_increasing_radial():
     arc = _semicircle_arc(2)
-    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
+    spine = LineMesh.loft([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="strictly increasing"):
         QuadMesh.half_ogrid(arc, spine, np.array([1.0, 0.5]), center_scale=0.5)
 
 
 def test_half_ogrid_rejects_radial_not_reaching_wall():
     arc = _semicircle_arc(2)
-    spine = LineMesh.open([[-1.0, 0, 0], [1.0, 0, 0]])
+    spine = LineMesh.loft([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="last layer position must be 1.0"):
         QuadMesh.half_ogrid(arc, spine, np.array([0.3, 0.6]), center_scale=0.5)
 
@@ -786,7 +786,7 @@ def _circle_loop(Nt, tag="wall"):
     M = 8 * Nt
     th = np.linspace(0.0, 2 * np.pi, M, endpoint=False)
     pts = np.column_stack([np.cos(th), np.sin(th), np.zeros(M)])
-    return LineMesh.loop(pts, element_tags=[tag] * M)
+    return LineMesh.loft(pts, element_tags=[tag] * M, loop=True)
 
 
 def test_spined_ogrid_valid_and_tagged():
@@ -800,15 +800,79 @@ def test_spined_ogrid_valid_and_tagged():
 
 
 def test_spined_ogrid_default_spine_equals_explicit_chord():
-    # omitting spine must use the straight A1..A2 chord (boundary's two split points)
+    # omitting spine must use the straight A1..A2 chord (boundary's two split points).
+    # The spine is meshed exactly at the points given -- never resampled -- so the
+    # "equivalent explicit chord" is that chord sampled at spine_fractions, which is
+    # exactly what the factory itself places for spine=None.
     Nt = 2
     loop = _circle_loop(Nt)
-    chord = LineMesh.open(loop.points[[0, 4 * Nt], :])
-    auto = QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
-    explicit = QuadMesh.spined_ogrid(loop, uniform_spacing(2), spine=chord,
-                                     center_scale=0.5)
-    assert np.allclose(np.asarray(auto.points), np.asarray(explicit.points))
+    radial = uniform_spacing(2)
+    fr = QuadMesh.spine_fractions(Nt, radial, 0.5)
+    chord = LineMesh.line(loop.points[0], loop.points[4 * Nt], fr)
+    auto = QuadMesh.spined_ogrid(loop, radial, center_scale=0.5)
+    explicit = QuadMesh.spined_ogrid(loop, radial, spine=chord, center_scale=0.5)
+    assert np.array_equal(np.asarray(auto.points), np.asarray(explicit.points))
     assert np.array_equal(np.asarray(auto.quads), np.asarray(explicit.quads))
+
+
+# -- the spine is meshed exactly, never resampled ----------------------------
+
+def test_spined_ogrid_rejects_wrong_length_spine():
+    # a 2-point chord is no longer silently resampled onto the required sampling;
+    # the error names the helper that derives it
+    Nt = 2
+    loop = _circle_loop(Nt)
+    chord = LineMesh.loft(loop.points[[0, 4 * Nt], :])
+    with pytest.raises(ValueError, match="spine_fractions"):
+        QuadMesh.spined_ogrid(loop, uniform_spacing(2), spine=chord,
+                              center_scale=0.5)
+
+
+def test_spine_fractions_shape_and_ordering():
+    Nt, radial, cs = 3, uniform_spacing(4), 0.4
+    fr = np.asarray(QuadMesh.spine_fractions(Nt, radial, cs))
+    Nr = len(radial) - 1
+    assert fr.shape == (2 * Nt + 1 + 2 * Nr,)
+    assert np.all(np.diff(fr) > 0.0)                  # strictly ascending A1 -> A2
+    assert fr[0] == 0.0 and fr[-1] == 1.0             # spans the full chord exactly
+
+
+def test_spine_fractions_rejects_bad_n_theta():
+    with pytest.raises(ValueError, match="n_theta >= 1"):
+        QuadMesh.spine_fractions(0, uniform_spacing(2), 0.5)
+
+
+@pytest.mark.parametrize("cs", [0.0, 1.0, -0.2, 1.5])
+def test_spine_fractions_rejects_bad_center_scale(cs):
+    with pytest.raises(ValueError, match=r"center_scale in \(0, 1\)"):
+        QuadMesh.spine_fractions(2, uniform_spacing(2), cs)
+
+
+def test_spined_ogrid_curved_spine_is_meshed_exactly():
+    # the "meshed exactly, not resampled" property: a bowed spine sampled at
+    # spine_fractions appears verbatim in the merged disc's points, to the bit.
+    Nt, radial, cs = 3, uniform_spacing(3), 0.5
+    loop = _circle_loop(Nt)
+    A1, A2 = loop.points[0], loop.points[4 * Nt]
+    fr = np.asarray(QuadMesh.spine_fractions(Nt, radial, cs))
+    pts = A1 + fr[:, None] * (A2 - A1)
+    pts[:, 2] = 0.35 * np.sin(np.pi * fr)             # +z bow, pinned at both ends
+    spine = LineMesh.loft(pts)
+    qm = QuadMesh.spined_ogrid(loop, radial, spine=spine, center_scale=cs)
+
+    assert not np.any(np.isnan(np.asarray(qm.points)))
+    assert qm.n_quads == 2 * (2 * Nt * Nt + 4 * Nt * radial[1:].size)
+    P = np.asarray(qm.points)
+    # every spine point is a point of the mesh: the given coordinates are used, not
+    # a resampling of them.  Most land bit-for-bit; a few center-fan nodes are
+    # rebuilt by the fan blend and land within a couple of ulp -- nowhere near the
+    # ~1e-2 a resampling of a bowed spine would cost.
+    dev = np.array([np.min(np.linalg.norm(P - p, axis=1)) for p in pts])
+    assert dev.max() < 1e-15
+    assert dev[0] == 0.0 and dev[-1] == 0.0           # both spine ends exactly
+    assert np.count_nonzero(dev == 0.0) > len(dev) // 2
+    # and the bow really left the plane
+    assert np.max(np.abs(P[:, 2])) == pytest.approx(np.max(np.abs(pts[:, 2])))
 
 
 def test_spined_ogrid_matches_two_half_ogrids():
@@ -820,8 +884,8 @@ def test_spined_ogrid_matches_two_half_ogrids():
     radial = uniform_spacing(2)
     combined = QuadMesh.spined_ogrid(loop, radial, center_scale=0.5)
 
-    arc1 = LineMesh.open(P[0:nh + 1, :], element_tags=["wall"] * nh)
-    arc2 = LineMesh.open(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags=["wall"] * nh)
+    arc1 = LineMesh.loft(P[0:nh + 1, :], element_tags=["wall"] * nh)
+    arc2 = LineMesh.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags=["wall"] * nh)
     h1 = QuadMesh.half_ogrid(arc1, _diameter_spine(arc1, 0.5, radial), radial,
                              center_scale=0.5, wall_tag="")
     h2 = QuadMesh.half_ogrid(arc2, _diameter_spine(arc2, 0.5, radial), radial,
@@ -849,7 +913,7 @@ def test_spined_ogrid_curved_spine_drives_interior_geometry():
     t = np.linspace(0.0, 1.0, 9)
     curved = e1 + t[:, None] * (e2 - e1)
     curved[:, 2] = 0.3 * np.sin(np.pi * t)                   # +z bulge, 0 at both ends
-    qm = QuadMesh.spined_ogrid(loop, uniform_spacing(2), spine=LineMesh.open(curved),
+    qm = QuadMesh.spined_ogrid(loop, uniform_spacing(2), spine=LineMesh.loft(curved),
                                center_scale=0.5)
     assert np.max(np.abs(np.asarray(qm.points)[:, 2])) > 1e-3
 
@@ -857,7 +921,7 @@ def test_spined_ogrid_curved_spine_drives_interior_geometry():
 def test_spined_ogrid_rejects_bad_boundary_count():
     # 12 points is not a multiple of 8 (cannot split into two 4*Nt+1 arcs)
     th = np.linspace(0.0, 2 * np.pi, 12, endpoint=False)
-    loop = LineMesh.loop(np.column_stack([np.cos(th), np.sin(th), np.zeros(12)]))
+    loop = LineMesh.loft(np.column_stack([np.cos(th), np.sin(th), np.zeros(12)]), loop=True)
     with pytest.raises(ValueError, match="8.Ntheta"):
         QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
 
@@ -868,7 +932,7 @@ def test_spined_ogrid_boundary_wrap_is_structural():
     # ring's `lines` wrap -- nothing is read from a stored flag.
     M = 16
     th = np.linspace(0.0, 2 * np.pi, M, endpoint=False)
-    loop = LineMesh.loop(np.column_stack([np.cos(th), np.sin(th), np.zeros(M)]))
+    loop = LineMesh.loft(np.column_stack([np.cos(th), np.sin(th), np.zeros(M)]), loop=True)
     assert loop.lines[-1].tolist() == [M - 1, 0]
     assert loop.boundary_points().size == 0
     qm = QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)

@@ -26,6 +26,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray, Vec3
+from ._assemble import merge
+from ._lift import from_grid
+from ._query import boundary_edges
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,7 +91,6 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     each flat face patch carries ``(order+1)**2`` straight-sided GLL nodes (exact,
     the faces are planar)."""
-    from .quadmesh import QuadMesh
     hs, n_axis = _axis_params(half_sizes, n)
     ft = face_tags or {}
     patches: list[QuadMesh] = []
@@ -102,9 +104,9 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
         B: FloatArray
         A, B = np.meshgrid(au, av, indexing="ij")
         face = hs * (nv + A[..., None] * uv + B[..., None] * vv)
-        patches.append(QuadMesh.from_grid(face, element_tag=ft.get(key, ""),
+        patches.append(from_grid(face, element_tag=ft.get(key, ""),
                                           order=order))
-    return QuadMesh.merge(patches)
+    return merge(patches)
 
 
 def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
@@ -153,7 +155,7 @@ def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
     from .quadmesh import QuadMesh
     if not rim_tag:
         return qm
-    rows = qm.boundary_edges()
+    rows = boundary_edges(qm)
     bnd, names = QuadMesh._order_bnd(rows, [rim_tag] * rows.shape[0])
     return QuadMesh(qm.lines, qm.quad, qm.flip, qm.interior if qm.order > 1 else None,
                     bnd, names, element_tags=qm.element_tags, order=qm.order)
@@ -183,7 +185,6 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1`` each
     flat patch carries ``(order+1)**2`` straight-sided GLL nodes (exact -- the
     patches are planar)."""
-    from .quadmesh import QuadMesh
     hs, n_axis = _axis_params(half_sizes, n)
     nv = n_axis[2] if n_vertical is None else int(n_vertical)
     if nv < 1:
@@ -199,7 +200,7 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
         B: FloatArray
         A, B = np.meshgrid(au, b_side, indexing="ij")
         face = hs * (nvv + A[..., None] * uv + B[..., None] * _VZ)
-        patches.append(QuadMesh.from_grid(face, element_tag=ft.get(key, ""),
+        patches.append(from_grid(face, element_tag=ft.get(key, ""),
                                           order=order))
     # the flat top patch at z = sz, spanning x and y in full
     ax = np.linspace(-1.0, 1.0, n_axis[0] + 1)
@@ -209,9 +210,9 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
     AX, AY = np.meshgrid(ax, ay, indexing="ij")
     top = hs * (_VZ + AX[..., None] * np.array([1.0, 0.0, 0.0])
                 + AY[..., None] * np.array([0.0, 1.0, 0.0]))
-    patches.append(QuadMesh.from_grid(top, element_tag=ft.get("z_max", ""),
+    patches.append(from_grid(top, element_tag=ft.get("z_max", ""),
                                       order=order))
-    return _tag_rim(QuadMesh.merge(patches), rim_tag)
+    return _tag_rim(merge(patches), rim_tag)
 
 
 def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,

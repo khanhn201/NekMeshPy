@@ -5,7 +5,7 @@ it along the axis.
 
     PYTHONPATH=. python examples/circular_pipe.py
 
-Produces ``circular_pipe.re2`` / ``.rea`` and ``circular_pipe.vtu``.
+Produces ``circular_pipe.re2`` and ``circular_pipe.vtu``.
 """
 
 import logging
@@ -53,6 +53,6 @@ stats = mesh.quality_summary()
 print("circular pipe: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
 
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
 print("groups:", ", ".join(mesh.boundary_group_tags))

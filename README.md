@@ -16,7 +16,8 @@ are built on the toolkit and live in [`examples/`](examples), not the library.
 - **[Concepts](https://khanhn201.github.io/NekMeshPy/user/concepts.html)** — the line→quad→hex ladder, tags, section factories, smoothing.
 - **[How-to recipes](https://khanhn201.github.io/NekMeshPy/user/howto.html)** — O-grid pipe, external flow, sphere shell, structured duct.
 - **[API reference](https://khanhn201.github.io/NekMeshPy/reference/)** — every public module, class, and function.
-- **[Developer guide](https://khanhn201.github.io/NekMeshPy/developer/architecture.html)** — architecture, extension points, conventions, contributing.
+- **[Architecture](https://khanhn201.github.io/NekMeshPy/user/architecture.html)** — how the toolkit is laid out and why.
+- **[Conventions](https://khanhn201.github.io/NekMeshPy/user/conventions.html)** — typing, naming, and the invariants the code holds to.
 
 ## Install
 
@@ -45,7 +46,7 @@ block   = HexMesh.extrude(section, axis=(0, 0, 1), length=5.0,
 
 # Boundaries are named at build time; map each name -> Nek BC code at export.
 codes = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-export.to_re2(block, "pipe", groups=codes)     # native Nek5000/NekRS (.re2 + .rea)
+export.to_re2(block, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
 export.write(block, "pipe.vtu", groups=codes)  # anything meshio supports
 
 assert block.is_watertight()                   # closed, leak-tight, single body
@@ -72,8 +73,8 @@ for a guided tour of each.
 `loft` is one primitive at three dimensions — `LineMesh.loft` (each profile a single
 point, the rungs *are* the lines), `QuadMesh.loft` (profiles are `LineMesh`es) and
 `HexMesh.loft` (profiles are `QuadMesh`es) — with `extrude` the straight special case
-at each rung, and `LineMesh.open` / `LineMesh.loop` thin wrappers over
-`LineMesh.loft(…, loop=False/True)`.
+at each rung, and `LineMesh.loft` itself the only thing that authors 1-D
+connectivity (`loop=False` chain / `loop=True` ring).
 
 Pass `loop=True` for a **periodic** sweep: the last profile joins back to the first,
 so `M` profiles give `M` layers and the seam is a genuine shared entity (no
@@ -94,7 +95,9 @@ Every factory takes an optional `order=N` (default `1`): each element then carri
 `(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's re2 has no
 high-order format yet), so a mesh exports byte-identically at any order, while `.vtu`
 emits VTK Lagrange cells (68 / 70 / 72) that ParaView and VisIt render as curved
-geometry.
+geometry. To hand the curved geometry to Nek itself, use `export.to_fld`, which writes
+the Nek field format (`<prefix>0.f00001`, `fields="X"`) — that one *does* store the
+full `lx1³` GLL block per element.
 
 **The B-rep ladder is the storage.** There is no per-element node block anywhere and
 no `.curved` facade: each container holds the rung below it plus what it privately
@@ -113,12 +116,15 @@ the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.
 
 **Curved geometry is not automatic.** Factories that own an analytic shape place the
 extra nodes on it — `LineMesh.circle` / `LineMesh.arc` on the exact arc,
+`LineMesh.curve` on any analytic parametrization you hand it (it calls your callable on
+the whole node lattice, corners *and* interiors),
 `QuadMesh.sphere` / `QuadMesh.hemisphere` projecting every node onto the exact sphere —
 the region fills (`ogrid` / `half_ogrid` / `structured`) carry their input walls'
 curvature into the interior as well as onto the wall, and the combinators (`extrude` /
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
-(`LineMesh.open`/`loop`/`loft`, `from_grid`) has only those points to go on and
-straight-subdivides between them: high order in storage, linear in geometry. Order-N
+(`LineMesh.loft`, `from_grid`) has only those points to go on and
+straight-subdivides between them: high order in storage, linear in geometry — so pass
+`LineMesh.curve` a closed form rather than sampling it into an array. Order-N
 smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
 above order 1 rather than degrading silently.
 
@@ -140,13 +146,17 @@ mypy                                 # type-checks the whole nekmeshpy package
 python -m pytest                     # golden-regression + algorithm tests
 ```
 
-CI runs all three on Python 3.9–3.12. See the
-[contributing guide](https://khanhn201.github.io/NekMeshPy/developer/contributing.html)
-for the workflow and the golden-regression invariant.
+CI runs all three on Python 3.9–3.12. `tests/golden/` freezes the output of
+`examples/bifurcation.py` — coordinates to `1e-12`, connectivity/cell types/boundary
+tags byte-for-byte — so a golden diff from a refactor is a bug.
 
 ## Roadmap
 
 - [ ] Periodic boundary
+- [ ] Function based operations
+- [ ] Rework tagging system
+- [ ] Rework smoothing
 - [x] High-order / curved elements — `order=N` on the factories (GLL nodes, curved
-  `.vtu`; `.re2` stays linear). See [`examples/high_order_*.py`](examples).
+  `.vtu` + Nek field file; `.re2` stays linear). See
+  [`examples/high_order_*.py`](examples).
 - [ ] Solid–fluid conjugate mesh

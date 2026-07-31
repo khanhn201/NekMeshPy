@@ -15,7 +15,7 @@ box's lower-left corner, pairing the loops index-for-index), carried through
 
     PYTHONPATH=. python examples/flow_past_plate.py
 
-Produces ``flow_past_plate.re2`` / ``.rea`` and ``flow_past_plate.vtu``.
+Produces ``flow_past_plate.re2`` and ``flow_past_plate.vtu``.
 """
 
 import logging
@@ -65,13 +65,13 @@ def ellipse(th):
 # There is no analytic ``LineMesh`` factory for an ellipse (``circle`` is the only
 # one), so place the high-order nodes here the way ``circle`` does: element k spans
 # theta[k] .. theta[k] + dtheta, and its interior GLL nodes go on the exact ellipse
-# rather than on ``LineMesh.loop``'s default straight chord.  Without this the wall
+# rather than on ``LineMesh.loft``'s default straight chord.  Without this the wall
 # would be high-order in storage and linear in geometry.
 interior = (None if ORDER == 1 else
             ellipse(theta[:, None]
                     + gll_nodes(ORDER)[1:ORDER][None, :] * (2.0 * np.pi / N_THETA)))
-inner = LineMesh.loop(ellipse(theta), element_tags=["plate"] * N_THETA,
-                      order=ORDER, interior=interior)
+inner = LineMesh.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
+                      order=ORDER, interior=interior, loop=True)
 
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named by the direction they face -- bottom / outlet / top / inlet
@@ -88,6 +88,6 @@ mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(mesh.report())
-export.to_re2(mesh, OUT_NAME, groups=GROUPS)
+export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))

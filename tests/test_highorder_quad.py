@@ -411,6 +411,63 @@ def test_vtu_meshio_roundtrip(tmp_path):
     assert {c.type for c in mm.cells} == {"VTK_LAGRANGE_QUADRILATERAL"}
 
 
+def test_lagrange_quad_perm_matches_vtk_order3():
+    """Pin the order-3 permutation against VTK's own spec, transcribed by hand.
+
+    ``vtkHigherOrderQuadrilateral::PointIndexFromIJK`` numbers the four edge runs
+    bottom / right / top / left, and -- unlike the corners -- **not** CCW: the top
+    edge ascends in ``i`` and the left edge ascends in ``j``.  Order 3 is the lowest
+    order that can see this (at order 2 each run is one node, so a reversed run is
+    indistinguishable), which is exactly how the reversal shipped unnoticed.
+    """
+    n, row = 3, 4
+
+    def ij(i, j):
+        return i + row * j
+    expected = [ij(0, 0), ij(n, 0), ij(n, n), ij(0, n),      # corners, CCW
+                ij(1, 0), ij(2, 0),                          # bottom, ascending i
+                ij(n, 1), ij(n, 2),                          # right,  ascending j
+                ij(1, n), ij(2, n),                          # top,    ascending i
+                ij(0, 1), ij(0, 2),                          # left,   ascending j
+                ij(1, 1), ij(2, 1), ij(1, 2), ij(2, 2)]      # interior, i fastest
+    assert list(export._lagrange_quad_perm(3)) == expected
+
+
+def test_vtu_quad_nodes_land_on_the_bilinear_lattice(tmp_path):
+    """Every emitted node of an affine quad must sit on that quad's **equispaced**
+    lattice -- the parametrization a VTK Lagrange cell is defined on, and therefore the
+    one the writer relabels to (``export._to_equispaced``).  The toolkit *stores* GLL,
+    so this is also the check that the relabel actually happened: at orders 3 and 4 the
+    two lattices differ, and a writer that shipped the GLL nodes verbatim would land
+    them here at the wrong slots.
+
+    An affine (planar, uniformly spaced) mesh makes each node's true position an
+    exact affine function of its ``(i, j)`` lattice slot, so a permutation that
+    scrambles a run shows up as a node sitting at another slot's coordinates.  Runs
+    at orders 3 and 4, where the edge runs carry more than one node.
+    """
+    meshio = pytest.importorskip("meshio")
+    for order in (2, 3, 4):
+        p = str(tmp_path / ("aff%d.vtu" % order))
+        corners = np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0],
+                            [3.0, 2.0, 0.0], [0.0, 2.0, 0.0]])
+        export.quad_to_vtu(QuadMesh.rectangle(corners, 2, 2, order=order), p)
+        mm = meshio.read(p)
+        conn = np.vstack([c.data for c in mm.cells])
+        pts = np.asarray(mm.points, dtype=float)
+        inv = np.argsort(export._lagrange_quad_perm(order))
+        g = uniform_spacing(order)          # VTK's Lagrange node parameters
+        for cell in conn:
+            block = pts[cell][inv]          # back to lexicographic (i fastest)
+            c = block[corner_indices(order, 2)]      # CCW: (0,0) (n,0) (n,n) (0,n)
+            uu, vv = np.meshgrid(g, g, indexing="xy")
+            want = (c[0] * ((1 - uu) * (1 - vv))[..., None]
+                    + c[1] * (uu * (1 - vv))[..., None]
+                    + c[3] * ((1 - uu) * vv)[..., None]
+                    + c[2] * (uu * vv)[..., None]).reshape(-1, 3)
+            assert np.max(np.abs(block - want)) < 1e-12
+
+
 # -- example golden -----------------------------------------------------
 def test_high_order_quad_example_matches_golden(tmp_path):
     ns = run_example("high_order_quad.py", tmp_path)

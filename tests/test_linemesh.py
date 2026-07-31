@@ -2,7 +2,7 @@
 (open vs closed read off the ``lines`` connectivity -- stored nowhere), the two
 tag systems (dense per-line
 ``element_tags`` + sparse tagged ``boundaries``/``boundary_tags``), the
-``line`` / ``circle`` / ``rectangle`` / ``from_segments``
+``loft`` / ``line`` / ``arc`` / ``circle`` / ``rectangle``
 factories (every curve meshed exactly at the points given -- no resampling), and
 the line -> quad -> hex tag ladder (``QuadMesh.extrude(LineMesh)`` and
 ``HexMesh.extrude`` carrying the tags up)."""
@@ -19,7 +19,7 @@ from nekmeshpy.model.fields import uniform_spacing
 # -- construction ------------------------------------------------------------
 
 def test_open_default_chain_connectivity():
-    lm = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)])
+    lm = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)])
     assert lm.n_points == 3
     assert lm.n_lines == 2                      # open chain: N-1 line elements
     assert lm.lines.tolist() == [[0, 1], [1, 2]]
@@ -29,7 +29,7 @@ def test_open_default_chain_connectivity():
 
 
 def test_loop_default_chain_wraps():
-    lm = LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)])
+    lm = LineMesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], loop=True)
     assert lm.n_points == 3
     assert lm.n_lines == 3                       # closed loop: N line elements
     # closedness lives here and nowhere else: the wrap row [2, 0] is explicit
@@ -39,11 +39,11 @@ def test_loop_default_chain_wraps():
 
 def test_rejects_2d_points():
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
-        LineMesh.open([(0, 0), (1, 0)])
+        LineMesh.loft([(0, 0), (1, 0)])
     # ``loop`` reports the same actionable error (it no longer relies on falling
     # through to a default-connectivity branch in the container -- there is none)
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
-        LineMesh.loop([(0, 0), (1, 0)])
+        LineMesh.loft([(0, 0), (1, 0)], loop=True)
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
         LineMesh.loft(np.array([[0.0, 0], [1.0, 0]]), loop=True)
 
@@ -62,30 +62,30 @@ def test_lines_is_a_required_constructor_argument():
 def test_element_tags_length_must_match_lines():
     # open 3-point chain has 2 line elements
     with pytest.raises(ValueError, match="element_tags length .* must match lines"):
-        LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b", "c"])
-    lm = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b"])
+        LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b", "c"])
+    lm = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b"])
     assert lm.element_tags.tolist() == ["a", "b"]
     assert lm.element_group_tags == ["a", "b"]
 
 
 def test_boundary_tags_length_must_match_boundaries():
     with pytest.raises(ValueError, match="boundary_tags length .* must match boundaries"):
-        LineMesh.open([(0, 0, 0), (1, 0, 0)],
+        LineMesh.loft([(0, 0, 0), (1, 0, 0)],
                       boundaries=[[0, 1]], boundary_tags=["a", "b"])
 
 
 # -- topological queries -----------------------------------------------------
 
 def test_boundary_points_are_open_ends():
-    lm = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)])
+    lm = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)])
     assert lm.boundary_points().tolist() == [0, 2]     # degree-1 ends
     # a closed loop has no degree-1 ends
-    assert LineMesh.loop([(0, 0, 0), (1, 0, 0), (1, 1, 0)]).boundary_points().size == 0
+    assert LineMesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], loop=True).boundary_points().size == 0
 
 
 def test_tagged_boundary_points_via_boundaries():
     # side 1 -> local vertex 0, side 2 -> local vertex 1 of the referenced line
-    lm = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+    lm = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
                        boundaries=[[0, 1], [1, 2]], boundary_tags=["start", "end"])
     assert lm.n_boundaries == 2
     assert lm.boundary_group_tags == ["end", "start"]
@@ -94,7 +94,7 @@ def test_tagged_boundary_points_via_boundaries():
 # -- length + exact-mesh factories -------------------------------------------
 
 def test_open_length():
-    lm = LineMesh.open([(0, 0, 0), (2, 0, 0)])
+    lm = LineMesh.loft([(0, 0, 0), (2, 0, 0)])
     assert np.isclose(lm.length, 2.0)
 
 
@@ -244,18 +244,6 @@ def test_rectangle_in_tilted_plane_is_planar():
     assert lm.lines[-1].tolist() == [7, 0] and lm.boundary_points().size == 0
 
 
-def test_from_segments_chains_a_loop():
-    # four segments of a unit square, given unordered, chain into a closed loop
-    segs = np.array([[0, 0, 0, 1, 0, 0], [1, 1, 0, 0, 1, 0],
-                     [1, 0, 0, 1, 1, 0], [0, 1, 0, 0, 0, 0]], float)
-    lm = LineMesh.from_segments(segs)
-    # the degree-based walk closes the loop structurally: every point has degree 2
-    assert lm is not None and lm.boundary_points().size == 0
-    # the four square corners are recovered (the walk repeats the start to close)
-    assert len(np.unique(np.round(lm.points, 9), axis=0)) == 4
-    assert LineMesh.from_segments(None) is None
-
-
 # -- merge (weld coincident end points) --------------------------------------
 
 def test_merge_two_arcs_close_into_a_loop():
@@ -266,8 +254,8 @@ def test_merge_two_arcs_close_into_a_loop():
     upper = np.column_stack([np.cos(tu), np.zeros(5), np.sin(tu)])
     tl = np.linspace(0.0, np.pi, 5)                     # A1 -> A2, z <= 0
     lower = np.column_stack([np.cos(tl), np.zeros(5), -np.sin(tl)])
-    ring = LineMesh.merge([LineMesh.open(upper),
-                           LineMesh.open(lower[::-1])])
+    ring = LineMesh.merge([LineMesh.loft(upper),
+                           LineMesh.loft(lower[::-1])])
     # welded at A1 and A2 -> one closed loop of 8 unique points (2*(5-1))
     assert ring.boundary_points().size == 0     # no degree-1 end survived
     assert ring.n_points == 8
@@ -283,9 +271,9 @@ def test_merge_two_arcs_close_into_a_loop():
 def test_merge_open_chains_stay_open_and_carry_tags():
     # two collinear open chains meeting at (1,0,0); the shared point welds but the
     # far ends stay degree-1, so the result is still open.
-    a = LineMesh.open([(0, 0, 0), (1, 0, 0)], element_tags=["a"],
+    a = LineMesh.loft([(0, 0, 0), (1, 0, 0)], element_tags=["a"],
                       boundaries=[[0, 1]], boundary_tags=["start"])
-    b = LineMesh.open([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
+    b = LineMesh.loft([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
     m = LineMesh.merge([a, b])
     assert m.boundary_points().tolist() == [0, 2]       # the two far ends survive
     assert m.n_points == 3                              # the shared point welded
@@ -296,8 +284,8 @@ def test_merge_open_chains_stay_open_and_carry_tags():
 def test_merge_does_not_weld_interior_points():
     # an interior point coincident with another chain's interior is NOT welded
     # (only degree-1 ends weld), mirroring QuadMesh/HexMesh.merge.
-    a = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)])   # (1,0,0) is interior
-    b = LineMesh.open([(1, 0, 0), (1, 1, 0)])              # end at (1,0,0)
+    a = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)])   # (1,0,0) is interior
+    b = LineMesh.loft([(1, 0, 0), (1, 1, 0)])              # end at (1,0,0)
     m = LineMesh.merge([a, b])
     # b's end welds to... nothing on a's interior; only ends weld -> 5 points
     assert m.n_points == 5
@@ -313,7 +301,7 @@ def _quad_edge_mid(qm, row):
 def test_extrude_line_to_quad_carries_element_and_boundary_tags():
     # an open line along +x, tagged per element, with tagged end points; sweep
     # along +y into a quad strip and check both tag chains land correctly.
-    line = LineMesh.open([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+    line = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
                          element_tags=["seg0", "seg1"],
                          boundaries=[[0, 1], [1, 2]], boundary_tags=["start", "end"])
     qm = QuadMesh.extrude(line, axis=(0.0, 1.0, 0.0), length=1.0,
