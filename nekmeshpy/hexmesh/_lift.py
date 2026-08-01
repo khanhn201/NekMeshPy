@@ -25,7 +25,7 @@ from .._typing import (
     StrArray,
     Vec3,
 )
-from ..linemesh._assemble import _sweep_lattice
+from ..linemesh._assemble import _sweep_lattice, _sweep_path
 from ..model import frames
 from ..model.fields import reject_loop_caps, validate_layers
 from ..quadmesh import QuadMesh
@@ -169,11 +169,11 @@ def from_grid(
     # x/y sides are the section's own edges; z sides are the sweep's end caps.
     edge_tags = {s: n for s, n in tags.items() if _GRID_SIDES[s][0] == "side"}
     slices = [quad_from_grid(P[:, :, k, :], edge_tags=edge_tags,
-                                 element_tag=element_tag, order=order)
+                             element_tag=element_tag, order=order)
               for k in range(P.shape[2])]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
     return loft(slices, first_tag=tags.get("z_min", ""),
-                    last_tag=tags.get("z_max", ""))
+                last_tag=tags.get("z_max", ""))
 
 
 def sweep(
@@ -274,19 +274,7 @@ def sweep(
     if loop:
         reject_loop_caps("HexMesh.sweep", first_tag, last_tag)
     tv: FloatArray = t[:-1] if loop else t
-    P: PointArray = np.asarray(path(tv), dtype=float)
-    if P.shape != (tv.shape[0], 3):
-        raise ValueError("sweep: path must map the (%d,) sweep lattice to a (%d,3) "
-                         "array of centreline points, got %s"
-                         % (tv.shape[0], tv.shape[0], (P.shape,)))
-    T: PointArray | None = None
-    if tangent is not None:
-        T = np.asarray(tangent(tv), dtype=float)
-        if T.shape != (tv.shape[0], 3):
-            raise ValueError("sweep: tangent must map the (%d,) sweep lattice to a "
-                             "(%d,3) array of unit tangents, got %s"
-                             % (tv.shape[0], tv.shape[0], (T.shape,)))
-        T = T / np.linalg.norm(T, axis=1)[:, None]
+    P, T = _sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
         section.points, P, orientation=orientation, up=up, twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,

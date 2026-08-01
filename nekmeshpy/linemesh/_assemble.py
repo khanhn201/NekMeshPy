@@ -144,16 +144,16 @@ def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
     return np.concatenate([u, fr[-1:]])
 
 
-def _sweep_lattice(fractions: FloatArray, order: int, *, loop: bool,
-                   name: str) -> tuple[FloatArray, FloatArray]:
-    """Validate a sweep's ``fractions`` and return ``(fr, node lattice)``.
+def _check_fraction_count(fr: FloatArray, *, loop: bool, name: str) -> None:
+    """Raise unless ``fr`` carries enough fractions for at least one sweep layer
+    (two, with ``loop=True`` -- the last fraction is the wrap back onto the first
+    profile rather than a level of its own).
 
-    The shared front half of every evaluated sweep -- :func:`loft_curve` at each rung
-    and ``sweep`` at the quad and hex ones -- so the two guards that decide how many
-    layers there are read identically wherever a caller meets them.  ``loop`` costs one
-    extra fraction because the last is the wrap back onto the first profile rather than
-    a level of its own."""
-    fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
+    The guard :func:`_sweep_lattice` runs before it can build a lattice, factored out
+    on its own because a rung's ``loft_curve`` needs it *before* its ``order`` is
+    settled (``order`` is itself read off a profile ``f`` returns, and ``f`` is not
+    called until the fraction count is known to be sane) and so cannot go through
+    :func:`_sweep_lattice` outright.  Both paths raise the identical two messages."""
     if fr.shape[0] - 1 < 1:
         raise ValueError("%s needs at least 2 fractions (one layer), got %d"
                          % (name, fr.shape[0]))
@@ -162,7 +162,49 @@ def _sweep_lattice(fractions: FloatArray, order: int, *, loop: bool,
             "%s(loop=True) needs at least 3 fractions (two layers), got %d -- the "
             "last one is the wrap back to the first profile, so it is not a level of "
             "its own" % (name, fr.shape[0]))
+
+
+def _sweep_lattice(fractions: FloatArray, order: int, *, loop: bool,
+                   name: str) -> tuple[FloatArray, FloatArray]:
+    """Validate a sweep's ``fractions`` and return ``(fr, node lattice)``.
+
+    The shared front half of every evaluated sweep whose ``order`` is already known --
+    ``sweep`` at the quad and hex rungs -- so the guard deciding how many layers there
+    are reads identically wherever a caller meets it.  A ``loft_curve``, whose order is
+    not yet settled at this point, calls :func:`_check_fraction_count` directly instead
+    and builds the lattice once ``order`` is known."""
+    fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
+    _check_fraction_count(fr, loop=loop, name=name)
     return fr, _refined_lattice(fr, order)
+
+
+def _sweep_path(path: Callable[[FloatArray], PointArray],
+                tangent: Callable[[FloatArray], PointArray] | None,
+                tv: FloatArray) -> tuple[PointArray, PointArray | None]:
+    """Sample a sweep's centreline (and, if given, its analytic derivative) on the
+    station parameters ``tv``, as ``(K,3)`` arrays.
+
+    The other shared half of an evaluated sweep, beside :func:`_sweep_lattice`: both
+    callables are **vectorized** -- a rotation-minimizing frame is integrated along the
+    whole curve, so it cannot be built one isolated parameter at a time -- and both are
+    shape-checked here so a mis-written ``path`` names the sweep rather than failing
+    somewhere inside ``frames``.  ``tangent`` is normalized on the way out, so any
+    non-unit scaling of the true derivative will do; ``None`` leaves the tangent field
+    to ``frames.tangents``' central differences (second order, and worst exactly where
+    the curvature jumps -- see ``QuadMesh.sweep`` for what that costs)."""
+    P: PointArray = np.asarray(path(tv), dtype=float)
+    if P.shape != (tv.shape[0], 3):
+        raise ValueError("sweep: path must map the (%d,) sweep lattice to a (%d,3) "
+                         "array of centreline points, got %s"
+                         % (tv.shape[0], tv.shape[0], (P.shape,)))
+    if tangent is None:
+        return P, None
+    T: PointArray = np.asarray(tangent(tv), dtype=float)
+    if T.shape != (tv.shape[0], 3):
+        raise ValueError("sweep: tangent must map the (%d,) sweep lattice to a "
+                         "(%d,3) array of unit tangents, got %s"
+                         % (tv.shape[0], tv.shape[0], (T.shape,)))
+    return P, T / np.linalg.norm(T, axis=1)[:, None]
 
 
 def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointArray:
@@ -285,6 +327,48 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
                 element_tags=element_tags, order=order)
 
 
+def _weld(pos: Sequence[PointArray], seams: Sequence[IntArray],
+          tol: float | None) -> tuple[PointArray, IntArray]:
+    """The corner half of every ``merge``: concatenate the blocks' points, fuse the
+    coincident *weldable* ones, and renumber.
+
+    Returns the surviving ``(P,3)`` points and the ``(total,)`` ``point_id`` table
+    taking a **concatenated** local index (block ``k``'s local ``v`` sits at
+    ``sum(counts[:k]) + v``) to its merged id -- so each rung's ``merge`` only has to
+    offset its own connectivity and look it up.
+
+    ``seams[k]`` are the local indices of block ``k`` that may weld: the degree-1 chain
+    ends at the line rung, the boundary-edge vertices at the quad one.  An interior
+    point is never a candidate, so two blocks that happen to touch away from their
+    boundaries stay separate.  Fusing is by a rounded integer key at ``tol`` (default
+    ``1e-7`` x the overall extent), which is a bucket, not a nearest-neighbour search:
+    two points on opposite sides of a bucket edge do not weld however close they are,
+    which is precisely why the factories hand neighbours *the same* ``LineMesh`` object
+    rather than two independent placements."""
+    P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
+    total = P.shape[0]
+
+    remap = np.arange(total, dtype=np.int64)
+    is_bnd: BoolArray = np.zeros(total, dtype=bool)
+    noff = 0
+    for p, seam in zip(pos, seams):
+        is_bnd[noff + seam] = True
+        noff += p.shape[0]
+    bidx = np.flatnonzero(is_bnd)
+    if bidx.size:
+        scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
+        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
+        keys = np.round(P[bidx, :] / t).astype(np.int64)
+        _, first_local, inverse = np.unique(
+            keys, axis=0, return_index=True, return_inverse=True)
+        remap[bidx] = bidx[first_local][inverse.ravel()]
+
+    survivors = np.unique(remap)
+    new_id: IntArray = np.empty(total, dtype=np.int64)
+    new_id[survivors] = np.arange(survivors.size)
+    return P[survivors, :], new_id[remap]
+
+
 def merge(meshes: Sequence[LineMesh], *,
           tol: float | None = None) -> LineMesh:
     """Merge line meshes into one, welding coincident **topological end
@@ -301,29 +385,8 @@ def merge(meshes: Sequence[LineMesh], *,
     meshes = list(meshes)
     pos = [np.asarray(m.points, dtype=float).reshape(-1, 3) for m in meshes]
     counts = [p.shape[0] for p in pos]
-    P = np.concatenate(pos, axis=0) if pos else np.zeros((0, 3))
-    total = P.shape[0]
-
-    remap = np.arange(total, dtype=np.int64)
-    is_bnd: BoolArray = np.zeros(total, dtype=bool)
-    noff = 0
-    for m, c in zip(meshes, counts):
-        is_bnd[noff + boundary_points(m)] = True
-        noff += c
-    bidx = np.flatnonzero(is_bnd)
-    if bidx.size:
-        scl = float(np.max(P.max(axis=0) - P.min(axis=0))) if total else 0.0
-        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
-        keys = np.round(P[bidx, :] / t).astype(np.int64)
-        _, first_local, inverse = np.unique(
-            keys, axis=0, return_index=True, return_inverse=True)
-        remap[bidx] = bidx[first_local][inverse.ravel()]
-
-    survivors = np.unique(remap)
-    new_id: IntArray = np.empty(total, dtype=np.int64)
-    new_id[survivors] = np.arange(survivors.size)
-    point_id = new_id[remap]
-    points = P[survivors, :]
+    # the weldable points here are the chain **ends** -- the 1-D boundary
+    points, point_id = _weld(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
     bnd_list: list[IntArray] = []

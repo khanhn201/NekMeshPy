@@ -513,13 +513,14 @@ def plane_frame(points: PointArray, *,
     else:
         w = np.linalg.svd(D, full_matrices=True)[2][2]
         w = w / float(np.linalg.norm(w))
-    if normal is None and float(np.max(np.abs(D @ w))) > PLANAR_TOL * extent:
+    if normal is None:
         off = float(np.max(np.abs(D @ w)))
-        raise ValueError(
-            "plane_frame: the section is not planar -- a point lies %.3g off the "
-            "fitted plane, %.3g of the section's own extent (tolerance %.0e). Pass "
-            "normal= to name the plane to sweep it from." % (off, off / extent,
-                                                             PLANAR_TOL))
+        if off > PLANAR_TOL * extent:
+            raise ValueError(
+                "plane_frame: the section is not planar -- a point lies %.3g off the "
+                "fitted plane, %.3g of the section's own extent (tolerance %.0e). Pass "
+                "normal= to name the plane to sweep it from."
+                % (off, off / extent, PLANAR_TOL))
     if hint is not None and float(w @ _unit_literal(hint, "plane_frame", "hint")) < 0.0:
         w = -w
     Q: PointArray = D - np.outer(D @ w, w)
@@ -615,8 +616,12 @@ def sweep_placements(profile_points: PointArray, path_points: PointArray, *,
                 "path, the plane's normal), or a (K,3) array naming one per station. "
                 "Use orientation='transport' to have the frame carried along the "
                 "curve instead.")
-        R = (np.stack([fixed_up(T[k:k + 1], per_station[k])[0] for k in range(K)])
-             if per_station is not None else fixed_up(T, up))
+        if per_station is None:
+            R = fixed_up(T, up)
+        else:
+            # fixed_up is pointwise, so a per-station field is just it applied one
+            # station at a time -- each frame against its own tangent and its own up.
+            R = np.stack([fixed_up(T[k:k + 1], per_station[k])[0] for k in range(K)])
     elif orientation == "frenet":
         R = frenet(P, T)
     else:

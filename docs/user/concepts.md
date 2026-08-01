@@ -101,11 +101,15 @@ further in.
 
 The core patch itself is public as
 {meth}`QuadMesh.quadrant_core <nekmeshpy.quadmesh.QuadMesh.quadrant_core>`, which is
-the construction `quadrant_ogrid` builds its own core with. That matters when a block
-has to fill the region *behind* a quadrant face: the corner where three of them meet
-is an octant of a 3-D O-grid, and its core cube's three inner faces are exactly their
-three cores, so it welds only if it lands on the same points — reproducing the formula
-outside the toolkit would work today and drift tomorrow
+the construction `quadrant_ogrid` builds its own core with.
+
+A quadrant face is also, read another way, a **triangle meshed as three structured
+patches** — its core plus the two halves of its ring band — which is exactly what
+{meth}`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` consumes. So the region
+*behind* three quadrant faces meeting at a common centre is filled by handing those
+three plus a fourth face to `tetra`: the octant of a 3-D O-grid (an `n³` core block
+and three `n × n × Nradial` slabs) falls out of the generic one-block-per-corner
+tetrahedron split, with the block split the faces already carry
 (`examples/quadrant_pipe_tjunction.py`).
 
 Because closedness is not a stored flag, the section factories constrain their input

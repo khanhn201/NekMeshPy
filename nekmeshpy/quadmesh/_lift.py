@@ -33,7 +33,7 @@ from .._typing import (
     Vec3,
 )
 from ..linemesh import LineMesh
-from ..linemesh._assemble import _sweep_lattice
+from ..linemesh._assemble import _sweep_lattice, _sweep_path
 from ..linemesh._assemble import loft as line_loft
 from ..linemesh._morph import blend as line_blend
 from ..linemesh._morph import transform as line_transform
@@ -219,11 +219,11 @@ def from_grid(
     # the sweep-direction rungs the same way and the quad interiors as the Coons
     # patch of the two, so a flat grid cell stays exact.
     slices = [line_loft(P[:, j, :], element_tags=line_tags,
-                            boundaries=pbnd_a, boundary_tags=pnames, order=order)
+                        boundaries=pbnd_a, boundary_tags=pnames, order=order)
               for j in range(nj1)]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
     return loft(slices, first_tag=tags.get("y_min", ""),
-                    last_tag=tags.get("y_max", ""))
+                last_tag=tags.get("y_max", ""))
 
 
 def sweep(
@@ -327,19 +327,7 @@ def sweep(
     if loop:
         reject_loop_caps("QuadMesh.sweep", first_tag, last_tag)
     tv: FloatArray = t[:-1] if loop else t
-    P: PointArray = np.asarray(path(tv), dtype=float)
-    if P.shape != (tv.shape[0], 3):
-        raise ValueError("sweep: path must map the (%d,) sweep lattice to a (%d,3) "
-                         "array of centreline points, got %s"
-                         % (tv.shape[0], tv.shape[0], (P.shape,)))
-    T: PointArray | None = None
-    if tangent is not None:
-        T = np.asarray(tangent(tv), dtype=float)
-        if T.shape != (tv.shape[0], 3):
-            raise ValueError("sweep: tangent must map the (%d,) sweep lattice to a "
-                             "(%d,3) array of unit tangents, got %s"
-                             % (tv.shape[0], tv.shape[0], (T.shape,)))
-        T = T / np.linalg.norm(T, axis=1)[:, None]
+    P, T = _sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
         profile.points, P, orientation=orientation, up=up, twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,

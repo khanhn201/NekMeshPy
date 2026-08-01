@@ -3,9 +3,8 @@
 ``loft`` (``n`` quad sections -> a block, rung delta +1), ``loft_curve`` (the same, with
 the sections evaluated from a parametrization rather than handed in) and ``merge``
 (``n`` blocks -> one, rung delta 0) are the n-ary operations at this rung, and the only
-code here
-that manufactures a global point/element index space from scratch: ``loft`` numbers the
-swept corner table (global id ``i*nn + v``), ``merge`` builds the ``remap`` /
+code here that manufactures a global point/element index space from scratch: ``loft``
+numbers the swept corner table (global id ``i*nn + v``), ``merge`` builds the ``remap`` /
 ``survivors`` / ``point_id`` tables of the weld.  Every fixed-arity operation either
 reuses an existing numbering (``blend``) or delegates here (``extrude``, ``annulus``,
 ``from_grid``).
@@ -15,10 +14,10 @@ line- and quad-rung twins do -- it *is* ``loft``, and it delegates the whole ass
 it through ``sweep_nodes``, contributing only the evaluation.
 
 Both ``loft`` and ``merge`` *rewrite* topology against a new corner numbering rather
-than merely generating
-it, which is why both must re-scatter the shared edge **and** face nodes owner-wins and
-verify every other incident copy -- unlike ``QuadMesh.loft``, which assembles its B-rep
-layer by layer and never duplicates a shared entity in the first place.
+than merely generating it, which is why both must re-scatter the shared edge **and**
+face nodes owner-wins and verify every other incident copy -- unlike ``QuadMesh.loft``,
+which assembles its B-rep layer by layer and never duplicates a shared entity in the
+first place.
 
 Free functions bound onto :class:`~nekmeshpy.HexMesh` by ``hexmesh/__init__.py``;
 internal toolkit code imports them from here directly rather than through the bound
@@ -33,20 +32,35 @@ from typing import Any
 import numpy as np
 
 from .._typing import (
-    BoolArray,
     FloatArray,
     IntArray,
     PointArray,
     StrArray,
 )
 from ..linemesh import LineMesh
-from ..linemesh._assemble import _refined_lattice
+from ..linemesh._assemble import _check_fraction_count, _refined_lattice, _weld
 from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ..quadmesh import NO_BOUNDARY, QuadMesh
 from ._query import _boundary_points
 from .hexmesh import HexMesh, _slice_block, _sweep_at
+
+
+def _face_brep(points: PointArray, canonical_conn: IntArray,
+               edge_nodes: PointArray | None, face_nodes: PointArray | None,
+               order: int) -> QuadMesh:
+    """The shared-face ``QuadMesh`` of a hex block, from its canonical face table.
+
+    The hex edge table ``unique_edges(hexes, 3)`` and the shared-face table
+    ``unique_edges(canonical_conn, 2)`` are the same array -- both canonicalize
+    min-corner-id first over the same global corner ids -- so ``edge_nodes`` scattered
+    with the *hex* incidence indexes this ``QuadMesh``'s edge ``LineMesh`` directly and
+    needs no re-derivation.  Shared by :func:`loft` and :func:`merge`, the two
+    operations that rewrite topology against a new corner numbering."""
+    q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
+    edge_lm = LineMesh(points, q_edges, order=order, interior=edge_nodes)
+    return QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
 
 
 def loft(
@@ -279,16 +293,11 @@ def loft(
         face_nodes = conform.scatter_face_nodes(
             local_f, elem_faces, face_orient, canonical_conn.shape[0], tol,
             "HexMesh.loft")
-    # the hex edge table unique_edges(hexes, 3) and the shared-face table
-    # unique_edges(canonical_conn, 2) are the same array (both canonicalize
-    # min-corner-id first over the same global corner ids), so ``edge_nodes``
-    # scattered with the hex incidence indexes the shared-face QuadMesh directly.
-    q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
-    edge_lm = LineMesh(points, q_edges, order=order, interior=edge_nodes)
-    faces = QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
+    faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
-               *HexMesh._order_bnd(bnd, names),
-               element_tags=etags, order=order)
+                   *HexMesh._order_bnd(bnd, names),
+                   element_tags=etags, order=order)
+
 
 def _loft_evaluated(
     profs: Sequence[QuadMesh],
@@ -433,18 +442,9 @@ def loft_curve(
     as on :func:`loft`, which does all the assembly and whose numbering, tags,
     boundaries and B-rep are carried up unchanged."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    nz = fr.shape[0] - 1
-    if nz < 1:
-        raise ValueError(
-            "loft_curve needs at least 2 fractions (one layer), got %d"
-            % fr.shape[0])
+    _check_fraction_count(fr, loop=loop, name="loft_curve")
     if loop:
         reject_loop_caps("HexMesh.loft_curve", first_tag, last_tag)
-        if nz < 2:
-            raise ValueError(
-                "loft_curve(loop=True) needs at least 3 fractions (two layers), "
-                "got %d -- the last one is the wrap back to the first section, so "
-                "it is not a level of its own" % fr.shape[0])
     if order is None:
         # The node lattice the sections are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the
@@ -479,30 +479,7 @@ def merge(
     meshes = list(meshes)
     pos = [m.points for m in meshes]
     counts = [p.shape[0] for p in pos]
-    P = np.concatenate(pos, axis=0) if pos else np.zeros((0, 3))
-    total = P.shape[0]
-
-    # remap: concat point index -> representative concat index (self by default)
-    remap = np.arange(total, dtype=np.int64)
-    is_bnd: BoolArray = np.zeros(total, dtype=bool)
-    noff = 0
-    for m, c in zip(meshes, counts):
-        is_bnd[noff + _boundary_points(m.hexes)] = True
-        noff += c
-    bidx = np.flatnonzero(is_bnd)
-    if bidx.size:
-        scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
-        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
-        keys = np.round(P[bidx, :] / t).astype(np.int64)
-        _, first_local, inverse = np.unique(
-            keys, axis=0, return_index=True, return_inverse=True)
-        remap[bidx] = bidx[first_local][inverse.ravel()]
-
-    survivors = np.unique(remap)                    # concat indices kept
-    new_id: IntArray = np.empty(total, dtype=np.int64)
-    new_id[survivors] = np.arange(survivors.size)
-    point_id = new_id[remap]                         # concat index -> final id
-    points = P[survivors, :]
+    points, point_id = _weld(pos, [_boundary_points(m.hexes) for m in meshes], tol)
 
     hex_list, bnd_list, name_list, etag_list = [], [], [], []
     noff = eoff = 0
@@ -552,12 +529,10 @@ def merge(
             local_f, elem_faces, face_orient, canonical_conn.shape[0], tol,
             "HexMesh.merge")
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
-    q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
-    edge_lm = LineMesh(points, q_edges, order=order, interior=edge_nodes)
-    faces = QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
+    faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
-               *HexMesh._order_bnd(bnd, names),
-               element_tags=etags, order=order)
+                   *HexMesh._order_bnd(bnd, names),
+                   element_tags=etags, order=order)
 
 
 #: Variable-arity combinators bound onto ``HexMesh`` as ``staticmethod``.
