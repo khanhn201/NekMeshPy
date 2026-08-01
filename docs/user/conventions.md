@@ -9,7 +9,8 @@
   input required — a `(N,2)` array is rejected, not padded**; `lines` is a
   **required** constructor argument — the container never synthesizes a default
   chain, so nothing in it can imply a wrap. Connectivity is authored one rung up by
-  {meth}`~nekmeshpy.linemesh.LineMesh.loft`, which `open` / `loop` wrap); the mesh containers
+  {meth}`~nekmeshpy.linemesh.LineMesh.loft`, whose `loop=False` / `loop=True` spell
+  the chain and the ring); the mesh containers
   (`TriMesh` / `QuadMesh` / `HexMesh` / `Mesh`) store a `(P,3)` `points` array
   (mutate with `mesh.points[:] = X`).
 
@@ -32,7 +33,9 @@ Alongside it are `boundaries` `(Nbc,2)` = `[element id, face (1–6)]` with para
 `boundary_tags`, plus a dense `element_tags` `(E,)` inherited from the swept quad.
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
 `quad`/`flip`/`interior`, boundaries `(Nbc,2)` = `[quad id, side (1–4)]`, side `s` =
-edge `EDGE_POINTS[s-1]`). `weld()` returns `(points, hexes, n_points)`; exporters
+edge `EDGE_POINTS[s-1]`). `weld()` returns a `WeldResult` NamedTuple —
+`.points` (the **live** array), `.hexes`, `.n_points`; the name is historical, since
+a `HexMesh` is already stored shared-point and nothing is welded or copied. Exporters
 expand via `points[hexes]`. Coordinates may be repositioned in place — writing
 `mesh.points[:] = X` hits the single source of truth and every rung sees it —
 but topology is fixed.
@@ -59,6 +62,9 @@ Enforced — `mypy` runs with `disallow_untyped_defs`, `check_untyped_defs`, and
   `FloatArray` — blend fractions, layer positions, grading, GLL nodes/weights and
   interpolation matrices, quality metrics, tolerances. numpy has
   no static shape checking, so they are interchangeable with `FloatArray` to mypy.
+- `SmoothingMethod` — the literal set every section factory's `smoothing_method=`
+  accepts — lives there too, rather than in the region-fill module that happens to
+  be its heaviest user.
 
 The package ships a `py.typed` marker.
 

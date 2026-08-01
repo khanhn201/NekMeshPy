@@ -1,6 +1,6 @@
 """Open-region :class:`~nekmeshpy.QuadMesh` section factories: fills that take a
 boundary / edges and mesh the bounded region (``structured`` / ``rectangle`` /
-``ogrid`` / ``half_ogrid`` / ``spined_ogrid``).
+``ogrid`` / ``half_ogrid`` / ``quadrant_ogrid`` / ``spined_ogrid``).
 
 These are plain free functions returning a ``QuadMesh``; ``quadmesh/__init__.py``
 binds each entry of ``FACTORIES`` onto the class, so callers use ``QuadMesh.ogrid(...)``
@@ -21,11 +21,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import FloatArray, IntArray, Point, PointArray
+from .._typing import FloatArray, IntArray, Point, PointArray, SmoothingMethod
 from ..linemesh import LineMesh
 from ..linemesh._assemble import loft as line_loft
 from ..linemesh._morph import reverse as line_reverse
 from ..linemesh._open import line
+from ..model import conform
 from ..model.fields import gll_nodes, validate_layers
 from ..model.interp import coons_grid
 from ._assemble import merge
@@ -36,12 +37,37 @@ if TYPE_CHECKING:
 
     from .quadmesh import QuadMesh
 
+#: The four sides of a :func:`structured` patch, in the CCW loop order its ``edges``
+#: are consumed in.  Both the ``edges`` mapping and ``side_tags`` are keyed by these.
+_SIDES = ("bottom", "right", "top", "left")
+
+
+def _ordered_sides(edges: Sequence[LineMesh] | Mapping[str, LineMesh],
+                   ) -> list[LineMesh]:
+    """``edges`` as the positional ``[bottom, right, top, left]`` list :func:`structured`
+    works in, accepting either spelling.
+
+    A bare 4-sequence lets the *order* silently encode which edge is which, so
+    swapping two gives a valid-looking twisted patch instead of an error; the mapping
+    spelling names them.  Both are accepted (the sequence form is what every existing
+    caller passes), and both end up here."""
+    if isinstance(edges, Mapping):
+        missing = [s for s in _SIDES if s not in edges]
+        extra = [s for s in edges if s not in _SIDES]
+        if missing or extra:
+            raise ValueError(
+                "structured edges mapping must have exactly the keys "
+                "bottom/right/top/left (missing %s, unexpected %s)"
+                % (missing or "none", extra or "none"))
+        return [edges[s] for s in _SIDES]
+    return list(edges)
+
 
 def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
               x_frac: FloatArray | None = None,
               y_frac: FloatArray | None = None,
               side_tags: Mapping[str, str] | None = None,
-              smoothing_method: str | None = None,
+              smoothing_method: SmoothingMethod | None = None,
               order: int = 1) -> QuadMesh:
     """Structured quad grid over the rectangle with four CCW corners
     ``corners = [c0, c1, c2, c3]``: ``nx`` cells along ``c0->c1`` (bottom/top),
@@ -85,7 +111,7 @@ def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
         raise ValueError(
             "%s must be a simple consecutive chain (line k joining points k and k+1) "
             "-- its point order is what sets the node distribution; build it with "
-            "LineMesh.loft/line/arc/curve (or merge chains end to end) rather than "
+            "LineMesh.loft/line/arc/loft_curve (or merge chains end to end) rather than "
             "re-indexing its lines" % name)
     return lo
 
@@ -176,12 +202,18 @@ def _sub_chain(chain: LineMesh, segs: IntArray, seg2line: IntArray) -> LineMesh:
                     interior=chain.interior[idx])
 
 
-def structured(edges: list[LineMesh], *,
-               boundary_tags: Mapping[str, str] | None = None,
-               smoothing_method: str | None = None) -> QuadMesh:
+def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
+               side_tags: Mapping[str, str] | None = None,
+               smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """Transfinite (Coons-patch) quad grid over the surface bounded by four
     open edge lines ``edges = [bottom, right, top, left]`` in CCW loop order.
     The lines must share corners (form a closed loop).
+
+    ``edges`` may equally be a **mapping** keyed ``bottom`` / ``right`` / ``top`` /
+    ``left`` -- the same four names ``side_tags`` uses.  Prefer it: in the sequence
+    spelling the position alone says which edge is which, so transposing two produces
+    a plausible-looking twisted patch rather than an error, whereas a mapping with a
+    missing or misspelt key raises.
 
     Resolution and node distribution come directly from the edge lines' own
     points (no resampling): ``bottom``/``top`` must share a point count
@@ -189,9 +221,12 @@ def structured(edges: list[LineMesh], *,
     cells.
 
     Each side is named from its own edge line's uniform ``element_tags``;
-    ``boundary_tags`` (keyed by ``"bottom"`` / ``"right"`` / ``"top"`` /
+    ``side_tags`` (keyed by ``"bottom"`` / ``"right"`` / ``"top"`` /
     ``"left"``) overrides that -- a non-empty entry replaces the side's tag, a
-    present-but-empty entry suppresses the side.
+    present-but-empty entry suppresses the side.  It is spelt ``side_tags``, not
+    ``boundary_tags``, because these are *named sides*: ``boundary_tags`` everywhere
+    else in the toolkit is the dense ``StrArray`` running parallel with a mesh's
+    ``boundaries (Nbc,2)`` rows, a different shape entirely.
 
     The order comes from the edges (all four must agree).  At ``order > 1`` each
     edge's own private high-order ``interior`` is **stamped onto the matching side**
@@ -202,15 +237,16 @@ def structured(edges: list[LineMesh], *,
     stays a straight order-N fill.
     """
     from .quadmesh import QuadMesh
-    if len(edges) != 4:
+    edge_list = _ordered_sides(edges)
+    if len(edge_list) != 4:
         raise ValueError("structured needs exactly 4 edge lines "
                          "[bottom, right, top, left]")
-    bottom, right, top, left = edges
+    bottom, right, top, left = edge_list
     for nm, e in (("bottom", bottom), ("right", right),
                   ("top", top), ("left", left)):
         _check_boundary(e, "structured " + nm + " edge", 2)
     order = bottom.order
-    if any(e.order != order for e in edges):
+    if any(e.order != order for e in edge_list):
         raise ValueError("structured: all four edges must share the same order")
     # resolution comes from the edges' own point counts (no resampling)
     if bottom.points.shape[0] != top.points.shape[0]:
@@ -226,7 +262,7 @@ def structured(edges: list[LineMesh], *,
     nx = bottom.points.shape[0] - 1
     ny = left.points.shape[0] - 1
     # the four edges must close into a loop (share corners) in CCW order
-    allpts = np.vstack([e.points for e in edges])
+    allpts = np.vstack([e.points for e in edge_list])
     scale = float(np.max(allpts.max(axis=0) - allpts.min(axis=0)))
     tol = 1e-6 * scale if scale > 0 else 1e-9
     for lbl, p, q in (("bottom->right", bottom.points[-1], right.points[0]),
@@ -269,15 +305,15 @@ def structured(edges: list[LineMesh], *,
         "left": [(0 * ny + j, 4) for j in range(ny)],
     }
     side_edges = {"bottom": bottom, "right": right, "top": top, "left": left}
-    bt = boundary_tags or {}
+    bt = side_tags or {}
     for side in bt:
         if side not in side_rows:
-            raise ValueError("structured boundary_tags side must be one of "
+            raise ValueError("structured side_tags side must be one of "
                              "bottom/right/top/left, got %r" % side)
     bnd: list[list[int]] = []
     names: list[str] = []
     # each side is named by its edge's uniform element tag; a non-empty
-    # boundary_tags[side] overrides, a present-but-empty entry suppresses it.
+    # side_tags[side] overrides, a present-but-empty entry suppresses it.
     for side, rows in side_rows.items():
         if side in bt:
             nm = bt[side]
@@ -315,9 +351,9 @@ def structured(edges: list[LineMesh], *,
     return _apply_smoothing(qm, smoothing_method)
 
 
-def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
+def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
           center_scale: float = 0.5,
-          wall_tag: str = "", smoothing_method: str | None = None) -> QuadMesh:
+          wall_tag: str = "", smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """O-grid filling the closed ``boundary``: a central ``n_side x n_side``
     block at the loop centroid, surrounded by O-ring layers blending its
     perimeter out to the boundary.  ``center_scale`` sizes the block (fraction
@@ -327,9 +363,11 @@ def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
     true shape; the block-and-ring build is only an initial guess, relaxed by
     ``smoothing_method="conduction"``.
 
-    ``radial`` are the O-ring layer positions with the initial position explicit:
-    strictly increasing in ``[0, 1]`` (``radial[0]`` = block perimeter, last =
-    ``1`` = wall), giving ``radial.size - 1`` rings.
+    ``radial`` is either an ``int`` count of uniform rings or the O-ring layer
+    positions with the initial position explicit: strictly increasing in
+    ``[0, 1]`` (``radial[0]`` = block perimeter, last = ``1`` = wall;
+    :func:`validate_layers <nekmeshpy.model.fields.validate_layers>`), giving
+    ``radial.size - 1`` rings.
 
     The outer ring (wall) is named from ``boundary``'s per-line ``element_tags``;
     a non-empty scalar ``wall_tag`` overrides that for the whole wall."""
@@ -443,14 +481,17 @@ def ogrid(boundary: LineMesh, n_side: int, radial: FloatArray, *,
 
 
 def half_ogrid(arc: LineMesh, spine: LineMesh,
-               radial: FloatArray, *, center_scale: float = 0.5,
+               radial: int | FloatArray, *, center_scale: float = 0.5,
                wall_tag: str = "",
-               smoothing_method: str | None = None) -> QuadMesh:
+               smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """Structured half-circle O-grid over a half-disk split along the ``spine``
     line (A1..A2); the wall ``arc`` (``(4*Ntheta+1, 3)``, arc[0]=A1, arc[-1]=A2)
-    is the open boundary.  ``radial`` are the O-ring layer positions with the
+    is the open boundary.  ``radial`` is either an ``int`` count of uniform rings
+    or the O-ring layer positions with the
     initial position explicit (strictly increasing in ``[0, 1]``, ``radial[0]`` =
-    inner block perimeter, last = ``1`` = wall); ``center_scale`` is the inner
+    inner block perimeter, last = ``1`` = wall;
+    :func:`validate_layers <nekmeshpy.model.fields.validate_layers>`);
+    ``center_scale`` is the inner
     block extent as a fraction of the spine.
 
     The ``spine`` is meshed exactly: its ``2*Ntheta+1 + 2*Nradial`` points must be
@@ -608,7 +649,273 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     return _apply_smoothing(qm, smoothing_method)
 
 
-def spine_fractions(n_theta: int, radial: FloatArray,
+#: The two nameable seams of a :func:`quadrant_ogrid`, in the order its arguments
+#: are taken.  ``side_tags`` is keyed by these.
+_QUADRANT_SEAMS = ("seam1", "seam2")
+
+
+def quadrant_core(arc: LineMesh, seam1: LineMesh, seam2: LineMesh, *,
+                  center_scale: float = 0.5) -> PointArray:
+    """The core quarter of a :func:`quadrant_ogrid` as an ``(n+1, n+1, 3)`` grid,
+    indexed ``[i][j]`` with ``i`` running ``O -> M1`` along ``seam1`` and ``j``
+    running ``O -> M2`` along ``seam2``.
+
+    It is a Coons patch whose two ``O``-ward sides are the caller's own seam fans --
+    so a graded or bowed radius is honoured -- and whose two far sides are the
+    straight chords into the core's far corner ``K = O + center_scale * (arc_mid - O)``.
+
+    ``quadrant_ogrid`` builds its core with this, and it is public for the one caller
+    that needs the same points *without* the surrounding mesh: a block that fills the
+    corner region behind three quadrant faces -- an octant of a 3-D O-grid, whose
+    core cube's three inner faces are exactly their three cores (see
+    ``examples/quadrant_pipe_tjunction.py``).  Reproducing the formula outside the
+    toolkit would work today and drift tomorrow; sharing it cannot.
+
+    Only the seams' first ``n+1`` points and the arc's midpoint are read, so the
+    ring-station part of a seam may be anything -- but the shapes must still be the
+    ones :func:`quadrant_ogrid` takes."""
+    apts = _check_boundary(arc, "quadrant_core arc", 3)
+    na = apts.shape[0]
+    if na < 3 or (na - 1) % 2 != 0:
+        raise ValueError(
+            "quadrant_core arc must have 2*n+1 points (n >= 1), got %d" % na)
+    n = (na - 1) // 2
+    if not 0.0 < center_scale < 1.0:
+        raise ValueError("quadrant_core needs center_scale in (0, 1)")
+    s1 = _check_boundary(seam1, "quadrant_core seam1", n + 1)
+    s2 = _check_boundary(seam2, "quadrant_core seam2", n + 1)
+    o: Point = s1[0]
+    m1, m2 = s1[n], s2[n]
+    k: Point = o + center_scale * (apts[n] - o)
+    t: FloatArray = np.arange(n + 1, dtype=float) / n
+    return coons_grid(s1[0:n + 1], m2 + t[:, None] * (k - m2),      # j = 0 / j = n
+                      s2[0:n + 1], m1 + t[:, None] * (k - m1), t, t)  # i = 0 / i = n
+
+
+def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
+                   radial: int | FloatArray, *, center_scale: float = 0.5,
+                   wall_tag: str = "",
+                   side_tags: Mapping[str, str] | None = None,
+                   smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
+    """Quarter-disk O-grid: the 90-degree sibling of :func:`half_ogrid`.
+
+    The region is bounded by the wall ``arc`` (open, ``A1 -> A2``, ``2*n+1`` points)
+    and the two radii ``seam1`` (``O -> A1``) and ``seam2`` (``O -> A2``).  It is
+    filled with **two** blocks -- a ``n x n`` core quarter plus one ``2n x Nradial``
+    ring band wrapping the core's far corner -- which is exactly the quarter of
+    :func:`ogrid` you get by cutting a full disk along two perpendicular diameters
+    through its core-edge midpoints.  Four such quadrants
+    ``QuadMesh.merge`` back into a conforming full disk.
+
+    ``radial`` is either an ``int`` count of uniform rings or the O-ring layer
+    positions with the initial position explicit (strictly increasing in ``[0, 1]``,
+    ``radial[0]`` = core perimeter, last = ``1`` = wall;
+    :func:`validate_layers <nekmeshpy.model.fields.validate_layers>`).
+    ``center_scale`` sizes the core: its far corner sits at
+    ``O + center_scale * (arc_midpoint - O)``.
+
+    Both seams are **meshed exactly at the points given** -- like every other curve
+    in the toolkit they are never resampled.  Each must carry exactly
+    ``n+1 + Nradial`` points ascending from ``O``: the ``n+1`` core fan, then the
+    ``Nradial`` ring stations.  Derive that sampling with
+    :func:`quadrant_seam_fractions` and evaluate your own radius curve there
+    (:meth:`LineMesh.line <nekmeshpy.linemesh.LineMesh.line>` for a straight radius,
+    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` for a bowed
+    one), at ``arc``'s order -- at ``order > 1`` a seam's own private nodes *are* the
+    radius geometry, so the orders must match.
+
+    Passing the seams in rather than deriving them from a ``center`` is what makes
+    adjacent quadrants weld exactly: two neighbours share one ``LineMesh`` object,
+    the second through
+    :meth:`LineMesh.reverse <nekmeshpy.linemesh.LineMesh.reverse>`, so the seam
+    coordinates are bit-identical instead of two independent placements that agree
+    only to round-off (the same reason :func:`spined_ogrid` reverses its spine).
+
+    The wall is named from ``arc``'s per-line ``element_tags``, each seam from its
+    own; a non-empty scalar ``wall_tag`` overrides the whole wall and a non-empty
+    ``side_tags[...]`` (keyed ``seam1`` / ``seam2``) the whole seam."""
+    from .quadmesh import QuadMesh
+    apts = _check_boundary(arc, "quadrant_ogrid arc", 3)
+    na = apts.shape[0]
+    if na < 3 or (na - 1) % 2 != 0:
+        raise ValueError(
+            "quadrant_ogrid arc must have 2*n+1 points (n >= 1), got %d" % na)
+    n = (na - 1) // 2
+    if not 0.0 < center_scale < 1.0:
+        raise ValueError("quadrant_ogrid needs center_scale in (0, 1)")
+    radial = validate_layers(radial, "quadrant_ogrid radial")
+    Nr = radial.size - 1
+    st = dict(side_tags or {})
+    extra = [s for s in st if s not in _QUADRANT_SEAMS]
+    if extra:
+        raise ValueError(
+            "quadrant_ogrid side_tags must be keyed seam1/seam2, got unexpected %s"
+            % extra)
+
+    n_seam = n + 1 + Nr
+    seams = (seam1, seam2)
+    for which, sm in zip(_QUADRANT_SEAMS, seams):
+        pts = _check_boundary(sm, "quadrant_ogrid " + which, 2)
+        if pts.shape[0] != n_seam:
+            raise ValueError(
+                "quadrant_ogrid %s must have exactly n+1 + Nradial = %d points "
+                "ascending from the center O (got %d); it is meshed exactly at the "
+                "points given, never resampled -- evaluate your radius curve at "
+                "quadrant_seam_fractions(%d, radial, center_scale)"
+                % (which, n_seam, pts.shape[0], n))
+        if sm.order != arc.order:
+            raise ValueError(
+                "quadrant_ogrid %s and arc must share an order (got %s order %d, arc "
+                "order %d); the seam's own nodes are the radius geometry, so a "
+                "lower-order seam cannot describe a higher-order edge"
+                % (which, which, sm.order, arc.order))
+    s1: PointArray = seam1.points
+    s2: PointArray = seam2.points
+    tol = conform.entity_tol(np.vstack([apts, s1, s2]))
+    gap_o = float(np.linalg.norm(s1[0] - s2[0]))
+    if gap_o > tol:
+        raise ValueError(
+            "quadrant_ogrid: seam1 and seam2 must start at the same center point O "
+            "(gap %.3g > %.3g); build both from one center array" % (gap_o, tol))
+    for which, sm_pts, corner, name in (("seam1", s1, apts[0], "arc[0] (A1)"),
+                                        ("seam2", s2, apts[-1], "arc[-1] (A2)")):
+        gap = float(np.linalg.norm(sm_pts[-1] - corner))
+        if gap > tol:
+            raise ValueError(
+                "quadrant_ogrid: %s must end at %s (gap %.3g > %.3g) -- the arc runs "
+                "A1 -> A2 and seam1 is the A1 radius; reverse the arc or swap the "
+                "seams" % (which, name, gap, tol))
+
+    core: PointArray = quadrant_core(arc, seam1, seam2,
+                                     center_scale=center_scale).reshape(-1, 3)
+
+    row = n + 1
+
+    def cid(i: int, j: int) -> int:
+        return i * row + j
+
+    bi: IntArray = np.repeat(np.arange(n, dtype=np.int64), n)
+    bj: IntArray = np.tile(np.arange(n, dtype=np.int64), n)
+    cquads: IntArray = np.stack([bi * row + bj, (bi + 1) * row + bj,
+                                 (bi + 1) * row + bj + 1, bi * row + bj + 1], axis=1)
+
+    # core perimeter, M1 -> K -> M2: 2n+1 points index-paired with arc[0..2n].
+    peri_ids: IntArray = np.array([cid(n, j) for j in range(row)]
+                                  + [cid(i, n) for i in range(n - 1, -1, -1)],
+                                  dtype=np.int64)
+    peripts: PointArray = core[peri_ids, :]
+    P = 2 * n + 1
+
+    # -- ring band: straight-chord blends out to the wall, with the two ends snapped
+    # onto the exact seam samples (as half_ogrid does) so neighbours weld bit-exactly.
+    lid: list[IntArray] = [peri_ids]
+    layers: list[PointArray] = [core]
+    ring_pts: list[PointArray] = []
+    nprev = core.shape[0]
+    for r in range(Nr):
+        tau = float(radial[r + 1])
+        rp: PointArray = (1.0 - tau) * peripts + tau * apts
+        rp[0, :] = s1[n + 1 + r]
+        rp[-1, :] = s2[n + 1 + r]
+        layers.append(rp)
+        ring_pts.append(rp)
+        lid.append(nprev + np.arange(P, dtype=np.int64))
+        nprev += P
+    points: PointArray = np.vstack(layers)
+
+    k: IntArray = np.arange(2 * n, dtype=np.int64)
+    ring_quads = [np.stack([b[k], b[k + 1], a[k + 1], a[k]], axis=1)   # CCW, b outer
+                  for a, b in zip(lid[:-1], lid[1:])]
+    quads: IntArray = np.vstack([cquads, *ring_quads])
+
+    # -- boundary rows.  Ring quad [b[k], b[k+1], a[k+1], a[k]] puts side 1 on the
+    # outer layer and side 3 on the inner (ogrid's winding), so the wall is side 1 of
+    # the outermost band; side 4 of band quad 0 and side 2 of band quad 2n-1 are the
+    # seams' ring stations, and the core's j == 0 row / i == 0 column their fans.
+    q0 = n * n
+    wall_q0 = q0 + (Nr - 1) * (2 * n)
+    wall_seg = arc._seg_tags()
+    bnd: list[list[int]] = []
+    names: list[str] = []
+    for m in range(2 * n):
+        nm = wall_tag if wall_tag else (wall_seg[m] if wall_seg is not None else "")
+        if nm:
+            bnd.append([wall_q0 + m, 1])
+            names.append(nm)
+    seam_sides = (
+        ("seam1", seam1, [(i * n, 1) for i in range(n)]
+         + [(q0 + r * (2 * n), 4) for r in range(Nr)]),
+        ("seam2", seam2, [(j, 4) for j in range(n)]
+         + [(q0 + r * (2 * n) + (2 * n - 1), 2) for r in range(Nr)]),
+    )
+    for which, sm, rows in seam_sides:
+        seg = sm._seg_tags()
+        override = st.get(which, "")
+        for m, (qid, side) in enumerate(rows):
+            nm = override if override else (seg[m] if seg is not None else "")
+            if nm:
+                bnd.append([qid, side])
+                names.append(nm)
+    qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
+
+    # -- order N.  Overlay every O-ring (both incident copies, or scatter_edge_nodes
+    # rightly rejects the shared edge) so the wall's curvature blends inward, and both
+    # seams with their *own* nodes so a bowed radius is meshed exactly rather than
+    # straight-subdivided between its samples.
+    order = arc.order
+    overlays: list[Overlay] = []
+    if order > 1:
+        peri_inner = _straight_interior(peripts, arc.lines, order)
+        ks: IntArray = np.arange(2 * n, dtype=np.int64)
+        rs: IntArray = np.arange(Nr, dtype=np.int64)
+        rings = [_blended_ring(ring_pts[r], arc, float(radial[r + 1]),
+                               peripts, peri_inner) for r in range(Nr)]
+        for r, ring_lm in enumerate(rings):
+            overlays.append((q0 + r * (2 * n) + ks, 1, ring_lm))           # outer
+            if r + 1 < Nr:
+                overlays.append((q0 + (r + 1) * (2 * n) + ks, 3, ring_lm))  # inner
+        core_fan: IntArray = np.arange(n, dtype=np.int64)
+        s2l1: IntArray = np.argsort(_chain_intervals(seam1, "quadrant_ogrid seam1"))
+        s2l2: IntArray = np.argsort(_chain_intervals(seam2, "quadrant_ogrid seam2"))
+        overlays += [
+            (core_fan * n, 1, _sub_chain(seam1, core_fan, s2l1)),
+            (q0 + rs * (2 * n), 4, _sub_chain(seam1, n + rs, s2l1)),
+            (core_fan, 4, _sub_chain(seam2, core_fan, s2l2)),
+            (q0 + rs * (2 * n) + (2 * n - 1), 2, _sub_chain(seam2, n + rs, s2l2)),
+        ]
+    qm = _elevate(qm, order, overlays)
+    return _apply_smoothing(qm, smoothing_method)
+
+
+def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
+                            center_scale: float = 0.5) -> FloatArray:
+    """The normalized ``O -> A`` positions of the ``n_side+1 + Nradial`` seam points
+    that :func:`quadrant_ogrid` requires, ascending: the ``n_side+1`` core fan, then
+    the ``Nradial`` ring stations.
+
+    The non-obvious term is where the core corner ``M`` lands.  ``center_scale``
+    places the core's *far* corner ``K`` at ``center_scale * R`` along the arc
+    midpoint's radius; ``M`` is the midpoint of the core square's side, i.e. half its
+    diagonal further in, so it sits at ``center_scale * cos(45 deg) * R`` -- **not**
+    at ``center_scale * R``.  Using the latter builds a quadrant whose merged core is
+    not a square and whose elements are visibly skewed at ``K``.
+
+    :func:`quadrant_ogrid` never resamples a seam, so this is how a caller derives
+    the sampling to prove: evaluate its own radius curve at these fractions and hand
+    the result in."""
+    ns = int(n_side)
+    if ns < 1:
+        raise ValueError("quadrant_seam_fractions needs n_side >= 1, got %d" % ns)
+    if not 0.0 < center_scale < 1.0:
+        raise ValueError("quadrant_seam_fractions needs center_scale in (0, 1)")
+    rad = validate_layers(radial, "quadrant_seam_fractions radial")
+    s_m = center_scale * float(np.cos(np.pi / 4.0))
+    fr: FloatArray = np.concatenate([np.linspace(0.0, s_m, ns + 1),
+                                     s_m + rad[1:] * (1.0 - s_m)])
+    return fr
+
+
+def spine_fractions(n_theta: int, radial: int | FloatArray,
                     center_scale: float = 0.5) -> FloatArray:
     """The normalized ``A1 -> A2`` positions of the ``2*n_theta+1 + 2*Nradial`` spine
     points that :func:`half_ogrid` and :func:`spined_ogrid` require, in ascending
@@ -618,7 +925,7 @@ def spine_fractions(n_theta: int, radial: FloatArray,
     Neither factory resamples a spine for you -- both mesh it exactly at the points
     given -- so this is how a caller **derives** the sampling to prove: evaluate its
     own spine curve at these fractions (with
-    :meth:`LineMesh.curve <nekmeshpy.linemesh.LineMesh.curve>` for an analytic spine,
+    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` for an analytic spine,
     or ``trimesh.ops.resample_polyline`` for a scanned one) and hand the result in.
     Keeping the formula here rather than in every caller is what stops the two from
     drifting apart."""
@@ -635,10 +942,10 @@ def spine_fractions(n_theta: int, radial: FloatArray,
     return fr
 
 
-def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
+def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
                  spine: LineMesh | None = None, center_scale: float = 0.5,
                  wall_tag: str = "",
-                 smoothing_method: str | None = None) -> QuadMesh:
+                 smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """Full-disk O-grid over a closed ``boundary`` split along a spine diameter
     into two :func:`half_ogrid` halves welded along the spine -- the clean way to
     O-grid a disk that has a natural ``A1..A2`` seam (a saddle-split vessel or pipe
@@ -725,6 +1032,8 @@ def spined_ogrid(boundary: LineMesh, radial: FloatArray, *,
 #: mesh, which is what keeps them out of ``FACTORIES``.
 HELPERS: dict[str, Callable[..., FloatArray]] = {
     "spine_fractions": spine_fractions,
+    "quadrant_seam_fractions": quadrant_seam_fractions,
+    "quadrant_core": quadrant_core,
 }
 
 #: Open-region section factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.
@@ -733,5 +1042,6 @@ FACTORIES: dict[str, Callable[..., QuadMesh]] = {
     "rectangle": rectangle,
     "ogrid": ogrid,
     "half_ogrid": half_ogrid,
+    "quadrant_ogrid": quadrant_ogrid,
     "spined_ogrid": spined_ogrid,
 }

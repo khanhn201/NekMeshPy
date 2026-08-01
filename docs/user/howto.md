@@ -18,10 +18,9 @@ Fill a tagged circular loop with an O-grid section and sweep it along an axis.
 
 ```python
 boundary = LineMesh.circle(radius, 4 * n_side, element_tags=["wall"] * (4 * n_side))
-section  = QuadMesh.ogrid(boundary, n_side=n_side, radial=uniform_spacing(4),
+section  = QuadMesh.ogrid(boundary, n_side=n_side, radial=4,
                           smoothing_method="bilinear")
-mesh     = HexMesh.extrude(section, axis=(0, 0, 1), length=L,
-                           layers=uniform_spacing(n_axial),
+mesh     = HexMesh.extrude(section, axis=(0, 0, 1), length=L, layers=n_axial,
                            first_tag="inlet", last_tag="outlet")
 ```
 
@@ -31,10 +30,38 @@ interface, see `examples/circular_pipe_tjunction.py`.
 ## Build a structured duct
 
 Give `QuadMesh.structured` four open `LineMesh` edges, each tagged with its own
-uniform side name; resolution comes from the edges' own points.
+uniform side name; resolution comes from the edges' own points. Prefer the
+**mapping** spelling — `structured({"bottom": …, "right": …, "top": …, "left": …})`
+— over the CCW 4-sequence: a misspelt key raises, whereas two transposed positions
+give a plausible-looking twisted patch. `side_tags=` (the same four keys) overrides
+the edges' own tags.
 
 → `examples/rectangular_pipe.py`, and `examples/transfinite_block.py` for the
 eight-corners → trilinear → `HexMesh.from_grid` path.
+
+## Sweep a section along a curved path
+
+Author **one** cross-section and let `HexMesh.sweep` carry it along the path by a
+moving frame — each station is a rigid placement, so the walls come out at the true
+offsets through a bend rather than each point following its own copy of the curve.
+
+```python
+mesh = HexMesh.sweep(section, centerline, fractions,
+                     origin=START,              # required: the section's reference
+                     tangent=dcenterline,       # analytic derivative; O(h²) without
+                     orientation="fixed", up=PLANE_NORMAL,   # exact for a planar path
+                     first_tag="inlet", last_tag="outlet")
+```
+
+`origin=` has no default (a disc's centroid is not its centre), and there is no
+`order=` — the block inherits the section's. For a path built from pieces of
+differing curvature, derive `fractions` with
+`LineMesh.sweep_fractions(breaks, total_length, target)`: it subdivides each piece
+at roughly `target` *on its own*, so every junction carries a station instead of
+being straddled by an element fitted across two geometries.
+
+→ `examples/serpentine_pipe.py` — one O-grid disc swept along an 8-pass coil of
+straights and 180° U-bends.
 
 ## External flow past a body (2-D section, swept)
 
@@ -51,14 +78,17 @@ end caps.
 
 ## External flow past a sphere (3-D shell)
 
-Build a closed far-field cube surface from six `QuadMesh.from_grid` patches (each
-carrying its far-field side as a per-quad `element_tag`), derive the body surface
-on the **same connectivity**, and fill the shell with `HexMesh.annulus`:
+Build a closed far-field cube surface with `QuadMesh.box` (each face tagged with
+the far-field side it forms), take the body surface from `QuadMesh.sphere` at the
+**same** `n` — it is the cube's connectivity with the points projected, so the two
+pair by index — and fill the shell with `HexMesh.annulus`:
 
 ```python
-cube   = HexMesh.merge([...six from_grid patches...])   # closed QuadMesh surface
-sphere = QuadMesh(R * normalize(cube.points), cube.quads)   # same quads, index-paired
-mesh   = HexMesh.annulus(sphere, cube, radial=geometric_spacing(n, ratio))
+cube   = QuadMesh.box(S, n, face_tags={"x_min": "inlet", "x_max": "outlet",
+                                       "y_min": "bottom", "y_max": "top",
+                                       "z_min": "front", "z_max": "back"})
+sphere = QuadMesh.sphere(R, n)                  # same quads, index-paired
+mesh   = HexMesh.annulus(sphere, cube, radial=geometric_spacing(n_radial, ratio))
 ```
 
 → `examples/flow_past_sphere.py`, and `examples/flow_past_hemisphere.py` for the

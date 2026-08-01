@@ -43,7 +43,7 @@ def _tag_count(mesh, name):
 def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):
     # one watertight, conformal, positively-oriented block
     assert mesh.is_watertight() and mesh.is_conforming()
-    assert topology.hex_report(*mesh.weld()[:2])["n_components"] == 1
+    assert topology.hex_report(*mesh.weld()[:2]).n_components == 1
     assert float(np.min(_scaled_jac(mesh))) > jac_floor
     # exactly the expected named groups, all non-empty
     assert set(mesh.boundary_group_tags) == groups

@@ -360,7 +360,7 @@ def test_high_order_quality_non_degenerate_on_curved_sphere(order):
     assert sj.shape == (qm.n_quads,)
     assert np.all(np.isfinite(sj))
     assert float(sj.min()) > 0.0                         # no folded surface nodes
-    assert qm.quality_summary(high_order=True)["n_elements"] == qm.n_quads
+    assert qm.quality_summary(high_order=True).n_elements == qm.n_quads
 
 
 # -- VTK Lagrange quad node ordering ------------------------------------

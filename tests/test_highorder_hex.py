@@ -153,7 +153,7 @@ def test_high_order_quality_non_degenerate_on_curved_shell(order):
     assert float(sj.min()) > 0.0                         # no folded GLL nodes
     # sampling the curved interior differs from the corner-only metric
     assert not np.allclose(sj, hm.scaled_jacobian())
-    assert hm.quality_summary(high_order=True)["n_elements"] == hm.n_hexes
+    assert hm.quality_summary(high_order=True).n_elements == hm.n_hexes
 
 
 # -- re2 export stays linear regardless of order ------------------------

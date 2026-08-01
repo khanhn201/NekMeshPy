@@ -30,6 +30,7 @@ from .._typing import (
     PointArray,
     StrArray,
 )
+from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import corner_indices
 from ..quadmesh import QuadMesh
@@ -226,6 +227,27 @@ class HexMesh:
         from byte-for-byte."""
         return conform.hex_corners_from_faces(
             self.quads.quads, self.hex, self.face_orient)
+
+    def __repr__(self) -> str:
+        """One-line REPL summary: element / point counts, ``order``, and the tag
+        vocabulary -- the same field set
+        :class:`LineMesh <nekmeshpy.linemesh.LineMesh>` and
+        :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` render, so the three read as a
+        family.
+
+        Counts come from the stored B-rep (the shared-face ``QuadMesh``'s points and the
+        ``hex`` incidence table), never from the derived ``hexes`` view, so it stays
+        cheap and correct even on an instance whose memoized ``_corners`` never got
+        built.  Never raises -- see
+        :meth:`LineMesh.__repr__ <nekmeshpy.linemesh.LineMesh.__repr__>`."""
+        try:
+            return ("<HexMesh %d points, %d hexes, order %d, element_tags=%s, "
+                    "boundary_tags=%s>"
+                    % (self.quads.lines.points.shape[0], self.hex.shape[0], self._order,
+                       _repr_tags(self.element_group_tags),
+                       _repr_tags(self.boundary_group_tags)))
+        except Exception:                     # a repr must never break a debug session
+            return "<HexMesh (unprintable)>"
 
     @property
     def order(self) -> int:

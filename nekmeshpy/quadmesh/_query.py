@@ -1,7 +1,7 @@
 """Read-only ``QuadMesh`` queries -- the operations that leave the ladder.
 
-They take the mesh (or bare connectivity) and return plain arrays, counts or summary
-dicts, never another mesh.
+They take the mesh (or bare connectivity) and return plain arrays, counts or a named
+tuple of statistics, never another mesh.
 
 Free functions bound onto :class:`~nekmeshpy.QuadMesh` by ``quadmesh/__init__.py``;
 internal toolkit code imports them from here directly rather than through the bound
@@ -19,6 +19,7 @@ from .._typing import (
     FloatArray,
     IntArray,
 )
+from ..model.quality import QualitySummary
 from .quadmesh import QuadMesh
 
 
@@ -61,7 +62,7 @@ def scaled_jacobian(mesh: QuadMesh, *, high_order: bool = False) -> FloatArray:
         return quality.scaled_jacobian_ho(mesh, mesh.order)
     return quality.scaled_jacobian(mesh.points, mesh.quads)
 
-def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> dict[str, Any]:
+def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics (see :meth:`scaled_jacobian` for the
     ``high_order`` flag)."""
     from . import quality

@@ -103,10 +103,34 @@ def symmetric_spacing(n: int, ratio: float = 1.0) -> FloatArray:
     return np.concatenate([first[:-1], second])      # 2*m+1 = n+1 fractions
 
 
-def validate_layers(positions: FloatArray, who: str) -> FloatArray:
-    """Validate a normalized layer-position array and return it flattened:
-    strictly increasing values in ``[0, 1]`` with an explicit first position and a
-    last position of ``1``.  ``who`` labels the caller in errors."""
+def validate_layers(positions: int | FloatArray, who: str) -> FloatArray:
+    """Normalize a layer *specification* to the flattened array of normalized layer
+    positions every sweep / fill factory consumes.  ``who`` labels the caller in errors.
+
+    Two spellings, one meaning:
+
+    * an ``int`` ``n`` -- ``n`` **uniform layers**, i.e. exactly
+      :func:`uniform_spacing(n) <uniform_spacing>`, the ``n+1`` positions
+      ``linspace(0, 1, n+1)``.  ``radial=3`` / ``layers=8`` is the first thing a caller
+      reaches for, and it counts *cells*, not positions -- the same convention
+      :func:`uniform_spacing` and :func:`geometric_spacing` already use, so there is
+      only one number to remember.  ``n >= 1``.
+    * an array of positions -- strictly increasing values in ``[0, 1]`` with an explicit
+      first position and a last position of ``1`` (the graded case: ``geometric_spacing``,
+      ``symmetric_spacing``, or a hand-authored distribution).  It is returned flattened
+      and otherwise **untouched**, bit-for-bit, which is what keeps the graded goldens
+      frozen.
+
+    Only a genuine scalar integer takes the first branch; an array of ints is a position
+    array like any other."""
+    if isinstance(positions, (int, np.integer)) and not isinstance(positions, bool):
+        n = int(positions)
+        if n < 1:
+            raise ValueError(
+                "%s: an int layer count means n uniform layers, so it needs n >= 1; "
+                "got %d -- pass an explicit position array (e.g. "
+                "geometric_spacing(n, ratio)) for a graded sweep" % (who, n))
+        return uniform_spacing(n)
     p = np.asarray(positions, dtype=float).ravel()
     if p.size < 2:
         raise ValueError("%s: needs at least 2 layer positions" % who)

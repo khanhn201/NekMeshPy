@@ -166,15 +166,15 @@ def test_hex_loft_loop_builds_a_watertight_solid_torus(order):
     profiles = _disc_profiles(order=order)
     solid = HexMesh.loft(profiles, loop=True)
     report = topology.hex_report(solid.points, solid.hexes)
-    assert report["n_components"] == 1
-    assert report["n_nonmanifold_faces"] == 0
-    assert report["n_hanging_points"] == 0
-    assert report["n_open_edges"] == 0
-    assert report["watertight"] and report["conformal"]
+    assert report.n_components == 1
+    assert report.n_nonmanifold_faces == 0
+    assert report.n_hanging_points == 0
+    assert report.n_open_edges == 0
+    assert report.watertight and report.conformal
 
     # the boundary is the wall only -- no cap faces (8 wall quads per section)
     n_wall = NSEC * 8
-    assert report["n_boundary_faces"] == n_wall
+    assert report.n_boundary_faces == n_wall
     assert solid.boundaries.shape[0] == n_wall
     assert sorted(set(solid.boundary_tags.tolist())) == ["wall"]
     assert set(solid.boundaries[:, 1].tolist()).isdisjoint({5, 6})
@@ -189,8 +189,8 @@ def test_hex_loft_loop_beats_repeating_the_first_profile():
     # the open stack still has its two cap face layers
     open_report = topology.hex_report(repeated.points, repeated.hexes)
     closed_report = topology.hex_report(closed.points, closed.hexes)
-    assert (open_report["n_boundary_faces"]
-            > closed_report["n_boundary_faces"])
+    assert (open_report.n_boundary_faces
+            > closed_report.n_boundary_faces)
 
 
 # -- cap tags are rejected on a closed sweep, at every rung -------------------

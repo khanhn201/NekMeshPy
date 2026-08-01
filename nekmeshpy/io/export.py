@@ -66,7 +66,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
 def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
-    X, HC, _ = hex_weld(mesh)
+    X, HC, _ = hex_weld(mesh)          # WeldResult unpacks as (points, hexes, n)
     g = _as_groups(mesh, groups)
     b = mesh.boundaries
     bnames = mesh.boundary_tags
@@ -503,8 +503,9 @@ def summary(mesh: HexMesh) -> None:
     for name in mesh.boundary_group_tags:
         _log.info("  %-14s: %d faces",
                   name, int(np.sum(mesh.boundary_tags == name)))
-    rep = topology.hex_report(*hex_weld(mesh)[:2])
+    w = hex_weld(mesh)
+    rep = topology.hex_report(w.points, w.hexes)
     _log.info("  watertight=%s  conformal=%s  components=%d  "
               "non-manifold faces=%d  hanging points=%d",
-              rep["watertight"], rep["conformal"], rep["n_components"],
-              rep["n_nonmanifold_faces"], rep["n_hanging_points"])
+              rep.watertight, rep.conformal, rep.n_components,
+              rep.n_nonmanifold_faces, rep.n_hanging_points)

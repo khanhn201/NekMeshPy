@@ -204,7 +204,7 @@ def test_circle_output_is_not_perturbed_by_the_shared_arc_placement():
 
 def test_rectangle_corners_and_per_side_tags():
     # n=4 -> the 4 corners, CCW from lower-left, one line element per side
-    lm = LineMesh.rectangle(4.0, 6.0, 4, side_tags=["bottom", "right", "top", "left"])
+    lm = LineMesh.rectangle(4.0, 6.0, 4, side_tags={"bottom": "bottom", "right": "right", "top": "top", "left": "left"})
     assert lm.n_points == 4 and lm.n_lines == 4
     assert lm.lines.tolist() == [[0, 1], [1, 2], [2, 3], [3, 0]]   # wraps
     assert np.allclose(lm.points, [[-2, -3, 0], [2, -3, 0], [2, 3, 0], [-2, 3, 0]])
@@ -225,7 +225,7 @@ def test_rectangle_discretizes_per_side_on_box():
 
 def test_rectangle_side_tag_counts_are_even():
     lm = LineMesh.rectangle(2.0, 2.0, 32,
-                            side_tags=["bottom", "right", "top", "left"])
+                            side_tags={"bottom": "bottom", "right": "right", "top": "top", "left": "left"})
     assert Counter(lm.element_tags.tolist()) == {
         "bottom": 8, "right": 8, "top": 8, "left": 8}
 
@@ -335,3 +335,51 @@ def test_hex_extrude_carries_quad_element_tags():
     assert block.n_hexes == 4
     assert Counter(block.element_tags.tolist()) == {"A": 2, "B": 2}
     assert block.element_group_tags == ["A", "B"]
+
+
+# -- sweep_fractions (HELPERS: a plain array, not a mesh) ---------------------
+
+def test_sweep_fractions_lands_a_node_on_every_junction():
+    # a 10-long path with junctions at 3 and 7, elements ~0.5 long
+    fr = LineMesh.sweep_fractions([3.0, 7.0], 10.0, 0.5)
+    assert fr[0] == 0.0 and fr[-1] == 1.0
+    assert (np.diff(fr) > 0).all()                 # strictly ascending
+    # the junctions are *in* the output bit-for-bit, not merely approached
+    assert 0.3 in fr.tolist() and 0.7 in fr.tolist()
+    # each piece subdivided on its own: 3/0.5=6, 4/0.5=8, 3/0.5=6 -> 20 elements
+    assert fr.size == 21
+
+
+def test_sweep_fractions_never_drops_a_piece_below_one_element():
+    # a piece far shorter than target still gets its own single element, so the
+    # junction survives rather than being swallowed
+    fr = LineMesh.sweep_fractions([0.01], 1.0, 0.5)
+    assert 0.01 in fr.tolist()
+    assert fr.tolist() == [0.0, 0.01, 0.505, 1.0]
+
+
+def test_sweep_fractions_rejects_breaks_on_the_endpoints():
+    # 0 and total_length are stations unconditionally; admitting them as breaks
+    # would duplicate a station and break the ascending contract
+    with pytest.raises(ValueError):
+        LineMesh.sweep_fractions([0.0, 5.0], 10.0, 1.0)
+    with pytest.raises(ValueError):
+        LineMesh.sweep_fractions([5.0, 10.0], 10.0, 1.0)
+
+
+def test_sweep_fractions_with_no_breaks_is_a_plain_subdivision():
+    assert np.allclose(LineMesh.sweep_fractions([], 2.0, 0.5),
+                       np.linspace(0.0, 1.0, 5))
+
+
+# -- repr ---------------------------------------------------------------------
+
+def test_repr_reports_counts_order_and_tag_groups():
+    lm = LineMesh.circle(1.0, 8, element_tags=["wall"] * 8)
+    assert repr(lm) == ("<LineMesh 8 points, 8 lines, order 1, "
+                        "element_tags={wall}, boundary_tags={}>")
+
+
+def test_repr_never_raises_on_a_half_built_container():
+    # a repr that can throw is worse than useless in a debugger
+    assert repr(LineMesh.__new__(LineMesh)) == "<LineMesh (unprintable)>"

@@ -76,7 +76,7 @@ inner = LineMesh.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named by the direction they face -- bottom / outlet / top / inlet
 outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
-                           side_tags=["bottom", "outlet", "top", "inlet"])
+                           side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)

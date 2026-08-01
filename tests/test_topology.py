@@ -26,23 +26,23 @@ def _stacked_hexes():
 # -- hex volume ---------------------------------------------------------
 def test_single_hex_is_watertight():
     rep = topology.hex_report(_UNIT_HEX.reshape(8, 3), np.arange(8).reshape(1, 8))
-    assert rep["watertight"] is True
-    assert rep["conformal"] is True
-    assert rep["n_hanging_points"] == 0
-    assert rep["n_boundary_faces"] == 6
-    assert rep["n_internal_faces"] == 0
-    assert rep["n_nonmanifold_faces"] == 0
-    assert rep["n_open_edges"] == 0
-    assert rep["n_components"] == 1
+    assert rep.watertight is True
+    assert rep.conformal is True
+    assert rep.n_hanging_points == 0
+    assert rep.n_boundary_faces == 6
+    assert rep.n_internal_faces == 0
+    assert rep.n_nonmanifold_faces == 0
+    assert rep.n_open_edges == 0
+    assert rep.n_components == 1
 
 
 def test_stacked_hexes_share_one_face():
     pts, hexes = _stacked_hexes()
     rep = topology.hex_report(pts, hexes)
-    assert rep["watertight"] is True
-    assert rep["n_internal_faces"] == 1
-    assert rep["n_boundary_faces"] == 10
-    assert rep["n_components"] == 1
+    assert rep.watertight is True
+    assert rep.n_internal_faces == 1
+    assert rep.n_boundary_faces == 10
+    assert rep.n_components == 1
     assert topology.is_watertight(pts, hexes) is True
 
 
@@ -67,10 +67,10 @@ def test_t_junction_is_watertight_but_not_conformal():
             for y0 in (0.0, 0.5) for z0 in (0.0, 0.5)]
     mesh = HexMesh.merge([coarse, *fine])
     rep = mesh.topology_report()
-    assert rep["n_open_edges"] == 0        # the defect leaves NO open edge...
-    assert rep["watertight"] is True       # ...so it reads as watertight...
-    assert rep["n_hanging_points"] >= 4     # ...but the hanging points expose it
-    assert rep["conformal"] is False
+    assert rep.n_open_edges == 0        # the defect leaves NO open edge...
+    assert rep.watertight is True       # ...so it reads as watertight...
+    assert rep.n_hanging_points >= 4     # ...but the hanging points expose it
+    assert rep.conformal is False
     assert mesh.is_conforming() is False
 
 
@@ -78,28 +78,28 @@ def test_disjoint_hexes_are_two_components():
     pts = np.vstack([_UNIT_HEX, _UNIT_HEX + np.array([10.0, 0, 0])])
     hexes = np.array([np.arange(8), np.arange(8, 16)], dtype=np.int64)
     rep = topology.hex_report(pts, hexes)
-    assert rep["n_components"] == 2
+    assert rep.n_components == 2
     # each piece has a closed boundary, but the mesh is not a single body
-    assert rep["watertight"] is True
-    assert rep["n_nonmanifold_faces"] == 0
+    assert rep.watertight is True
+    assert rep.n_nonmanifold_faces == 0
 
 
 def test_bifurcation_mesh_is_watertight(built_mesh):
     mesh = built_mesh["mesh"]
     rep = mesh.topology_report()
-    assert rep["n_components"] == 1
-    assert rep["n_nonmanifold_faces"] == 0
-    assert rep["n_open_edges"] == 0
-    assert rep["n_hanging_points"] == 0
-    assert rep["watertight"] is True
-    assert rep["conformal"] is True
+    assert rep.n_components == 1
+    assert rep.n_nonmanifold_faces == 0
+    assert rep.n_open_edges == 0
+    assert rep.n_hanging_points == 0
+    assert rep.watertight is True
+    assert rep.conformal is True
     assert mesh.is_watertight() is True
     assert mesh.is_conforming() is True
     # the true (topological) boundary is exactly the wall + outlet faces; the
     # flux-measurement planes (flux_1/flux_2) are interior faces that also carry a name
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
     exterior = int(np.isin(mesh.boundary_tags, outer).sum())
-    assert rep["n_boundary_faces"] == exterior
+    assert rep.n_boundary_faces == exterior
     assert exterior < mesh.boundaries.shape[0]      # flux planes are extra, interior
 
 
@@ -120,7 +120,7 @@ def test_boundary_helpers_single_hex():
 def test_boundary_helpers_match_topology(built_mesh):
     mesh = built_mesh["mesh"]
     rep = mesh.topology_report()
-    assert mesh.boundary_faces().shape[0] == rep["n_boundary_faces"]
+    assert mesh.boundary_faces().shape[0] == rep.n_boundary_faces
     # boundary faces are the wall + outlet named faces (flux planes are interior)
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
     exterior = mesh.boundaries[np.isin(mesh.boundary_tags, outer)]
