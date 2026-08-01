@@ -529,7 +529,7 @@ def test_unnamed_rectangle_far_field_stays_untagged():
 
 def test_rectangle_far_field_carries_element_tags_by_side():
     outer = LineMesh.rectangle(
-        12.0, 12.0, 64, side_tags=["bottom", "outlet", "top", "inlet"])
+        12.0, 12.0, 64, side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
     assert len(outer.element_tags) == outer.n_lines == 64
     from collections import Counter
     counts = Counter(outer.element_tags.tolist())
@@ -549,7 +549,7 @@ def test_annulus_consumes_outer_loop_element_tags():
     # the scalar inner_tag still tags the whole inner ring.
     inner = _circle(0.5, 64)
     outer = LineMesh.rectangle(
-        12.0, 12.0, 64, side_tags=["bottom", "outlet", "top", "inlet"])
+        12.0, 12.0, 64, side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
     qm = QuadMesh.annulus(inner, outer, geometric_spacing(6, 1.12),
                           inner_tag="cylinder")
     from collections import Counter
@@ -564,7 +564,7 @@ def test_element_tags_propagate_line_to_hex_faces():
     from nekmeshpy import HexMesh
     inner = _circle(0.5, 32)
     outer = LineMesh.rectangle(
-        12.0, 12.0, 32, side_tags=["bottom", "outlet", "top", "inlet"])
+        12.0, 12.0, 32, side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
     section = QuadMesh.annulus(inner, outer, uniform_spacing(4), inner_tag="cylinder")
     block = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,
                             layers=uniform_spacing(2), first_tag="front",
@@ -644,24 +644,24 @@ def test_structured_reads_edge_element_tags():
     assert counts == {"wall": 3, "top": 3, "outlet": 2, "inlet": 2}
 
 
-def test_structured_boundary_tags_override_edge_tags():
-    # a non-empty boundary_tags entry OVERRIDES that side's edge tag
+def test_structured_side_tags_override_edge_tags():
+    # a non-empty side_tags entry OVERRIDES that side's edge tag
     qm = QuadMesh.structured(
         _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
-        boundary_tags={"bottom": "floor"})
+        side_tags={"bottom": "floor"})
     from collections import Counter
     counts = Counter(qm.boundary_tags.tolist())
     assert counts["floor"] == 3            # bottom overridden
     assert counts["wall"] == 3 + 2 + 2     # the other three sides keep their edge tag
 
 
-def test_structured_boundary_tags_empty_suppresses_edge_tag():
+def test_structured_side_tags_empty_suppresses_edge_tag():
     # a present-but-empty override (NO_BOUNDARY / "") suppresses a tagged edge -- e.g.
     # a shared edge that merge will weld away
     from nekmeshpy import NO_BOUNDARY
     qm = QuadMesh.structured(
         _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
-        boundary_tags={"left": NO_BOUNDARY})
+        side_tags={"left": NO_BOUNDARY})
     names = qm.boundary_tags.tolist()
     assert "wall" in names
     assert qm.n_boundaries == 3 + 2 + 3    # left (ny=2 edges) suppressed
@@ -672,7 +672,7 @@ def test_annulus_inner_tag_overrides_loop_element_tags():
     # inner_tag OVERRIDES it for the whole inner ring
     inner = LineMesh.circle(0.5, 16, element_tags=["body"] * 16)
     outer = LineMesh.rectangle(
-        12.0, 12.0, 16, side_tags=["bottom", "outlet", "top", "inlet"])
+        12.0, 12.0, 16, side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
     qm = QuadMesh.annulus(inner, outer, geometric_spacing(4, 1.12),
                           inner_tag="override")
     from collections import Counter
@@ -938,3 +938,34 @@ def test_spined_ogrid_boundary_wrap_is_structural():
     qm = QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
     # the filled disc's only free perimeter is the wall ring itself
     assert qm.boundary_edges().shape[0] == M
+
+
+# -- structured: edges as a keyed Mapping ------------------------------------
+
+def test_structured_accepts_edges_as_a_keyed_mapping():
+    # the same four edges named rather than positional -- byte-identical result,
+    # so the Sequence form stays the canonical one and this is pure sugar
+    seq = _tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"])
+    a = QuadMesh.structured(seq)
+    b = QuadMesh.structured(dict(zip(("bottom", "right", "top", "left"), seq)))
+    assert np.array_equal(a.points, b.points)
+    assert np.array_equal(a.quads, b.quads)
+    assert a.boundary_tags.tolist() == b.boundary_tags.tolist()
+
+
+def test_structured_edge_mapping_is_order_insensitive():
+    seq = _tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"])
+    keys = ("bottom", "right", "top", "left")
+    shuffled = {k: e for k, e in sorted(zip(keys, seq), key=lambda kv: kv[0])}
+    assert np.array_equal(QuadMesh.structured(seq).points,
+                          QuadMesh.structured(shuffled).points)
+
+
+def test_structured_edge_mapping_rejects_missing_and_unknown_keys():
+    seq = _tagged_rect_edges(3, 2, ["a", "b", "c", "d"])
+    keys = ("bottom", "right", "top", "left")
+    full = dict(zip(keys, seq))
+    with pytest.raises(ValueError):                      # all four are required
+        QuadMesh.structured({k: full[k] for k in keys[:3]})
+    with pytest.raises(ValueError):                      # typo must not pass silently
+        QuadMesh.structured({**full, "lft": full["left"]})

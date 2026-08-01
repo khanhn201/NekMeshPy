@@ -1,12 +1,18 @@
 """Variable-arity ``QuadMesh`` operations -- the only ones that build a numbering.
 
-``loft`` (``n`` line profiles -> a section, rung delta +1) and ``merge`` (``n`` sections
--> one, rung delta 0) are the two n-ary operations at this rung, and the only code here
+``loft`` (``n`` line profiles -> a section, rung delta +1), ``loft_curve`` (the same,
+with the profiles evaluated from a parametrization rather than handed in) and ``merge``
+(``n`` sections -> one, rung delta 0) are the n-ary operations at this rung, and the
+only code here
 that manufactures a global point/element index space from scratch: ``loft`` numbers the
 layer-by-layer B-rep it assembles (``prof_off`` / ``rung_off``, global id
 ``i*nn + v``), ``merge`` builds the ``remap`` / ``survivors`` / ``point_id`` tables of
 the weld.  Every fixed-arity operation either reuses an existing numbering (``blend``)
 or delegates here (``extrude``, ``from_grid``, the region factories).
+
+``loft_curve`` lives here rather than with the region fills for the same reason its
+line-rung twin does -- it *is* ``loft``, and it delegates the whole assembly to it
+through ``sweep_nodes``, contributing only the evaluation.
 
 They also differ in what they owe the B-rep: ``loft`` *generates* topology, so no
 shared entity is ever duplicated and nothing needs reconciling; ``merge`` *rewrites* it
@@ -20,7 +26,7 @@ internal toolkit code imports them from here directly rather than through the bo
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -33,7 +39,9 @@ from .._typing import (
     StrArray,
 )
 from ..linemesh import LineMesh
+from ..linemesh._assemble import _refined_lattice
 from ..model import conform
+from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ._query import _boundary_mask
 from .quadmesh import (
@@ -48,6 +56,8 @@ def loft(
     slices: Sequence[LineMesh],
     *,
     loop: bool = False,
+    sweep_nodes: Sequence[Sequence[LineMesh]] | None = None,
+    element_tags: StrArray | Sequence[str] | None = None,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
 ) -> QuadMesh:
@@ -63,7 +73,26 @@ def loft(
     ``[a_i, b_i, b_{i+1}, a_{i+1}]``.  The line's ``element_tags`` ride onto every
     quad in its column and tagged boundary points onto the swept wall edges;
     ``first_tag`` / ``last_tag`` name the near / far cap edges (scalar or per-line
-    array).
+    array).  ``element_tags`` is the orthogonal, **per-layer** dense tag array
+    (length ``nz``, ``""`` = untagged): where a layer's tag is non-empty it
+    *overrides* the profile line tag on every quad of that layer, following the
+    toolkit's upper-overrides-lower rule.  Left ``None`` the profile tags stand
+    alone, which is the historical behaviour.
+
+    **The sweep is straight unless you say otherwise.**  With only the corner-level
+    profiles to go on, each column quad is a transfinite patch curved along the
+    profile (from the slices' own nodes) and *straight along the sweep*, so at
+    ``order > 1`` a swept curved surface is high-order in storage and linear in
+    geometry between consecutive slices -- exact input rings do not save it.
+    ``sweep_nodes`` is the escape hatch, and the exact analogue of
+    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`'s ``interior``
+    override one rung down: ``sweep_nodes[i]`` is the ``order-1`` profiles lying
+    strictly *between* slice ``i`` and the slice it sweeps to, at that layer's
+    interior GLL levels.  Supplied, they replace both interpolations -- the rung
+    lines' interiors and the quads' private interiors are then read straight out of
+    them, so every node is a genuine profile point and nothing is blended.
+    :meth:`loft_curve` builds them by evaluating a parametrization on the refined
+    sweep lattice; that is the intended way in.
 
     ``loop=True`` makes the sweep **periodic**: the last profile is joined back to
     the *first*, so ``M`` profiles give ``M`` layers instead of ``M-1``.  It falls
@@ -103,6 +132,30 @@ def loft(
         raise ValueError("loft: all slices must share the same order")
     ho = order > 1
 
+    # the intermediate profiles, if any -- one list of ``order-1`` per layer, in
+    # ascending GLL-level order.  Validated here so a mis-sized stack names the
+    # layer rather than failing later inside a fancy-index.
+    sw: list[list[LineMesh]] | None = None
+    if sweep_nodes is not None:
+        sw = [list(level) for level in sweep_nodes]
+        if len(sw) != nz:
+            raise ValueError(
+                "loft: sweep_nodes must have one entry per layer (%d), got %d"
+                % (nz, len(sw)))
+        for i, level in enumerate(sw):
+            if len(level) != order - 1:
+                raise ValueError(
+                    "loft: sweep_nodes[%d] must hold order-1 = %d intermediate "
+                    "profiles, got %d" % (i, order - 1, len(level)))
+            for m in level:
+                if m.order != order or m.n_points != nn:
+                    raise ValueError(
+                        "loft: sweep_nodes[%d] profiles must match the slices "
+                        "(order %d, %d points), got order %d with %d points"
+                        % (i, order, nn, m.order, m.n_points))
+        if not ho:
+            sw = None                      # order 1 has no interior level at all
+
     a = lines[:, 0]
     b = lines[:, 1]
     # only points actually carried by a profile line get a rung (an isolated point
@@ -136,9 +189,16 @@ def loft(
         rung_off[layer] = cur
         line_rows.append(np.column_stack([layer * nn + used, j * nn + used]))
         if ho:
-            lo, hi = S[layer, used, :], S[j, used, :]
-            inter_rows.append(lo[:, None, :]
-                              + gi[None, :, None] * (hi - lo)[:, None, :])
+            if sw is not None:
+                # the true profile points at this layer's interior GLL levels --
+                # no blend, so a curved sweep survives.
+                inter_rows.append(np.stack(
+                    [np.asarray(m.points, dtype=float).reshape(-1, 3)[used]
+                     for m in sw[layer]], axis=1))          # (nu, order-1, 3)
+            else:
+                lo, hi = S[layer, used, :], S[j, used, :]
+                inter_rows.append(lo[:, None, :]
+                                  + gi[None, :, None] * (hi - lo)[:, None, :])
         cur += nu
 
     for i in range(n_prof):
@@ -175,16 +235,38 @@ def loft(
     flip: BoolArray = np.tile(
         np.array([False, False, True, True]), (nz * L, 1))
     etags: StrArray = np.asarray(slices[0].element_tags, dtype=np.str_)[l_idx]
+    if element_tags is not None:
+        # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
+        # profile's line tag on every quad of that layer.
+        layer_tags: StrArray = np.asarray(
+            element_tags, dtype=np.str_).reshape(-1)
+        if layer_tags.shape[0] != nz:
+            raise ValueError(
+                "loft: element_tags is per layer, so it needs %d entries, got %d"
+                % (nz, layer_tags.shape[0]))
+        over = layer_tags[i_idx]
+        etags = np.where(over != "", over, etags)
 
-    # order-N: each column quad is a transfinite (Coons) patch -- curved along the
-    # profile line (from the slices' own points + private interior nodes), straight
-    # along the sweep between consecutive slices.  Its boundary already lives on the
-    # merged/rung lines, so the patch is evaluated only at the private interior
-    # slots.
+    # order-N: without ``sweep_nodes`` each column quad is a transfinite (Coons)
+    # patch -- curved along the profile line (from the slices' own points + private
+    # interior nodes), straight along the sweep between consecutive slices.  Its
+    # boundary already lives on the merged/rung lines, so the patch is evaluated only
+    # at the private interior slots.
     interior: PointArray | None = None
     if ho:
         g = gll_nodes(order)
         row = order + 1
+
+        def _line_nodes(m: LineMesh) -> PointArray:
+            """That profile's ``(L, order+1, 3)`` per-line node curve, assembled
+            natively from the shared corner points and its private interiors."""
+            P: PointArray = np.asarray(m.points, dtype=float).reshape(-1, 3)
+            out: PointArray = np.empty((L, row, 3), dtype=float)
+            out[:, 0, :] = P[a]
+            out[:, order, :] = P[b]
+            out[:, 1:order, :] = np.asarray(m.interior, dtype=float)
+            return out
+
         # each profile's own high-order curve, assembled natively from the shared
         # corner points and that profile's private interior nodes
         Scur: PointArray = np.empty((n_prof, L, row, 3), dtype=float)
@@ -192,16 +274,30 @@ def loft(
         Scur[:, :, order, :] = S[:, b, :]
         Scur[:, :, 1:order, :] = np.stack(
             [np.asarray(s.interior, dtype=float) for s in slices], axis=0)
-        bottom = Scur[i_idx, l_idx]                     # (Q,row,3) a->b at i
-        top = Scur[j_idx, l_idx]                        # (Q,row,3) a->b at next(i)
-        a_lo, a_hi = S[i_idx, av], S[j_idx, av]         # (Q,3) sweep at a
-        b_lo, b_hi = S[i_idx, bv], S[j_idx, bv]         # (Q,3) sweep at b
-        gg = g[None, :, None]
-        left = a_lo[:, None, :] + gg * (a_hi - a_lo)[:, None, :]   # (Q,row,3)
-        right = b_lo[:, None, :] + gg * (b_hi - b_lo)[:, None, :]
         islots = _quad_interior_slots(order)
-        interior = _coons_at(bottom, top, left, right, g,
-                             islots % row, islots // row)
+        if sw is not None:
+            # every node of every sweep level is a genuine profile point, so the
+            # element block is a straight gather out of them -- no patch, nothing
+            # interpolated in either direction.
+            lev: PointArray = np.empty((nz, row, L, row, 3), dtype=float)
+            if nz:
+                lev[:, 0] = Scur[np.arange(nz, dtype=np.int64)]
+                lev[:, order] = Scur[nxt]
+                for k in range(1, order):
+                    lev[:, k] = np.stack(
+                        [_line_nodes(sw[i][k - 1]) for i in range(nz)], axis=0)
+            interior = lev[i_idx[:, None], (islots // row)[None, :],
+                           l_idx[:, None], (islots % row)[None, :], :]
+        else:
+            bottom = Scur[i_idx, l_idx]                 # (Q,row,3) a->b at i
+            top = Scur[j_idx, l_idx]                    # (Q,row,3) a->b at next(i)
+            a_lo, a_hi = S[i_idx, av], S[j_idx, av]     # (Q,3) sweep at a
+            b_lo, b_hi = S[i_idx, bv], S[j_idx, bv]     # (Q,3) sweep at b
+            gg = g[None, :, None]
+            left = a_lo[:, None, :] + gg * (a_hi - a_lo)[:, None, :]   # (Q,row,3)
+            right = b_lo[:, None, :] + gg * (b_hi - b_lo)[:, None, :]
+            interior = _coons_at(bottom, top, left, right, g,
+                                 islots % row, islots // row)
 
     # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
     sec_b = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
@@ -237,7 +333,186 @@ def loft(
     return QuadMesh(lm, quad, flip, interior, b_ord, n_ord,
                element_tags=etags, order=order)
 
-def merge(meshes: list[QuadMesh], *, tol: float | None = None) -> QuadMesh:
+def _loft_evaluated(
+    profs: Sequence[LineMesh],
+    t: FloatArray,
+    order: int,
+    *,
+    loop: bool = False,
+    element_tags: StrArray | Sequence[str] | None = None,
+    first_tag: str | Sequence[str] | StrArray = "",
+    last_tag: str | Sequence[str] | StrArray = "",
+    name: str = "loft_curve",
+) -> QuadMesh:
+    """The shared tail of every sweep whose profiles are **evaluated** on the refined
+    node lattice rather than handed in: validate, close the loop, split, delegate.
+
+    The quad-rung twin of ``hexmesh._assemble._loft_evaluated``.  ``profs`` is one
+    profile per entry of the sweep lattice ``t`` (``nz*order + 1`` of them; ``t`` is in
+    the caller's own parameter units and is used only in error messages);
+    ``profs[i*order]`` are the corner-level slices and the ``order-1`` profiles between
+    consecutive ones are that layer's :func:`loft` ``sweep_nodes``.  Every profile must
+    be index-paired and conformal with the first, and with ``loop=True`` the trailing
+    wrap profile must reproduce the first point-for-point
+    (``model.conform.entity_tol``) before it is dropped -- its layer's intermediates
+    stay, since they are what curve the seam.  ``name`` is the caller's name for the
+    error messages.
+
+    Factored out of :func:`loft_curve` so a sweep that already *has* the profile list
+    (rather than a callable to evaluate) reuses the same contract instead of restating
+    it -- which is exactly what ``QuadMesh.sweep`` needs, because a
+    rotation-minimizing frame is integrated along the whole path and cannot be
+    evaluated at one isolated parameter value."""
+    profs = list(profs)
+    if len(profs) != t.shape[0]:
+        raise ValueError(
+            "%s: expected one profile per sweep lattice value (%d), got %d"
+            % (name, t.shape[0], len(profs)))
+    nz = (len(profs) - 1) // order
+    ref = profs[0]
+    ref_lines = np.asarray(ref.lines, dtype=np.int64).reshape(-1, 2)
+    for k, m in enumerate(profs):
+        if m.order != order:
+            raise ValueError(
+                "%s: f(%g) returned an order-%d profile, but order=%d was "
+                "requested" % (name, t[k], m.order, order))
+        if (m.n_points != ref.n_points
+                or not np.array_equal(
+                    np.asarray(m.lines, dtype=np.int64).reshape(-1, 2), ref_lines)):
+            raise ValueError(
+                "%s: every profile must be index-paired and conformal with "
+                "the first, but f(%g) returned %d points / %d lines against f(%g)'s "
+                "%d / %d.  Place one profile with the affine ops rather than "
+                "rebuilding it per parameter."
+                % (name, t[k], m.n_points, m.n_lines, t[0], ref.n_points,
+                   ref.n_lines))
+
+    if loop:
+        # the wrap level must land back on level 0; drop it, but keep the seam
+        # layer's own intermediate levels -- they are what curve the seam.
+        P0 = np.asarray(profs[0].points, dtype=float).reshape(-1, 3)
+        Pw = np.asarray(profs[-1].points, dtype=float).reshape(-1, 3)
+        gap = float(np.max(np.linalg.norm(Pw - P0, axis=1))) if P0.size else 0.0
+        tol = entity_tol(P0)
+        if gap > tol:
+            raise ValueError(
+                "%s(loop=True) needs the last fraction to map back to the "
+                "first profile, but f(%g) and f(%g) are %g apart (tolerance %g).  "
+                "Pass the trailing wrap value as the final fraction, or use "
+                "loop=False." % (name, t[-1], t[0], gap, tol))
+        profs = profs[:-1]
+
+    slices = profs[::order]
+    sweep_nodes = [profs[i * order + 1:(i + 1) * order] for i in range(nz)]
+    return loft(slices, loop=loop,
+                sweep_nodes=sweep_nodes if order > 1 else None,
+                element_tags=element_tags,
+                first_tag=first_tag, last_tag=last_tag)
+
+
+def loft_curve(
+    f: Callable[[float], LineMesh],
+    fractions: FloatArray,
+    *,
+    loop: bool = False,
+    order: int | None = None,
+    element_tags: StrArray | Sequence[str] | None = None,
+    first_tag: str | Sequence[str] | StrArray = "",
+    last_tag: str | Sequence[str] | StrArray = "",
+) -> QuadMesh:
+    """Loft a section from a **parametrized family of profiles** -- :func:`loft` with
+    the slices evaluated rather than handed in, so **every** node (the corners *and*
+    the sweep-direction high-order nodes) comes from calling ``f`` and nothing is
+    blended along the sweep.
+
+    This is the quad rung of
+    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`, and it
+    exists for the same reason: a plain :func:`loft` has only the corner-level
+    profiles to go on, so at ``order > 1`` it subdivides the sweep straight and a
+    swept curved surface ends up high-order in storage and linear in geometry (a
+    torus lofted from *exact* rings puts its interior nodes tens of percent of the
+    tube radius off the true surface).  Evaluating the profiles at the intermediate
+    GLL levels too is what closes that.
+
+    ``f`` maps a **single parameter value** to that profile as a ``LineMesh`` and is
+    called once per node level -- ``n*order + 1`` times, or ``n*order`` when looping.
+    Every profile it returns must be index-paired and conformal with the first: same
+    ``lines``, same point count, same ``order``.  The robust idiom is to build one
+    profile and *place* it with the affine ops (``ring.rotate(t, axis=...)
+    .translate(...)``), which move no index and are exact; re-deriving it from a
+    factory whose orientation depends on ``t`` can silently renumber it.
+
+    **Why ``f`` is scalar here and ``sweep``'s ``path`` is vectorized.**  ``f`` returns
+    a *mesh*, and a callable that hands back one mesh can only be given one parameter
+    value -- there is no array-of-meshes for a vectorized form to return (which is also
+    why :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`, whose
+    ``f`` returns plain coordinates, *is* vectorized).  :func:`sweep`'s ``path`` is
+    vectorized for a different reason again: it returns coordinates *and* the default
+    frame generator is a sequential integration along the whole curve, so it cannot be
+    evaluated at one isolated parameter at all.
+
+    ``order`` defaults to ``None`` = **inferred**: ``f`` is called once at
+    ``fractions[0]`` purely to read ``.order`` off the profile it returns, and the real
+    sweep then proceeds as usual -- so a ``None`` order costs exactly one extra
+    evaluation of ``f`` (the lattice the profiles are sampled on depends on the order,
+    so it cannot be built before the order is known).  Pass an explicit ``int`` to
+    assert it instead: a profile of a different order is then a ``ValueError`` naming
+    the mismatch, and no probe call is made.  There is no inference at the line rung --
+    ``LineMesh.loft_curve``'s ``f`` returns points, not a mesh, so its ``order`` is
+    constructive rather than inherited.
+
+    ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
+    normalization and no remapping -- the same contract as at the line rung -- so
+    ``len(fractions) - 1`` is the layer count and the grading is honored *per layer*:
+    layer ``i``'s sweep-direction nodes ride the GLL nodes of its own
+    ``fractions[i] .. fractions[i+1]`` span.
+
+    ``loop=True`` makes the sweep periodic and takes the **trailing wrap value**, as
+    at the line rung: pass ``n+1`` fractions whose last maps back to the first
+    profile and the result has ``n`` layers with the seam a genuine shared entity.
+    The wrap value stays in because it is what gives the seam layer a far parameter
+    to evaluate its interior levels at.  That ``f(fractions[-1])`` really does
+    reproduce ``f(fractions[0])`` is checked, not assumed (``ValueError`` otherwise,
+    at the scale-relative coincidence tolerance ``model.conform.entity_tol``).  A
+    closed sweep has no near/far cap, so ``first_tag`` / ``last_tag`` are rejected.
+
+    ``element_tags`` is the per-layer tag array and the caps the per-line ones,
+    exactly as on :func:`loft`, which does all the assembly and whose numbering is
+    carried up unchanged."""
+    fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
+    nz = fr.shape[0] - 1
+    if nz < 1:
+        raise ValueError(
+            "loft_curve needs at least 2 fractions (one layer), got %d"
+            % fr.shape[0])
+    if loop:
+        reject_loop_caps("QuadMesh.loft_curve", first_tag, last_tag)
+        if nz < 2:
+            raise ValueError(
+                "loft_curve(loop=True) needs at least 3 fractions (two layers), "
+                "got %d -- the last one is the wrap back to the first profile, so "
+                "it is not a level of its own" % fr.shape[0])
+    if order is None:
+        # The node lattice the profiles are sampled on is a function of the order, so
+        # the order has to be settled before the sweep can start -- and ``f`` is the
+        # only thing that knows it.  One throwaway evaluation at the first fraction is
+        # the whole cost; the profile it returns is discarded and re-evaluated with
+        # the rest, so no partial state leaks out of the probe.
+        probe = f(float(fr[0]))
+        if not isinstance(probe, LineMesh):
+            raise TypeError(
+                "loft_curve: f must return a LineMesh profile, but f(%g) returned %s. "
+                "Pass order= explicitly only if you also fix f." % (fr[0], type(probe)))
+        order = probe.order
+
+    t: FloatArray = _refined_lattice(fr, order)
+    profs: list[LineMesh] = [f(float(v)) for v in t]
+    return _loft_evaluated(profs, t, order, loop=loop,
+                           element_tags=element_tags,
+                           first_tag=first_tag, last_tag=last_tag)
+
+
+def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     """Merge quad sections into one, welding coincident boundary points.
     ``tol`` is the absolute coincidence distance (default ``1e-7`` x the extent).
     Tagged ``boundaries`` and dense ``element_tags`` concatenate with each
@@ -316,5 +591,6 @@ def merge(meshes: list[QuadMesh], *, tol: float | None = None) -> QuadMesh:
 #: Variable-arity combinators bound onto ``QuadMesh`` as ``staticmethod``.
 FACTORIES: dict[str, Any] = {
     "loft": loft,
+    "loft_curve": loft_curve,
     "merge": merge,
 }

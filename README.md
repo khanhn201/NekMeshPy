@@ -33,15 +33,15 @@ operations on a finished mesh are free functions taking the mesh first.
 
 ```python
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
-from nekmeshpy.model.fields import uniform_spacing
 
 # Tag the wall on the boundary loop; the tag rides up line -> quad -> hex.
 boundary = LineMesh.circle(radius=1.0, n=24, element_tags=["wall"] * 24)
 
 # Fill the loop with an O-grid section, then sweep it into a hex block.
-section = QuadMesh.ogrid(boundary, n_side=6, radial=uniform_spacing(4))
-block   = HexMesh.extrude(section, axis=(0, 0, 1), length=5.0,
-                          layers=uniform_spacing(40),
+# radial / layers count *cells*: an int is n uniform layers; pass an explicit
+# array of normalized positions (geometric_spacing(n, r), ...) to grade them.
+section = QuadMesh.ogrid(boundary, n_side=6, radial=4)
+block   = HexMesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
                           first_tag="inlet", last_tag="outlet")
 
 # Boundaries are named at build time; map each name -> Nek BC code at export.
@@ -51,8 +51,15 @@ export.write(block, "pipe.vtu", groups=codes)  # anything meshio supports
 
 assert block.is_watertight()                   # closed, leak-tight, single body
 assert block.is_conforming()                   # no hanging-point / T-junction faces
-print(block.quality_summary())
+print(block)                       # <HexMesh 5945 points, 5280 hexes, order 1, ...>
+print(block.quality_summary().min) # a QualitySummary NamedTuple, not a dict
 ```
+
+Every container has a `__repr__` that names its size, order and tag vocabulary, and the
+report-returning functions hand back **NamedTuples** rather than dicts —
+`quality_summary()` a `QualitySummary` (`n_elements`/`min`/`max`/`mean`/`median`/
+`n_inverted`/`n_poor`), `topology_report()` a `TopologyReport` — so a typo in
+`stats.n_inverted` is a `mypy` error instead of a `KeyError` at runtime.
 
 ## Examples
 
@@ -88,12 +95,58 @@ sections = [...]                                   # rings revolved about an axi
 torus    = QuadMesh.loft(sections, loop=True)      # closed surface, zero free edges
 ```
 
+### Bending along a path with `sweep`
+
+`loft` asks you to position every profile. When each station is the **same section**
+carried along a curve — a pipe through a 90° elbow, a U-turn, a coil —
+`QuadMesh.sweep` / `HexMesh.sweep` do the placing, from a moving frame:
+
+```python
+disc = QuadMesh.ogrid(LineMesh.circle(0.1, 20, order=2), n_side=5, radial=3)
+bend = HexMesh.sweep(disc, path, np.linspace(0.0, 1.0, 21),   # path: (K,) -> (K,3)
+                     origin=(0, 0, 0),          # the section's reference point
+                     tangent=dpath, orientation="fixed", up=(0, 1, 0))
+```
+
+The section is placed **rigidly** (`p ↦ path(t) + R(t) @ p_local`), never offset
+point-by-point — which is the whole point, because through a bend of radius `Rb` the
+outboard wall traverses `Rb + d` and the inboard `Rb - d`, so neither follows the
+centreline. The intermediate GLL stations are evaluated too, so the bend is exact at
+`order > 1` along the sweep as well as around the section — there is no `order=` here,
+because a rigid placement cannot change the section's own order. `origin=` is
+**required**: it is the section's reference point, the one that rides the path, and it
+has no safe default — an O-grid disc's centroid is *not* its centre, so the obvious
+guess gave a quietly off-axis block. `orientation=` names a *mode* and nothing else —
+`"transport"` (rotation-minimizing, right on a non-planar path), `"fixed"` with an
+`up=`, or `"frenet"` (present, but undefined on a straight run) — and a per-station up
+field is a `(K,3)` `up=` alongside `orientation="fixed"`, not something passed as the
+mode. Whichever you pick, station 0 lands the section exactly as authored. `loop=True`
+closes the sweep on the *identical* first placement, so a solid torus welds exactly.
+
+A path assembled from pieces (straights and arcs) has curvature that **jumps** at each
+junction, and an element straddling one is fitted across two different geometries —
+a visible kink in the wall. `LineMesh.sweep_fractions(breaks, total_length, target)`
+returns the stations that avoid it: each interval between consecutive junctions is
+subdivided on its own at roughly `target`, so every junction reappears in the output
+bit-for-bit instead of being approached by a global `linspace`. Like
+`LineMesh.arclength_fractions` and `QuadMesh.spine_fractions` it is a helper, not a
+factory — it returns a plain array of `fractions`, because the sweep meshes exactly at
+the stations it is given. See `examples/serpentine_pipe.py`.
+
 ### High-order (order-N) elements
 
-Every factory takes an optional `order=N` (default `1`): each element then carries
-`(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction (line `N+1`, quad
-`(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's re2 has no
-high-order format yet), so a mesh exports byte-identically at any order, while `.vtu`
+The order is declared **once, at the bottom of the ladder**. A factory that builds its
+points from nothing takes an optional `order=N` (default `1`) — `LineMesh.circle` /
+`arc` / `line` / `rectangle` / `loft`, `QuadMesh.box` / `sphere` / `rectangle` /
+`from_grid`, `HexMesh.from_grid`; everything that takes a *mesh* in (`ogrid`,
+`structured`, `annulus`, `extrude`, `sweep`, `blend`, `loft`, `merge`) has no `order=`
+at all and inherits it from its inputs, rejecting a mismatch loudly. So `order=` is set
+on the boundary loop and rides all the way up. (`QuadMesh.loft_curve` /
+`HexMesh.loft_curve` keep an `order: int | None = None` because they *evaluate*
+profiles rather than receive them; `None` means the profiles' own.) At order `N` each
+element carries `(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction (line
+`N+1`, quad `(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's
+re2 has no high-order format yet), so a mesh exports byte-identically at any order, while `.vtu`
 emits VTK Lagrange cells (68 / 70 / 72) that ParaView and VisIt render as curved
 geometry. To hand the curved geometry to Nek itself, use `export.to_fld`, which writes
 the Nek field format (`<prefix>0.f00001`, `fields="X"`) — that one *does* store the
@@ -116,15 +169,23 @@ the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.
 
 **Curved geometry is not automatic.** Factories that own an analytic shape place the
 extra nodes on it — `LineMesh.circle` / `LineMesh.arc` on the exact arc,
-`LineMesh.curve` on any analytic parametrization you hand it (it calls your callable on
+`LineMesh.loft_curve` on any analytic parametrization you hand it (it calls your callable on
 the whole node lattice, corners *and* interiors),
+`QuadMesh.loft_curve` / `HexMesh.loft_curve` doing the same one and two rungs up along the
+*sweep* (your callable returns a `LineMesh` profile / `QuadMesh` section and is called at
+every node level, not just the corner levels),
+`QuadMesh.sweep` / `HexMesh.sweep` carrying **one** profile along a curved path by a moving
+frame (a bent pipe from one O-grid disc),
 `QuadMesh.sphere` / `QuadMesh.hemisphere` projecting every node onto the exact sphere —
-the region fills (`ogrid` / `half_ogrid` / `structured`) carry their input walls'
+the region fills (`ogrid` / `half_ogrid` / `quadrant_ogrid` / `structured`) carry their input walls'
 curvature into the interior as well as onto the wall, and the combinators (`extrude` /
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
 (`LineMesh.loft`, `from_grid`) has only those points to go on and
 straight-subdivides between them: high order in storage, linear in geometry — so pass
-`LineMesh.curve` a closed form rather than sampling it into an array. Order-N
+`LineMesh.loft_curve` a closed form rather than sampling it into an array. A plain
+`QuadMesh.loft` is the same trap along its *sweep* direction — exact profiles still give a
+surface that is straight between them — so reach for `loft_curve` or `sweep` (or hand
+`loft` the intermediate profiles as `sweep_nodes=`) when the sweep path is curved. Order-N
 smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
 above order 1 rather than degrading silently.
 

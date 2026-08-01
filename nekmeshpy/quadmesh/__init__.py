@@ -8,8 +8,8 @@ ladder the operation moves):
 ============== ======== ===== ===============================================
 module         arity    delta contents
 ============== ======== ===== ===============================================
-``_assemble``  n-ary    +1/0  ``loft``, ``merge`` -- build a new index space
-``_lift``      fixed    +1    ``extrude``/``annulus``/``from_grid`` -> ``loft``
+``_assemble``  n-ary    +1/0  ``loft``, ``loft_curve``, ``merge`` -- new index space
+``_lift``      fixed    +1    ``extrude``/``sweep``/``annulus``/``from_grid`` -> ``loft``
 ``_morph``     fixed     0    ``blend`` + ``translate``/``rotate``/``scale``
 ``_query``     fixed     exit read-only queries returning plain arrays
 ``_open``      fixed    +1    region fills (``structured`` / ``ogrid`` / ...)
@@ -24,7 +24,11 @@ the class below.  ``_open`` carries a third one, ``HELPERS``: also ``staticmetho
 but for functions that answer a question *about* a factory's input contract and return a
 plain array rather than a mesh, which is what keeps them out of ``FACTORIES``
 (``QuadMesh.spine_fractions``, the sampling a ``spined_ogrid``/``half_ogrid`` spine must
-carry -- neither factory resamples one).  So callers write ``QuadMesh.ogrid(...)`` / ``qm.boundary_edges()``
+carry; ``QuadMesh.quadrant_seam_fractions``, the one a ``quadrant_ogrid`` seam must --
+no factory resamples one; and ``QuadMesh.quadrant_core``, the core patch
+``quadrant_ogrid`` builds its own core with, exposed so a block filling the region
+*behind* a quadrant face can land on the same points instead of reproducing the
+formula).  So callers write ``QuadMesh.ogrid(...)`` / ``qm.boundary_edges()``
 while adding an operation touches only the sibling module (the function plus one
 registry entry), never the container or this file.  The shared ``_apply_smoothing`` /
 ``_check_boundary`` / ``_elevate`` factory internals live in ``_helpers.py``.

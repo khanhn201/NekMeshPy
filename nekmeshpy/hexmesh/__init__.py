@@ -8,8 +8,8 @@ ladder the operation moves):
 ============== ======== ===== ===============================================
 module         arity    delta contents
 ============== ======== ===== ===============================================
-``_assemble``  n-ary    +1/0  ``loft``, ``merge`` -- build a new index space
-``_lift``      fixed    +1    ``extrude``/``annulus``/``from_grid`` -> ``loft``
+``_assemble``  n-ary    +1/0  ``loft``, ``loft_curve``, ``merge`` -- new index space
+``_lift``      fixed    +1    ``extrude``/``sweep``/``annulus``/``from_grid`` -> ``loft``
 ``_morph``     fixed     0    ``blend`` + ``translate``/``rotate``/``scale``
 ``_query``     fixed     exit read-only queries, topology and reporting
 ============== ======== ===== ===============================================

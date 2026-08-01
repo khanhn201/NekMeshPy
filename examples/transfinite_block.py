@@ -74,7 +74,7 @@ mesh = HexMesh.from_grid(P, face_tags={s: s for s in SIDES}, order=ORDER)
 # -- report + export ---------------------------------------------------------
 stats = mesh.quality_summary()
 print("block: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
-print("scaled Jacobian: min=%.4f mean=%.4f" % (stats["min"], stats["mean"]))
+print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

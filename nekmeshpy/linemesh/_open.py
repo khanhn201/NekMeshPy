@@ -1,5 +1,10 @@
 """Open :class:`~nekmeshpy.LineMesh` factories: curves with free ends that do not
-close on themselves (``line`` / ``arc`` / ``curve``).
+close on themselves (``line`` / ``arc``), plus the ``arclength_fractions`` /
+``sweep_fractions`` sampling helpers.
+
+The general parametrized curve is **not** here: it authors its own connectivity and
+takes the same ``loop`` flag as the sweep primitive, so it lives beside it as
+:func:`~nekmeshpy.linemesh._assemble.loft_curve`.
 
 These are plain free functions returning a ``LineMesh``; ``linemesh/__init__.py``
 binds each entry of ``FACTORIES`` onto the class, so callers use ``LineMesh.line(...)``
@@ -14,9 +19,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._typing import FloatArray, IntArray, Point, PointArray, StrArray, Vec3
-from ..model.fields import gll_nodes
-from ._assemble import loft
+from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
+from ._assemble import _eval_curve, loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 
 if TYPE_CHECKING:
@@ -103,34 +107,6 @@ def arc(radius: float, n: int, *,
                          order=order)
 
 
-def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
-    """The ``n*order + 1`` parameter positions of **every** node of the order-``order``
-    chain graded by ``fractions`` (``n = len(fractions) - 1`` elements): element ``i``'s
-    node ``a`` sits at ``fr[i] + g[a]*(fr[i+1] - fr[i])`` for the GLL nodes ``g`` on
-    ``[0, 1]``, and the chain ends at ``fr[-1]``.
-
-    This is the 1-D twin of :func:`~nekmeshpy.quadmesh._open._refined_params`; the
-    grading rides in ``fractions`` rather than being assumed uniform, so each element's
-    private interior lands inside that element's own span.  At ``order == 1``
-    (``g = [0, 1]``) it is exactly ``fractions``, so the order-1 placement falls out by
-    construction rather than by a branch."""
-    g: FloatArray = gll_nodes(order)
-    fr = fractions
-    u: FloatArray = (fr[:-1, None]
-                     + g[None, :order] * np.diff(fr)[:, None]).ravel()
-    return np.concatenate([u, fr[-1:]])
-
-
-def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointArray:
-    """``f(t)`` as a validated ``(len(t), 3)`` array."""
-    P: PointArray = np.asarray(f(t), dtype=float)
-    if P.shape != (t.shape[0], 3):
-        raise ValueError(
-            "curve callable must return (len(t), 3) points; got shape %r for %d "
-            "parameters" % (P.shape, t.shape[0]))
-    return P
-
-
 def _arclength_params(f: Callable[[FloatArray], PointArray], t0: float, t1: float,
                       samples: int) -> tuple[FloatArray, FloatArray]:
     """``(t_dense, s_dense)`` -- ``samples`` parameters spanning ``[t0, t1]`` and their
@@ -152,10 +128,11 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     """The ``(n+1,)`` **parameter values** spanning ``t_range`` -- from ``t_range[0]``
     to ``t_range[1]`` -- at which ``f`` must be evaluated for the resulting ``n+1``
     points to be evenly spaced by **arc length**: hand the result straight to
-    :func:`curve` as its ``fractions``, with no further scaling
-    (``curve(f, arclength_fractions(f, n, t_range=...), order=N)``).
+    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` as its
+    ``fractions``, with no further scaling
+    (``loft_curve(f, arclength_fractions(f, n, t_range=...), order=N)``).
 
-    ``t_range`` is the parameter interval to invert over -- unlike :func:`curve`, this
+    ``t_range`` is the parameter interval to invert over -- unlike ``loft_curve``, this
     helper genuinely needs a domain, because the chord table is built by sampling it
     densely.  A descending range needs no special handling: the returned values simply
     run from ``t_range[0]`` down to ``t_range[1]``, which meshes the curve backwards.
@@ -163,7 +140,7 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     The inversion goes through a cumulative **chord**-length table of ``samples`` dense
     evaluations of ``f``, so only *where along* the curve the nodes end up inherits that
     table's discretization error.  Every node of the resulting mesh still lies on the
-    curve to machine precision, because :func:`curve` places it by evaluating ``f`` and
+    curve to machine precision, because ``loft_curve`` places it by evaluating ``f`` and
     never by interpolating this table -- raise ``samples`` for a more even spacing, not
     for a more accurate curve."""
     ni = int(n)
@@ -180,74 +157,64 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     return t
 
 
-def curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
-          order: int = 1,
-          element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
-    """An **open** curve meshed on its own analytic parametrization, with **every**
-    node -- corners *and* the private high-order ``interior`` -- evaluated by calling
-    ``f``, so nothing is ever placed on a chord.
+def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
+                    target: float) -> FloatArray:
+    """Normalized sweep stations in ``[0, 1]`` that put a node **exactly on every
+    junction** of a piecewise path, subdividing each piece at roughly ``target``.
 
-    ``f`` maps a ``(K,)`` parameter array to ``(K, 3)`` points and is called **once**
-    with the whole node lattice (vectorize it; ``np.column_stack`` of the three
-    component expressions is the usual shape).
+    ``breaks`` are the cumulative arc-length positions (in the same units as
+    ``total_length``, strictly ascending, strictly inside ``(0, total_length)``) of the
+    path's interior junctions -- for a turtle-walked centerline, ``cumsum(seg_len)``
+    with its first and last entries dropped.  ``target`` is the desired element length
+    along the sweep.
 
-    ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
-    normalization and no remapping: node ``k`` is ``f(fractions[k])``, and there are
-    ``len(fractions) - 1`` line elements.  The caller states the domain by choosing the
-    values -- for an ``f`` written on ``[0, 1]`` they are exactly the normalized
-    fractions the sibling
-    :meth:`LineMesh.line <nekmeshpy.linemesh.LineMesh.line>` takes, and an ``f`` written
-    on any other interval is sampled in its own units
-    (``np.linspace(0.0, np.pi, n + 1)`` for a uniform chain over ``[0, pi]``).  A
-    descending sequence runs the curve backwards; nothing here requires ascending order.
+    Each interval between consecutive breaks (and the two end intervals against ``0``
+    and ``total_length``) is split into ``max(1, round(interval / target))`` equal
+    steps *on its own*, so the breaks reappear in the output bit-for-bit rather than
+    being approached by a global ``linspace``.  That is the whole point: a path's
+    curvature is piecewise constant and **jumps** at a junction, so an element that
+    straddled one would be fitted across two different geometries -- visible as a kink
+    in the wall of a swept bend.  The result is strictly ascending, opens with ``0.0``,
+    contains every ``break / total_length``, and closes with ``1.0``.
 
-    The values grade the nodes in **parameter** space; for nodes spaced evenly by **arc
-    length** pass :meth:`LineMesh.arclength_fractions
-    <nekmeshpy.linemesh.LineMesh.arclength_fractions>`, whose chord-length table
-    perturbs only *where along* the curve the nodes sit -- every node still lies on the
-    curve to machine precision, because it is placed by evaluating ``f`` and never by
-    interpolating the table.  At ``order > 1`` the grading is honored **per element**:
-    element ``i``'s private ``interior`` rides the GLL nodes of its own
-    ``fractions[i] .. fractions[i+1]`` span.
-
-    This is the general sibling of
-    :meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`, which is the special case
-    ``f = circle`` (kept separate because it can place its nodes without an inversion
-    and to the last ulp).  Reach for ``curve`` whenever a curve has a closed form that
-    is not a circular arc -- an ellipse, a helix, a cylinder-cylinder intersection --
-    instead of sampling it into an array and calling
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`, which can only subdivide
-    straight between the samples and therefore loses the curve at ``order > 1``.  For a
-    curve with **no** closed form (a scanned polyline) there is nothing to evaluate;
-    resample it with ``trimesh.ops.resample_polyline`` and accept the chord.
-
-    ``element_tags`` (length ``len(fractions) - 1``) tags the line elements at
-    construction; ``order`` (default 1 = linear) sets the polynomial order.  The result
-    is always an open chain -- for a closed parametric loop, mesh it here and weld the
-    ends with :meth:`LineMesh.merge <nekmeshpy.linemesh.LineMesh.merge>`."""
-    fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    ni = fr.shape[0] - 1
-    if ni < 1:
+    Hand it straight to the ``fractions`` of
+    :meth:`HexMesh.sweep <nekmeshpy.hexmesh.HexMesh.sweep>` /
+    :meth:`QuadMesh.sweep <nekmeshpy.quadmesh.QuadMesh.sweep>` (or of
+    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`) whose path is
+    parametrized by normalized arc length.  Like
+    :func:`arclength_fractions` it is a ``HELPERS`` entry, not a factory: it answers a
+    question about a sweep's input contract and returns a plain array, since the sweep
+    itself meshes exactly at the stations given."""
+    L = float(total_length)
+    if not L > 0.0:
+        raise ValueError("sweep_fractions needs total_length > 0, got %g" % L)
+    tgt = float(target)
+    if not tgt > 0.0:
+        raise ValueError("sweep_fractions needs target > 0, got %g" % tgt)
+    br: FloatArray = np.asarray(breaks, dtype=float).ravel()
+    if br.size and (br[0] <= 0.0 or br[-1] >= L):
         raise ValueError(
-            "curve needs at least 2 fractions (one element), got %d" % fr.shape[0])
-
-    # every node of the chain, corners and interiors alike, as one parameter array --
-    # so the interiors ride the true curve instead of ``loft``'s straight chord blend.
-    t: FloatArray = _refined_lattice(fr, order)
-    P: PointArray = _eval_curve(f, t)
-
-    if order == 1:
-        return loft(P, element_tags=element_tags)
-    slot: IntArray = (np.arange(ni)[:, None] * order
-                      + np.arange(1, order)[None, :])        # (n, order-1)
-    return loft(P[::order], interior=P[slot], element_tags=element_tags, order=order)
+            "sweep_fractions breaks must lie strictly inside (0, %g) -- they are the "
+            "path's *interior* junctions, and 0 / total_length are always stations "
+            "anyway (got %g .. %g)" % (L, br[0], br[-1]))
+    if br.size > 1 and not np.all(np.diff(br) > 0.0):
+        raise ValueError(
+            "sweep_fractions breaks must be strictly ascending cumulative arc lengths")
+    s: FloatArray = br / L
+    pieces: list[FloatArray] = []
+    for a, b in zip(np.concatenate([[0.0], s]), np.concatenate([s, [1.0]])):
+        # round-to-nearest on the piece's own length, floored at one element: a piece
+        # shorter than ``target`` still gets an element rather than vanishing.
+        n = max(1, int(round((b - a) * L / tgt)))
+        pieces.append(np.linspace(a, b, n + 1)[:-1])   # drop the shared end station
+    out: FloatArray = np.concatenate(pieces + [np.array([1.0])])
+    return out
 
 
 #: Open-curve factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.
 FACTORIES: dict[str, Callable[..., LineMesh]] = {
     "line": line,
     "arc": arc,
-    "curve": curve,
 }
 
 #: Open-curve helpers bound onto ``LineMesh`` as ``staticmethod``s.  These answer a
@@ -255,4 +222,5 @@ FACTORIES: dict[str, Callable[..., LineMesh]] = {
 #: mesh, which is what keeps them out of ``FACTORIES``.
 HELPERS: dict[str, Callable[..., FloatArray]] = {
     "arclength_fractions": arclength_fractions,
+    "sweep_fractions": sweep_fractions,
 }

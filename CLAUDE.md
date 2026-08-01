@@ -83,6 +83,18 @@ modules `hexmesh.smoothing` / `quadmesh.smoothing`. Don't add heavy
 methods to the containers; add a function in the right `<type>`/`model`/`io`
 module.
 
+**The report functions return `NamedTuple`s, not dicts.** `quality_summary` hands back a
+`QualitySummary` (`n_elements`/`min`/`max`/`mean`/`median`/`n_inverted`/`n_poor`) whose schema
+lives container-free in `model/quality.py` beside the `POOR_THRESHOLD` constant that names both
+its `n_poor` field and the `poor (<…)` line of the formatted report — one number, so the two
+cannot drift apart (as a `"n_below_0.2"` dict key it was baked into the public schema four times
+over, and it is not even a valid identifier, which is what kept the summary a dict). `hex_report` /
+`HexMesh.topology_report()` return a `TopologyReport` whose old `"kind": "hex"` discriminator is
+**gone** — it existed only so `format_report` could tell a hex report from a surface one, and the
+type says that now. `hexmesh` `weld` returns `WeldResult(points, hexes, n_points)`. `trimesh`'s
+`surface_report` deliberately still returns a dict, which is exactly what `format_report`'s
+`isinstance` dispatch keys the surface branch off.
+
 **Public API is re-exported from the top level** (`nekmeshpy/__init__.py`), so
 `from nekmeshpy import ...` is stable regardless of internal file layout. Keep `__all__`
 and the imports in sync when adding/removing public names.
@@ -119,8 +131,11 @@ and the imports in sync when adding/removing public names.
   `LineMesh.line(start, end, fractions, *, element_tag=…)` (open straight edge placed exactly at
   `start + f*(end-start)` for each normalized-arc-length `f` — the graded-edge sibling of
   `circle`/`rectangle`; `element_tag` names every line element),
-  `LineMesh.curve(f, fractions, *, order=1, element_tags=…)` (open; the
-  **general sibling of `LineMesh.arc`** — meshes a
+  `LineMesh.loft_curve(f, fractions, *, loop=False, order=1, element_tags=…)` (the
+  **general sibling of `LineMesh.arc`**, and — being the one op besides `loft`/`merge` that
+  authors a global index space — it lives in `linemesh/_assemble.py` beside `loft`, not with
+  the shape factories: it *is* `loft`, with the profiles **evaluated** from a parametrization
+  instead of handed in, so open-vs-closed is a `loop` flag here exactly as it is there. Meshes a
   curve on its own analytic parametrization. `f` maps a `(K,)` parameter array to `(K,3)` points
   and is called **once with the whole node lattice** — corners *and* the private high-order
   `interior` GLL nodes — so nothing is ever placed on a chord. This is what closes the
@@ -131,18 +146,20 @@ and the imports in sync when adding/removing public names.
   there are `len(fractions)-1` elements. The caller states the domain by choosing the values: for
   an `f` written on `[0,1]` they are exactly the normalized fractions the sibling `LineMesh.line`
   takes, and an `f` written on any other interval is sampled in its own units
-  (`curve(f, np.linspace(0.0, np.pi, n+1))`); a descending sequence is the supported way to
+  (`loft_curve(f, np.linspace(0.0, np.pi, n+1))`); a descending sequence is the supported way to
   reverse the traversal. The grading is honored **per element** at `order > 1`:
   element `i`'s private `interior` rides the GLL nodes of its own `fractions[i]..fractions[i+1]`
   span (`_refined_lattice`), which the old `n`-only form could not express. Even **arc-length**
   spacing is now an explicit caller step rather than a mode: the helper
   `LineMesh.arclength_fractions(f, n, *, t_range=(0.0, 1.0), samples=1001)` returns the `(n+1,)`
   **parameter values** spanning `t_range`, evenly spaced by arc length, to hand straight to
-  `curve` unscaled. It keeps a `t_range` where `curve` has none because it genuinely needs a
+  `loft_curve` unscaled. It keeps a `t_range` where `loft_curve` has none because it genuinely
+  needs a
   domain: it inverts a cumulative **chord**-length table of `samples`
   dense evaluations of `f` over that interval; only the node *positions along* the curve inherit that
   table's discretization error — every node still lies on the curve to machine precision, because
-  `curve` places it by evaluating `f` and never by interpolating the table, so raising `samples`
+  `loft_curve` places it by evaluating `f` and never by interpolating the table, so raising
+  `samples`
   improves the evenness of the spacing, not the accuracy of the curve. It is bound onto
   `LineMesh` as a `staticmethod` through a **`HELPERS` registry** in `linemesh/_open.py`, the
   twin of `quadmesh/_open.py`'s and kept out of `FACTORIES` for the same reason (it returns a
@@ -150,17 +167,26 @@ and the imports in sync when adding/removing public names.
   the points given and the caller proves the sampling, which is why `spined_ogrid` stopped
   resampling its spine too. `arc` is **not**
   reimplemented on top of it: `arc` places its nodes without an inversion and to the last ulp.
-  The result is always an open chain — for a closed parametric loop, mesh it here and weld the
-  ends with `LineMesh.merge` (`bifurcation.py::fourier_wall`). For a curve with **no** closed
+  `loop=True` closes the curve exactly as it does on `loft`, and takes the **trailing wrap
+  value**: pass `n+1` fractions whose last maps back to the first point
+  (`np.linspace(0, 2*np.pi, n+1)` for a `2π`-periodic `f`) and the result is a ring of `n`
+  points and `n` lines with no degree-1 end, the seam element's own private `interior`
+  evaluated on `fr[n-1]..fr[n]` like every other element's. The wrap value is *why* the
+  convention is `n+1` fractions rather than inferring a period — without it the seam element
+  has no far parameter to evaluate at and would be straight-subdivided, which is the whole
+  defect this function exists to close. `f(fr[-1])` must land on `f(fr[0])` within
+  `conform.entity_tol` or it is a loud `ValueError`. Welding two ends with `LineMesh.merge`
+  after an open mesh (`bifurcation.py::fourier_wall`) remains valid and is what a curve
+  assembled from *several* parametrizations still needs. For a curve with **no** closed
   form (a scanned polyline) there is nothing to evaluate — but a *closed* scanned loop can be
   given one by refitting it: `bifurcation.py::fourier_ring` rFFTs `x`/`y`/`z` against the
   uniform ring parameter, keeps the lower half of the modes (dropping the STL facet noise a
   high-order wall would otherwise resolve faithfully) and hands the resulting series to
-  `LineMesh.curve`. An **open** scanned arc refits in the basis its endpoints demand:
+  `LineMesh.loft_curve`. An **open** scanned arc refits in the basis its endpoints demand:
   `bifurcation.py::_arc_curve` expands the arc's deviation from its own chord as a truncated
   **sine** series in the normalized arc-length parameter (a type-I DST of dense
   uniform-arc-length samples, truncated to the modes the mesh can resolve), then meshes it
-  with `LineMesh.curve` + `LineMesh.arclength_fractions`. Every `sin(k*pi*s)` vanishes at both
+  with `LineMesh.loft_curve` + `LineMesh.arclength_fractions`. Every `sin(k*pi*s)` vanishes at both
   ends, so `A1`/`A2` stay **bit-exact** for any truncation — which is what lets the three
   *shared* seam arcs be refit **once, globally** and handed to both legs that see each one, so
   the blocks still weld. (A per-leg refit could not: it would mix the two arcs that leg
@@ -174,7 +200,7 @@ and the imports in sync when adding/removing public names.
   ellipses**, `p(t) = (xside*R sin t, R cos t, R sin t)`, `t: 0 → π`, in the plane
   `x = xside*z` with semi-axes `R*sqrt(2)` and `R` — used to be a 400-point sampled polyline
   lofted straight, putting the interior GLL nodes 1.3e-2 off the true curve at order 2 (2.6% of
-  `R`); it is now `LineMesh.curve(f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
+  `R`); it is now `LineMesh.loft_curve(f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
   order=ORDER)`, meshed in the ellipse's own `t` units and exact to machine precision at any
   order),
   `LineMesh.circle(radius, n, *, center=…, normal=…, start_theta=0.0, element_tags=…)` (closed;
@@ -185,8 +211,11 @@ and the imports in sync when adding/removing public names.
   `LineMesh.rectangle(width, height, n, *, center=…, normal=…, side_tags=…)`
   (closed far-field loop in the given plane, discretized into `n` line elements — `n` a positive
   multiple of 4: `n // 4` evenly spaced per side, running CCW from the lower-left corner with the
-  corners always landing on a point, so it is a true rectangle; `side_tags` `[bottom, right, top,
-  left]` names the four sides. It is the far-field outer loop for `annulus`: pass `n` equal to the
+  corners always landing on a point, so it is a true rectangle; `side_tags` is a **mapping** keyed
+  `bottom`/`right`/`top`/`left` naming each side's line elements — an absent key leaves that side
+  untagged, an unrecognized one is a loud `ValueError`, and the keys rather than a positional
+  4-sequence are what make this spelling identical to its one-rung-up twin `QuadMesh.rectangle`
+  (a transposed 4-list silently lost a wall). It is the far-field outer loop for `annulus`: pass `n` equal to the
   inner loop's point count and rotate the inner `circle` with `start_theta` to the lower-left
   corner, and the two loops pair index-for-index — the radial spokes need not be straight),
   Ordering an unordered segment soup into a ring is a *surface* op, not a container
@@ -202,7 +231,8 @@ and the imports in sync when adding/removing public names.
   (there is no flag to check): each constrains its input through the facts it actually needs —
   `ogrid` an exact `4*n_side` point ring, `annulus`/`blend` identical `lines` on both rings,
   `structured` four edges that share corners, `spined_ogrid` an `8*Ntheta` ring. A factory that
-  reads only `boundary.points` (`ogrid`, `half_ogrid`, `structured`) therefore accepts an open
+  reads only `boundary.points` (`ogrid`, `half_ogrid`, `quadrant_ogrid`, `structured`)
+  therefore accepts an open
   chain and silently treats it as the equivalent closed ring — a known, deliberate gap.
   **Every curve is meshed exactly at the points given — there
   are no `LineMesh` ordered/resampling ops** (a factory or the caller must hand in an
@@ -218,11 +248,15 @@ and the imports in sync when adding/removing public names.
     `element_group_tags` = sorted unique non-empty. **Tag at the lowest level** — every
     section-wall tag can originate on the `LineMesh` input (the circle/loop/arc/edge), which
     every section factory now reads: `ogrid`/`annulus` from the loop's per-line tags,
-    `half_ogrid` from the arc's per-segment tags, `structured` from each edge's uniform tag.
+    `half_ogrid`/`quadrant_ogrid` from the arc's per-segment tags (and, for the latter,
+    each seam from its own), `structured` from each edge's uniform tag.
     The factories' scalar/mapping args (`wall_tag` / `inner_tag` / `outer_tag` /
-    `boundary_tags[side]`) are **overrides**: a non-empty arg replaces the line-level tag for
+    `side_tags[side]`) are **overrides**: a non-empty arg replaces the line-level tag for
     that wall/side (**upper overrides lower**); an empty/absent arg falls through to it (and a
-    present-but-empty `boundary_tags[side]` / `NO_BOUNDARY` suppresses the side). The examples
+    present-but-empty `side_tags[side]` / `NO_BOUNDARY` suppresses the side). It is spelt
+    `side_tags`, not `boundary_tags`, precisely because these are *named sides*: `boundary_tags`
+    everywhere else is the sparse `StrArray` running parallel with a mesh's `boundaries (Nbc,2)`
+    rows, a different shape entirely. The examples
     tag at the line level and keep only the hex-level `first_tag`/`last_tag` end caps (no lower
     level exists for those).
   - `boundary_tags` — a **sparse** `StrArray` parallel with `boundaries (Nbc,2)` = `[elem id,
@@ -232,7 +266,12 @@ and the imports in sync when adding/removing public names.
 - `TriMesh` / `QuadMesh` / `HexMesh` / `Mesh` — mesh containers; each stores coordinates as
   a **bare `(P,3)` NumPy array** on `.points` (mutate in place with `mesh.points[:] = X`).
   `QuadMesh` and `HexMesh` also carry a dense `element_tags` and sparse `boundaries`/
-  `boundary_tags`, mirroring `LineMesh` one/two dimensions up.
+  `boundary_tags`, mirroring `LineMesh` one/two dimensions up. All four (with `LineMesh`) render
+  the **same one-line `__repr__`** — counts, `order`, tag vocabulary — so they read as a family at
+  the REPL this toolkit is mostly driven from. It is deliberately **cheap** (stored array shapes
+  and the two tag properties only, no topology derived) and **total**: any failure degrades to a
+  bare marker rather than raising, because a repr that throws on a half-built or degenerate mesh
+  makes the debugging session it exists to serve strictly worse.
 
 ### Module layout: one axis pair, three identical packages
 
@@ -248,13 +287,14 @@ The siblings are split by two orthogonal axes: **arity** (fixed vs variable/n-ar
 
 | module | arity | Δ | contents |
 |---|---|---|---|
-| `_assemble.py` | **n-ary** | +1 / 0 | `loft`, `merge` |
-| `_lift.py` | fixed | +1 | quad `extrude`/`annulus`/`from_grid`; hex `extrude`/`annulus`/`from_grid` |
+| `_assemble.py` | **n-ary** | +1 / 0 | `loft`, `loft_curve` (all three rungs), `merge` |
+| `_lift.py` | fixed | +1 | quad `extrude`/`sweep`/`annulus`/`from_grid`; hex `extrude`/`sweep`/`annulus`/`from_grid` |
 | `_morph.py` | fixed | 0 | binary `blend`; **unary** `translate`/`rotate`/`scale`/`transform` |
 | `_query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
 | `_open.py` / `_closed.py` | fixed | +1 | shape factories (own a *shape model*, hence separate from `_lift` — `annulus` owns none, so it is a `_lift` at both rungs) |
 
-`_assemble` is the load-bearing boundary: **`loft` and `merge` are the only operations
+`_assemble` is the load-bearing boundary: **`loft` (with `loft_curve`, which delegates to it)
+and `merge` are the only operations
 that manufacture a global point/element index space** (`loft`'s `prof_off`/`rung_off`
 and `i*nn + v`; `merge`'s `remap`/`survivors`/`point_id`). Every fixed-arity operation
 either reuses an existing numbering (`blend` keeps `a`'s verbatim) or delegates here
@@ -293,8 +333,11 @@ and the unary placements (`mesh.translate(v)`, not `LineMesh.translate(mesh, v)`
 a third one, `HELPERS`, in **both** `linemesh/_open.py` and `quadmesh/_open.py`: also
 `staticmethod`-bound, but for functions that answer a question *about* a factory's input
 contract and return a plain array rather than a mesh, which is what keeps them out of
-`FACTORIES` (`LineMesh.arclength_fractions`, `QuadMesh.spine_fractions` — the two
-samplings a caller must prove now that neither factory resamples) —
+`FACTORIES` (`LineMesh.arclength_fractions`, `LineMesh.sweep_fractions`,
+`QuadMesh.spine_fractions`, `QuadMesh.quadrant_seam_fractions` — the samplings a caller must
+prove now that no factory resamples; plus `QuadMesh.quadrant_core`, the core patch
+`quadrant_ogrid` builds its own core with, public so that a block filling the region
+*behind* a quadrant face lands on the same points instead of reproducing the formula) —
 and the package `__init__` merges the dicts and binds every entry. There is no import
 cycle to break: the container never imports its operation modules, so they import it
 directly at module level.
@@ -309,11 +352,53 @@ directly at module level.
   `QuadMesh.blend` / `mesh.weld()`; external callers (examples/tests/users) use the
   bound `LineMesh.circle(...)` / `mesh.is_watertight()` sugar.
 
-- **Sections** are `QuadMesh` classmethods: `QuadMesh.structured` (transfinite grid from four
-  open `LineMesh` edges), `QuadMesh.rectangle(corners, nx, ny, *, x_frac=, y_frac=, side_tags=)`
+- **Sections** are `QuadMesh` classmethods: `QuadMesh.structured(edges, *, side_tags=,
+  smoothing_method=)` (transfinite grid from four
+  open `LineMesh` edges — `edges` either the `[bottom, right, top, left]` sequence or, preferably,
+  a **mapping** keyed by those same four names, since in the positional spelling only the position
+  says which edge is which and transposing two yields a plausible-looking twisted patch instead of
+  an error, whereas a missing or misspelt key raises; its per-side tag argument is spelt
+  `side_tags`, not `boundary_tags`, for the reason given above),
+  `QuadMesh.rectangle(corners, nx, ny, *, x_frac=, y_frac=, side_tags=)`
   (structured-grid convenience: 4 corners + counts + optional per-axis grading + `{bottom,right,
   top,left}` side tags), `QuadMesh.ogrid` (O-grid in a closed `LineMesh`),
   `QuadMesh.half_ogrid` (half-disc O-grid bounded by a wall arc + a spine diameter),
+  `QuadMesh.quadrant_ogrid(arc, seam1, seam2, radial, *, center_scale=, wall_tag=, side_tags=,
+  smoothing_method=)` (**quarter-disk** O-grid — the 90-degree sibling of `half_ogrid`, and
+  exactly the quarter of `ogrid` you get by cutting a full disk along two perpendicular
+  diameters through its core-edge midpoints, so four of them `merge` back into a conforming
+  disk. Two blocks: an `n x n` core plus one `2n x Nradial` ring band wrapping the core's far
+  corner, from an `arc` of exactly `2n+1` points running `A1 -> A2`. **Both seams are
+  arguments, not derived from a `center`** — that is the whole point: two adjacent quadrants
+  hand in the *same* `LineMesh` object (the second through `LineMesh.reverse`) and therefore
+  weld bit-exactly instead of to a tolerance, the `spined_ogrid` precedent one rung finer.
+  Each seam is **meshed exactly at the points given** and must carry exactly
+  `n+1 + Nradial` points ascending from the center `O` — the `n+1` core fan, then the
+  `Nradial` ring stations — or it is a loud `ValueError`, never a silent reinterpolation;
+  derive that sampling with `QuadMesh.quadrant_seam_fractions(n_side, radial, center_scale)`
+  (a `HELPERS` entry, not a factory: it returns a plain array). Its one non-obvious term is
+  `center_scale * cos(pi/4)`: `center_scale` places the core's *far* corner `K` on the arc
+  midpoint's radius, while the seam's core end `M` is the **midpoint of the core square's
+  side**, half a diagonal further in — a caller who naively uses `center_scale` gets a
+  visibly skewed core. At `order > 1` a bowed seam is meshed exactly: both seams go down the
+  same `Overlay` channel as the O-rings, from their own private nodes, so nothing is
+  straight-subdivided between seam samples. `side_tags` is keyed `seam1`/`seam2` only.
+  Its core patch is public as `QuadMesh.quadrant_core(arc, seam1, seam2, *, center_scale=)`
+  → an `(n+1,n+1,3)` grid: the region *behind* three quadrant faces meeting at `O` is an
+  **octant of a 3-D O-grid** (an `n^3` core cube whose three inner faces are exactly their
+  three cores, plus three `n x n x Nradial` slabs out to the wall), which welds only if it
+  lands on the same points. Used by `examples/quadrant_pipe_tjunction.py`, which meshes a
+  small-branch T-junction as a **single welded component** by making one quadrant of the
+  main pipe *be* a quadrant of the branch's footprint disc: four regions (two legs, the
+  branch stub, two crotch caps) meet at the axes-crossing point and every interface between
+  them is a quadrant face radiating from it. That example is the worked case for the
+  straight-subdivision traps below hitting at once — wall curves carried as a
+  parametrization and meshed with `LineMesh.loft_curve`, each leg's transition a
+  `HexMesh.loft_curve` rather than a `loft` (straight along the sweep: 7.2e-4 off the
+  cylinder at order 3), and the caps nested `loft_curve` blocks rather than
+  `HexMesh.from_grid`, which blends straight from corners and would both leave the wall and
+  disagree with `quadrant_ogrid`'s bowed ring bands. Result: corners bit-identical at
+  `ORDER` 1-4, wall nodes on their cylinder to 2.2e-16),
   `QuadMesh.spined_ogrid(boundary, radial, *, spine=None, center_scale=, wall_tag=, smoothing_method=)`
   (full-disk O-grid over a closed `boundary` loop with a natural `A1..A2` seam: it splits the loop
   at index `0`/`M//2` into two `A1->A2` half-arcs, runs two `half_ogrid`s and `merge`s them, so
@@ -325,7 +410,7 @@ directly at module level.
   caps, center fan, south caps]` sampling `half_ogrid` consumes) or it is a loud `ValueError`
   rather than a silent reinterpolation. Derive that sampling with the new public helper
   `QuadMesh.spine_fractions(n_theta, radial, center_scale)` — it returns the normalized
-  fractions, so callers evaluate their own curve there (`LineMesh.curve` for an analytic spine,
+  fractions, so callers evaluate their own curve there (`LineMesh.loft_curve` for an analytic spine,
   `trimesh.ops.resample_polyline` for a scanned one) instead of copy-pasting the formula. It is
   bound onto `QuadMesh` as a `staticmethod` through the **`HELPERS` registry** in
   `quadmesh/_open.py`, kept distinct from `FACTORIES` because it returns a plain array rather
@@ -349,8 +434,8 @@ directly at module level.
   built as a radial `QuadMesh.loft` of blended rings, the sibling of `HexMesh.annulus` one
   dimension down; the periodic ring topology rides in the loops' wrapping `lines`, so there is no
   modular arithmetic, and the inner/outer rings are the loft's near/far caps).
-  `QuadMesh` also has `extrude`/`loft` **one dimension down** — sweeping a `LineMesh` into a quad
-  strip (mirrors `HexMesh.extrude`/`loft`), carrying the line's `element_tags` onto the quads and
+  `QuadMesh` also has `extrude`/`sweep`/`loft`/`loft_curve` **one dimension down** — sweeping a `LineMesh` into a quad
+  strip (mirrors `HexMesh.extrude`/`sweep`/`loft`), carrying the line's `element_tags` onto the quads and
   its boundary-point tags onto the side-wall edges.
   **`blend(a, b, fractions)`** is the shared morphing combinator on all three containers
   (`LineMesh`/`QuadMesh`/`HexMesh`): given two index-paired conformal profiles (equal point count,
@@ -367,18 +452,28 @@ directly at module level.
   `LineMesh.blend`ed rings; `HexMesh.annulus` = radial fill of `QuadMesh.blend`ed shells) and behind
   each leg's slice stack in `bifurcation.py`/`circular_pipe_tjunction.py`
   (`LineMesh.blend(opening, seam, …)`). Each section takes an optional
-  `smoothing_method=` (see below). All build **natively in 3-D** — nothing is projected to a
+  `smoothing_method=` (see below), and every `layers=` / `radial=` argument at either rung takes
+  **either** a plain `int` `n` — `n` uniform layers, counting *cells* exactly as
+  `uniform_spacing`/`geometric_spacing` do, expanded to the `n+1` positions `linspace(0,1,n+1)` —
+  or an explicit array of normalized positions for a graded sweep, through the one shared
+  `model.fields.validate_layers` contract. The array branch is returned flattened and otherwise
+  **untouched, bit-for-bit**, which is what keeps the graded goldens frozen; only a genuine scalar
+  integer takes the count branch, so an array of ints is a position array like any other. All build **natively in 3-D** — nothing is projected to a
   plane, so a boundary placed in any plane, or a genuinely **curvy / non-planar** boundary, is
   filled in place with its true shape (never flattened to `xy`). `ogrid`/`annulus` build a
   straight-chord initial guess and rely on `smoothing_method="conduction"` to relax the interior
   harmonically onto the curved surface spanned by the fixed boundary ring; `structured`/
-  `half_ogrid` blend the 3-D edge points directly. (`LineMesh.circle` and `rectangle`
+  `half_ogrid`/`quadrant_ogrid` blend the 3-D edge points directly. (`LineMesh.circle` and `rectangle`
   use the private `linemesh/_plane.py` `_in_plane_axes` helper — they *construct* a
-  planar loop, not project an existing boundary.) `ogrid`/`half_ogrid` are ICEM/Pointwise terms
+  planar loop, not project an existing boundary.) `ogrid`/`half_ogrid`/`quadrant_ogrid` are ICEM/Pointwise terms
   with no gmsh equivalent — kept deliberately.
 - **Hex blocks** are `HexMesh` classmethods: `extrude` (sweep one section along a straight
-  axis = gmsh Extrude+Layers+Recombine), `loft` (recombine a stack of pre-positioned
-  profiles — the general case behind `extrude`), `annulus` (fill the 3-D shell between two
+  axis = gmsh Extrude+Layers+Recombine), `sweep` (carry one section rigidly along a
+  **curved** path by a moving frame — the curved generalization of `extrude`; a bent pipe),
+  `loft` (recombine a stack of pre-positioned
+  profiles — the general case behind `extrude`), `loft_curve` (`loft` with the sections
+  **evaluated** from a parametrization, exact along the sweep at `order > 1`),
+  `annulus` (fill the 3-D shell between two
   **closed `QuadMesh` surfaces** — the section-to-section case, sibling of `QuadMesh.annulus`
   one dimension up), `merge` (stitch blocks, welding coincident **boundary** points only),
   `from_grid` (structured i×j×k). `HexMesh` is immutable by construction (no incremental
@@ -434,8 +529,118 @@ dimensions**, each taking a stack of index-paired conformal profiles and a
 | rung | a "profile" is | a "rung" entity is | `extrude` = |
 |---|---|---|---|
 | `LineMesh.loft(points, *, loop=…)` | a single **point** | a **line** element | (n/a — `line`/`circle` place the points) |
-| `QuadMesh.loft(slices, *, loop=…)` | a `LineMesh` | a rung **line** + the **quads** | `QuadMesh.extrude` |
-| `HexMesh.loft(slices, *, loop=…)` | a `QuadMesh` | a rung **face** + the **hexes** | `HexMesh.extrude` |
+| `QuadMesh.loft(slices, *, loop=…, sweep_nodes=…)` | a `LineMesh` | a rung **line** + the **quads** | `QuadMesh.extrude` |
+| `HexMesh.loft(slices, *, loop=…, sweep_nodes=…)` | a `QuadMesh` | a rung **face** + the **hexes** | `HexMesh.extrude` |
+
+**A `loft` is straight along the sweep** — it sees only the corner-level profiles, so
+at `order > 1` the rung interiors are a lerp and each quad interior a Coons patch over
+lerped sweep curves. Exact input profiles therefore do **not** give an exact swept
+surface: a torus lofted from exact `LineMesh.circle` rings puts its nodes 62–83% of the
+tube radius off the true tube at orders 2–4. `QuadMesh.loft_curve(f, fractions, *,
+loop=…, order=None, element_tags=…)` is the escape — the quad-rung twin of
+`LineMesh.loft_curve`, and the same sentence: it *is* `loft`, with the profiles
+**evaluated** from a parametrization instead of handed in. `f` maps **one** parameter
+value to **one** `LineMesh` profile (not a vectorized `FloatArray -> …`: a callable
+returning a single mesh can only take a single value) and is called once per node level
+of the sweep — `_refined_lattice(fractions, order)`, the same line-rung helper, so
+grading is honored per layer (level `a` of layer `i` at
+`fr[i] + g[a]*(fr[i+1] - fr[i])`) and at order 1 the lattice is exactly `fractions`,
+making the order-1 path a no-op by construction. `order=None` (the default) **infers** the
+order from the profile `f` returns — unlike `LineMesh.loft_curve`, whose `f` hands back
+bare coordinates, so there is nothing there to read an order off and the argument stays a
+constructive `int`. `fractions` are the parameter values
+themselves in `f`'s own units, and `loop=True` takes the **trailing wrap value** exactly
+as at the line rung, verified against `conform.entity_tol`. Every profile must be
+index-paired and conformal with the first (same point count, same `lines`) — the robust
+idiom is to build one profile and *place* it with the `_morph` affine ops
+(`ring.rotate(t, axis=…)`), which move no index; rebuilding it per parameter with a
+rotating `LineMesh.circle(normal=…)` is not guaranteed to be, because `_in_plane_axes`
+can flip the basis. `element_tags` here is **per sweep layer** (dense, length `nz`),
+overriding the profiles' per-line tags where non-empty — upper overrides lower, as
+everywhere else; it is available on plain `loft` too.
+
+It delegates the whole assembly through **`QuadMesh.loft`'s `sweep_nodes=`**:
+`sweep_nodes[i]` is the `order-1` intermediate `LineMesh` profiles lying strictly
+between slice `i` and the slice it sweeps to — the quad-rung analogue of
+`LineMesh.loft`'s `interior=` override, stated in rung-below vocabulary so none of
+`loft`'s `used`/`rung_slot` index space leaks into the API. With it supplied the rung
+line interiors and the quad interiors are gathered from those true profiles instead of
+interpolated; `sweep_nodes=None` (and order 1, where it is empty) leaves the existing
+code path **byte-for-byte**, which is what keeps the goldens frozen. Numbering, tags,
+boundaries and the B-rep all come from `loft` unchanged — sweep-major, no `unique_edges`
+re-derivation.
+
+**`HexMesh.loft_curve(f, fractions, *, loop=…, order=None, element_tags=…)` is the same
+thing one rung up**, `f` mapping one parameter value to one `QuadMesh` section (the order
+again defaulting to that section's own), and it
+delegates the same way through **`HexMesh.loft`'s `sweep_nodes=`** (the `order-1`
+intermediate `QuadMesh` sections strictly between slice `i` and the slice it sweeps to).
+The hex rung turned out to be the *easier* half, not the harder one: `HexMesh.loft`
+derives its whole B-rep — including the D4 `face_orient` codes — from the corner table
+via `unique_edges` → `canonical_faces`, so the codes fall out of the corner ids and the
+intermediate sections only ever supply *coordinates* (edge nodes, face nodes, private
+interiors) into tables whose topology is already settled.
+
+**`QuadMesh.sweep` / `HexMesh.sweep` are the *rigid* sweep** — the same profile carried
+along a curve by a moving frame rather than a stack of profiles the caller positions.
+They live in `_lift.py` (fixed arity, Δ+1: they are the curved generalization of
+`extrude`, which translates the section along a straight axis) and end in the same
+`loft`-with-`sweep_nodes` assembly, so a swept bend is exact at every order:
+
+```python
+HexMesh.sweep(section, path, fractions, *, origin, tangent=None,
+              orientation="transport", up=None, twist=0.0, close_twist=True,
+              normal=None, loop=False, element_tags=None,
+              first_tag="", last_tag="")
+```
+
+The load-bearing property is that the section is placed **rigidly** —
+`p ↦ path(t) + R(t) @ p_local` — never offset point-by-point. Through a bend of radius
+`Rb` the outboard wall traverses radius `Rb + d` and the inboard `Rb − d`, so the two
+travel different distances and *neither* follows the centreline; only a frame-carried
+rigid placement gets that right (a U-turn's walls come out at exactly `Rb ± Rp`). `path`
+is vectorized `(K,) -> (K,3)` because the default frame generator is a sequential
+integration and cannot be evaluated at one isolated parameter. `loop=True` appends the
+**identical** first placement as the wrap profile, so a closed sweep (a solid torus)
+welds exactly rather than to a tolerance. A bend tighter than the section is wide folds
+the inboard elements and is rejected loudly by `loft`'s mixed-winding guard.
+
+Three of those arguments are the way they are because the obvious spelling was quietly
+wrong. **`origin` is required** — it is the section's reference point, the one that rides
+the path; it used to default to the centroid, which is defensible and frequently wrong
+(an O-grid disc's centroid misses its centre by the grid's own slight asymmetry), so the
+obvious call produced an off-axis block with no error anywhere. There is no safe default,
+so there is no default: pass the centre the boundary loop was built about. **There is no
+`order=`** — a rigid placement cannot change the order, so the order is the section's own
+and a separate argument could only disagree with it. And **`orientation` names a *mode*
+and nothing else**, `Literal["transport", "fixed", "frenet"]`; the per-station up vectors
+that used to be smuggled through it are now a `(K,3)` `up=` with `orientation="fixed"`,
+so `up` takes either a single `(3,)` world direction or a per-station field, told apart
+by rank.
+
+`LineMesh.sweep_fractions(breaks, total_length, target)` authors the `fractions` for a
+**piecewise** path: `breaks` are the cumulative arc lengths of the path's *interior*
+junctions (strictly inside `(0, total_length)` — `0` and `total_length` are stations
+anyway) and each interval between consecutive breaks is split into
+`max(1, round(interval / target))` equal steps *on its own*, so every junction reappears
+in the output bit-for-bit instead of being approached by a global `linspace`. That is the
+whole point: curvature is piecewise constant along such a path and **jumps** at a
+junction, so an element straddling one is fitted across two different geometries — a
+visible kink in the wall of a swept bend. Like `arclength_fractions` it is a `HELPERS`
+entry rather than a factory, because the sweep itself meshes exactly at the stations
+given (`examples/serpentine_pipe.py`).
+
+`model/frames.py` owns the frame machinery and, like `model/affine.py`, **imports no
+container**: `tangents` (O(h²) finite difference — pass `tangent=` for the analytic
+derivative when the end stations matter, ~3e-4 rad of tilt otherwise), the three
+generators `fixed_up` (exact, zero-twist, right for planar paths) / `parallel_transport`
+(RMF by double reflection, for genuinely non-planar paths) / `frenet` (present but wrong
+for sweeps — undefined on straight runs, sign-flips through inflections), `plane_frame`
+(the section's own authored frame, from an SVD best-fit plane; `normal=` overrides both
+the fit *and* the planarity check, `origin=` defaults to the centroid — which an O-grid
+disc's is *not* its centre, so pass it), and `sweep_placements`, which composes them and
+pins the frame field's one free parameter (a constant roll about the tangent) so station
+0 lands the section exactly as authored. See `examples/serpentine_pipe.py`.
 
 The quad rung assembles **layer by layer** (append profile `i`'s own lines +
 `interior` verbatim, then the rung lines joining level `i` to level `i-1`; a quad is
@@ -486,7 +691,15 @@ rejects `order > 1` the same way.
 
 ### High-order (order-N) elements
 
-Every factory takes an optional `order=N` (default `1`). At `order > 1` each element
+Every factory that **authors points** takes an optional `order=N` (default `1`) —
+`LineMesh.line`/`arc`/`circle`/`rectangle`/`loft`/`loft_curve`, `Quad/HexMesh.from_grid`,
+`QuadMesh.box`/`half_box`/`sphere`/`hemisphere`/`rectangle`. A factory that **consumes a
+finished mesh** has no `order=` at all and inherits its inputs' — `extrude`, `sweep`,
+`loft`, `merge`, `blend`, `ogrid`/`half_ogrid`/`quadrant_ogrid`/`spined_ogrid`, `structured`, both
+`annulus` — which is why they reject a mismatched order across their inputs rather than
+elevate. The quad/hex `loft_curve` sit between the two and take `order: int | None = None`
+= "the sections' own", the line rung's `order: int = 1` being genuinely constructive
+(it has no mesh to read it off). At `order > 1` each element
 carries `(N+1)` **GLL** (Gauss–Lobatto–Legendre) nodes per parametric direction —
 line `N+1`, quad `(N+1)²`, hex `(N+1)³`. GLL endpoint parameters are exactly
 `0.0`/`1.0`, so the two extreme nodes *are* the corners and stay exact under every
@@ -538,7 +751,7 @@ line between corners:
 - **on the true shape**: `LineMesh.circle`/`LineMesh.arc` (interior GLL nodes evaluated
   at the exact arc angles — `_plane._arc_points`/`_arc_interior` — and handed to `loft`
   as an explicit `interior`, overriding its default chord blend),
-  `LineMesh.curve` (the same trick for an arbitrary analytic parametrization: `_refined_lattice`
+  `LineMesh.loft_curve` (the same trick for an arbitrary analytic parametrization: `_refined_lattice`
   builds the `n*order+1` **parameter values** of **every** node of the chain — element `i`'s node
   `a` at `fr[i] + g[a]*(fr[i+1] - fr[i])` for the caller's `fractions` `fr` (the parameter values
   themselves, in `f`'s own units) and the GLL nodes `g`
@@ -548,6 +761,17 @@ line between corners:
   is the escape hatch from the straight-subdivision bullet below for any curve with a closed
   form; `LineMesh.arclength_fractions` perturbs only *where along* the curve the nodes sit, never
   whether they are on it),
+  `QuadMesh.loft_curve` (the same trick one rung up, along the **sweep**: the profiles are
+  evaluated at every node level of `_refined_lattice(fractions, order)`, not just the corner
+  levels, so a swept curved surface is exact instead of straight between slices — see the
+  sweep-primitive section above; `QuadMesh.loft(..., sweep_nodes=…)` is the same escape with
+  the intermediate profiles handed in rather than evaluated),
+  `HexMesh.loft_curve` / `HexMesh.loft(..., sweep_nodes=…)` (the identical pair at the hex
+  rung, sections instead of profiles),
+  `QuadMesh.sweep`/`HexMesh.sweep` (one profile carried along a curved path by a moving
+  frame — every station is a rigid placement of the *authored* section, and the
+  intermediate stations go down the same `sweep_nodes` channel, so a bent tube is exact at
+  every order both around the section and along the bend),
   `QuadMesh.sphere`/`QuadMesh.hemisphere` (radial projection applied **entity-wise** to
   the cube's / half box's whole B-rep — `points`, `lines.interior`, `interior` — never to
   a reassembled block, so a shared edge lands identically from either quad).
@@ -557,7 +781,7 @@ line between corners:
   `LineMesh.loft` (each line's interior = the straight blend of its two
   endpoints), `QuadMesh.from_grid`/`HexMesh.from_grid`. Sampling a curve into points and
   calling `LineMesh.loft` therefore *loses* the curve at `order > 1`; hand in the
-  analytic `arc`/`circle` instead, or `LineMesh.curve` when the closed form is neither
+  analytic `arc`/`circle` instead, or `LineMesh.loft_curve` when the closed form is neither
   (only a genuinely form-less curve — a scanned polyline — is stuck with the chord).
 - **region fills — curved throughout, by two different mechanisms.** Both propagate the
   input wall's curvature into the *interior*, not just onto the boundary elements:
@@ -572,7 +796,7 @@ line between corners:
     the whole block and no overlay is needed. At `order == 1`, `g = [0,1]` makes the
     refined lattice exactly `linspace`, so the order-1 no-op falls out by construction
     rather than by a branch.
-  - `ogrid`/`half_ogrid` have no global analytic map, so they keep the linear
+  - `ogrid`/`half_ogrid`/`quadrant_ogrid` have no global analytic map, so they keep the linear
     construction and generalize the `Overlay` `(quad ids, local side, curve)` channel:
     **one overlay pair per O-ring**, not just the wall. Each intermediate ring's curve is
     `LineMesh.blend(block perimeter, wall, t)` — the same mechanism `annulus` uses — so a
@@ -580,7 +804,9 @@ line between corners:
     ring must be stamped (ring `m` is block `m−1`'s outer side *and* block `m`'s inner
     side); stamping one leaves the other straight and `scatter_edge_nodes` rejects the
     mesh. Each element is then curved tangentially and straight radially — exactly
-    `annulus`'s behaviour, which is right for a radial blend. `half_ogrid` stamps the
+    `annulus`'s behaviour, which is right for a radial blend. `quadrant_ogrid` stamps
+    the same channel along **both** of its seams, from each seam's own nodes.
+    `half_ogrid` stamps the
     same channel a second time along its **seam**, one overlay per spine point interval
     (see `spined_ogrid` above), so a curved spine bows the flat side too.
   - Underneath both, `_elevate` derives each quad's private `interior` as the
@@ -588,10 +814,13 @@ line between corners:
     *after* the overlays (`_coons_at`), instead of a bilinear fill from its corners. A
     curved side therefore bows the interior with it; with four straight edges the patch
     is algebraically that bilinear fill (it differs only in float association, ~1e-16).
-- **carried through**: `extrude` translates a section's whole B-rep rigidly; `blend`
+- **carried through**: `extrude` translates a section's whole B-rep rigidly, and `sweep`
+  *rotates and* translates it rigidly at each station (the affine `_morph` ops map every
+  coordinate table, so the placed section keeps its exact shape); `blend`
   lerps the entity tables with the same `t` the corners get; `loft` sweeps each column
   as a Coons patch curved along the profile (from the slices' own nodes, `_coons_at` /
-  `_slice_block` / `_sweep_at`) and straight along the sweep; `QuadMesh.annulus` is a
+  `_slice_block` / `_sweep_at`) and straight along the sweep (use `loft_curve`/`sweep`, or
+  `sweep_nodes=`, when the sweep path itself is curved); `QuadMesh.annulus` is a
   single curved path at every order (radial `loft` of `LineMesh.blend`ed rings).
 All factories reject a mismatched `order` across their inputs.
 
@@ -708,7 +937,12 @@ filename including the extension** (`to_re2(mesh, "pipe.re2")`); nothing is appe
   `(P,3)` `points`, `(L,order-1,3)` `LineMesh.interior`, `(Q,(order-1)**2,3)` `QuadMesh.interior`,
   `(E,6,(order-1)**2,3)` gathered hex face nodes, `(ni+1,nj+1[,nk+1],3)` `from_grid` grids. The
   concrete shape belongs in each field/parameter docstring; the alias deliberately does not encode
-  it. Real data that is **not** a position keeps `FloatArray`: `fractions`/`t` blend parameters,
+  it. `SmoothingMethod` lives here too — a `Literal` of the built-in `SECTION_METHODS` names with a
+  bare `str` arm kept alongside it, so mypy and an IDE surface the built-ins without the annotation
+  closing the **open** registry to a third-party `@register_section_smoothing`; it sits in
+  `_typing.py` rather than beside the registry because every rung that forwards a
+  `smoothing_method=` down to it (the region fills, both `annulus`) needs the same spelling. Real
+  data that is **not** a position keeps `FloatArray`: `fractions`/`t` blend parameters,
   `layers`/`radial` positions, `x_frac`/`y_frac` grading, GLL nodes/weights and Lagrange
   (derivative) matrices, `tensor_nodes`' `(M,dim)` *parametric* reference lattice, scaled-Jacobian
   values and quality metrics, tolerances. numpy has no static shape checking, so they document

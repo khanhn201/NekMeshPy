@@ -7,7 +7,7 @@ for triangle surface meshes.  Both reports also count connected components.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple, Union
 
 import numpy as np
 
@@ -16,6 +16,38 @@ from .._typing import IntArray, PointArray
 # Nek face -> the 4 corner point positions (0-based), cyclic order.
 _FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
                         [3, 0, 4, 7], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int64)
+
+
+class TopologyReport(NamedTuple):
+    """Facet inventory and validity verdicts for an all-hex mesh.
+
+    Returned by :func:`hex_report` and by ``HexMesh.topology_report()``.  There is
+    no ``kind`` discriminator: the dict this replaced carried ``"kind": "hex"``
+    only so :func:`format_report` could tell a hex report from a surface one, and
+    the type now says that.
+    """
+
+    #: Number of hex elements.
+    n_elements: int
+    #: Distinct quad facets, counted orientation-free.
+    n_faces: int
+    #: Facets borne by exactly one hex -- the domain boundary.
+    n_boundary_faces: int
+    #: Facets shared by exactly two hexes.
+    n_internal_faces: int
+    #: Facets shared by three or more hexes -- always a defect.
+    n_nonmanifold_faces: int
+    #: Boundary-surface edges not bounded by exactly two boundary faces (leaks).
+    n_open_edges: int
+    #: Boundary points lying strictly inside another boundary edge (T-junctions).
+    n_hanging_points: int
+    #: Connected components of the hex-adjacency graph.
+    n_components: int
+    #: ``True`` when the boundary is a closed, non-empty 2-manifold.  Says nothing
+    #: about conformity: a T-junction interface still reads watertight.
+    watertight: bool
+    #: ``True`` when there are no hanging points.
+    conformal: bool
 
 
 # -- shared helpers -----------------------------------------------------
@@ -88,12 +120,12 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
 
 
 # -- hex (volume) meshes ------------------------------------------------
-def hex_report(points: PointArray, hexes: IntArray) -> dict[str, Any]:
+def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
     """Topology / watertightness report for an all-hex mesh.
 
     ``points`` is ``(P,3)``, ``hexes`` is ``(N,8)`` in Nek corner order.  Returns
-    a dict with the facet inventory, open-edge and hanging-point counts, component
-    count, and the ``watertight`` / ``conformal`` verdicts.
+    the facet inventory, open-edge and hanging-point counts, component count, and
+    the ``watertight`` / ``conformal`` verdicts.
     """
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
@@ -128,24 +160,23 @@ def hex_report(points: PointArray, hexes: IntArray) -> dict[str, Any]:
     n_components = _count_components(N, _adjacency_edges(inverse, counts, owner))
 
     watertight = bool(n_nonmanifold == 0 and n_open_edges == 0 and n_boundary > 0)
-    return {
-        "kind": "hex",
-        "n_elements": N,
-        "n_faces": int(counts.size),
-        "n_boundary_faces": n_boundary,
-        "n_internal_faces": n_internal,
-        "n_nonmanifold_faces": n_nonmanifold,
-        "n_open_edges": n_open_edges,
-        "n_hanging_points": n_hanging,
-        "n_components": n_components,
-        "watertight": watertight,
-        "conformal": bool(n_hanging == 0),
-    }
+    return TopologyReport(
+        n_elements=N,
+        n_faces=int(counts.size),
+        n_boundary_faces=n_boundary,
+        n_internal_faces=n_internal,
+        n_nonmanifold_faces=n_nonmanifold,
+        n_open_edges=n_open_edges,
+        n_hanging_points=n_hanging,
+        n_components=n_components,
+        watertight=watertight,
+        conformal=bool(n_hanging == 0),
+    )
 
 
 def is_watertight(points: PointArray, hexes: IntArray) -> bool:
     """``True`` if the all-hex mesh's boundary is a closed 2-manifold."""
-    return bool(hex_report(points, hexes)["watertight"])
+    return hex_report(points, hexes).watertight
 
 
 # -- triangle (surface) meshes ------------------------------------------
@@ -201,19 +232,24 @@ def is_closed(points: PointArray, tris: IntArray) -> bool:
 
 
 # -- reporting ----------------------------------------------------------
-def format_report(report: dict[str, Any]) -> str:
-    """Human-readable multi-line summary of a hex or surface report."""
-    if report.get("kind") == "hex":
+def format_report(report: Union[TopologyReport, dict[str, Any]]) -> str:
+    """Human-readable multi-line summary of a hex or surface report.
+
+    The two branches are told apart by *type* now that :func:`hex_report` returns a
+    :class:`TopologyReport`; :func:`surface_report` still hands back a dict (its own
+    conversion is a separate change), so the dict branch is the surface one.
+    """
+    if isinstance(report, TopologyReport):
         return "\n".join([
-            "hex elements   : %d" % report["n_elements"],
+            "hex elements   : %d" % report.n_elements,
             "faces          : %d (%d boundary, %d internal, %d non-manifold)"
-            % (report["n_faces"], report["n_boundary_faces"],
-               report["n_internal_faces"], report["n_nonmanifold_faces"]),
-            "open edges     : %d" % report["n_open_edges"],
-            "hanging points  : %d" % report["n_hanging_points"],
-            "components     : %d" % report["n_components"],
-            "watertight     : %s" % report["watertight"],
-            "conformal      : %s" % report["conformal"],
+            % (report.n_faces, report.n_boundary_faces,
+               report.n_internal_faces, report.n_nonmanifold_faces),
+            "open edges     : %d" % report.n_open_edges,
+            "hanging points  : %d" % report.n_hanging_points,
+            "components     : %d" % report.n_components,
+            "watertight     : %s" % report.watertight,
+            "conformal      : %s" % report.conformal,
         ])
     return "\n".join([
         "triangles      : %d" % report["n_faces"],

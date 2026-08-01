@@ -68,7 +68,7 @@ napoleon_numpy_docstring = True
 # the project's numpy dtype aliases are documentation aliases with no class page
 _TYPE_ALIASES = [
     "FloatArray", "IntArray", "BoolArray", "StrArray",
-    "Point", "Vec3", "PointArray",
+    "Point", "Vec3", "PointArray", "SmoothingMethod",
 ]
 
 # nitpicky (-n) mode flags every unresolved xref.  Ignore targets we can never
@@ -81,6 +81,9 @@ nitpick_ignore_regex = [
     (r"py:.*", r"meshio.*"),
     (r"py:.*", r"'?(" + "|".join(_TYPE_ALIASES) + r")'?"),
     (r"py:.*", r"GroupsArg"),
+    # WeldResult is a NamedTuple in the private hexmesh._query; its fields are
+    # documented on ``weld`` itself, and the module is deliberately not autodoc'd.
+    (r"py:.*", r"(nekmeshpy\.hexmesh\._query\.)?WeldResult"),
     (r"py:.*", r"nekmeshpy\..*\.[A-Z]$"),  # single-letter TypeVars (F, ...)
 ]
 

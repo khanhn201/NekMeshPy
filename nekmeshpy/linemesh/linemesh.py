@@ -57,6 +57,20 @@ def _as_points(points: NDArray[Any]) -> PointArray:
     return a
 
 
+def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
+    """Render a tag vocabulary as ``{inlet,outlet}`` for a container's ``__repr__``,
+    eliding past ``limit`` entries with ``...`` so one loud tag scheme cannot push the
+    counts off the line.  Empty tags are dropped, so an untagged mesh reads ``{}``.
+
+    Lives here, at the bottom rung, because all three ladder containers' reprs share it
+    and must render identically -- ``QuadMesh`` / ``HexMesh`` import it directly (they
+    already import ``LineMesh`` from this package).  ``TriMesh`` carries no tags at all
+    and needs none."""
+    kept = [t for t in tags if t]
+    shown = kept[:limit] + (["..."] if len(kept) > limit else [])
+    return "{%s}" % ",".join(shown)
+
+
 class LineMesh:
     """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a
     dense per-line ``element_tags``, and ``[line id, side 1-2]`` ``boundaries`` with
@@ -170,6 +184,27 @@ class LineMesh:
         return self._order
 
     # -- sizes / topology -----------------------------------------------
+    def __repr__(self) -> str:
+        """One-line REPL summary: element / point counts, ``order``, and the tag
+        vocabulary -- the questions a caller actually has at the prompt, where this
+        toolkit is mostly driven from.  The same field set is rendered by
+        :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` and
+        :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>` so the three read as a family.
+
+        Deliberately **cheap** -- it reads stored array shapes and the two tag
+        properties only, deriving no topology -- and **total**: any failure degrades to
+        a bare marker instead of raising, because a repr that throws on a half-built or
+        degenerate mesh makes the debugging session it was meant to serve strictly
+        worse."""
+        try:
+            return ("<LineMesh %d points, %d lines, order %d, element_tags=%s, "
+                    "boundary_tags=%s>"
+                    % (self.points.shape[0], self.lines.shape[0], self._order,
+                       _repr_tags(self.element_group_tags),
+                       _repr_tags(self.boundary_group_tags)))
+        except Exception:                     # a repr must never break a debug session
+            return "<LineMesh (unprintable)>"
+
     def __len__(self) -> int:
         """Number of points."""
         return self.points.shape[0]

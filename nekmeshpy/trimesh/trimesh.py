@@ -42,6 +42,22 @@ class TriMesh:
     EDGE_POINTS = np.array([[0, 1], [1, 2], [2, 0]], dtype=np.int64)
 
     # -- sizes -----------------------------------------------------------
+    def __repr__(self) -> str:
+        """One-line REPL summary: element and point counts.  The same shape as the
+        ladder containers' reprs (:meth:`LineMesh.__repr__
+        <nekmeshpy.linemesh.LineMesh.__repr__>`) minus the fields a triangulated
+        surface does not have -- a ``TriMesh`` is a linear scanned/imported surface
+        carrying no polynomial order and no element or boundary tags, so those fields
+        are omitted rather than rendered empty and misleading.
+
+        Reads two stored array shapes; never raises, because a repr that throws on a
+        half-loaded surface makes debugging strictly worse."""
+        try:
+            return "<TriMesh %d points, %d tris>" % (
+                self.points.shape[0], self.tris.shape[0])
+        except Exception:                     # a repr must never break a debug session
+            return "<TriMesh (unprintable)>"
+
     @property
     def n_points(self) -> int:
         """Number of points."""

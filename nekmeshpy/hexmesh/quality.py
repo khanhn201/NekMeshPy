@@ -6,11 +6,12 @@ All metrics operate on a shared-point representation ``(points, hexes)`` where
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+from ..model.quality import POOR_THRESHOLD, QualitySummary
 
 if TYPE_CHECKING:
     from .hexmesh import HexMesh
@@ -77,25 +78,25 @@ def scaled_jacobian_ho(mesh: HexMesh, order: int) -> FloatArray:
     return _sj(_ho_block(mesh, order), order, dim=3)
 
 
-def _summary(sj: FloatArray) -> dict[str, Any]:
-    """Aggregate-statistics dict from a per-element scaled-Jacobian array."""
-    return {
-        "n_elements": int(sj.size),
-        "min": float(np.min(sj)),
-        "max": float(np.max(sj)),
-        "mean": float(np.mean(sj)),
-        "median": float(np.median(sj)),
-        "n_inverted": int(np.sum(sj <= 0)),
-        "n_below_0.2": int(np.sum(sj < 0.2)),
-    }
+def _summary(sj: FloatArray) -> QualitySummary:
+    """Aggregate statistics from a per-element scaled-Jacobian array."""
+    return QualitySummary(
+        n_elements=int(sj.size),
+        min=float(np.min(sj)),
+        max=float(np.max(sj)),
+        mean=float(np.mean(sj)),
+        median=float(np.median(sj)),
+        n_inverted=int(np.sum(sj <= 0)),
+        n_poor=int(np.sum(sj < POOR_THRESHOLD)),
+    )
 
 
-def summary(points: PointArray, hexes: IntArray) -> dict[str, Any]:
-    """Dict of aggregate quality statistics for a hex mesh."""
+def summary(points: PointArray, hexes: IntArray) -> QualitySummary:
+    """Aggregate quality statistics for a hex mesh."""
     return _summary(scaled_jacobian(points, hexes))
 
 
-def summary_ho(mesh: HexMesh, order: int) -> dict[str, Any]:
+def summary_ho(mesh: HexMesh, order: int) -> QualitySummary:
     """Aggregate statistics for the order-N :func:`scaled_jacobian_ho` metric."""
     return _summary(scaled_jacobian_ho(mesh, order))
 
@@ -107,15 +108,20 @@ def histogram(points: PointArray, hexes: IntArray, bins: int = 10,
     return np.histogram(sj, bins=bins, range=(lo, hi))
 
 
-def format_report(stats: dict[str, Any],
+def format_report(stats: QualitySummary,
                   hist: tuple[IntArray, FloatArray] | None = None) -> str:
-    """Human-readable multi-line quality report from :func:`summary` output."""
+    """Human-readable multi-line quality report from :func:`summary` output.
+
+    The ``poor`` label is **derived** from ``POOR_THRESHOLD`` rather than spelling
+    the number again, so the text can never disagree with the count it labels; the
+    label is padded to the 13-column field the other rows use.
+    """
     lines = [
-        "elements     : %d" % stats["n_elements"],
+        "elements     : %d" % stats.n_elements,
         "scaled Jac   : min=%.4f  mean=%.4f  median=%.4f  max=%.4f"
-        % (stats["min"], stats["mean"], stats["median"], stats["max"]),
-        "inverted(<=0): %d" % stats["n_inverted"],
-        "poor (<0.2)  : %d" % stats["n_below_0.2"],
+        % (stats.min, stats.mean, stats.median, stats.max),
+        "inverted(<=0): %d" % stats.n_inverted,
+        ("poor (<%g)" % POOR_THRESHOLD).ljust(13) + ": %d" % stats.n_poor,
     ]
     if hist is not None:
         counts, edges = hist

@@ -31,6 +31,7 @@ from .._typing import (
     StrArray,
 )
 from ..linemesh import LineMesh
+from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import quad_edge_indices
 
@@ -162,7 +163,9 @@ class QuadMesh:
                 raise ValueError(
                     "QuadMesh: order %d > 1 requires the per-quad private interior "
                     "nodes (pass interior=(Q,(order-1)**2,3), or build the section "
-                    "with a factory such as QuadMesh.ogrid(..., order=%d))"
+                    "with a factory -- the region fills inherit their order from their "
+                    "input boundary, e.g. "
+                    "QuadMesh.ogrid(LineMesh.circle(r, n, order=%d), n_side, radial))"
                     % (self._order, self._order))
             self.interior: PointArray = np.zeros((Q, 0, 3), dtype=float)
         else:
@@ -226,12 +229,16 @@ class QuadMesh:
             raise ValueError(
                 "QuadMesh.from_corners builds the linear (order 1) B-rep from corner "
                 "points alone; got order=%d, whose shared edge / private interior "
-                "nodes it cannot know. Build with a factory at order=%d (e.g. "
-                "QuadMesh.ogrid(..., order=%d) or QuadMesh.loft(slices) from order-%d "
-                "profiles), which places those nodes on the true geometry, or "
-                "construct QuadMesh(lines, quad, flip, interior=..., order=%d) "
-                "directly from the entity fields."
-                % (order, order, order, order, order))
+                "nodes it cannot know. Build with a factory instead, which places those "
+                "nodes on the true geometry: the region fills and the sweeps inherit "
+                "their order from their inputs (e.g. "
+                "QuadMesh.ogrid(LineMesh.circle(r, n, order=%d), n_side, radial), or "
+                "QuadMesh.loft(slices) from order-%d profiles), while the grid / "
+                "analytic factories take it directly (QuadMesh.from_grid(P, order=%d), "
+                "QuadMesh.rectangle(corners, nx, ny, order=%d)). Or construct "
+                "QuadMesh(lines, quad, flip, interior=..., order=%d) directly from the "
+                "entity fields."
+                % (order, order, order, order, order, order))
         pts: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
         conn: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         edges, elem_edges, flip = conform.unique_edges(conn, 2)
@@ -249,6 +256,27 @@ class QuadMesh:
         eid = self.quad                                # (Q,4) edge ids
         start = np.where(self.flip, ln[eid, 1], ln[eid, 0])   # (Q,4)
         return start.astype(np.int64)
+
+    def __repr__(self) -> str:
+        """One-line REPL summary: element / point counts, ``order``, and the tag
+        vocabulary -- the same field set
+        :class:`LineMesh <nekmeshpy.linemesh.LineMesh>` and
+        :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>` render, so the three read as a
+        family.
+
+        Counts come from the stored B-rep (``lines.points`` and the ``quad`` incidence
+        table) rather than the derived ``points`` / ``quads`` views, so it stays cheap
+        and correct even on an instance whose memoized ``_corners`` never got built.
+        Never raises -- see
+        :meth:`LineMesh.__repr__ <nekmeshpy.linemesh.LineMesh.__repr__>`."""
+        try:
+            return ("<QuadMesh %d points, %d quads, order %d, element_tags=%s, "
+                    "boundary_tags=%s>"
+                    % (self.lines.points.shape[0], self.quad.shape[0], self._order,
+                       _repr_tags(self.element_group_tags),
+                       _repr_tags(self.boundary_group_tags)))
+        except Exception:                     # a repr must never break a debug session
+            return "<QuadMesh (unprintable)>"
 
     @property
     def order(self) -> int:

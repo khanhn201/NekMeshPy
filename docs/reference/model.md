@@ -27,10 +27,24 @@ behind the B-rep) — is internal; see
    :members:
 ```
 
+## `model.quality`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.quality
+   :members:
+```
+
 ## `model.affine`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.model.affine
+   :members:
+```
+
+## `model.frames`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.frames
    :members:
 ```
 

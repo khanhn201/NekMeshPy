@@ -61,5 +61,51 @@ def test_quality_module_matches_mesh(built_mesh):
     sj = quality.scaled_jacobian(X, HC)
     assert np.allclose(sj, mesh.scaled_jacobian())
     stats = quality.summary(X, HC)
-    assert stats["n_inverted"] == 0
+    assert stats.n_inverted == 0
     assert mesh.quality_summary() == stats
+
+
+# -- validate_layers: an int is n uniform layers ------------------------------
+
+def test_int_layer_count_is_uniform_spacing():
+    from nekmeshpy.model.fields import uniform_spacing, validate_layers
+    # an int counts *layers* (cells), not positions -- 3 -> 4 positions
+    assert np.array_equal(validate_layers(3, "who"), uniform_spacing(3))
+    assert validate_layers(3, "who").size == 4
+
+
+def test_int_layer_count_reaches_the_factories_bit_identically():
+    from nekmeshpy import HexMesh
+    from nekmeshpy.model.fields import uniform_spacing
+    circ = LineMesh.circle(1.0, 8)
+    a = QuadMesh.ogrid(circ, 2, uniform_spacing(2))
+    b = QuadMesh.ogrid(circ, 2, 2)
+    assert a.points.tobytes() == b.points.tobytes()
+    ha = HexMesh.extrude(a, axis=(0, 0, 1), length=1.0, layers=uniform_spacing(3))
+    hb = HexMesh.extrude(b, axis=(0, 0, 1), length=1.0, layers=3)
+    assert ha.points.tobytes() == hb.points.tobytes()
+
+
+def test_layer_count_rejects_zero_and_floats():
+    import pytest
+
+    from nekmeshpy.model.fields import validate_layers
+    with pytest.raises(ValueError):
+        validate_layers(0, "who")            # zero layers is not a mesh
+    with pytest.raises(ValueError):
+        validate_layers(2.0, "who")          # a lone float is not a position array
+
+
+# -- repr on the quad / hex / tri containers ----------------------------------
+
+def test_repr_of_each_container_names_counts_and_tag_groups():
+    from nekmeshpy import HexMesh, TriMesh
+    section = QuadMesh.ogrid(LineMesh.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
+    block = HexMesh.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
+                            first_tag="inlet", last_tag="outlet")
+    assert repr(section).startswith("<QuadMesh ")
+    assert "order 1" in repr(section) and "boundary_tags={wall}" in repr(section)
+    assert repr(block).startswith("<HexMesh ")
+    assert "boundary_tags={inlet,outlet,wall}" in repr(block)
+    tri = TriMesh(np.zeros((4, 3)), [[0, 1, 2], [0, 2, 3]])
+    assert repr(tri) == "<TriMesh 4 points, 2 tris>"

@@ -19,7 +19,7 @@ internal toolkit code imports them from here directly rather than through the bo
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Callable, Literal
 
 import numpy as np
 
@@ -28,25 +28,29 @@ from .._typing import (
     IntArray,
     Point,
     PointArray,
+    SmoothingMethod,
     StrArray,
     Vec3,
 )
 from ..linemesh import LineMesh
+from ..linemesh._assemble import _sweep_lattice
 from ..linemesh._assemble import loft as line_loft
 from ..linemesh._morph import blend as line_blend
+from ..linemesh._morph import transform as line_transform
 from ..linemesh._morph import translate
-from ..model.fields import validate_layers
-from ._assemble import loft
+from ..model import frames
+from ..model.fields import reject_loop_caps, validate_layers
+from ._assemble import _loft_evaluated, loft
 from ._helpers import _apply_smoothing, _check_boundary
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
 
 
 def extrude(
     line: LineMesh,
+    length: float,
+    layers: int | FloatArray,
     *,
     axis: Vec3 = _Z_AXIS,
-    length: float,
-    layers: FloatArray,
     origin: Point = _ORIGIN,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
@@ -55,11 +59,18 @@ def extrude(
     section (the straight special case of :meth:`loft`).
 
     The ``line`` is translated rigidly along ``axis``; ``origin`` shifts the whole
-    section.  ``layers`` are normalized positions along ``axis`` (strictly
-    increasing in ``[0, 1]`` with the last ``1``), giving ``layers.size - 1``
+    section.  ``layers`` is either an ``int`` count of uniform layers or the
+    normalized positions along ``axis`` (strictly increasing in ``[0, 1]`` with
+    the last ``1``; :func:`validate_layers
+    <nekmeshpy.model.fields.validate_layers>`), giving ``layers.size - 1``
     layers.  The line's ``element_tags`` ride onto the swept quads and its tagged
     boundary points onto the side-wall edges; ``first_tag`` / ``last_tag`` name
-    the near / far cap edges."""
+    the near / far cap edges.
+
+    ``length`` and ``layers`` are positional-or-keyword, like ``path`` /
+    ``fractions`` on the sibling :func:`sweep`: they are required, so making them
+    keyword-only bought nothing.  Every existing
+    ``extrude(line, axis=..., length=..., layers=...)`` call still binds."""
     axis_u: Vec3 = np.asarray(axis, dtype=float)
     axis_u = axis_u / np.linalg.norm(axis_u)
     offsets = validate_layers(layers, "extrude layers") * float(length)
@@ -72,8 +83,8 @@ def extrude(
     slices = [translate(placed, d * axis_u) for d in offsets]
     return loft(slices, first_tag=first_tag, last_tag=last_tag)
 
-def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
-            smoothing_method: str | None = None,
+def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
+            smoothing_method: SmoothingMethod | None = None,
             inner_tag: str = "", outer_tag: str = "",
             ) -> QuadMesh:
     """Ring O-grid filling the region between an inner and an outer closed loop
@@ -83,9 +94,11 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: FloatArray, *,
     ``N``, and point ``i`` of ``inner`` joins radially to point ``i`` of
     ``outer`` (no resampling; build the outer loop with the same point count and
     aligned index 0, e.g. a ``LineMesh.rectangle(w, h, N)`` box against a
-    ``LineMesh.circle(r, N, start_theta=...)`` body).  ``radial`` are the ring positions with
+    ``LineMesh.circle(r, N, start_theta=...)`` body).  ``radial`` is either an ``int``
+    count of uniform ring layers or the ring positions with
     the initial position explicit (strictly increasing in ``[0, 1]``,
-    ``radial[0]`` = inner ring, last = ``1`` = outer loop), giving
+    ``radial[0]`` = inner ring, last = ``1`` = outer loop; :func:`validate_layers
+    <nekmeshpy.model.fields.validate_layers>`), giving
     ``radial.size - 1`` ring layers.  ``smoothing_method`` relaxes the ring
     interior with the inner/outer rings held fixed.
 
@@ -213,9 +226,135 @@ def from_grid(
                     last_tag=tags.get("y_max", ""))
 
 
+def sweep(
+    profile: LineMesh,
+    path: Callable[[FloatArray], PointArray],
+    fractions: FloatArray,
+    *,
+    origin: Point | Sequence[float],
+    tangent: Callable[[FloatArray], PointArray] | None = None,
+    orientation: Literal["transport", "fixed", "frenet"] = "transport",
+    up: Vec3 | Sequence[float] | PointArray | None = None,
+    twist: float = 0.0,
+    close_twist: bool = True,
+    normal: Vec3 | Sequence[float] | None = None,
+    loop: bool = False,
+    element_tags: StrArray | Sequence[str] | None = None,
+    first_tag: str | Sequence[str] | StrArray = "",
+    last_tag: str | Sequence[str] | StrArray = "",
+) -> QuadMesh:
+    """A strip swept from one ``LineMesh`` ``profile`` along the curve ``path``.
+
+    Sweep one cross-section along a **curved** path: the section is carried by a moving
+    orthonormal frame, so at every station it is placed by a *rigid* motion -- the
+    curved generalization of :func:`extrude`, which is this with a straight path and a
+    constant frame.
+
+    **The section is moved rigidly, not point-by-point.**  Through a bend of radius
+    ``Rb`` a node sitting ``d`` outboard of the centreline traverses radius ``Rb + d``
+    and one ``d`` inboard traverses ``Rb - d``: they cover different distances and
+    neither of them follows the path.  That is the correct behaviour of a swept solid,
+    and it is what offsetting every section point along its own copy of the curve would
+    get wrong -- that would shear the section, and on a bend tighter than the section
+    is wide it would fold the inboard nodes through the axis and invert the elements.
+    Nothing here prevents that fold -- a bend radius must exceed the section's own
+    in-plane extent -- but it is not silently meshed either: the folded layer comes out
+    mixed-winding and ``loft`` rejects it, naming the sweep as the likely cause.
+
+    ``path`` is **vectorized** -- ``(K,) -> (K,3)`` -- unlike ``loft_curve``'s
+    profile-at-a-time callable, and deliberately so: a rotation-minimizing frame is a
+    *sequential* integration along the curve, so it cannot be evaluated at one isolated
+    parameter.  (``loft_curve``'s ``f`` is scalar for its own reason: it returns a
+    *mesh*, and a callable handing back one mesh can only take one parameter value.
+    ``LineMesh.loft_curve``'s ``f`` returns coordinates, so it is vectorized again.
+    The three shapes disagree because the three return types do.)  ``sweep`` samples
+    the whole node lattice
+    ``_refined_lattice(fractions, order)`` in one call, builds the frame field on it,
+    places the section at every level -- corner levels *and* the intermediate GLL levels
+    -- and delegates to :func:`loft` through ``sweep_nodes``.  So the sweep direction is
+    exact at any order, not straight-subdivided between slices.
+
+    ``fractions`` are the path parameter values themselves, in ``path``'s own units, and
+    grade the sweep exactly as they do on ``loft_curve``.  ``loop=True`` takes the
+    trailing wrap value; the closing profile is the *identical* placement as the first
+    (not a re-evaluation), so a closed sweep welds exactly rather than to a tolerance.
+
+    ``orientation`` picks the frame generator
+    (:func:`nekmeshpy.model.frames.sweep_placements`): ``"transport"`` -- the default,
+    rotation-minimizing, seeded from the section's own in-plane axis so it does not spin
+    at the start and correct on a non-planar path; ``"fixed"`` with ``up=`` -- exact and
+    zero-twist, the right choice for a planar path (an elbow, a U-turn), failing loudly
+    if a tangent turns parallel to ``up``; ``"frenet"`` -- included but wrong for a
+    sweep, being undefined on a straight run and sign-flipping through an inflection.
+    It names a *mode* and nothing else; the per-station up vectors that used to be
+    passed as ``orientation`` are now a ``(K,3)`` ``up=`` with ``orientation="fixed"``.
+    ``up`` therefore takes either a single ``(3,)`` world direction or a ``(K,3)``
+    per-station field (told apart by rank).  ``twist`` adds a total roll in radians
+    about the tangent, spread over the stations.
+
+    ``tangent`` is the path's **derivative**, ``(K,) -> (K,3)``, and is worth passing
+    whenever the path has one in closed form.  Without it the tangent field is central
+    differences of the *sampled* centreline: O(h^2), and worst exactly where the
+    curvature jumps (a straight run meeting an arc), which tilts every frame there --
+    so the centreline lands exactly and the profile does not.  **This is the quiet
+    failure mode, not a loud one**: measured on ``examples/serpentine_pipe.py`` the
+    finite-differenced sweep pulls the wall 1.1e-4 *inside* the tube radius -- 0.2% of
+    it -- while passing every quality, watertightness and topology check the suite has;
+    passing the analytic derivative takes the same measurement to 4.1e-11.  It is
+    normalized here, so any non-unit scaling of the true derivative will do.
+
+    ``origin`` is **required**: it is the profile's reference point, the one that rides
+    the path.  It used to default to the profile's centroid, which is defensible and
+    frequently wrong -- an O-grid disc's centroid is *not* its centre (the grid is
+    slightly asymmetric), so the obvious call produced a quietly off-axis block with no
+    error anywhere.  There is no safe default, so there is no default; pass the centre
+    the profile was built about.  ``normal=`` overrides the profile's own fitted plane,
+    needed when it is not planar (otherwise a ``ValueError`` rather than a silent
+    shear) -- and a straight-segment profile has no plane of its own at all, so it
+    always needs one.  Tags behave exactly as on :func:`loft`:
+    ``element_tags`` is per sweep layer and overrides the section's own where non-empty,
+    and ``first_tag`` / ``last_tag`` cap the ends (rejected when ``loop=True``).
+
+    The order is the **profile's own** -- a rigid placement cannot change it, so there
+    is nothing for a separate ``order=`` argument to say that argument one does not
+    already say.
+
+    The 2-D rung of the sweep: the "cross-section" is a curve and the result a surface,
+    the sibling one rung down of ``HexMesh.sweep``.
+    """
+    order = profile.order
+    _, t = _sweep_lattice(fractions, order, loop=loop, name="sweep")
+    if loop:
+        reject_loop_caps("QuadMesh.sweep", first_tag, last_tag)
+    tv: FloatArray = t[:-1] if loop else t
+    P: PointArray = np.asarray(path(tv), dtype=float)
+    if P.shape != (tv.shape[0], 3):
+        raise ValueError("sweep: path must map the (%d,) sweep lattice to a (%d,3) "
+                         "array of centreline points, got %s"
+                         % (tv.shape[0], tv.shape[0], (P.shape,)))
+    T: PointArray | None = None
+    if tangent is not None:
+        T = np.asarray(tangent(tv), dtype=float)
+        if T.shape != (tv.shape[0], 3):
+            raise ValueError("sweep: tangent must map the (%d,) sweep lattice to a "
+                             "(%d,3) array of unit tangents, got %s"
+                             % (tv.shape[0], tv.shape[0], (T.shape,)))
+        T = T / np.linalg.norm(T, axis=1)[:, None]
+    places = frames.sweep_placements(
+        profile.points, P, orientation=orientation, up=up, twist=twist,
+        close_twist=close_twist, loop=loop, origin=origin, normal=normal,
+        path_tangents=T)
+    profs: list[LineMesh] = [line_transform(profile, M, o) for M, o in places]
+    if loop:
+        profs.append(profs[0])          # the seam profile *is* the first placement
+    return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
+                           first_tag=first_tag, last_tag=last_tag, name="sweep")
+
+
 #: Rung-raising combinators bound onto ``QuadMesh`` as ``staticmethod``.
 FACTORIES: dict[str, Any] = {
     "extrude": extrude,
+    "sweep": sweep,
     "annulus": annulus,
     "from_grid": from_grid,
 }

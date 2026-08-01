@@ -9,7 +9,7 @@ here needs no edit there).  Internal toolkit code calls the free functions direc
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -69,7 +69,7 @@ def circle(radius: float, n: int, *,
 def rectangle(width: float, height: float, n: int, *,
               center: Point = (0.0, 0.0, 0.0),
               normal: Vec3 = (0.0, 0.0, 1.0),
-              side_tags: Sequence[str] | None = None,
+              side_tags: Mapping[str, str] | None = None,
               order: int = 1) -> LineMesh:
     """A closed rectangle loop of the given ``width`` x ``height`` about
     ``center`` in the plane with the given ``normal`` (default ``+z``),
@@ -84,8 +84,13 @@ def rectangle(width: float, height: float, n: int, *,
     (``atan2(-height, -width)``) and the two loops pair index-for-index (the
     radial spokes are not straight, but the mesh conforms).
 
-    ``side_tags`` (length-4 ``[bottom, right, top, left]``) names each side's
-    line elements; ``side_tags=None`` leaves the loop untagged.
+    ``side_tags`` (keyed ``bottom`` / ``right`` / ``top`` / ``left``) names each
+    side's line elements; an absent key leaves that side untagged and
+    ``side_tags=None`` leaves the whole loop untagged.  The keys -- rather than a
+    positional 4-sequence -- are what make this spelling identical to its one-rung-up
+    twin :meth:`QuadMesh.rectangle <nekmeshpy.quadmesh.QuadMesh.rectangle>`, which
+    takes the same keyword with the same four names; an unrecognized key is a loud
+    ``ValueError`` because a silent typo would otherwise just lose a wall.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     each element carries ``order+1`` GLL nodes on its straight side -- the two
@@ -113,11 +118,13 @@ def rectangle(width: float, height: float, n: int, *,
                           _side(tr, tl), _side(tl, bl)])
     tags: list[str] | None = None
     if side_tags is not None:
-        st = list(side_tags)
-        if len(st) != 4:
-            raise ValueError("rectangle side_tags must be 4 names "
-                             "[bottom, right, top, left]")
-        tags = [st[0]] * m + [st[1]] * m + [st[2]] * m + [st[3]] * m
+        sides = ("bottom", "right", "top", "left")   # the loop's CCW traversal order
+        for key in side_tags:
+            if key not in sides:
+                raise ValueError(
+                    "rectangle side_tags key must be one of "
+                    "bottom/right/top/left, got %r" % key)
+        tags = [t for side in sides for t in [side_tags.get(side, "")] * m]
     # every side is straight, so ``loft``'s default straight GLL interior is exact
     return loft(pts, loop=True, element_tags=tags, order=order)
 
