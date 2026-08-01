@@ -291,7 +291,7 @@ The siblings are split by two orthogonal axes: **arity** (fixed vs variable/n-ar
 | `_lift.py` | fixed | +1 | quad `extrude`/`sweep`/`annulus`/`from_grid`; hex `extrude`/`sweep`/`annulus`/`from_grid` |
 | `_morph.py` | fixed | 0 | binary `blend`; **unary** `translate`/`rotate`/`scale`/`transform` |
 | `_query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
-| `_open.py` / `_closed.py` | fixed | +1 | shape factories (own a *shape model*, hence separate from `_lift` — `annulus` owns none, so it is a `_lift` at both rungs) |
+| `_open.py` / `_closed.py` | fixed | +1 | shape factories (own a *shape model*, hence separate from `_lift` — `annulus` owns none, so it is a `_lift` at both rungs). `hexmesh/_open.py` holds `tetra`, whose inputs are a rung *two* below its output |
 
 `_assemble` is the load-bearing boundary: **`loft` (with `loft_curve`, which delegates to it)
 and `merge` are the only operations
@@ -384,10 +384,11 @@ directly at module level.
   same `Overlay` channel as the O-rings, from their own private nodes, so nothing is
   straight-subdivided between seam samples. `side_tags` is keyed `seam1`/`seam2` only.
   Its core patch is public as `QuadMesh.quadrant_core(arc, seam1, seam2, *, center_scale=)`
-  → an `(n+1,n+1,3)` grid: the region *behind* three quadrant faces meeting at `O` is an
-  **octant of a 3-D O-grid** (an `n^3` core cube whose three inner faces are exactly their
-  three cores, plus three `n x n x Nradial` slabs out to the wall), which welds only if it
-  lands on the same points. Used by `examples/quadrant_pipe_tjunction.py`, which meshes a
+  → an `(n+1,n+1,3)` grid. A quadrant face is itself a **three-patch triangle** (its core
+  plus the two halves of its ring band), which is exactly what `HexMesh.tetra` consumes —
+  so the region *behind* three quadrant faces meeting at `O` is filled by handing them and
+  a wall patch to `tetra`, and the **octant of a 3-D O-grid** (`n^3` core + three
+  `n x n x Nradial` slabs) falls out of the generic tetrahedron split. Used by `examples/quadrant_pipe_tjunction.py`, which meshes a
   small-branch T-junction as a **single welded component** by making one quadrant of the
   main pipe *be* a quadrant of the branch's footprint disc: four regions (two legs, the
   branch stub, two crotch caps) meet at the axes-crossing point and every interface between
@@ -467,6 +468,23 @@ directly at module level.
   use the private `linemesh/_plane.py` `_in_plane_axes` helper — they *construct* a
   planar loop, not project an existing boundary.) `ogrid`/`half_ogrid`/`quadrant_ogrid` are ICEM/Pointwise terms
   with no gmsh equivalent — kept deliberately.
+- **`HexMesh.tetra(faces, *, center=)`** (`hexmesh/_open.py`) fills the curvilinear
+  **tetrahedron** enclosed by four triangular `QuadMesh` faces, each meshed as **three
+  structured patches meeting at one interior node**. The structure is *recovered* from the
+  connectivity — a three-patch triangle has exactly 3 nodes on one quad and 1 node on three
+  — so nothing is declared and a bad face is a loud `ValueError`. The fill is the classic
+  tet split, **one hex block per corner**, each inheriting whatever split the faces already
+  carry along its three edges; a block's three outer sides *are* the faces' patches, taken
+  verbatim (so the mesh is exact wherever the faces are), and its three inner sides are
+  transfinite patches of two face spokes and two chords into `center`, computed identically
+  from both blocks that share them. `center` defaults to the centroid of the four face
+  centres — pass one when three faces are much smaller than the fourth, since the natural
+  centroid then lands near their plane and three coplanar edges at a corner is a flat cell.
+  Each face's **`element_tags`** name the boundary faces it becomes, and travel *with the
+  face* through the internal reordering. Order N rides through: face nodes come off the
+  conformal walk and each block is assembled from its full node lattice through the three
+  rungs' `loft` (`LineMesh.loft(interior=)` → `QuadMesh.loft(sweep_nodes=)` →
+  `HexMesh.loft(sweep_nodes=)`), never from corners — which is what `from_grid` cannot do.
 - **Hex blocks** are `HexMesh` classmethods: `extrude` (sweep one section along a straight
   axis = gmsh Extrude+Layers+Recombine), `sweep` (carry one section rigidly along a
   **curved** path by a moving frame — the curved generalization of `extrude`; a bent pipe),

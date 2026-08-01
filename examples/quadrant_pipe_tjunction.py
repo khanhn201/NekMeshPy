@@ -98,7 +98,6 @@ from collections import namedtuple
 import numpy as np
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
-from nekmeshpy.model.interp import coons_grid
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -332,59 +331,16 @@ COMPOSITE_L = disc([(FQ[2].reverse(), SP[3], SP[2]),      # P2 -> P3
                     (SIDE_LP, SWP, SP[3])])
 
 
-# -- the crotch caps: an octant of a 3-D O-grid -------------------------------
-def core_grid(seam1, seam2, arc):
-    """A quadrant's core patch and its far corner ``K``.
-
-    :meth:`QuadMesh.quadrant_core <nekmeshpy.quadmesh.QuadMesh.quadrant_core>` is the
-    same construction ``quadrant_ogrid`` builds its own core with, which is the whole
-    point: the cap blocks below have to land on exactly those points to weld to the
-    three quadrant faces around them."""
-    o = seam1.points[0]
-    return (QuadMesh.quadrant_core(arc, seam1, seam2, center_scale=CENTER_SCALE),
-            o + CENTER_SCALE * (arc.points[N] - o))
-
-
-def polyline(v):
-    """The uniform piecewise-linear map ``[0,1] -> v`` through ``v``'s ``m+1`` rows.
-
-    Piecewise-linear, not a global fit: it is what the toolkit puts on a
-    straight-sided edge at order N, so a cap block built on this reproduces the
-    quadrant's own node positions rather than merely passing through the same
-    corners."""
-    v = np.asarray(v, dtype=float)
-    m = v.shape[0] - 1
-
-    def f(s):
-        s = np.clip(np.asarray(s, dtype=float), 0.0, 1.0) * m
-        i = np.clip(np.floor(s).astype(int), 0, m - 1)
-        w = s - i
-        return (1.0 - w if v.ndim == 1 else (1.0 - w)[:, None]) * v[i] + (
-            w if v.ndim == 1 else w[:, None]) * v[i + 1]
-
-    return f
-
-
-def bilinear(grid):
-    """The uniform piecewise-bilinear map ``[0,1]**2 -> grid`` -- the two-dimensional
-    twin of :func:`polyline`, and what a straight-sided quad patch's nodes are."""
-    g = np.asarray(grid, dtype=float)
-    m = g.shape[0] - 1
-
-    def f(x, y):
-        x = np.clip(np.asarray(x, dtype=float), 0.0, 1.0) * m
-        y = np.clip(np.asarray(y, dtype=float), 0.0, 1.0) * m
-        i = np.clip(np.floor(x).astype(int), 0, m - 1)
-        j = np.clip(np.floor(y).astype(int), 0, m - 1)
-        a, b = (x - i)[:, None], (y - j)[:, None]
-        return ((1 - a) * (1 - b) * g[i, j] + a * (1 - b) * g[i + 1, j]
-                + (1 - a) * b * g[i, j + 1] + a * b * g[i + 1, j + 1])
-
-    return f
+# -- the crotch caps ----------------------------------------------------------
+def quadrant(arc, seam1, seam2):
+    """One quadrant face, built exactly as the discs build theirs, so the cap shares
+    its points with the leg or branch on the other side of it."""
+    return QuadMesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+                                   center_scale=CENTER_SCALE)
 
 
 def coons_fn(cb, ct, cl, cr):
-    """A transfinite patch of four boundary *functions*: the continuous form of
+    """A transfinite patch of four boundary *functions* -- the continuous form of
     ``model.interp.coons_grid``, evaluable at any node lattice."""
     def f(x, y):
         xa = np.asarray(x, dtype=float)[:, None]
@@ -398,123 +354,71 @@ def coons_fn(cb, ct, cl, cr):
     return f
 
 
-def evaluated_block(x_map, fx, fy, fz, last_tag=""):
-    """A structured block from a vectorized map on the unit cube, **evaluated at every
-    node** rather than subdivided between corners.
+def wall_patch(fn, tag):
+    """One patch of the wall triangle, evaluated on the cylinder at every node.
 
-    This is what ``from_grid`` cannot do: it takes corners and blends straight, so at
-    ``order > 1`` its edges are chords.  Nesting the three rungs' ``loft_curve`` --
-    each of which calls its ``f`` at the whole GLL-refined lattice, not just the
-    corner levels -- puts every node on the true map instead, which is what lets the
-    cap agree with ``quadrant_ogrid``'s bowed ring bands and stay on the wall."""
-    def profile(y, z):
-        return LineMesh.loft_curve(
-            lambda x: x_map(x, np.full(np.shape(x), y), np.full(np.shape(x), z)),
-            fx, order=ORDER)
-
-    def section(z):
-        return QuadMesh.loft_curve(lambda y: profile(y, z), fy, order=ORDER)
-
-    return HexMesh.loft_curve(section, fz, order=ORDER, last_tag=last_tag)
+    Spelt as a nested ``loft_curve`` rather than ``QuadMesh.from_grid`` because
+    ``from_grid`` blends straight from corners: at ``order > 1`` its interior nodes
+    would leave the wall."""
+    fr = np.linspace(0.0, 1.0, N + 1)
+    return QuadMesh.loft_curve(
+        lambda y: LineMesh.loft_curve(
+            lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
+        fr, order=ORDER, element_tags=[tag] * N)
 
 
-def cap(sa, sb, sc, ab, bc, ca):
-    """Fill the corner region bounded by the three quadrant faces ``(sa, sb, ab)``,
-    ``(sb, sc, bc)``, ``(sc, sa, ca)`` and the wall triangle between their arcs.  Each
-    of ``ab``/``bc``/``ca`` is that arc as a ``(LineMesh, Wall)`` pair -- the mesh to
-    share points with, the parametrization to evaluate the wall on.
+def wall_triangle(w_ab, w_bc, w_ca, tag="wall"):
+    """The curved wall triangle between three arcs, as the three patches about its
+    centroid that :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` wants.
 
-    Index the corner by ``(i, j, k)`` along the three seams.  The ``n x n x n`` core
-    cube's inner faces ``k=0`` / ``j=0`` / ``i=0`` *are* the three quadrant cores;
-    its three outer faces each carry an ``n x n x Nradial`` slab out to a third of the
-    wall triangle, and every slab side face is half of a neighbouring quadrant's ring
-    band computed by that factory's own blend."""
-    (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
-    core_ab, k_ab = core_grid(sa, sb, m_ab)
-    core_bc, k_bc = core_grid(sb, sc, m_bc)
-    core_ca, k_ca = core_grid(sc, sa, m_ca)
-    t = np.arange(N + 1, dtype=float) / N
-    fx = np.linspace(0.0, 1.0, N + 1)
-
-    # the three arc midpoints and their centroid, read off the parametrizations so
-    # that all three share one coherent branch of phi.
+    Built in the cylinder's own ``(phi, z)`` parameters throughout, so every node of
+    every patch lands on the wall exactly."""
     u_ab, u_bc, u_ca = (w.g(w.fr[N:N + 1])[0] for w in (w_ab, w_bc, w_ca))
     wc = (u_ab + u_bc + u_ca) / 3.0
 
-    # The core cube's far corner.  Scaling it like the K's -- or, worse, averaging
-    # them -- puts it in their own plane, and three coplanar edges at a corner is a
-    # flat cell.  A cube octant has its seam ends at d, its face corners at d*sqrt(2)
-    # and its far corner at d*sqrt(3); ``quadrant_ogrid`` already places M at
-    # ``center_scale/sqrt(2)`` and K at ``center_scale``, so the matching far corner
-    # is ``center_scale*sqrt(3/2)`` along the wall triangle's centroid ray.
-    o = sa.points[0]
-    cc = o + CENTER_SCALE * np.sqrt(1.5) * (cyl_pts(wc[None, :])[0] - o)
-
-    def chord(p, q):
-        return p + t[:, None] * (q - p)
-
-    # the cube's three outer faces: a Coons patch of two core perimeter halves and
-    # two chords running into the far corner.
-    f_i = coons_grid(core_ab[N], chord(k_ca, cc), core_ca[:, N], chord(k_ab, cc),
-                     t, t)                                       # [j][k]
-    f_j = coons_grid(core_ab[:, N], chord(k_bc, cc), core_bc[N], chord(k_ab, cc),
-                     t, t)                                       # [i][k]
-    f_k = coons_grid(core_ca[N], chord(k_bc, cc), core_bc[:, N], chord(k_ca, cc),
-                     t, t)                                       # [i][j]
-
-    cube = np.empty((N + 1, N + 1, N + 1, 3))
-    for m in range(N + 1):                        # a Coons level per k; k = 0 and
-        cube[:, :, m, :] = coons_grid(core_ca[m], f_j[:, m],   # k = n reproduce the
-                                      core_bc[:, m], f_i[:, m], t, t)  # given faces
-
-    # the wall triangle, split into three patches about that same centroid.  All of it
-    # is done in the cylinder's own (phi, z) parameters, so no node leaves the wall.
     def half(w, i0, i1):
-        """One half of an arc, reparametrized onto ``[0,1]`` **through its own node
-        values** -- a plain linear remap would move the shared nodes off the arc when
-        its spacing is graded, as the footprint's arc-length spacing is."""
-        rep = polyline(w.fr[np.arange(i0, i1 + (1 if i1 > i0 else -1),
-                                      1 if i1 > i0 else -1)])
+        """Half an arc on ``[0, 1]``, remapped **through its own node values** -- a
+        plain linear remap would slide the shared nodes off the arc wherever its
+        spacing is graded, as the footprint's arc-length spacing is."""
+        idx = np.arange(i0, i1 + (1 if i1 > i0 else -1), 1 if i1 > i0 else -1)
+        fr, m = w.fr[idx], idx.size - 1
+
+        def rep(s):
+            s = np.clip(np.asarray(s, dtype=float), 0.0, 1.0) * m
+            i = np.clip(np.floor(s).astype(int), 0, m - 1)
+            return (1.0 - (s - i)) * fr[i] + (s - i) * fr[i + 1]
+
         return lambda s: w.g(rep(s))
 
     def spoke(mid):
         return lambda s: mid + np.asarray(s, dtype=float)[:, None] * (wc - mid)
 
-    w_a = coons_fn(half(w_ab, 0, N), spoke(u_ca), half(w_ca, 2 * N, N), spoke(u_ab))
-    w_b = coons_fn(half(w_ab, 2 * N, N), spoke(u_bc), half(w_bc, 0, N), spoke(u_ab))
-    w_c = coons_fn(half(w_ca, 0, N), spoke(u_bc), half(w_bc, 2 * N, N), spoke(u_ca))
+    return QuadMesh.merge([
+        wall_patch(coons_fn(half(w_ab, 0, N), spoke(u_ca),
+                            half(w_ca, 2 * N, N), spoke(u_ab)), tag),
+        wall_patch(coons_fn(half(w_ab, 2 * N, N), spoke(u_bc),
+                            half(w_bc, 0, N), spoke(u_ab)), tag),
+        wall_patch(coons_fn(half(w_ca, 0, N), spoke(u_bc),
+                            half(w_bc, 2 * N, N), spoke(u_ca)), tag)])
 
-    def slab(base, wall, sm, swap):
-        """One radial band: the cube's outer face blended out to its wall patch over
-        ``RADIAL``.  That blend *is* ``quadrant_ogrid``'s ring formula, so the two side
-        faces it shares with the neighbouring quadrants come out node-for-node the
-        same.  ``swap`` fixes the one slab whose natural axis order is left-handed."""
-        b = bilinear(base)
 
-        def x_map(x, y, tau):
-            p, q = (y, x) if swap else (x, y)
-            s = np.asarray(tau, dtype=float)[:, None]
-            return (1.0 - s) * b(p, q) + s * cyl_pts(wall(p, q))
+def cap(sa, sb, sc, ab, bc, ca):
+    """A crotch: the curvilinear tetrahedron whose four sides are the three quadrant
+    faces meeting at ``O`` and the patch of pipe wall between their arcs.
 
-        # The slab's seam column is *derived*, not snapped.  ``quadrant_ogrid`` pins
-        # each ring's two ends onto the seam's own stations; for a straight seam
-        # sampled at ``quadrant_seam_fractions`` the blend already lands exactly
-        # there, which is why nothing here has to reproduce that snap.  Bow a seam or
-        # hand-sample one and the identity quietly stops holding, so check it.
-        z1 = np.zeros(1)
-        col = ((1.0 - RADIAL[:, None]) * b(z1, z1)
-               + RADIAL[:, None] * cyl_pts(wall(z1, z1)))
-        if not np.allclose(col, sm.points[N:], rtol=0.0, atol=1e-12):
-            raise ValueError(
-                "cap: the seam column does not reproduce the seam's own ring "
-                "stations, so this slab would not weld to the quadrant faces beside "
-                "it -- the seams must be straight and sampled at "
-                "QuadMesh.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)")
-        return evaluated_block(x_map, fx, fx, RADIAL, last_tag="wall")
-
-    return [HexMesh.from_grid(cube, order=ORDER),
-            slab(f_i, w_a, sa, False), slab(f_j, w_b, sb, True),
-            slab(f_k, w_c, sc, False)]
+    Each of ``ab``/``bc``/``ca`` is that arc as a ``(LineMesh, Wall)`` pair -- the mesh
+    the quadrant face is built on, the parametrization the wall patch is evaluated on.
+    :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` does the rest: one hex
+    block per corner, inheriting the split each face already carries, which is exactly
+    the octant of a 3-D O-grid this region wants."""
+    (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
+    return [HexMesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
+                           quadrant(m_ca, sc, sa),
+                           wall_triangle(w_ab, w_bc, w_ca)],
+                          center=ORIGIN + CENTER_SCALE * np.sqrt(1.5)
+                          * (cyl_pts(np.mean([w.g(w.fr[N:N + 1])[0]
+                                              for w in (w_ab, w_bc, w_ca)],
+                                             axis=0)[None, :])[0] - ORIGIN))]
 
 
 # -- build --------------------------------------------------------------------

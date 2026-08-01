@@ -29,13 +29,14 @@ from ._assemble import FACTORIES as _ASSEMBLE_FACTORIES
 from ._lift import FACTORIES as _LIFT_FACTORIES
 from ._morph import FACTORIES as _MORPH_FACTORIES
 from ._morph import METHODS as _MORPH_METHODS
+from ._open import FACTORIES as _OPEN_FACTORIES
 from ._query import METHODS as _QUERY_METHODS
 from .hexmesh import HexMesh
 
 # The combinators are plain free functions (no ``cls``); bind as ``staticmethod`` so
 # ``HexMesh.extrude(section, ...)`` passes no implicit first argument.
 for _name, _fn in {**_ASSEMBLE_FACTORIES, **_LIFT_FACTORIES,
-                   **_MORPH_FACTORIES}.items():
+                   **_MORPH_FACTORIES, **_OPEN_FACTORIES}.items():
     setattr(HexMesh, _name, staticmethod(_fn))
 
 # The queries and the unary placements take the mesh they act on first, except the
