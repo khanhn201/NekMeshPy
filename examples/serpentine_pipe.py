@@ -30,6 +30,7 @@ Produces ``serpentine_pipe.re2`` and ``serpentine_pipe.vtu``.
 
 import logging
 import time
+from collections import namedtuple
 
 import numpy as np
 
@@ -104,23 +105,19 @@ MOVES += [
 ]
 
 # -- turtle-walk the table into per-segment arrays ---------------------------
-# Lines carry a start point + unit direction; arcs a centre, radius, start angle and
-# signed sweep. Lines get a dummy radius 1 so the arc formula can be evaluated
-# unconditionally and selected with np.where.
+# One row per segment. A line is described by its start point + unit direction, an arc
+# by its centre, radius, start angle and signed sweep; each fills the other's fields
+# with harmless dummies (a line gets radius 1, an arc a zero direction) so both closed
+# forms can be evaluated unconditionally and selected with np.where.
+Seg = namedtuple("Seg", "is_arc p0 dir cen rad th0 dth length")
+
+_segs = []
 _p = np.array([X_PASS_0 + DX_OFFSET, Z_PLANE])   # inlet, above and inward of pass 1
 _phi = -0.5 * np.pi                              # heading straight down
-_is_arc, _p0, _dir, _cen, _rad, _th0, _dth, _len = [], [], [], [], [], [], [], []
 for _kind, _a, _b in MOVES:
     if _kind == "line":
         _d = np.array([np.cos(_phi), np.sin(_phi)])
-        _is_arc.append(False)
-        _p0.append(_p.copy())
-        _dir.append(_d)
-        _cen.append(np.zeros(2))
-        _rad.append(1.0)
-        _th0.append(0.0)
-        _dth.append(0.0)
-        _len.append(_a)
+        _segs.append(Seg(False, _p.copy(), _d, np.zeros(2), 1.0, 0.0, 0.0, _a))
         _p = _p + _a * _d
     else:
         _r, _turn = _a, float(np.deg2rad(_b))
@@ -130,28 +127,40 @@ for _kind, _a, _b in MOVES:
                          np.sin(_phi + _sgn * 0.5 * np.pi)])
         _c = _p + _r * _nrm
         _t0 = float(np.arctan2(_p[1] - _c[1], _p[0] - _c[0]))
-        _is_arc.append(True)
-        _p0.append(_p.copy())
-        _dir.append(np.zeros(2))
-        _cen.append(_c)
-        _rad.append(_r)
-        _th0.append(_t0)
-        _dth.append(_turn)
-        _len.append(_r * abs(_turn))             # exact: radius * angle
+        # the length is exact: radius * angle
+        _segs.append(Seg(True, _p.copy(), np.zeros(2), _c, _r, _t0, _turn,
+                         _r * abs(_turn)))
         _p = _c + _r * np.array([np.cos(_t0 + _turn), np.sin(_t0 + _turn)])
         _phi = _phi + _turn
 
-IS_ARC = np.asarray(_is_arc, dtype=bool)
-SEG_P0 = np.asarray(_p0, dtype=float)
-SEG_DIR = np.asarray(_dir, dtype=float)
-SEG_CEN = np.asarray(_cen, dtype=float)
-SEG_RAD = np.asarray(_rad, dtype=float)
-SEG_TH0 = np.asarray(_th0, dtype=float)
-SEG_DTH = np.asarray(_dth, dtype=float)
-SEG_LEN = np.asarray(_len, dtype=float)
+IS_ARC = np.asarray([s.is_arc for s in _segs], dtype=bool)
+SEG_P0 = np.asarray([s.p0 for s in _segs], dtype=float)
+SEG_DIR = np.asarray([s.dir for s in _segs], dtype=float)
+SEG_CEN = np.asarray([s.cen for s in _segs], dtype=float)
+SEG_RAD = np.asarray([s.rad for s in _segs], dtype=float)
+SEG_TH0 = np.asarray([s.th0 for s in _segs], dtype=float)
+SEG_DTH = np.asarray([s.dth for s in _segs], dtype=float)
+SEG_LEN = np.asarray([s.length for s in _segs], dtype=float)
 CUM = np.concatenate([np.zeros(1), np.cumsum(SEG_LEN)])   # (S+1,) cumulative length
 TOTAL = float(CUM[-1])                                    # exact total arc length
 S_BREAKS = CUM[1:-1] / TOTAL      # normalized s of every straight<->arc junction
+
+
+def locate(s):
+    """Dispatch normalized arc lengths onto ``(segment index, arc length into it)``.
+
+    ``(K,)`` in ``[0, 1]`` -> two ``(K,)`` arrays.  Both closed forms below start
+    here: a ``searchsorted`` of the cumulative table is what puts each sample in its
+    own segment, so nothing is ever evaluated with a neighbour's geometry.
+    """
+    t = np.clip(np.asarray(s, dtype=float).ravel(), 0.0, 1.0) * TOTAL
+    idx = np.clip(np.searchsorted(CUM, t, side="right") - 1, 0, SEG_LEN.size - 1)
+    return idx, t - CUM[idx]
+
+
+def in_plane(uv):
+    """``(K,2)`` in-plane components to ``(K,3)``, on the coil's own plane axes."""
+    return uv[:, 0, None] * AXIS_U + uv[:, 1, None] * AXIS_V
 
 
 def centerline(s):
@@ -159,18 +168,14 @@ def centerline(s):
 
     Vectorized -- ``(K,)`` in ``[0, 1]`` -> ``(K,3)`` -- because that is what
     :meth:`HexMesh.sweep` wants: it samples the whole node lattice in one call so a
-    moving frame can be built along it.  Each sample is dispatched into its own
-    segment with a ``searchsorted`` and evaluated from that segment's closed form.
+    moving frame can be built along it.
     """
-    t = np.clip(np.asarray(s, dtype=float).ravel(), 0.0, 1.0) * TOTAL
-    idx = np.clip(np.searchsorted(CUM, t, side="right") - 1, 0, SEG_LEN.size - 1)
-    loc = t - CUM[idx]
+    idx, loc = locate(s)
     line_uv = SEG_P0[idx] + SEG_DIR[idx] * loc[:, None]
     theta = SEG_TH0[idx] + np.sign(SEG_DTH[idx]) * loc / SEG_RAD[idx]
     arc_uv = SEG_CEN[idx] + SEG_RAD[idx][:, None] * np.stack(
         [np.cos(theta), np.sin(theta)], axis=1)
-    uv = np.where(IS_ARC[idx][:, None], arc_uv, line_uv)
-    return ORIGIN + uv[:, 0, None] * AXIS_U + uv[:, 1, None] * AXIS_V
+    return ORIGIN + in_plane(np.where(IS_ARC[idx][:, None], arc_uv, line_uv))
 
 
 def tangent(s):
@@ -189,14 +194,12 @@ def tangent(s):
     straight's is its own constant direction; an arc's is the radius vector turned
     a quarter turn in the direction of travel.  Both are already unit length.
     """
-    t = np.clip(np.asarray(s, dtype=float).ravel(), 0.0, 1.0) * TOTAL
-    idx = np.clip(np.searchsorted(CUM, t, side="right") - 1, 0, SEG_LEN.size - 1)
-    loc = t - CUM[idx]
+    idx, loc = locate(s)
     sgn = np.sign(SEG_DTH[idx])
     theta = SEG_TH0[idx] + sgn * loc / SEG_RAD[idx]
     arc_uv = sgn[:, None] * np.stack([-np.sin(theta), np.cos(theta)], axis=1)
-    uv = np.where(IS_ARC[idx][:, None], arc_uv, SEG_DIR[idx])
-    return uv[:, 0, None] * AXIS_U + uv[:, 1, None] * AXIS_V
+    # a direction, not a point -- ORIGIN deliberately does not enter here
+    return in_plane(np.where(IS_ARC[idx][:, None], arc_uv, SEG_DIR[idx]))
 
 
 # -- sweep stations: a node exactly on every junction ------------------------

@@ -43,6 +43,11 @@ def _coons2(cb: PointArray, ct: PointArray,
     return coons_grid(cb, ct, cl, cr, _lin(cb.shape[0]), _lin(cl.shape[0]))
 
 
+def _chord(p: Point, q: Point, t: PointArray) -> PointArray:
+    """The straight chord ``p -> q`` sampled at parameters ``t``: ``(len(t), 3)``."""
+    return p + t[:, None] * (q - p)
+
+
 def _side_map(quads: IntArray) -> dict[tuple[int, int], list[int]]:
     """``{sorted corner pair: [quad, ...]}`` over every quad side."""
     out: dict[tuple[int, int], list[int]] = {}
@@ -98,8 +103,9 @@ def _lattice(patch: IntArray, blocks: PointArray, order: int) -> PointArray:
     a patch cell whose origin is local corner ``l`` enters rotated by ``l`` quarter
     turns."""
     g: IntArray = np.arange(order + 1, dtype=np.int64)
-    ia: IntArray = g[:, None] + np.zeros_like(g)[None, :]
-    ib: IntArray = np.zeros_like(g)[:, None] + g[None, :]
+    # ``(order+1, order+1)`` index grids: ia counts up axis a, ib up axis b
+    ia: IntArray = np.repeat(g[:, None], order + 1, axis=1)
+    ib: IntArray = np.repeat(g[None, :], order + 1, axis=0)
     n = order
     turn: tuple[tuple[IntArray, IntArray], ...] = (
         (ia, ib), (n - ib, ia), (n - ia, n - ib), (ib, n - ia))
@@ -145,10 +151,10 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
     sides = _side_map(quads)
     c = int(centres[0])
     lats: list[PointArray] = []
-    for q0 in np.flatnonzero((quads == c).any(axis=1)):
-        l0 = int(np.flatnonzero(quads[int(q0)] == c)[0])
+    for q0 in (int(q) for q in np.flatnonzero((quads == c).any(axis=1))):
+        l0 = int(np.flatnonzero(quads[q0] == c)[0])
         # centre-origin, then flipped so [0,0] is the corner and [-1,-1] the centre
-        lats.append(_lattice(_patch_walk(quads, sides, int(q0), l0, who),
+        lats.append(_lattice(_patch_walk(quads, sides, q0, l0, who),
                              blocks, order)[::-1, ::-1])
     got = np.array([lat[0, 0] for lat in lats])
     want = qm.points[corners]
@@ -158,6 +164,49 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
             "%s: the three patches do not reach the face's three corners -- it is not "
             "a triangle meshed as three structured patches" % who)
     return lats
+
+
+def _corner_incidence(rec: Sequence[Sequence[PointArray]], tol: float,
+                      who: str) -> list[list[tuple[int, int]]]:
+    """``[[(face, patch), x3], x4]`` -- the three patches meeting at each of the
+    tetrahedron's four corners.
+
+    ``rec[fi][k]`` is face ``fi``'s patch ``k``, indexed from its own corner, so
+    ``rec[fi][k][0, 0]`` *is* that corner and the four corners are recovered by
+    matching those points across faces within ``tol``.  Nothing about the corners is
+    declared by the caller; a set that does not come out as 4 corners each on exactly
+    3 faces, with no face touching one twice, does not bound a tetrahedron and is
+    rejected here rather than meshed into a twisted block."""
+    pts: list[Point] = []
+    ids: list[list[int]] = []
+    for lats in rec:
+        row: list[int] = []
+        for lat in lats:
+            p: Point = lat[0, 0]
+            hit = next((k for k, q in enumerate(pts)
+                        if float(np.linalg.norm(p - q)) <= tol), None)
+            if hit is None:
+                pts.append(p)
+                hit = len(pts) - 1
+            row.append(hit)
+        ids.append(row)
+    if len(pts) != 4:
+        raise ValueError(
+            "%s: the four faces must meet at exactly 4 corners, found %d -- they do "
+            "not bound a tetrahedron" % (who, len(pts)))
+
+    at: list[list[tuple[int, int]]] = [[] for _ in range(4)]
+    for fi, row in enumerate(ids):
+        if len(set(row)) != 3:
+            raise ValueError("%s: face %d meets the same corner twice" % (who, fi))
+        for k, v in enumerate(row):
+            at[v].append((fi, k))
+    for v, lst in enumerate(at):
+        if len(lst) != 3:
+            raise ValueError(
+                "%s: corner %d lies on %d faces, expected 3 -- the four faces must "
+                "share their six edges pairwise" % (who, v, len(lst)))
+    return at
 
 
 def _coons3(f: dict[tuple[int, int], PointArray]) -> PointArray:
@@ -170,10 +219,11 @@ def _coons3(f: dict[tuple[int, int], PointArray]) -> PointArray:
     on both sides."""
     ni, nj = f[(2, 0)].shape[0], f[(2, 0)].shape[1]
     nk = f[(0, 0)].shape[1]
-    uu = (_lin(ni)[:, None, None, None], )
-    vv = (_lin(nj)[None, :, None, None], )
-    ww = (_lin(nk)[None, None, :, None], )
-    u, v, w = (1 - uu[0], uu[0]), (1 - vv[0], vv[0]), (1 - ww[0], ww[0])
+    ti: PointArray = _lin(ni)[:, None, None, None]
+    tj: PointArray = _lin(nj)[None, :, None, None]
+    tk: PointArray = _lin(nk)[None, None, :, None]
+    # per axis, the blend weights of its ``end = 0`` and ``end = 1`` faces
+    u, v, w = (1 - ti, ti), (1 - tj, tj), (1 - tk, tk)
     out: PointArray = np.zeros((ni, nj, nk, 3), dtype=float)
     for a in (0, 1):                                        # the six faces
         out = (out + u[a] * f[(0, a)][None, :, :, :]
@@ -330,37 +380,8 @@ def tetra(faces: Sequence[QuadMesh], *,
     ftag = [_face_tag(f, who) for f in fs]
     tol = conform.entity_tol(np.vstack([f.points for f in fs]))
 
-    # -- the four tetrahedron corners, matched across faces by position.
-    pts: list[Point] = []
-    ids: list[list[int]] = []
-    for lats in rec:
-        row: list[int] = []
-        for lat in lats:
-            p: Point = lat[0, 0]
-            hit = [k for k, q in enumerate(pts)
-                   if float(np.linalg.norm(p - q)) <= tol]
-            if not hit:
-                pts.append(p)
-                hit = [len(pts) - 1]
-            row.append(hit[0])
-        ids.append(row)
-    if len(pts) != 4:
-        raise ValueError(
-            "%s: the four faces must meet at exactly 4 corners, found %d -- they do "
-            "not bound a tetrahedron" % (who, len(pts)))
-
-    at: list[list[tuple[int, int]]] = [[] for _ in range(4)]
-    for fi, row in enumerate(ids):
-        if len(set(row)) != 3:
-            raise ValueError("%s: face %d meets the same corner twice" % (who, fi))
-        for k, v in enumerate(row):
-            at[v].append((fi, k))
-    for v, lst in enumerate(at):
-        if len(lst) != 3:
-            raise ValueError(
-                "%s: corner %d lies on %d faces, expected 3 -- the four faces must "
-                "share their six edges pairwise" % (who, v, len(lst)))
-
+    # the four tetrahedron corners, matched across faces by position
+    at = _corner_incidence(rec, tol, who)
     mid: Point = (np.mean([r[0][-1, -1] for r in rec], axis=0)
                   if center is None
                   else np.asarray(center, dtype=float).reshape(3))
@@ -380,18 +401,19 @@ def tetra(faces: Sequence[QuadMesh], *,
                 % (who, pb.shape[1], pc.shape[1]))
         qa, qb, qc = pa[-1, -1], pb[-1, -1], pc[-1, -1]      # the three face centres
         t0, t1, t2 = _lin(pa.shape[0]), _lin(pa.shape[1]), _lin(pb.shape[1])
-
-        def chord(p: Point, t: PointArray, m: Point = mid) -> PointArray:
-            return p + t[:, None] * (m - p)
-
+        # the three inner sides are transfinite patches of two face spokes and two
+        # chords from a face centre into ``mid``.
         f: dict[tuple[int, int], PointArray] = {
             (2, 0): pa, (0, 0): pb, (1, 0): pc,
             # axis 0's far side, [j][k]: corners m0, qa, mid, qc
-            (0, 1): _coons2(pa[-1, :], chord(qc, t1), pc[-1, :], chord(qa, t2)),
+            (0, 1): _coons2(pa[-1, :], _chord(qc, mid, t1),
+                            pc[-1, :], _chord(qa, mid, t2)),
             # axis 1's far side, [i][k]: corners m1, qa, mid, qb
-            (1, 1): _coons2(pa[:, -1], chord(qb, t0), pb[-1, :], chord(qa, t2)),
+            (1, 1): _coons2(pa[:, -1], _chord(qb, mid, t0),
+                            pb[-1, :], _chord(qa, mid, t2)),
             # axis 2's far side, [i][j]: corners m2, qc, mid, qb
-            (2, 1): _coons2(pc[:, -1], chord(qb, t0), pb[:, -1], chord(qc, t1)),
+            (2, 1): _coons2(pc[:, -1], _chord(qb, mid, t0),
+                            pb[:, -1], _chord(qc, mid, t1)),
         }
         # The three outer sides carry their own face's tag -- i = 0 is pb's, j = 0
         # is pc's and k = 0 is pa's, matching the f[(axis, 0)] assignment above.  The

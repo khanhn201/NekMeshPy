@@ -202,9 +202,12 @@ def wall_mesh(w):
 def ruled_wall(pa, pb):
     """The straight ``(phi, z)`` segment between two stations, on ``[0, 1]``."""
     pa, pb = np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)
-    return Wall(lambda x: (1.0 - np.asarray(x, dtype=float)[:, None]) * pa
-                + np.asarray(x, dtype=float)[:, None] * pb,
-                np.linspace(0.0, 1.0, 2 * N_QUAD + 1))
+
+    def g(x):
+        xi = np.asarray(x, dtype=float)[:, None]
+        return (1.0 - xi) * pa + xi * pb
+
+    return Wall(g, np.linspace(0.0, 1.0, 2 * N_QUAD + 1))
 
 
 def foot_wall(fr):
@@ -249,6 +252,14 @@ def seam(target, center=ORIGIN):
 
 
 # -- sections -----------------------------------------------------------------
+def quadrant(arc, seam1, seam2, wall_tag=""):
+    """One quadrant face.  Every quadrant in the mesh -- disc sections and crotch
+    caps alike -- comes from here, so a cap shares its points with the leg or branch
+    on the other side of it."""
+    return QuadMesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+                                   center_scale=CENTER_SCALE, wall_tag=wall_tag)
+
+
 def disc(pieces):
     """A full-disc section: four ``(arc, seam1, seam2)`` quadrants merged.
 
@@ -257,17 +268,14 @@ def disc(pieces):
     hexes come out inverted -- so ``pieces`` must run around the disc the right way.
     Handing each shared radius in as the same ``LineMesh`` object is what makes
     neighbours weld bit-exactly instead of to a tolerance."""
-    return QuadMesh.merge([
-        QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CENTER_SCALE,
-                                wall_tag="wall")
-        for arc, s1, s2 in pieces])
+    return QuadMesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
+                           for arc, s1, s2 in pieces])
 
 
-def arc_disc(arcs, z_center):
-    """A main-pipe section from its four wall arcs and the height of its centre; each
-    shared radius is built once and handed to both of its quadrants."""
-    c = np.array([0.0, 0.0, z_center])
-    seams = [seam(a.points[0], c) for a in arcs]
+def arc_disc(arcs, center):
+    """A section from its four wall arcs and its centre point; each shared radius is
+    built once and handed to both of its quadrants."""
+    seams = [seam(a.points[0], center) for a in arcs]
     seams.append(seams[0])
     return disc([(arcs[q], seams[q], seams[q + 1]) for q in range(4)])
 
@@ -332,11 +340,11 @@ COMPOSITE_L = disc([(FQ[2].reverse(), SP[3], SP[2]),      # P2 -> P3
 
 
 # -- the crotch caps ----------------------------------------------------------
-def quadrant(arc, seam1, seam2):
-    """One quadrant face, built exactly as the discs build theirs, so the cap shares
-    its points with the leg or branch on the other side of it."""
-    return QuadMesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
-                                   center_scale=CENTER_SCALE)
+def arc_mids(walls):
+    """The ``(phi, z)`` mid-node of each of a crotch's three arcs -- the nodes the
+    wall triangle splits at, taken from the arcs' own sampling rather than at the
+    midpoint of the parameter range, which is not the same point on a graded arc."""
+    return [w.g(w.fr[N:N + 1])[0] for w in walls]
 
 
 def coons_fn(cb, ct, cl, cr):
@@ -367,20 +375,23 @@ def wall_patch(fn, tag):
         fr, order=ORDER, element_tags=[tag] * N)
 
 
-def wall_triangle(w_ab, w_bc, w_ca, tag="wall"):
+def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None):
     """The curved wall triangle between three arcs, as the three patches about its
     centroid that :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` wants.
 
     Built in the cylinder's own ``(phi, z)`` parameters throughout, so every node of
-    every patch lands on the wall exactly."""
-    u_ab, u_bc, u_ca = (w.g(w.fr[N:N + 1])[0] for w in (w_ab, w_bc, w_ca))
+    every patch lands on the wall exactly.  ``mids`` lets a caller that already has
+    ``arc_mids((w_ab, w_bc, w_ca))`` (``cap()``, for its tetra ``center``) pass it
+    straight through instead of it being recomputed here."""
+    u_ab, u_bc, u_ca = arc_mids((w_ab, w_bc, w_ca)) if mids is None else mids
     wc = (u_ab + u_bc + u_ca) / 3.0
 
     def half(w, i0, i1):
         """Half an arc on ``[0, 1]``, remapped **through its own node values** -- a
         plain linear remap would slide the shared nodes off the arc wherever its
         spacing is graded, as the footprint's arc-length spacing is."""
-        idx = np.arange(i0, i1 + (1 if i1 > i0 else -1), 1 if i1 > i0 else -1)
+        step = 1 if i1 > i0 else -1
+        idx = np.arange(i0, i1 + step, step)
         fr, m = w.fr[idx], idx.size - 1
 
         def rep(s):
@@ -412,13 +423,19 @@ def cap(sa, sb, sc, ab, bc, ca):
     block per corner, inheriting the split each face already carries, which is exactly
     the octant of a 3-D O-grid this region wants."""
     (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
-    return [HexMesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
-                           quadrant(m_ca, sc, sa),
-                           wall_triangle(w_ab, w_bc, w_ca)],
-                          center=ORIGIN + CENTER_SCALE * np.sqrt(1.5)
-                          * (cyl_pts(np.mean([w.g(w.fr[N:N + 1])[0]
-                                              for w in (w_ab, w_bc, w_ca)],
-                                             axis=0)[None, :])[0] - ORIGIN))]
+    # The centre is the octant core's far corner: out along the ray from ``O`` through
+    # the wall point midway between the three arcs, at ``CENTER_SCALE * sqrt(1.5) * R``.
+    # Each quadrant face puts its own core corner at ``CENTER_SCALE * R`` along its arc
+    # midpoint, and on the ideal octant the cube corner spanned by those three lies
+    # ``sqrt(3/2)`` times as far out -- so the core block meets all three faces' cores
+    # squarely.  ``tetra``'s default (the centroid of the four face centres) is well
+    # inside that and would flatten the corner cells.
+    mids = arc_mids((w_ab, w_bc, w_ca))
+    wc = cyl_pts(np.mean(mids, axis=0)[None, :])[0]
+    return HexMesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
+                          quadrant(m_ca, sc, sa),
+                          wall_triangle(w_ab, w_bc, w_ca, mids=mids)],
+                         center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN))
 
 
 # -- build --------------------------------------------------------------------
@@ -438,7 +455,7 @@ def leg(composite, walls, sign, end_tag):
 
     def station(s):
         return arc_disc([wall_mesh(blend_wall(walls[q], w_plain[q], s))
-                         for q in range(4)], s * z)
+                         for q in range(4)], np.array([0.0, 0.0, s * z]))
 
     plain = station(1.0)
     return [HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
@@ -453,27 +470,23 @@ def branch():
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
     c_open = np.array([H_BRANCH, 0.0, 0.0])
-    sections = []
-    for i in range(t.size):
-        arcs = [w[i] for w in walls]
-        seams = [seam(a.points[0], t[i] * c_open) for a in arcs]
-        seams.append(seams[0])
-        sections.append(disc([(arcs[q], seams[q], seams[q + 1]) for q in range(4)]))
-    return [HexMesh.loft(sections, last_tag="branch")]
+    sections = [arc_disc([w[i] for w in walls], t[i] * c_open) for i in range(t.size)]
+    return HexMesh.loft(sections, last_tag="branch")
 
 
-blocks = (leg(COMPOSITE_R, W_R, 1, "outlet")
-          + leg(COMPOSITE_L, W_L, -1, "inlet") + branch()
+blocks = [*leg(COMPOSITE_R, W_R, 1, "outlet"),
+          *leg(COMPOSITE_L, W_L, -1, "inlet"),
+          branch(),
           # A crotch's three arcs must share one branch of phi, so the two that are
           # authored a full turn away in a leg's unwrapped list are shifted back.
-          + cap(SP[0], SP[3], SWP,                      # +y crotch: P1, P2, W+
-                (FQ[3].reverse(), foot_wall(FQ_FR[3][::-1])),
-                (SIDE_LP.reverse(), shift_wall(reverse_wall(W_L[3]), 1)),
-                (SIDE_RP.reverse(), reverse_wall(W_R[1])))
-          + cap(SP[2], SP[1], SWM,                      # -y crotch: P3, P4, W-
-                (FQ[1].reverse(), foot_wall(FQ_FR[1][::-1])),
-                (SIDE_RM.reverse(), shift_wall(reverse_wall(W_R[3]), -1)),
-                (SIDE_LM.reverse(), reverse_wall(W_L[1]))))
+          cap(SP[0], SP[3], SWP,                        # +y crotch: P1, P2, W+
+              (FQ[3].reverse(), foot_wall(FQ_FR[3][::-1])),
+              (SIDE_LP.reverse(), shift_wall(reverse_wall(W_L[3]), 1)),
+              (SIDE_RP.reverse(), reverse_wall(W_R[1]))),
+          cap(SP[2], SP[1], SWM,                        # -y crotch: P3, P4, W-
+              (FQ[1].reverse(), foot_wall(FQ_FR[1][::-1])),
+              (SIDE_RM.reverse(), shift_wall(reverse_wall(W_R[3]), -1)),
+              (SIDE_LM.reverse(), reverse_wall(W_L[1])))]
 mesh = HexMesh.merge(blocks)
 
 print(mesh.report())

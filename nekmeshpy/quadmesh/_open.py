@@ -116,6 +116,21 @@ def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
     return lo
 
 
+def _grid_quads(ni: int, nj: int) -> IntArray:
+    """The ``(ni*nj, 4)`` CCW quad table of an ``(ni+1) x (nj+1)`` structured point
+    grid numbered ``id(i, j) = i*(nj+1) + j``, in i-major / j-minor element order
+    (quad ``(i, j)`` is row ``i*nj + j``).
+
+    The corner list ``[(i,j), (i+1,j), (i+1,j+1), (i,j+1)]`` is what puts the grid's
+    ``j = 0`` row on local side 1, ``i = ni-1`` on side 2, ``j = nj-1`` on side 3 and
+    ``i = 0`` on side 4 -- every caller's boundary rows are read off that."""
+    row = nj + 1
+    i: IntArray = np.repeat(np.arange(ni, dtype=np.int64), nj)
+    j: IntArray = np.tile(np.arange(nj, dtype=np.int64), ni)
+    return np.stack([i * row + j, (i + 1) * row + j,
+                     (i + 1) * row + j + 1, i * row + j + 1], axis=1)
+
+
 def _refined_params(n: int, order: int) -> FloatArray:
     """The ``n*order+1`` transfinite parameters of an ``n``-interval edge at order N.
 
@@ -186,6 +201,59 @@ def _blended_ring(pos: PointArray, wall: LineMesh, tau: float,
     inner = (inner + (1.0 - g)[None, :, None] * d0[:, None, :]
              + g[None, :, None] * d1[:, None, :])
     return LineMesh(pos, lines, order=order, interior=inner)
+
+
+def _ring_overlays(ring_pts: Sequence[PointArray], wall: LineMesh,
+                   radial: FloatArray, peri_pos: PointArray, q0: int,
+                   width: int, outer_side: int) -> list[Overlay]:
+    """Both incident copies of every O-ring curve, as ``_elevate`` overlays.
+
+    Shared by :func:`ogrid` / :func:`half_ogrid` / :func:`quadrant_ogrid`, whose ring
+    bands differ only in where they start (``q0``, the first band quad), how wide a
+    band is (``width`` quads) and which local side faces outward (``outer_side``, 1 for
+    the ``[b, b_next, a_next, a]`` winding of ``ogrid`` and ``quadrant_ogrid``, 3 for
+    ``half_ogrid``'s ``[a, a_next, b_next, b]``).
+
+    **Every** ring is overlaid, not just the wall, so the wall's curvature is blended
+    inward instead of dying one layer in -- ring ``r`` is band ``r``'s outer side *and*
+    band ``r+1``'s inner side, and both incident copies must be stamped or
+    :func:`~nekmeshpy.model.conform.scatter_edge_nodes` rightly reports a
+    non-conforming shared edge.  Ring 0 is the band's inner boundary (the core
+    perimeter), which already matches its straight guess; the outermost ring
+    (``tau == 1``) reproduces ``wall`` exactly."""
+    inner_side = 3 if outer_side == 1 else 1
+    peri_inner = _straight_interior(peri_pos, wall.lines, wall.order)
+    ks: IntArray = np.arange(width, dtype=np.int64)
+    nr = len(ring_pts)
+    overlays: list[Overlay] = []
+    for r, pts in enumerate(ring_pts):
+        ring_lm = _blended_ring(pts, wall, float(radial[r + 1]),
+                                peri_pos, peri_inner)
+        overlays.append((q0 + r * width + ks, outer_side, ring_lm))
+        if r + 1 < nr:
+            overlays.append((q0 + (r + 1) * width + ks, inner_side, ring_lm))
+    return overlays
+
+
+def _curve_rows(rows: Sequence[tuple[int, int]], curve: LineMesh,
+               override: str) -> tuple[list[list[int]], list[str]]:
+    """The tagged ``(boundaries, boundary_tags)`` rows naming one side of a region.
+
+    ``rows[m]`` is the ``(quad id, quad side)`` that carries element ``m`` of
+    ``curve``, so the side is named element by element from the curve's own per-line
+    ``element_tags``: a boundary assembled from several differently tagged arcs splits
+    into distinct named sides instead of collapsing into one.  A non-empty scalar
+    ``override`` (a factory's ``wall_tag`` / ``side_tags[...]``) names the whole side
+    instead, and an element left untagged either way emits no row at all."""
+    seg = curve._seg_tags()
+    bnd: list[list[int]] = []
+    names: list[str] = []
+    for m, (qid, side) in enumerate(rows):
+        nm = override if override else (seg[m] if seg is not None else "")
+        if nm:
+            bnd.append([qid, side])
+            names.append(nm)
+    return bnd, names
 
 
 def _sub_chain(chain: LineMesh, segs: IntArray, seg2line: IntArray) -> LineMesh:
@@ -287,14 +355,10 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
                    _refined_chain(left, "structured left edge")[::-1],
                    _refined_chain(right, "structured right edge"),
                    _refined_params(nx, order), _refined_params(ny, order))
-    points = S[::order, ::order].reshape(-1, 3)            # id(i,j) = i*row + j
-    row = ny + 1
+    points = S[::order, ::order].reshape(-1, 3)      # id(i,j) = i*(ny+1) + j
 
     # quads in i-major / j-minor order (i in [0,nx), j in [0,ny))
-    qi: IntArray = np.repeat(np.arange(nx, dtype=np.int64), ny)
-    qj = np.tile(np.arange(ny, dtype=np.int64), nx)
-    quads = np.stack([qi * row + qj, (qi + 1) * row + qj,
-                      (qi + 1) * row + qj + 1, qi * row + qj + 1], axis=1)
+    quads = _grid_quads(nx, ny)
     # boundary edges as [quad id, side]; quad id = i*ny + j (i-major).  With
     # v0=(i,j) v1=(i+1,j) v2=(i+1,j+1) v3=(i,j+1): bottom (j=0) is side 1,
     # right (i=nx-1) side 2, top (j=ny-1) side 3, left (i=0) side 4.
@@ -333,8 +397,8 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         # unlike a stamp-the-walls-on elevation the interior edges are curved too.
         # Quad (i,j) = quad id i*ny + j spans lattice rows i*order..(i+1)*order and
         # columns j*order..(j+1)*order; its local (i,j) axes are the global ones.
-        qi = np.repeat(np.arange(nx, dtype=np.int64), ny)
-        qj = np.tile(np.arange(ny, dtype=np.int64), nx)
+        qi: IntArray = np.repeat(np.arange(nx, dtype=np.int64), ny)
+        qj: IntArray = np.tile(np.arange(ny, dtype=np.int64), nx)
         a: IntArray = np.arange(order + 1, dtype=np.int64)
         blk: PointArray = S[(qi[:, None, None] * order + a[None, :, None]),
                             (qj[:, None, None] * order + a[None, None, :])]
@@ -412,10 +476,7 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
              + (U * (1 - V))[..., None] * C10
              + (U * V)[..., None] * C11
              + ((1 - U) * V)[..., None] * C01).reshape(-1, 3)    # (row*row, 3)
-    bi: IntArray = np.repeat(np.arange(n_side, dtype=np.int64), n_side)
-    bj = np.tile(np.arange(n_side, dtype=np.int64), n_side)
-    cquads = np.stack([bi * row + bj, (bi + 1) * row + bj,
-                       (bi + 1) * row + bj + 1, bi * row + bj + 1], axis=1)
+    cquads = _grid_quads(n_side, n_side)
 
     peri_ids = np.array([cid(i, 0) for i in range(row)]
                         + [cid(n_side, j) for j in range(1, row)]
@@ -442,40 +503,19 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
     quads = np.vstack([cquads, *ring_quads])
 
     # wall edges = side 1 of the outermost ring's quads (rows n_side^2 +
-    # (n_radial-1)*P onward).
+    # (n_radial-1)*P onward), named from the boundary loop's own per-segment tags.
     wall_q0 = n_side * n_side + (n_radial - 1) * P
-    # wall named from the boundary loop's per-segment tags; a non-empty scalar
-    # wall_tag overrides that for the whole wall.
-    wall_seg = boundary._seg_tags()
-    bnd: list[list[int]] = []
-    names: list[str] = []
-    for m in range(P):
-        nm = wall_tag if wall_tag else (wall_seg[m] if wall_seg is not None else "")
-        if nm:
-            bnd.append([wall_q0 + m, 1])
-            names.append(nm)
+    bnd, names = _curve_rows([(wall_q0 + m, 1) for m in range(P)],
+                            boundary, wall_tag)
     qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
-    # order-N: overlay **every** O-ring, not just the wall, so each ring carries its
-    # blended share of the wall's curvature and the curvature reaches the block
-    # perimeter instead of dying one layer in.  The ring quad is
-    # [b[k], b[kn], a[kn], a[k]] with b the outer layer, so ring m is block m-1's
-    # side 1 *and* block m's side 3 -- both incident copies must be stamped or
-    # ``scatter_edge_nodes`` rightly reports a non-conforming edge.  Ring 0 (the
-    # straight block perimeter) already matches its bilinear guess; the wall
-    # (tau == 1) is the last ring and reproduces the boundary loop exactly.
+    # order-N: the ring quad is [b[k], b[kn], a[kn], a[k]] with b the outer layer, so
+    # the outward-facing local side is 1.  ``layers[1:]`` are the ring curves, ring 0
+    # being the straight block perimeter that stays with its bilinear guess.
     order = boundary.order
     overlays: list[Overlay] = []
     if order > 1:
-        peri_inner = _straight_interior(peri_pos, boundary.lines, order)
-        q0 = n_side * n_side
-        ks: IntArray = np.arange(P, dtype=np.int64)
-        rings = [_blended_ring(layers[r + 1], boundary, float(tau),
-                               peri_pos, peri_inner)
-                 for r, tau in enumerate(fracs)]
-        for r, ring_lm in enumerate(rings):
-            overlays.append((q0 + r * P + ks, 1, ring_lm))          # outer side
-            if r + 1 < n_radial:
-                overlays.append((q0 + (r + 1) * P + ks, 3, ring_lm))  # inner side
+        overlays = _ring_overlays(layers[1:], boundary, radial, peri_pos,
+                                  n_side * n_side, P, 1)
     qm = _elevate(qm, order, overlays)
     return _apply_smoothing(qm, smoothing_method)
 
@@ -568,10 +608,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
             point_list.append(C)
             rid[i, j] = len(point_list) - 1
 
-    quads = []
-    for i in range(ni):
-        for j in range(nj):
-            quads.append([rid[i, j], rid[i + 1, j], rid[i + 1, j + 1], rid[i, j + 1]])
+    quads = _grid_quads(ni, nj).tolist()
 
     peri = np.concatenate([rid[0, 0:nj + 1], rid[1:ni + 1, nj], rid[ni, nj - 1::-1]])
     points = np.array(point_list, dtype=float)
@@ -598,37 +635,19 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     # wall arc edges = side 3 of the outermost ring's quads (rows (ni*nj) +
     # (Nr-1)*(4*Nt) onward); wall edge k tracks arc segment k.
     wall_q0 = ni * nj + (Nr - 1) * (4 * Nt)
-    # wall named from the arc's per-segment tags; a non-empty scalar wall_tag
-    # overrides that for the whole wall.
-    wall_seg = arc._seg_tags()
-    bnd: list[list[int]] = []
-    names: list[str] = []
-    for k in range(4 * Nt):
-        nm = wall_tag if wall_tag else (wall_seg[k] if wall_seg is not None else "")
-        if nm:
-            bnd.append([wall_q0 + k, 3])
-            names.append(nm)
+    bnd, names = _curve_rows([(wall_q0 + k, 3) for k in range(4 * Nt)],
+                            arc, wall_tag)
     qm = QuadMesh.from_corners(points, np.array(quads, dtype=np.int64),
                                *QuadMesh._order_bnd(bnd, names))
-    # order-N: overlay **every** ring, not just the wall arc, so the arc's curvature
-    # is blended inward instead of dying one layer in.  The ring quad here is
-    # [a[k], a[k+1], b[k+1], b[k]] with b the outer layer, so the outer curve is
-    # side 3 (as the wall always was) and the inner curve is side 1 -- ring m is
-    # block m-1's side 3 *and* block m's side 1, and both incident copies must be
-    # stamped for the shared edge to conform.  ``_blended_ring`` re-anchors each ring
-    # on its snapped spine end points; the wall (tau == 1) reproduces ``arc`` exactly.
+    # order-N: the ring quad here is [a[k], a[k+1], b[k+1], b[k]] with b the outer
+    # layer, so the outward-facing local side is 3 (as the wall always was).
+    # ``_blended_ring`` re-anchors each ring on its snapped spine end points.
     order = arc.order
     overlays: list[Overlay] = []
     if order > 1:
-        peri_inner = _straight_interior(peripts, arc.lines, order)
         q0 = ni * nj
-        ks: IntArray = np.arange(4 * Nt, dtype=np.int64)
-        rings = [_blended_ring(ring_pts[r], arc, float(radial[r + 1]),
-                               peripts, peri_inner) for r in range(Nr)]
-        for r, ring_lm in enumerate(rings):
-            overlays.append((q0 + r * (4 * Nt) + ks, 3, ring_lm))          # outer
-            if r + 1 < Nr:
-                overlays.append((q0 + (r + 1) * (4 * Nt) + ks, 1, ring_lm))  # inner
+        overlays = _ring_overlays(ring_pts, arc, radial, peripts,
+                                  q0, 4 * Nt, 3)
         # ...and overlay the seam with the spine's *own* nodes, so a curved spine is
         # meshed exactly at order N too rather than straight-subdivided between its
         # samples.  Each seam edge is single-incidence (the half-disk's flat side), and
@@ -794,10 +813,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     def cid(i: int, j: int) -> int:
         return i * row + j
 
-    bi: IntArray = np.repeat(np.arange(n, dtype=np.int64), n)
-    bj: IntArray = np.tile(np.arange(n, dtype=np.int64), n)
-    cquads: IntArray = np.stack([bi * row + bj, (bi + 1) * row + bj,
-                                 (bi + 1) * row + bj + 1, bi * row + bj + 1], axis=1)
+    cquads: IntArray = _grid_quads(n, n)
 
     # core perimeter, M1 -> K -> M2: 2n+1 points index-paired with arc[0..2n].
     peri_ids: IntArray = np.array([cid(n, j) for j in range(row)]
@@ -834,46 +850,29 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     # seams' ring stations, and the core's j == 0 row / i == 0 column their fans.
     q0 = n * n
     wall_q0 = q0 + (Nr - 1) * (2 * n)
-    wall_seg = arc._seg_tags()
-    bnd: list[list[int]] = []
-    names: list[str] = []
-    for m in range(2 * n):
-        nm = wall_tag if wall_tag else (wall_seg[m] if wall_seg is not None else "")
-        if nm:
-            bnd.append([wall_q0 + m, 1])
-            names.append(nm)
     seam_sides = (
         ("seam1", seam1, [(i * n, 1) for i in range(n)]
          + [(q0 + r * (2 * n), 4) for r in range(Nr)]),
         ("seam2", seam2, [(j, 4) for j in range(n)]
          + [(q0 + r * (2 * n) + (2 * n - 1), 2) for r in range(Nr)]),
     )
+    bnd, names = _curve_rows([(wall_q0 + m, 1) for m in range(2 * n)],
+                            arc, wall_tag)
     for which, sm, rows in seam_sides:
-        seg = sm._seg_tags()
-        override = st.get(which, "")
-        for m, (qid, side) in enumerate(rows):
-            nm = override if override else (seg[m] if seg is not None else "")
-            if nm:
-                bnd.append([qid, side])
-                names.append(nm)
+        seam_bnd, seam_names = _curve_rows(rows, sm, st.get(which, ""))
+        bnd += seam_bnd
+        names += seam_names
     qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
 
-    # -- order N.  Overlay every O-ring (both incident copies, or scatter_edge_nodes
-    # rightly rejects the shared edge) so the wall's curvature blends inward, and both
+    # -- order N.  Overlay every O-ring so the wall's curvature blends inward, and both
     # seams with their *own* nodes so a bowed radius is meshed exactly rather than
     # straight-subdivided between its samples.
     order = arc.order
     overlays: list[Overlay] = []
     if order > 1:
-        peri_inner = _straight_interior(peripts, arc.lines, order)
-        ks: IntArray = np.arange(2 * n, dtype=np.int64)
+        overlays = _ring_overlays(ring_pts, arc, radial, peripts,
+                                  q0, 2 * n, 1)
         rs: IntArray = np.arange(Nr, dtype=np.int64)
-        rings = [_blended_ring(ring_pts[r], arc, float(radial[r + 1]),
-                               peripts, peri_inner) for r in range(Nr)]
-        for r, ring_lm in enumerate(rings):
-            overlays.append((q0 + r * (2 * n) + ks, 1, ring_lm))           # outer
-            if r + 1 < Nr:
-                overlays.append((q0 + (r + 1) * (2 * n) + ks, 3, ring_lm))  # inner
         core_fan: IntArray = np.arange(n, dtype=np.int64)
         s2l1: IntArray = np.argsort(_chain_intervals(seam1, "quadrant_ogrid seam1"))
         s2l2: IntArray = np.argsort(_chain_intervals(seam2, "quadrant_ogrid seam2"))
