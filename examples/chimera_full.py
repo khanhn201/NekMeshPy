@@ -193,7 +193,7 @@ def pattern_adapter(sec_a, sec_b, axis, n_layers=2, name=""):
         print("  hex corner pts (abs):\n%s" % np.round(result.points[hc], 4))
     return result, best_k
 
-FAST = False
+FAST = True
 ORDER = 2
 N_HALF = 8
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])
@@ -316,7 +316,7 @@ else:
 # reasonable-quality (~0.21 min scaled Jacobian) octant split; CENTER_SCALE
 # has no effect on this at all (checked). main axis -> x, branch -> -y.
 # -----------------------------------------------------------------------------
-T1_PHI_W = np.deg2rad(172.0)
+T1_PHI_W = np.deg2rad(170.0)
 T1_RATIO = 0.999
 ROT_T1 = -np.deg2rad(120.0)
 AXIS_T1 = (1.0, -1.0, 1.0)
@@ -455,7 +455,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
                                        path_tangents=T3)[1]
         return disc.transform(m, o)
 
-    conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices)
+    conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*2)
     end_sec = _end_section(db)
     print("  [%s] end_sec center=%s normal=%s" %
          (tag, end_sec.points.mean(axis=0), normal_of(end_sec)))
@@ -522,13 +522,30 @@ print("stage1:", mesh1.n_hexes, "hexes, watertight", mesh1.is_watertight(),
 # -----------------------------------------------------------------------------
 ROT_T2 = -np.pi / 2
 AXIS_T2 = (1.0, 0.0, 0.0)
-H2_BRANCH = 2.5 * R_BR
+#: T2's branch runs nearly all the way to the coil's own bend rather than
+#: stopping a stub's length off the junction body, and carries layers about as
+#: long as the coil's rather than being finely sliced right at the junction.
+#: Whatever length is left over is swept as the connector's leading straight
+#: (see build_coil), which solves its own run from wherever the branch ends --
+#: so growing this shortens that automatically and the overall shape does not
+#: move.
+#:
+#: Lengthening costs no shape fidelity: build_tjunction's branch() blends the
+#: footprint (the saddle where branch meets main) into the round opening, and
+#: those two differ *only* in the axial coordinate -- both carry the identical
+#: R_BRANCH*(sin, cos) cross-section -- so the blend straightens the section's
+#: axial position and never touches its radius.  Measured over the whole run:
+#: wall radius = R_BR to 1.7e-15.  A long branch is a straight round pipe whose
+#: end plane merely relaxes from saddle-shaped to flat more gradually.
+H2_BRANCH = 15.0
+N2_BRANCH = max(2, int(round(H2_BRANCH / 2.0)))   # ~2.0-long layers, as the coil uses
 
 
 def build_t2(mirror=False):
     tj = build_tjunction(R_MAIN, R_BR, H2_BRANCH, order=ORDER, N_QUAD=2,
                          RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         PHI_W=np.deg2rad(100.0), N_TRANS=n_slices, N_BRANCH=n_slices)
+                         PHI_W=np.deg2rad(100.0), N_TRANS=n_slices,
+                         N_BRANCH=N2_BRANCH)
     ang, axis = ROT_T2, AXIS_T2
     core, dm, dp, dbr = (tj.core.rotate(ang, axis=axis), tj.disc_minus.rotate(ang, axis=axis),
                         tj.disc_plus.rotate(ang, axis=axis), tj.disc_branch.rotate(ang, axis=axis))
@@ -763,8 +780,17 @@ _coil_end_uv = _coil_local.centerline(np.array([1.0]))[0]
 COIL_DV = _coil_end_uv[1]   # local (u, v) end offset is (0, COIL_DV) exactly
 
 BEND_R_CONN = 3.0
-VERTICAL_RUN = 10.0
-GAP_Z = 1.0   # deliberate short leftover so weld_bridge has a nonzero span
+VERTICAL_RUN = 16.0
+#: How much of the outbound leg is left for weld_bridge to span.  It has to be
+#: generous: weld_bridge spends a rigid stub (up to stub_max) at each end and
+#: fits n_blend layers into whatever remains, so a token gap makes those layers
+#: absurdly thin -- at GAP_Z = 1.0 the two stubs ate 0.6 of it and the six
+#: blend layers were 0.067 each, about a seventh of the tube radius.  Must stay
+#: below VERTICAL_RUN, which is the leg it is carved out of.
+GAP_Z = 10.0
+assert 0.0 < GAP_Z < VERTICAL_RUN, (
+    "GAP_Z is carved out of VERTICAL_RUN -- at or above it the outbound leg's "
+    "own straight run vanishes (or reverses) instead of just getting shorter")
 
 
 def _dx_of(line_len, turn_sign, heading0):
@@ -920,3 +946,9 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.boundary_group_tags))
+
+stats = mesh.quality_summary()
+assert stats.min > 0.0, "inverted element: min scaled Jacobian %g" % stats.min
+print("%d hex elements, %d points, order %d"
+      % (mesh.n_hexes, mesh.n_points, mesh.order))
+print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
