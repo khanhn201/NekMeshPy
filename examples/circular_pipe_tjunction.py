@@ -84,7 +84,7 @@ def arc_collar(xside):
     ``p(t) = (xside*R sin t, R cos t, R sin t)``, ``t: 0 -> pi`` -- it lies in the
     plane ``x = xside*z`` with semi-axes ``R*sqrt(2)`` and ``R``.
 
-    :meth:`LineMesh.loft_curve` evaluates that form at every node, corners *and* the
+    :meth:`LineMesh.loft_fn` evaluates that form at every node, corners *and* the
     interior GLL nodes, so the collar is exact to machine precision at any ``ORDER``.
     Its arc length has no closed form, so the even-by-arc-length grading is an
     explicit first step: :meth:`LineMesh.arclength_fractions` inverts a chord table
@@ -100,7 +100,7 @@ def arc_collar(xside):
         return np.column_stack(
             [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
 
-    return LineMesh.loft_curve(
+    return LineMesh.loft_fn(
         f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
         order=ORDER)
 

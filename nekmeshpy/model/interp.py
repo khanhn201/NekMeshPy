@@ -194,7 +194,7 @@ def coons_grid_fn(
     lattice rather than only where the boundaries happen to already be meshed.
 
     Returns ``f(x, y)`` matching the row-wise contract
-    :func:`~nekmeshpy.quadmesh.loft_curve`'s callback wants: ``x`` the varying
+    :func:`~nekmeshpy.quadmesh.loft_fn`'s callback wants: ``x`` the varying
     row lattice, ``y`` a single value (repeated to ``x``'s shape by the caller).
     That degenerate case -- one row of a grid, rather than the whole grid -- is
     exactly what :func:`coons_grid` computes when handed a one-element ``v``, so

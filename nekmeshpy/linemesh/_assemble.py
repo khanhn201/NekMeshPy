@@ -1,6 +1,6 @@
 """Variable-arity ``LineMesh`` operations -- the only ones that build a numbering.
 
-``loft`` (``n`` points -> a line mesh, rung delta +1), ``loft_curve`` (a callable ->
+``loft`` (``n`` points -> a line mesh, rung delta +1), ``loft_fn`` (a callable ->
 the same, sampled rather than given) and ``merge`` (``n`` line meshes -> one, rung
 delta 0) are the n-ary operations at this rung, and they are the only code here that
 manufactures a global point/element index space from scratch: ``loft`` numbers the
@@ -8,7 +8,7 @@ chain it authors, ``merge`` builds the ``remap`` / ``survivors`` / ``point_id`` 
 of the weld.  Every fixed-arity operation either reuses an existing numbering
 (``blend``) or delegates to one of these two.
 
-``loft_curve`` lives here rather than with the shape factories because it authors
+``loft_fn`` lives here rather than with the shape factories because it authors
 connectivity exactly as ``loft`` does -- it *is* ``loft``, with the profiles evaluated
 from a parametrization instead of handed in -- and so takes the same ``loop`` flag.
 Being open or closed is therefore not a property of the function: the same ``f`` meshes
@@ -144,7 +144,7 @@ def _check_fraction_count(fr: FloatArray, *, loop: bool, name: str) -> None:
     profile rather than a level of its own).
 
     The guard :func:`_sweep_lattice` runs before it can build a lattice, factored out
-    on its own because a rung's ``loft_curve`` needs it *before* its ``order`` is
+    on its own because a rung's ``loft_fn`` needs it *before* its ``order`` is
     settled (``order`` is itself read off a profile ``f`` returns, and ``f`` is not
     called until the fraction count is known to be sane) and so cannot go through
     :func:`_sweep_lattice` outright.  Both paths raise the identical two messages."""
@@ -164,7 +164,7 @@ def _sweep_lattice(fractions: FloatArray, order: int, *, loop: bool,
 
     The shared front half of every evaluated sweep whose ``order`` is already known --
     ``sweep`` at the quad and hex rungs -- so the guard deciding how many layers there
-    are reads identically wherever a caller meets it.  A ``loft_curve``, whose order is
+    are reads identically wherever a caller meets it.  A ``loft_fn``, whose order is
     not yet settled at this point, calls :func:`_check_fraction_count` directly instead
     and builds the lattice once ``order`` is known."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
@@ -211,9 +211,9 @@ def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointAr
     return P
 
 
-def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
-               loop: bool = False, order: int = 1,
-               element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
+def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
+            loop: bool = False, order: int = 1,
+            element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
     """Loft a curve given as its own analytic parametrization -- :func:`loft` with the
     profiles **evaluated** rather than handed in, so **every** node (corners *and* the
     private high-order ``interior``) comes from calling ``f`` and nothing is ever
@@ -225,8 +225,8 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
 
     **Why vectorized here and scalar one rung up.**  ``f`` returns *coordinates*, and a
     whole lattice of them is just a ``(K,3)`` array -- so the natural call is one, on
-    the whole lattice, which is also the cheapest.  ``QuadMesh.loft_curve`` /
-    ``HexMesh.loft_curve`` instead take a **scalar** ``Callable[[float], LineMesh]`` /
+    the whole lattice, which is also the cheapest.  ``QuadMesh.loft_fn`` /
+    ``HexMesh.loft_fn`` instead take a **scalar** ``Callable[[float], LineMesh]`` /
     ``Callable[[float], QuadMesh]``, because a callable returning a *single mesh* can
     only be handed a single parameter value: there is no array-of-meshes to return.
     ``sweep``'s ``path`` is vectorized again, for a third reason -- the default frame
@@ -236,7 +236,7 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     ``order`` (default 1) is **constructive** at this rung, not inherited: ``f`` hands
     back points, not a mesh, so there is nothing to read an order off -- the argument
     is what *decides* the node lattice ``f`` is sampled on.  That is why it stays an
-    ``int`` here while ``QuadMesh.loft_curve`` / ``HexMesh.loft_curve`` default it to
+    ``int`` here while ``QuadMesh.loft_fn`` / ``HexMesh.loft_fn`` default it to
     ``None`` and infer it from the profile ``f`` returns.
 
     ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
@@ -273,7 +273,7 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     This is the general sibling of
     :meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`, which is the special case
     ``f = circle`` (kept separate because it can place its nodes without an inversion
-    and to the last ulp).  Reach for ``loft_curve`` whenever a curve has a closed form
+    and to the last ulp).  Reach for ``loft_fn`` whenever a curve has a closed form
     that is not a circular arc -- an ellipse, a helix, a cylinder-cylinder intersection
     -- instead of sampling it into an array and calling :func:`loft`, which can only
     subdivide straight between the samples and therefore loses the curve at
@@ -287,10 +287,10 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     ni = fr.shape[0] - 1
     if ni < 1:
         raise ValueError(
-            "loft_curve needs at least 2 fractions (one element), got %d" % fr.shape[0])
+            "loft_fn needs at least 2 fractions (one element), got %d" % fr.shape[0])
     if loop and ni < 2:
         raise ValueError(
-            "loft_curve(loop=True) needs at least 3 fractions (two elements), got %d -- "
+            "loft_fn(loop=True) needs at least 3 fractions (two elements), got %d -- "
             "the last one is the wrap back to the first point, so it is not a point of "
             "its own" % fr.shape[0])
 
@@ -306,7 +306,7 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
         tol = entity_tol(corners)
         if gap > tol:
             raise ValueError(
-                "loft_curve(loop=True) needs the last fraction to map back to the "
+                "loft_fn(loop=True) needs the last fraction to map back to the "
                 "first point, but f(%g) and f(%g) are %g apart (tolerance %g).  Pass "
                 "the trailing wrap value -- np.linspace(0, 2*np.pi, n+1) for a "
                 "2*pi-periodic f -- so the seam element's own nodes can be evaluated."
@@ -415,6 +415,6 @@ def merge(meshes: Sequence[LineMesh], *,
 #: Variable-arity combinators bound onto ``LineMesh`` as ``staticmethod``.
 FACTORIES: dict[str, Any] = {
     "loft": loft,
-    "loft_curve": loft_curve,
+    "loft_fn": loft_fn,
     "merge": merge,
 }

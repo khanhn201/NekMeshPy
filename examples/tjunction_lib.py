@@ -62,7 +62,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return cyl(u[:, 0], u[:, 1])
 
     def wall_mesh(w):
-        return LineMesh.loft_curve(lambda x: cyl_pts(w.g(x)), w.fr, order=order)
+        return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=order)
 
     def ruled_wall(pa, pb):
         pa, pb = np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)
@@ -118,7 +118,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
     FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
                                           t_range=(TQ[q], TQ[q + 1])) for q in range(4)]
-    FQ = [LineMesh.loft_curve(footprint, fr, order=order) for fr in FQ_FR]
+    FQ = [LineMesh.loft_fn(footprint, fr, order=order) for fr in FQ_FR]
 
     UP = [cyl_params(p) for p in P]
     UWP, UWM = np.array([PHI_W, 0.0]), np.array([-PHI_W, 0.0])
@@ -151,8 +151,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
     def wall_patch(fn, tag):
         fr = np.linspace(0.0, 1.0, N + 1)
-        return QuadMesh.loft_curve(
-            lambda y: LineMesh.loft_curve(
+        return QuadMesh.loft_fn(
+            lambda y: LineMesh.loft_fn(
                 lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=order),
             fr, order=order, element_tags=[tag] * N)
 
@@ -205,12 +205,12 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                 wall_tag="wall")
 
         plain = station(1.0)
-        transition = HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                                        order=order)
+        transition = HexMesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+                                     order=order)
         return transition, plain
 
     def branch():
-        open_arcs = [LineMesh.loft_curve(opening, fr, order=order) for fr in FQ_FR]
+        open_arcs = [LineMesh.loft_fn(opening, fr, order=order) for fr in FQ_FR]
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
         walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])

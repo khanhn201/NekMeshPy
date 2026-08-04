@@ -4,7 +4,7 @@ close on themselves (``line`` / ``arc``), plus the ``arclength_fractions`` /
 
 The general parametrized curve is **not** here: it authors its own connectivity and
 takes the same ``loop`` flag as the sweep primitive, so it lives beside it as
-:func:`~nekmeshpy.linemesh._assemble.loft_curve`.
+:func:`~nekmeshpy.linemesh._assemble.loft_fn`.
 
 These are plain free functions returning a ``LineMesh``; ``linemesh/__init__.py``
 binds each entry of ``FACTORIES`` onto the class, so callers use ``LineMesh.line(...)``
@@ -128,11 +128,11 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     """The ``(n+1,)`` **parameter values** spanning ``t_range`` -- from ``t_range[0]``
     to ``t_range[1]`` -- at which ``f`` must be evaluated for the resulting ``n+1``
     points to be evenly spaced by **arc length**: hand the result straight to
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` as its
+    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>` as its
     ``fractions``, with no further scaling
-    (``loft_curve(f, arclength_fractions(f, n, t_range=...), order=N)``).
+    (``loft_fn(f, arclength_fractions(f, n, t_range=...), order=N)``).
 
-    ``t_range`` is the parameter interval to invert over -- unlike ``loft_curve``, this
+    ``t_range`` is the parameter interval to invert over -- unlike ``loft_fn``, this
     helper genuinely needs a domain, because the chord table is built by sampling it
     densely.  A descending range needs no special handling: the returned values simply
     run from ``t_range[0]`` down to ``t_range[1]``, which meshes the curve backwards.
@@ -140,7 +140,7 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     The inversion goes through a cumulative **chord**-length table of ``samples`` dense
     evaluations of ``f``, so only *where along* the curve the nodes end up inherits that
     table's discretization error.  Every node of the resulting mesh still lies on the
-    curve to machine precision, because ``loft_curve`` places it by evaluating ``f`` and
+    curve to machine precision, because ``loft_fn`` places it by evaluating ``f`` and
     never by interpolating this table -- raise ``samples`` for a more even spacing, not
     for a more accurate curve."""
     ni = int(n)
@@ -180,7 +180,7 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     Hand it straight to the ``fractions`` of
     :meth:`HexMesh.sweep <nekmeshpy.hexmesh.HexMesh.sweep>` /
     :meth:`QuadMesh.sweep <nekmeshpy.quadmesh.QuadMesh.sweep>` (or of
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`) whose path is
+    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`) whose path is
     parametrized by normalized arc length.  Like
     :func:`arclength_fractions` it is a ``HELPERS`` entry, not a factory: it answers a
     question about a sweep's input contract and returns a plain array, since the sweep

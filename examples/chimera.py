@@ -222,7 +222,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return LineMesh.loft_curve(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -259,7 +259,7 @@ def blend_wall(w0, w1, lam):
 
 
 def reverse_wall(w):
-    """The same curve traversed the other way: ``loft_curve`` takes a descending
+    """The same curve traversed the other way: ``loft_fn`` takes a descending
     parameter sequence for exactly this."""
     return Wall(w.g, w.fr[::-1])
 
@@ -314,7 +314,7 @@ if TOPOLOGY == "quadrant":
              for q in range(4)]
     #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
     #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-    FQ = [LineMesh.loft_curve(footprint, fr, order=ORDER) for fr in FQ_FR]
+    FQ = [LineMesh.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
     #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
     UP = [cyl_params(p) for p in P]
@@ -368,7 +368,7 @@ else:
         """One ``A1 -> A2`` footprint half, arc-length-even, ``N_HALF + 1`` points
         -- the collar arc shared between the branch and one main leg."""
         fr = LineMesh.arclength_fractions(footprint, N_HALF, t_range=(t0, t1))
-        return LineMesh.loft_curve(footprint, fr, order=ORDER)
+        return LineMesh.loft_fn(footprint, fr, order=ORDER)
 
     def join_arcs(p, q):
         """Two shared-endpoint ``A1 -> A2`` arcs into one closed ``2*N_HALF``-point
@@ -386,7 +386,7 @@ else:
             xi = np.asarray(x, dtype=float)[:, None]
             return cyl_pts((1.0 - xi) * pa + xi * pb)
 
-        return LineMesh.loft_curve(f, np.linspace(0.0, 1.0, N_HALF + 1), order=ORDER)
+        return LineMesh.loft_fn(f, np.linspace(0.0, 1.0, N_HALF + 1), order=ORDER)
 
     #: The branch collar, split at the two saddle points: ``A_PLUS`` via the ``+z``
     #: side (through ``t = OFFSET``), ``A_MINUS`` via the ``-z`` side. Both run
@@ -405,8 +405,8 @@ else:
         -- ``opening`` is a plain circle, so uniform ``t`` is already arc-length
         even -- giving the same point count and winding as ``A_PLUS``/``A_MINUS``
         so ``SEAM_BRANCH`` blends into it index-for-index."""
-        return LineMesh.loft_curve(opening, np.linspace(t0, t1, N_HALF + 1),
-                                   order=ORDER)
+        return LineMesh.loft_fn(opening, np.linspace(t0, t1, N_HALF + 1),
+                                order=ORDER)
 
     OPEN_PLUS = opening_arc(TA1, TA2)
     OPEN_MINUS = opening_arc(TA1, TA1 + np.pi)
@@ -434,8 +434,8 @@ def arc_mids(walls):
 def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node."""
     fr = np.linspace(0.0, 1.0, N + 1)
-    return QuadMesh.loft_curve(
-        lambda y: LineMesh.loft_curve(
+    return QuadMesh.loft_fn(
+        lambda y: LineMesh.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -506,8 +506,8 @@ def leg(composite, walls, sign, run, end_tag):
 
     plain = station(1.0)
     n_run = max(1, round(run / AXIAL_CELL))
-    return [HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                               order=ORDER),
+    return [HexMesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+                            order=ORDER),
             HexMesh.extrude(plain, run, n_run, axis=(0.0, 0.0, float(sign)),
                             last_tag=end_tag)]
 
@@ -519,7 +519,7 @@ def leg(composite, walls, sign, run, end_tag):
 #: from the identical points. Built once, per topology, exactly like the rest of the
 #: junction geometry above; ``bend()`` below only needs it to be *a* valid disc.
 if TOPOLOGY == "quadrant":
-    OPEN_ARCS = [LineMesh.loft_curve(opening, fr, order=ORDER) for fr in FQ_FR]
+    OPEN_ARCS = [LineMesh.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
     C_OPEN = np.array([H_BRANCH, 0.0, 0.0])
     OPENING_DISC = QuadMesh.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
                                           center_scale=CENTER_SCALE, wall_tag="wall")

@@ -85,7 +85,7 @@ def test_a_bowed_seam_is_meshed_exactly(order):
         return np.stack([t, 0.25 * np.sin(np.pi * t), np.zeros_like(t)], axis=1)
 
     fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
-    s1 = LineMesh.loft_curve(bow, fr, order=order)
+    s1 = LineMesh.loft_fn(bow, fr, order=order)
     s2 = LineMesh.line(np.zeros(3), np.array([0.0, 1.0, 0.0]), fr, order=order)
     # a wall arc joining the two seam ends; its shape is irrelevant to this check
     arc = LineMesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=order)

@@ -1,12 +1,12 @@
-"""Unit tests for ``HexMesh.loft_curve`` -- ``HexMesh.loft`` with the sections
+"""Unit tests for ``HexMesh.loft_fn`` -- ``HexMesh.loft`` with the sections
 **evaluated** from a parametrization instead of handed in -- and for the
 ``sweep_nodes`` / per-layer ``element_tags`` arguments it delegates through.
 
-The contract, one rung up from ``QuadMesh.loft_curve``: a plain ``loft`` sees only the
+The contract, one rung up from ``QuadMesh.loft_fn``: a plain ``loft`` sees only the
 corner-level sections, so at ``order > 1`` every node between two of them is a plain GLL
 lerp of their in-plane blocks and the swept solid comes out high-order in storage and
 linear in geometry.  Lofting a solid torus from **exact** disc sections still puts its
-interior nodes tens of percent of the tube radius off the true shape.  ``loft_curve``
+interior nodes tens of percent of the tube radius off the true shape.  ``loft_fn``
 evaluates the sections at the intermediate GLL levels too, so every node is a genuine
 section point and the solid is exact.
 
@@ -98,16 +98,16 @@ def test_plain_loft_of_exact_sections_is_straight_along_the_sweep(order):
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
 def test_every_node_lies_on_the_true_solid_torus(order):
-    torus = HexMesh.loft_curve(_torus_f(order), _ring_fractions(),
-                               loop=True, order=order)
+    torus = HexMesh.loft_fn(_torus_f(order), _ring_fractions(),
+                            loop=True, order=order)
     assert _revolution_deviation(torus, order) < 1e-13
 
 
 @pytest.mark.parametrize("order", [1, 2, 3])
 def test_corners_are_exact_at_every_order(order):
     """Corners were always exact; the fix must not disturb them."""
-    torus = HexMesh.loft_curve(_torus_f(order), _ring_fractions(),
-                               loop=True, order=order)
+    torus = HexMesh.loft_fn(_torus_f(order), _ring_fractions(),
+                            loop=True, order=order)
     x, y, z = torus.points.T
     rho = np.hypot(x, y)
     # the outermost corner ring rides the tube surface exactly
@@ -120,8 +120,8 @@ def test_corners_are_exact_at_every_order(order):
 
 @pytest.mark.parametrize("order", [1, 2, 3])
 def test_loop_gives_a_closed_solid_with_no_duplicated_layer(order):
-    torus = HexMesh.loft_curve(_torus_f(order), _ring_fractions(),
-                               loop=True, order=order)
+    torus = HexMesh.loft_fn(_torus_f(order), _ring_fractions(),
+                            loop=True, order=order)
     sec = _tube_disc(order)
     assert torus.n_points == sec.n_points * NV      # no seam section duplicated
     assert torus.n_hexes == sec.n_quads * NV        # NV layers, not NV-1
@@ -140,24 +140,24 @@ def test_loop_rejects_a_family_that_does_not_close():
     # a full turn *plus* a bit: f(fr[-1]) does not land back on f(fr[0])
     fr = np.linspace(0.0, 2.0 * np.pi + 0.3, NV + 1)
     with pytest.raises(ValueError, match="map back to the first section"):
-        HexMesh.loft_curve(lambda t: base.rotate(t, axis=(0, 0, 1)), fr,
-                           loop=True, order=2)
+        HexMesh.loft_fn(lambda t: base.rotate(t, axis=(0, 0, 1)), fr,
+                        loop=True, order=2)
 
 
 def test_loop_rejects_end_caps():
     with pytest.raises(ValueError):
-        HexMesh.loft_curve(_torus_f(1), _ring_fractions(), loop=True,
-                           first_tag="in")
+        HexMesh.loft_fn(_torus_f(1), _ring_fractions(), loop=True,
+                        first_tag="in")
 
 
 def test_loop_rejects_fewer_than_three_fractions():
     with pytest.raises(ValueError, match="at least 3 fractions"):
-        HexMesh.loft_curve(_torus_f(1), np.array([0.0, 2.0 * np.pi]), loop=True)
+        HexMesh.loft_fn(_torus_f(1), np.array([0.0, 2.0 * np.pi]), loop=True)
 
 
 def test_needs_at_least_two_fractions():
     with pytest.raises(ValueError, match="at least 2 fractions"):
-        HexMesh.loft_curve(_torus_f(1), np.array([0.0]))
+        HexMesh.loft_fn(_torus_f(1), np.array([0.0]))
 
 
 # -- order 1 and the open sweep are the plain loft ---------------------------
@@ -166,7 +166,7 @@ def test_needs_at_least_two_fractions():
 def test_order_one_equals_a_plain_loft_of_the_same_sections(loop):
     f = _torus_f(1)
     fr = _ring_fractions()
-    got = HexMesh.loft_curve(f, fr, loop=loop, order=1)
+    got = HexMesh.loft_fn(f, fr, loop=loop, order=1)
     want = HexMesh.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.hexes, want.hexes)
@@ -180,8 +180,8 @@ def test_open_sweep_has_the_expected_shape_and_caps():
     order = 2
     f = _torus_f(order)
     fr = np.linspace(0.0, np.pi / 2, 4)
-    blk = HexMesh.loft_curve(f, fr, order=order,
-                             first_tag="start", last_tag="end")
+    blk = HexMesh.loft_fn(f, fr, order=order,
+                          first_tag="start", last_tag="end")
     sec = _tube_disc(order)
     assert blk.n_points == sec.n_points * 4
     assert blk.n_hexes == sec.n_quads * 3
@@ -197,7 +197,7 @@ def test_grading_is_honored_per_layer():
     order = 3
     f = _torus_f(order)
     fr = np.array([0.0, 0.3, 2.4, 2.0 * np.pi])
-    blk = HexMesh.loft_curve(f, fr, order=order)
+    blk = HexMesh.loft_fn(f, fr, order=order)
     assert _revolution_deviation(blk, order) < 1e-13
     # the corner levels sit exactly at the requested parameters
     theta = np.arctan2(blk.points[:, 1], blk.points[:, 0])
@@ -217,7 +217,7 @@ def test_per_layer_element_tags_override_the_section_quad_tags():
                       ElementTags.uniform(base.n_quads, "fluid"))
     f = lambda t: tagged.rotate(t, axis=(0, 0, 1))                 # noqa: E731
     layers = ["", "hot", ""]
-    blk = HexMesh.loft_curve(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
+    blk = HexMesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
     tags = blk.element_tags.dense(blk.n_hexes).reshape(3, base.n_quads)   # hex (layer i, quad q)
     assert list(np.unique(tags[0])) == ["fluid"]
     assert list(np.unique(tags[1])) == ["hot"]         # non-empty layer tag wins
@@ -226,8 +226,8 @@ def test_per_layer_element_tags_override_the_section_quad_tags():
 
 def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
     f = _torus_f(1, wall_tag="wall")
-    blk = HexMesh.loft_curve(f, np.linspace(0.0, 1.0, 3), order=1,
-                             element_tags=["a", "b"],
+    blk = HexMesh.loft_fn(f, np.linspace(0.0, 1.0, 3), order=1,
+                          element_tags=["a", "b"],
                              first_tag="inlet", last_tag="outlet")
     assert set(blk.face_group_tags) == {"wall", "inlet", "outlet"}
     b = blk.face_tags
@@ -251,8 +251,8 @@ def test_loft_rejects_a_mis_sized_element_tags():
 def test_rejects_a_section_of_the_wrong_order():
     base = _tube_disc(1)
     with pytest.raises(ValueError, match="order-1 section"):
-        HexMesh.loft_curve(lambda t: base.rotate(t, axis=(0, 0, 1)),
-                           np.linspace(0.0, 1.0, 3), order=2)
+        HexMesh.loft_fn(lambda t: base.rotate(t, axis=(0, 0, 1)),
+                        np.linspace(0.0, 1.0, 3), order=2)
 
 
 def test_rejects_sections_that_are_not_index_paired():
@@ -264,7 +264,7 @@ def test_rejects_sections_that_are_not_index_paired():
         NS + 1, RADIAL)
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
     with pytest.raises(ValueError, match="index-paired and conformal"):
-        HexMesh.loft_curve(f, np.linspace(0.0, 1.0, 3))
+        HexMesh.loft_fn(f, np.linspace(0.0, 1.0, 3))
 
 
 # -- sweep_nodes on loft itself ----------------------------------------------
@@ -330,7 +330,7 @@ def test_reverse_wound_section_sweeps_exactly_too(order):
     column's grid is scrambled against its own corner table."""
     f = _torus_f(order, flipped=True)
     fr = _ring_fractions()
-    torus = HexMesh.loft_curve(f, fr, loop=True, order=order)
+    torus = HexMesh.loft_fn(f, fr, loop=True, order=order)
     assert _revolution_deviation(torus, order, flipped=True) < 1e-13
     assert torus.is_conforming()
     straight = HexMesh.loft([f(t) for t in fr[:-1]], loop=True)

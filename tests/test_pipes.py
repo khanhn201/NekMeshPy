@@ -107,7 +107,7 @@ def test_quadrant_pipe_tjunction(tmp_path):
 
     # every wall node -- corner and high-order alike -- is on one of the two
     # cylinders.  Nothing in this mesh is straight-subdivided: the wall curves are
-    # meshed from their parametrizations, the leg transition is a loft_curve rather
+    # meshed from their parametrizations, the leg transition is a loft_fn rather
     # than a loft (which is straight along the sweep), and the crotch caps are
     # evaluated at every node rather than blended from corners.
     assert mesh.order > 1, "the point of this assertion is the high-order nodes"

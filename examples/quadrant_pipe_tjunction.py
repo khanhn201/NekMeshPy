@@ -79,15 +79,15 @@ Exact at any ``ORDER``, which took some care: a junction like this is where the
 straight-subdivision traps all bite at once.
 
 * Every wall curve is carried as its **surface parametrization** (:class:`Wall`), not
-  as sampled points, and meshed with ``LineMesh.loft_curve`` -- so the footprint, the
+  as sampled points, and meshed with ``LineMesh.loft_fn`` -- so the footprint, the
   side transitions and the bypass are all evaluated on the true curve at every node.
   Sampling them into arrays and calling ``LineMesh.loft`` chords the wall from
   ``order > 1`` on.
-* A leg's transition is a ``HexMesh.loft_curve`` over the blend parameter, not a
+* A leg's transition is a ``HexMesh.loft_fn`` over the blend parameter, not a
   ``loft`` of a section stack.  ``loft`` is straight **along the sweep**, so its wall
   nodes would be chords between stations at different ``phi`` -- measured here at
   order 3, that alone put them 7.2e-4 off the cylinder.
-* The cap blocks are ``evaluated_block``s -- nested ``loft_curve`` over an explicit
+* The cap blocks are ``evaluated_block``s -- nested ``loft_fn`` over an explicit
   map on the unit cube -- rather than ``HexMesh.from_grid``, which takes corners and
   blends straight.  A ``from_grid`` cap is fine at order 1 and at ``order > 1`` both
   leaves the wall and disagrees with ``quadrant_ogrid``'s bowed ring bands along the
@@ -213,7 +213,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return LineMesh.loft_curve(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -250,7 +250,7 @@ def blend_wall(w0, w1, lam):
 
 
 def reverse_wall(w):
-    """The same curve traversed the other way: ``loft_curve`` takes a descending
+    """The same curve traversed the other way: ``loft_fn`` takes a descending
     parameter sequence for exactly this."""
     return Wall(w.g, w.fr[::-1])
 
@@ -313,7 +313,7 @@ FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
                                       t_range=(TQ[q], TQ[q + 1])) for q in range(4)]
 #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
 #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-FQ = [LineMesh.loft_curve(footprint, fr, order=ORDER) for fr in FQ_FR]
+FQ = [LineMesh.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
 #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
 UP = [cyl_params(p) for p in P]
@@ -359,12 +359,12 @@ def arc_mids(walls):
 def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node.
 
-    Spelt as a nested ``loft_curve`` rather than ``QuadMesh.from_grid`` because
+    Spelt as a nested ``loft_fn`` rather than ``QuadMesh.from_grid`` because
     ``from_grid`` blends straight from corners: at ``order > 1`` its interior nodes
     would leave the wall."""
     fr = np.linspace(0.0, 1.0, N + 1)
-    return QuadMesh.loft_curve(
-        lambda y: LineMesh.loft_curve(
+    return QuadMesh.loft_fn(
+        lambda y: LineMesh.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -461,15 +461,15 @@ def leg(composite, walls, sign, end_tag):
             wall_tag="wall")
 
     plain = station(1.0)
-    return [HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                               order=ORDER),
+    return [HexMesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+                            order=ORDER),
             HexMesh.extrude(plain, L_MAIN - Z_NEAR, N_LEG,
                             axis=(0.0, 0.0, float(sign)), last_tag=end_tag)]
 
 
 def branch():
     """The branch stub: the footprint disc morphed to the circular opening."""
-    open_arcs = [LineMesh.loft_curve(opening, fr, order=ORDER) for fr in FQ_FR]
+    open_arcs = [LineMesh.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
     c_open = np.array([H_BRANCH, 0.0, 0.0])

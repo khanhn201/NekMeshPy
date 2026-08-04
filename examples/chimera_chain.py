@@ -182,7 +182,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return LineMesh.loft_curve(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -219,7 +219,7 @@ def blend_wall(w0, w1, lam):
 
 
 def reverse_wall(w):
-    """The same curve traversed the other way: ``loft_curve`` takes a descending
+    """The same curve traversed the other way: ``loft_fn`` takes a descending
     parameter sequence for exactly this."""
     return Wall(w.g, w.fr[::-1])
 
@@ -275,7 +275,7 @@ FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
          for q in range(4)]
 #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
 #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-FQ = [LineMesh.loft_curve(footprint, fr, order=ORDER) for fr in FQ_FR]
+FQ = [LineMesh.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
 #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
 UP = [cyl_params(p) for p in P]
@@ -318,8 +318,8 @@ def arc_mids(walls):
 def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node."""
     fr = np.linspace(0.0, 1.0, N + 1)
-    return QuadMesh.loft_curve(
-        lambda y: LineMesh.loft_curve(
+    return QuadMesh.loft_fn(
+        lambda y: LineMesh.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -392,8 +392,8 @@ def leg(composite, walls, sign, run):
             np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
-    transition = HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                                    order=ORDER)
+    transition = HexMesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+                                 order=ORDER)
     if run <= 0.0:
         return [transition]
 
@@ -463,7 +463,7 @@ def to_b(m):
 #: The branch's round opening disc, axis ``x``, centred at ``(H_BRANCH, 0, 0)`` --
 #: shared by ``branch()`` (as its far cross-section) and every junction's hairpin
 #: bend (as the disc the straight arm carries out to the bend).
-OPEN_ARCS = [LineMesh.loft_curve(opening, fr, order=ORDER) for fr in FQ_FR]
+OPEN_ARCS = [LineMesh.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
 C_OPEN = np.array([H_BRANCH, 0.0, 0.0])
 OPENING_DISC = QuadMesh.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
                                       center_scale=CENTER_SCALE, wall_tag="wall")

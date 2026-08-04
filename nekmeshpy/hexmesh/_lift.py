@@ -212,12 +212,12 @@ def sweep(
     in-plane extent -- but it is not silently meshed either: the folded layer comes out
     mixed-winding and ``loft`` rejects it, naming the sweep as the likely cause.
 
-    ``path`` is **vectorized** -- ``(K,) -> (K,3)`` -- unlike ``loft_curve``'s
+    ``path`` is **vectorized** -- ``(K,) -> (K,3)`` -- unlike ``loft_fn``'s
     profile-at-a-time callable, and deliberately so: a rotation-minimizing frame is a
     *sequential* integration along the curve, so it cannot be evaluated at one isolated
-    parameter.  (``loft_curve``'s ``f`` is scalar for its own reason: it returns a
+    parameter.  (``loft_fn``'s ``f`` is scalar for its own reason: it returns a
     *mesh*, and a callable handing back one mesh can only take one parameter value.
-    ``LineMesh.loft_curve``'s ``f`` returns coordinates, so it is vectorized again.
+    ``LineMesh.loft_fn``'s ``f`` returns coordinates, so it is vectorized again.
     The three shapes disagree because the three return types do.)  ``sweep`` samples
     the whole node lattice
     ``_refined_lattice(fractions, order)`` in one call, builds the frame field on it,
@@ -226,7 +226,7 @@ def sweep(
     exact at any order, not straight-subdivided between slices.
 
     ``fractions`` are the path parameter values themselves, in ``path``'s own units, and
-    grade the sweep exactly as they do on ``loft_curve``.  ``loop=True`` takes the
+    grade the sweep exactly as they do on ``loft_fn``.  ``loop=True`` takes the
     trailing wrap value; the closing profile is the *identical* placement as the first
     (not a re-evaluation), so a closed sweep welds exactly rather than to a tolerance.
 

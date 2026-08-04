@@ -1,6 +1,6 @@
 """Variable-arity ``QuadMesh`` operations -- the only ones that build a numbering.
 
-``loft`` (``n`` line profiles -> a section, rung delta +1), ``loft_curve`` (the same,
+``loft`` (``n`` line profiles -> a section, rung delta +1), ``loft_fn`` (the same,
 with the profiles evaluated from a parametrization rather than handed in) and ``merge``
 (``n`` sections -> one, rung delta 0) are the n-ary operations at this rung, and the
 only code here
@@ -10,7 +10,7 @@ layer-by-layer B-rep it assembles (``prof_off`` / ``rung_off``, global id
 the weld.  Every fixed-arity operation either reuses an existing numbering (``blend``)
 or delegates here (``extrude``, ``from_grid``, the region factories).
 
-``loft_curve`` lives here rather than with the region fills for the same reason its
+``loft_fn`` lives here rather than with the region fills for the same reason its
 line-rung twin does -- it *is* ``loft``, and it delegates the whole assembly to it
 through ``sweep_nodes``, contributing only the evaluation.
 
@@ -96,7 +96,7 @@ def loft(
     interior GLL levels.  Supplied, they replace both interpolations -- the rung
     lines' interiors and the quads' private interiors are then read straight out of
     them, so every node is a genuine profile point and nothing is blended.
-    :meth:`loft_curve` builds them by evaluating a parametrization on the refined
+    :meth:`loft_fn` builds them by evaluating a parametrization on the refined
     sweep lattice; that is the intended way in.
 
     ``loop=True`` makes the sweep **periodic**: the last profile is joined back to
@@ -337,7 +337,7 @@ def _loft_evaluated(
     element_tags: StrArray | Sequence[str] | None = None,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
-    name: str = "loft_curve",
+    name: str = "loft_fn",
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
     node lattice rather than handed in: validate, close the loop, split, delegate.
@@ -353,7 +353,7 @@ def _loft_evaluated(
     stay, since they are what curve the seam.  ``name`` is the caller's name for the
     error messages.
 
-    Factored out of :func:`loft_curve` so a sweep that already *has* the profile list
+    Factored out of :func:`loft_fn` so a sweep that already *has* the profile list
     (rather than a callable to evaluate) reuses the same contract instead of restating
     it -- which is exactly what ``QuadMesh.sweep`` needs, because a
     rotation-minimizing frame is integrated along the whole path and cannot be
@@ -405,7 +405,7 @@ def _loft_evaluated(
                 first_tag=first_tag, last_tag=last_tag)
 
 
-def loft_curve(
+def loft_fn(
     f: Callable[[float], LineMesh],
     fractions: FloatArray,
     *,
@@ -421,7 +421,7 @@ def loft_curve(
     blended along the sweep.
 
     This is the quad rung of
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`, and it
+    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`, and it
     exists for the same reason: a plain :func:`loft` has only the corner-level
     profiles to go on, so at ``order > 1`` it subdivides the sweep straight and a
     swept curved surface ends up high-order in storage and linear in geometry (a
@@ -440,7 +440,7 @@ def loft_curve(
     **Why ``f`` is scalar here and ``sweep``'s ``path`` is vectorized.**  ``f`` returns
     a *mesh*, and a callable that hands back one mesh can only be given one parameter
     value -- there is no array-of-meshes for a vectorized form to return (which is also
-    why :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`, whose
+    why :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`, whose
     ``f`` returns plain coordinates, *is* vectorized).  :func:`sweep`'s ``path`` is
     vectorized for a different reason again: it returns coordinates *and* the default
     frame generator is a sequential integration along the whole curve, so it cannot be
@@ -453,7 +453,7 @@ def loft_curve(
     so it cannot be built before the order is known).  Pass an explicit ``int`` to
     assert it instead: a profile of a different order is then a ``ValueError`` naming
     the mismatch, and no probe call is made.  There is no inference at the line rung --
-    ``LineMesh.loft_curve``'s ``f`` returns points, not a mesh, so its ``order`` is
+    ``LineMesh.loft_fn``'s ``f`` returns points, not a mesh, so its ``order`` is
     constructive rather than inherited.
 
     ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
@@ -475,9 +475,9 @@ def loft_curve(
     exactly as on :func:`loft`, which does all the assembly and whose numbering is
     carried up unchanged."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    _check_fraction_count(fr, loop=loop, name="loft_curve")
+    _check_fraction_count(fr, loop=loop, name="loft_fn")
     if loop:
-        reject_loop_caps("QuadMesh.loft_curve", first_tag, last_tag)
+        reject_loop_caps("QuadMesh.loft_fn", first_tag, last_tag)
     if order is None:
         # The node lattice the profiles are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the
@@ -487,7 +487,7 @@ def loft_curve(
         probe = f(float(fr[0]))
         if not isinstance(probe, LineMesh):
             raise TypeError(
-                "loft_curve: f must return a LineMesh profile, but f(%g) returned %s. "
+                "loft_fn: f must return a LineMesh profile, but f(%g) returned %s. "
                 "Pass order= explicitly only if you also fix f." % (fr[0], type(probe)))
         order = probe.order
 
@@ -556,6 +556,6 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
 #: Variable-arity combinators bound onto ``QuadMesh`` as ``staticmethod``.
 FACTORIES: dict[str, Any] = {
     "loft": loft,
-    "loft_curve": loft_curve,
+    "loft_fn": loft_fn,
     "merge": merge,
 }

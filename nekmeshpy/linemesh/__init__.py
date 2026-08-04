@@ -8,7 +8,7 @@ ladder the operation moves):
 ============== ======== ===== ===============================================
 module         arity    delta contents
 ============== ======== ===== ===============================================
-``_assemble``  n-ary    +1/0  ``loft``, ``loft_curve``, ``merge`` -- new index space
+``_assemble``  n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
 ``_morph``     fixed     0    ``blend``, ``translate``/``rotate``/``scale``, ``reverse``
 ``_query``     fixed     exit read-only queries returning plain arrays
 ``_open``      fixed    +1    open shape factories (``line`` / ``arc``)
@@ -20,9 +20,9 @@ combinators, ``METHODS`` for the instance-method-bound queries -- and this packa
 binds them onto the class below.  ``_open`` carries a third one, ``HELPERS``: also
 ``staticmethod``-bound, but for functions that answer a question *about* a factory's
 input contract and return a plain array rather than a mesh, which is what keeps them
-out of ``FACTORIES`` (``LineMesh.arclength_fractions``, the ``loft_curve`` grading that
+out of ``FACTORIES`` (``LineMesh.arclength_fractions``, the ``loft_fn`` grading that
 spaces nodes evenly by arc length -- the inversion is an explicit caller step, since
-``loft_curve`` meshes exactly at the fractions given).  So callers write ``LineMesh.circle(...)`` /
+``loft_fn`` meshes exactly at the fractions given).  So callers write ``LineMesh.circle(...)`` /
 ``lm.boundary_points()`` while adding an operation touches only the sibling module
 (the function plus one registry entry), never the container or this file.
 """

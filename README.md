@@ -141,8 +141,8 @@ points from nothing takes an optional `order=N` (default `1`) — `LineMesh.circ
 `from_grid`, `HexMesh.from_grid`; everything that takes a *mesh* in (`ogrid`,
 `structured`, `annulus`, `extrude`, `sweep`, `blend`, `loft`, `merge`) has no `order=`
 at all and inherits it from its inputs, rejecting a mismatch loudly. So `order=` is set
-on the boundary loop and rides all the way up. (`QuadMesh.loft_curve` /
-`HexMesh.loft_curve` keep an `order: int | None = None` because they *evaluate*
+on the boundary loop and rides all the way up. (`QuadMesh.loft_fn` /
+`HexMesh.loft_fn` keep an `order: int | None = None` because they *evaluate*
 profiles rather than receive them; `None` means the profiles' own.) At order `N` each
 element carries `(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction (line
 `N+1`, quad `(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's
@@ -169,9 +169,9 @@ the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.
 
 **Curved geometry is not automatic.** Factories that own an analytic shape place the
 extra nodes on it — `LineMesh.circle` / `LineMesh.arc` on the exact arc,
-`LineMesh.loft_curve` on any analytic parametrization you hand it (it calls your callable on
+`LineMesh.loft_fn` on any analytic parametrization you hand it (it calls your callable on
 the whole node lattice, corners *and* interiors),
-`QuadMesh.loft_curve` / `HexMesh.loft_curve` doing the same one and two rungs up along the
+`QuadMesh.loft_fn` / `HexMesh.loft_fn` doing the same one and two rungs up along the
 *sweep* (your callable returns a `LineMesh` profile / `QuadMesh` section and is called at
 every node level, not just the corner levels),
 `QuadMesh.sweep` / `HexMesh.sweep` carrying **one** profile along a curved path by a moving
@@ -182,9 +182,9 @@ curvature into the interior as well as onto the wall, and the combinators (`extr
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
 (`LineMesh.loft`, `from_grid`) has only those points to go on and
 straight-subdivides between them: high order in storage, linear in geometry — so pass
-`LineMesh.loft_curve` a closed form rather than sampling it into an array. A plain
+`LineMesh.loft_fn` a closed form rather than sampling it into an array. A plain
 `QuadMesh.loft` is the same trap along its *sweep* direction — exact profiles still give a
-surface that is straight between them — so reach for `loft_curve` or `sweep` (or hand
+surface that is straight between them — so reach for `loft_fn` or `sweep` (or hand
 `loft` the intermediate profiles as `sweep_nodes=`) when the sweep path is curved. Order-N
 smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
 above order 1 rather than degrading silently.

@@ -38,7 +38,7 @@ explicitly:
   through the constructor with its `lines` spelled out.
 - `LineMesh.line(start, end, fractions, …)` — straight edge sampled at the given
   fractions (a direct lerp, meshed exactly).
-- `LineMesh.loft_curve(f, fractions, loop=False, order=1, element_tags=…)` — a curve
+- `LineMesh.loft_fn(f, fractions, loop=False, order=1, element_tags=…)` — a curve
   meshed on its own analytic parametrization, the general sibling of
   {meth}`~nekmeshpy.linemesh.LineMesh.arc`. `f` maps a `(K,)` parameter array to
   `(K,3)` points and is called once with the **whole** node lattice — corners and the
@@ -200,7 +200,7 @@ filled in place with its true shape.
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.annulus` | ring O-grid between inner and outer closed loops, paired **by index** (equal point counts — e.g. `LineMesh.rectangle(w, h, N)` against `circle(r, N, start_theta=…)`) |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.extrude` / {meth}`~nekmeshpy.quadmesh.QuadMesh.loft` | sweep/stack a `LineMesh` one dimension down into a quad strip |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.sweep` | carry **one** `LineMesh` profile along a curved path by a moving frame — the curved generalization of `extrude` |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_curve` | the same sweep with the profiles **evaluated**: `f(t) -> LineMesh` is called at every node level of the sweep lattice, so a swept curved surface is exact at `order > 1` instead of straight between the corner levels |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_fn` | the same sweep with the profiles **evaluated**: `f(t) -> LineMesh` is called at every node level of the sweep lattice, so a swept curved surface is exact at `order > 1` instead of straight between the corner levels |
 | {meth}`~nekmeshpy.quadmesh.QuadMesh.from_grid` | structured `(ni+1,nj+1)` quad grid (itself a {meth}`~nekmeshpy.quadmesh.QuadMesh.loft` of the grid's column profiles, each itself a {meth}`~nekmeshpy.linemesh.LineMesh.loft` of that column's `i` points, whose **sweep-major, `i`-fastest** numbering it carries up unchanged — `points == P.transpose(1,0,2).reshape(-1,3)`); `element_tag` fills the per-quad tags |
 
 `ogrid` / `annulus` build a straight-chord initial guess and rely on
@@ -215,7 +215,7 @@ directly. (`ogrid` / `half_ogrid` are ICEM/Pointwise terms; the rest follow gmsh
 | {meth}`~nekmeshpy.hexmesh.HexMesh.extrude` | sweep one section along a straight axis (gmsh Extrude + Layers + Recombine) |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.sweep` | carry **one** section along a *curved* path by a moving frame — a round pipe bent through a 90° elbow or a U-turn, from one O-grid disc |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.loft` | recombine a stack of pre-positioned conformal profiles — the general case behind `extrude` |
-| {meth}`~nekmeshpy.hexmesh.HexMesh.loft_curve` | the same stack with the sections **evaluated**: `f(t) -> QuadMesh` is called at every node level of the sweep lattice, so the sweep is exact at `order > 1` |
+| {meth}`~nekmeshpy.hexmesh.HexMesh.loft_fn` | the same stack with the sections **evaluated**: `f(t) -> QuadMesh` is called at every node level of the sweep lattice, so the sweep is exact at `order > 1` |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.annulus` | fill the shell between two **closed `QuadMesh` surfaces**, paired **by index** (e.g. `sphere = R*normalize(cube.points)` on `cube.quads`) |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.merge` | stitch blocks, welding coincident **boundary** points only |
 | {meth}`~nekmeshpy.hexmesh.HexMesh.from_grid` | structured `i×j×k` block (itself a {meth}`~nekmeshpy.hexmesh.HexMesh.loft` of the grid's `k`-sections, each a {meth}`~nekmeshpy.quadmesh.QuadMesh.from_grid`, whose numbering it carries up unchanged — `i` fastest, `k` slowest, `points == P.transpose(2,1,0,3).reshape(-1,3)`); `face_tags` maps a side `x_min`…`z_max` to a name |
@@ -294,23 +294,23 @@ discs). A closed sweep has no near/far cap, so at every rung `loop=True`
 `QuadMesh.annulus` closes in the *ring* direction, which lives in the loops' own
 connectivity rather than the loft direction, so it does **not** use `loop=True`.
 
-### The evaluated sweep: `loft_curve`
+### The evaluated sweep: `loft_fn`
 
 A `loft` sees only the profiles it is handed, which at `order > 1` are the **corner
 levels** of the sweep. Between them it has no information, so it subdivides the sweep
 direction **straight** — a mesh lofted from perfectly exact profiles can still be
 high-order in storage and linear in geometry (a torus lofted from exact
 `LineMesh.circle` rings puts its interior nodes tens of percent of the tube radius off
-the true surface). `loft_curve` is the escape at all three rungs: it *is*
+the true surface). `loft_fn` is the escape at all three rungs: it *is*
 `loft`, with the profiles **evaluated** from a parametrization instead of handed in,
 so it can evaluate the intermediate GLL levels too and every node is a genuine profile
 point.
 
 | rung | `f` maps | evaluated at |
 |---|---|---|
-| {meth}`~nekmeshpy.linemesh.LineMesh.loft_curve` | `(K,) params -> (K,3)` points | the whole node lattice, in one call |
-| {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_curve` | one param -> one `LineMesh` profile | once per node level of the sweep |
-| {meth}`~nekmeshpy.hexmesh.HexMesh.loft_curve` | one param -> one `QuadMesh` section | once per node level of the sweep |
+| {meth}`~nekmeshpy.linemesh.LineMesh.loft_fn` | `(K,) params -> (K,3)` points | the whole node lattice, in one call |
+| {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_fn` | one param -> one `LineMesh` profile | once per node level of the sweep |
+| {meth}`~nekmeshpy.hexmesh.HexMesh.loft_fn` | one param -> one `QuadMesh` section | once per node level of the sweep |
 
 All three take `fractions` as the **parameter values themselves** (in `f`'s own units, no
 normalization) and the same trailing-wrap `loop` convention: pass `n+1` values whose
@@ -325,7 +325,7 @@ affine ops, which move no index:
 
 ```python
 ring = LineMesh.circle(0.6, 8, center=(2.0, 0, 0), normal=(0, 1, 0), order=3)
-torus = QuadMesh.loft_curve(lambda t: ring.rotate(t, axis=(0, 0, 1)),
+torus = QuadMesh.loft_fn(lambda t: ring.rotate(t, axis=(0, 0, 1)),
                             np.linspace(0.0, 2.0 * np.pi, 7), loop=True)
 ```
 
@@ -333,19 +333,19 @@ Rebuilding the profile per parameter (a `LineMesh.circle` with a rotating `norma
 is *not* guaranteed to be index-paired — the in-plane basis can flip.
 
 `order` is `None` by default at the quad and hex rungs and is read off the profile
-`f` returns — there is a mesh to ask. Only `LineMesh.loft_curve` keeps a plain
+`f` returns — there is a mesh to ask. Only `LineMesh.loft_fn` keeps a plain
 `order: int`, and there the argument is **constructive** rather than inherited: `f`
 hands back coordinates, not a mesh, so nothing carries an order and the argument is
 what *decides* the node lattice `f` is sampled on.
 
 `QuadMesh.loft` and `HexMesh.loft` also accept the intermediate profiles directly, as
 `sweep_nodes[i]` = the `order-1` profiles lying strictly between slice `i` and the
-slice it sweeps to; `loft_curve` is exactly that argument with the profiles evaluated
+slice it sweeps to; `loft_fn` is exactly that argument with the profiles evaluated
 for you.
 
 ### The rigid sweep: `sweep`
 
-`loft_curve` still asks you to *produce* each profile. When every station is the **same
+`loft_fn` still asks you to *produce* each profile. When every station is the **same
 section** carried along a path — a round pipe bent through an elbow, a U-turn, a coil —
 {meth}`~nekmeshpy.quadmesh.QuadMesh.sweep` and {meth}`~nekmeshpy.hexmesh.HexMesh.sweep`
 do the placing for you. They are the curved generalization of `extrude` (hence
@@ -452,7 +452,7 @@ nothing — the `LineMesh` shapes, `QuadMesh.rectangle` / `box` / `sphere` /
 `half_box` / `hemisphere`, and the two `from_grid`s. Everything that consumes a mesh
 inherits its order instead and has no such argument: `ogrid` / `half_ogrid` /
 `quadrant_ogrid` / `spined_ogrid` / `structured` / `annulus` take it from the boundary loop or edges,
-`extrude` / `loft` / `sweep` from the section, and the quad and hex `loft_curve`s
+`extrude` / `loft` / `sweep` from the section, and the quad and hex `loft_fn`s
 default `order=None` and read it off the profile `f` returns. All of them reject a
 mismatched order across their inputs rather than quietly degrading one.
 
@@ -531,11 +531,11 @@ anywhere other than on the straight line between the corners.
 
 - **Placed on the true shape.** `LineMesh.circle` and `LineMesh.arc` evaluate the exact
   arc at the interior GLL angles, so each element's nodes lie on the circle rather than
-  its chord. {meth}`~nekmeshpy.linemesh.LineMesh.loft_curve` generalizes that to any curve you
+  its chord. {meth}`~nekmeshpy.linemesh.LineMesh.loft_fn` generalizes that to any curve you
   can write down: it builds the parameter values of *every* node of the chain — the
   `n+1` corners and each element's `order-1` interior nodes — and calls your callable
   once on the whole lattice, so no node is ever placed by interpolating between
-  others. {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_curve` is the same idea one rung
+  others. {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_fn` is the same idea one rung
   up — the profiles are evaluated at every node level of the *sweep*, so the swept
   surface is exact in that direction too.
   `QuadMesh.sphere` and `QuadMesh.hemisphere` project **every** node of the
@@ -549,28 +549,28 @@ anywhere other than on the straight line between the corners.
   blend: `LineMesh.loft`, `QuadMesh.from_grid` / `HexMesh.from_grid`. Sampling a
   curve into points and calling `LineMesh.loft` thus *throws the curve away* above
   order 1 — pass the analytic `arc` / `circle` instead, or
-  {meth}`~nekmeshpy.linemesh.LineMesh.loft_curve` when the closed form is neither:
+  {meth}`~nekmeshpy.linemesh.LineMesh.loft_fn` when the closed form is neither:
 
   ```python
   # the intersection of two equal-radius cylinders is a planar ellipse
   ellipse = lambda t: np.column_stack([R * np.sin(t), R * np.cos(t), R * np.sin(t)])
   fr = LineMesh.arclength_fractions(ellipse, n=12, t_range=(0.0, np.pi))
-  collar = LineMesh.loft_curve(ellipse, fr, order=3)
+  collar = LineMesh.loft_fn(ellipse, fr, order=3)
   ```
 
-  The sampling is the caller's to prove: `loft_curve` meshes exactly at the parameter values
+  The sampling is the caller's to prove: `loft_fn` meshes exactly at the parameter values
   given — `t_range=(0.0, np.pi)` above lives on the helper, not on the factory, because
   the `fractions` already carry the domain. {meth}`LineMesh.arclength_fractions
   <nekmeshpy.linemesh.LineMesh.arclength_fractions>` inverts a
   chord-length table of `samples` dense evaluations into the parameter values that space
-  the nodes evenly along the curve, ready to hand straight to `loft_curve` unscaled. Only
+  the nodes evenly along the curve, ready to hand straight to `loft_fn` unscaled. Only
   *where along* the curve each node sits
   inherits that table's discretization error — the node itself is still placed by
   evaluating the callable, never by interpolating the table, so it lies on the curve to
   machine precision. Raise `samples` for more even spacing, not for a more accurate
   curve. `arc` stays a separate factory rather than a wrapper: for a circular arc the
   angles are known outright, so it needs no inversion and is exact to the last ulp.
-  `loft_curve` takes the same `loop` flag as `LineMesh.loft`, so a closed parametric
+  `loft_fn` takes the same `loop` flag as `LineMesh.loft`, so a closed parametric
   loop is meshed directly rather than welded: pass the **trailing wrap value** — `n+1`
   fractions whose last maps back to the first point, e.g. `np.linspace(0, 2*np.pi, n+1)`
   for a `2*pi`-periodic `f` — and the result is a ring of `n` points and `n` lines with
@@ -581,7 +581,7 @@ anywhere other than on the straight line between the corners.
   be given one by refitting it, which is what `examples/bifurcation.py` does: its
   `fourier_ring` takes the rFFT of `x`/`y`/`z` against the uniform ring parameter, keeps
   the lower half of the modes (dropping the STL facet noise a high-order wall would
-  otherwise resolve faithfully) and feeds that series to `loft_curve`. An **open** scanned
+  otherwise resolve faithfully) and feeds that series to `loft_fn`. An **open** scanned
   arc gets the same treatment in a basis chosen for its endpoints: `_arc_curve` refits
   the arc's deviation from its own chord as a truncated **sine** series in the
   normalized arc-length parameter, and because every `sin(k*pi*s)` vanishes at both
@@ -614,7 +614,7 @@ anywhere other than on the straight line between the corners.
   the two profiles' entity tables the same way it lerps their corners, and `loft`
   sweeps each column as a Coons patch that is curved along the profile (from the
   profiles' own nodes) and straight along the sweep — which is exactly the gap
-  {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_curve` (or `QuadMesh.loft`'s `sweep_nodes=`)
+  {meth}`~nekmeshpy.quadmesh.QuadMesh.loft_fn` (or `QuadMesh.loft`'s `sweep_nodes=`)
   closes when the sweep path is itself curved. So curvature you put in at the
   bottom of the ladder rides all the way up — `HexMesh.annulus` between an `order=N`
   `sphere` and an `order=N` `box` keeps its inner wall exactly spherical.

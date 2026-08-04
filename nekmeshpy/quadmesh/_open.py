@@ -112,7 +112,7 @@ def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
         raise ValueError(
             "%s must be a simple consecutive chain (line k joining points k and k+1) "
             "-- its point order is what sets the node distribution; build it with "
-            "LineMesh.loft/line/arc/loft_curve (or merge chains end to end) rather than "
+            "LineMesh.loft/line/arc/loft_fn (or merge chains end to end) rather than "
             "re-indexing its lines" % name)
     return lo
 
@@ -732,7 +732,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     ``Nradial`` ring stations.  Derive that sampling with
     :func:`quadrant_seam_fractions` and evaluate your own radius curve there
     (:meth:`LineMesh.line <nekmeshpy.linemesh.LineMesh.line>` for a straight radius,
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` for a bowed
+    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>` for a bowed
     one), at ``arc``'s order -- at ``order > 1`` a seam's own private nodes *are* the
     radius geometry, so the orders must match.
 
@@ -937,7 +937,7 @@ def spine_fractions(n_theta: int, radial: int | FloatArray,
     Neither factory resamples a spine for you -- both mesh it exactly at the points
     given -- so this is how a caller **derives** the sampling to prove: evaluate its
     own spine curve at these fractions (with
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` for an analytic spine,
+    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>` for an analytic spine,
     or ``trimesh.ops.resample_polyline`` for a scanned one) and hand the result in.
     Keeping the formula here rather than in every caller is what stops the two from
     drifting apart."""

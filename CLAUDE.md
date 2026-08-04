@@ -73,7 +73,7 @@ hex ladder the op moves):
 
 | module | arity | Δ | contents |
 |---|---|---|---|
-| `_assemble.py` | n-ary | +1 / 0 | `loft`, `loft_curve`, `merge` |
+| `_assemble.py` | n-ary | +1 / 0 | `loft`, `loft_fn`, `merge` |
 | `_lift.py` | fixed | +1 | `extrude` / `sweep` / `annulus` / `from_grid` → `loft` |
 | `_morph.py` | fixed | 0 | `blend`; unary `translate`/`rotate`/`scale`/`transform` |
 | `_query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
@@ -156,7 +156,7 @@ linear in geometry. A plain `QuadMesh.loft`/`HexMesh.loft` is the same trap alon
 *sweep* direction: exact profiles still give a surface that is straight between them (a
 torus lofted from exact circles lands 62–83% of the tube radius off).
 
-The escapes, at all three rungs: `loft_curve` (evaluates your parametrization on the
+The escapes, at all three rungs: `loft_fn` (evaluates your parametrization on the
 **whole** node lattice, corners *and* private interiors), `sweep` (carries one profile
 rigidly along a curved path by a moving frame), or handing `loft` its intermediate
 profiles as `sweep_nodes=`. Region fills (`ogrid` / `half_ogrid` / `quadrant_ogrid` /
@@ -175,6 +175,12 @@ Order-N smoothing is not implemented: a repositioning smoother raises
   that names both its `n_poor` field and the formatted report's `poor (<…)` line, so the
   two cannot drift. `trimesh.surface_report` deliberately still returns a dict — that is
   what `format_report`'s `isinstance` dispatch keys off.
+- **`_fn` names the functional variant.** Where an operation has both a discrete form
+  (it takes the sampled data) and a continuous one (it takes a parametrization and
+  evaluates it), the second is the first's name plus `_fn`: `loft` / `loft_fn` at all
+  three rungs, `coons_grid` / `coons_grid_fn`. An operation that only ever takes a
+  callable is *not* a variant of anything and keeps its plain name
+  (`LineMesh.arclength_fractions`, `sweep`'s `path=`).
 - **Typing is enforced** (`disallow_untyped_defs`, `check_untyped_defs`,
   `disallow_any_generics`). Use the dtype-parametrized aliases in `_typing.py` —
   `FloatArray` / `IntArray` / `BoolArray` / `StrArray`; a bare `np.ndarray` is an error.
@@ -192,5 +198,5 @@ Order-N smoothing is not implemented: a repositioning smoother raises
 ## Further reading
 
 `docs/user/` is the long form and is kept current: `concepts.md` (the ladder, tags,
-`loft`/`loft_curve`/`sweep`, high order), `architecture.md`, `conventions.md`.
+`loft`/`loft_fn`/`sweep`, high order), `architecture.md`, `conventions.md`.
 `examples/README.md` has a one-line description of what each script builds.
