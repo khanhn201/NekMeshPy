@@ -129,14 +129,14 @@ def annulus(
 def from_grid(
     P: PointArray,
     *,
-    face_tags: Mapping[str, str] | None = None,
+    side_tags: Mapping[str, str] | None = None,
     element_tag: str = "",
     order: int = 1,
 ) -> HexMesh:
     """Build hexes from a structured point grid ``P`` ``(ni+1,nj+1,nk+1,3)``.
-    ``face_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
+    ``side_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
     ``z_min``/``z_max``) to boundary names on the six outer sides; a side left out
-    or mapped to ``NO_BOUNDARY`` emits no boundary row. ``element_tag`` is written
+    or mapped to ``NO_TAG`` emits no tag row. ``element_tag`` is written
     to every hex's ``element_tags``.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
@@ -159,16 +159,16 @@ def from_grid(
     ``(k*(nj+1) + j)*(ni+1) + i`` and grid cell ``(i, j, k)`` is hex
     ``(k*nj + j)*ni + i``, i.e. ``points`` equals
     ``P.transpose(2, 1, 0, 3).reshape(-1, 3)`` -- *not* the ``P.reshape(-1, 3)``
-    (``k``-fastest) order this factory used historically.  ``boundaries`` stays
+    (``k``-fastest) order this factory used historically.  ``face_tags`` stays
     lexsorted by ``(element, face)``, so its row order follows the hex ids; each
     tagged row still names the same physical side."""
     P = np.asarray(P, dtype=float)
-    tags = {s: n for s, n in (face_tags or {}).items() if n}
+    tags = {s: n for s, n in (side_tags or {}).items() if n}
     for side in tags:
         _GRID_SIDES[side]        # reject an unknown side name (KeyError)
     # x/y sides are the section's own edges; z sides are the sweep's end caps.
-    edge_tags = {s: n for s, n in tags.items() if _GRID_SIDES[s][0] == "side"}
-    slices = [quad_from_grid(P[:, :, k, :], edge_tags=edge_tags,
+    side_map = {s: n for s, n in tags.items() if _GRID_SIDES[s][0] == "side"}
+    slices = [quad_from_grid(P[:, :, k, :], side_tags=side_map,
                              element_tag=element_tag, order=order)
               for k in range(P.shape[2])]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.

@@ -42,7 +42,7 @@ from ._morph import METHODS as _MORPH_METHODS
 from ._open import FACTORIES as _OPEN_FACTORIES
 from ._open import HELPERS as _OPEN_HELPERS
 from ._query import METHODS as _QUERY_METHODS
-from .quadmesh import NO_BOUNDARY, QuadMesh
+from .quadmesh import NO_TAG, QuadMesh
 
 # The combinators are plain free functions (no ``cls``); bind as ``staticmethod`` so
 # ``QuadMesh.ogrid(boundary, ...)`` passes no implicit first argument.
@@ -58,4 +58,4 @@ for _name, _fn in {**_QUERY_METHODS, **_MORPH_METHODS}.items():
     setattr(QuadMesh, _name,
             staticmethod(_fn) if _name == "_boundary_mask" else _fn)
 
-__all__ = ["NO_BOUNDARY", "QuadMesh"]
+__all__ = ["NO_TAG", "QuadMesh"]

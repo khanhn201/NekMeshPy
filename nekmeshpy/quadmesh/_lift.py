@@ -39,7 +39,7 @@ from ..linemesh._morph import transform as line_transform
 from ..linemesh._morph import translate
 from ..model import frames
 from ..model.fields import reject_loop_caps, validate_layers
-from ..model.tags import BoundaryBuilder
+from ..model.tags import PointTags, TagBuilder
 from ._assemble import _loft_evaluated, loft
 from ._helpers import _apply_smoothing, _check_boundary
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
@@ -156,14 +156,14 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
 def from_grid(
     P: PointArray,
     *,
-    edge_tags: Mapping[str, str] | None = None,
+    side_tags: Mapping[str, str] | None = None,
     element_tag: str = "",
     order: int = 1,
 ) -> QuadMesh:
     """Build quads from a structured point grid ``P`` ``(ni+1,nj+1,3)``.
-    ``edge_tags`` maps side names (``x_min`` / ``x_max`` / ``y_min`` / ``y_max``)
+    ``side_tags`` maps side names (``x_min`` / ``x_max`` / ``y_min`` / ``y_max``)
     to boundary tags on the four outer edges; a side left out (or mapped to
-    ``NO_BOUNDARY``) emits no boundary row.  ``element_tag`` is written to every
+    ``NO_TAG``) emits no tag row.  ``element_tag`` is written to every
     quad's dense ``element_tags``.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
@@ -190,12 +190,12 @@ def from_grid(
     point ``j*(ni+1) + i`` and grid cell ``(i, j)`` is quad ``j*ni + i``, i.e.
     ``points`` equals ``P.transpose(1, 0, 2).reshape(-1, 3)`` -- *not* the
     ``P.reshape(-1, 3)`` (``j``-fastest) order this factory used historically.
-    ``boundaries`` stays lexsorted by ``(quad, side)``, so its row order follows
+    ``edge_tags`` stays lexsorted by ``(quad, side)``, so its row order follows
     the quad ids; each tagged row still names the same physical side."""
     P = np.asarray(P, dtype=float)
     ni1, nj1, _ = P.shape
     ni = ni1 - 1
-    tags = {s: n for s, n in (edge_tags or {}).items() if n}
+    tags = {s: n for s, n in (side_tags or {}).items() if n}
     for side in tags:
         _GRID_SIDES[side]        # reject an unknown side name (KeyError)
 
@@ -204,7 +204,7 @@ def from_grid(
     line_tags: StrArray = np.full(ni, element_tag)
     # tagged profile end points -> the two swept walls (loft: vertex 1 -> quad side
     # 4, vertex 2 -> side 2), which is exactly x_min / x_max.
-    pbb = BoundaryBuilder()
+    pbb = TagBuilder(PointTags)
     for side in ("x_min", "x_max"):
         if side in tags:
             # loft carries profile end point side 1 -> quad side 4, side 2 -> 2
@@ -217,7 +217,7 @@ def from_grid(
     # the sweep-direction rungs the same way and the quad interiors as the Coons
     # patch of the two, so a flat grid cell stays exact.
     slices = [line_loft(P[:, j, :], element_tags=line_tags,
-                        boundaries=pbnd_t, order=order)
+                        point_tags=pbnd_t, order=order)
               for j in range(nj1)]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
     return loft(slices, first_tag=tags.get("y_min", ""),

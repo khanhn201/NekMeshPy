@@ -29,7 +29,7 @@ from ..linemesh._open import line
 from ..model import conform
 from ..model.fields import gll_nodes, validate_layers
 from ..model.interp import coons_grid
-from ..model.tags import BoundaryBuilder, BoundaryTable
+from ..model.tags import EdgeTags, TagBuilder
 from ._assemble import merge
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
 
@@ -237,7 +237,7 @@ def _ring_overlays(ring_pts: Sequence[PointArray], wall: LineMesh,
 
 
 def _curve_rows(rows: Sequence[tuple[int, int]], curve: LineMesh,
-               override: str) -> BoundaryTable:
+               override: str) -> EdgeTags:
     """The tagged boundary rows naming one side of a region.
 
     ``rows[m]`` is the ``(quad id, quad side)`` that carries element ``m`` of
@@ -247,7 +247,7 @@ def _curve_rows(rows: Sequence[tuple[int, int]], curve: LineMesh,
     ``override`` (a factory's ``wall_tag`` / ``side_tags[...]``) names the whole side
     instead, and an element left untagged either way emits no row at all."""
     seg = curve._seg_tags()
-    bb = BoundaryBuilder()
+    bb = TagBuilder(EdgeTags)
     for m, (qid, side) in enumerate(rows):
         bb.add_if_tagged(qid, side, override if override
                          else (seg[m] if seg is not None else ""))
@@ -290,8 +290,8 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
     ``side_tags`` (keyed by ``"bottom"`` / ``"right"`` / ``"top"`` /
     ``"left"``) overrides that -- a non-empty entry replaces the side's tag, a
     present-but-empty entry suppresses the side.  It is spelt ``side_tags``, not
-    ``boundaries``, because these are *named sides*: a mesh's ``boundaries`` is a
-    :class:`BoundaryTable <nekmeshpy.model.tags.BoundaryTable>` of
+    ``edge_tags``, because these are *named sides*: a mesh's ``edge_tags`` is an
+    :class:`EdgeTags <nekmeshpy.model.tags.EdgeTags>` table of
     ``(element, side, tag)`` rows, a different shape entirely.
 
     The order comes from the edges (all four must agree).  At ``order > 1`` each
@@ -372,7 +372,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         if side not in side_rows:
             raise ValueError("structured side_tags side must be one of "
                              "bottom/right/top/left, got %r" % side)
-    bb = BoundaryBuilder()
+    bb = TagBuilder(EdgeTags)
     # each side is named by its edge's uniform element tag; a non-empty
     # side_tags[side] overrides, a present-but-empty entry suppresses it.
     for side, rows in side_rows.items():
@@ -381,7 +381,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         else:
             et = side_edges[side].element_group_tags
             nm = et[0] if len(et) == 1 else ""
-        if not nm:                       # NO_BOUNDARY / "" / untagged -> no row
+        if not nm:                       # NO_TAG / "" / untagged -> no row
             continue
         for q, s in rows:
             bb.add(q, s, nm)
@@ -404,7 +404,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         lm, elem_edges, flip, interior = entities_from_blocks(
             blocks, quads, points, order, "QuadMesh.structured")
         qm = QuadMesh(lm, elem_edges, flip, interior,
-                      qm.boundaries, qm.element_tags, order=order)
+                      qm.edge_tags, qm.element_tags, order=order)
     # smooth last: a repositioning smoother rejects order > 1 (high-order smoothing
     # is not implemented).
     return _apply_smoothing(qm, smoothing_method)
@@ -849,7 +849,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
         ("seam2", seam2, [(j, 4) for j in range(n)]
          + [(q0 + r * (2 * n) + (2 * n - 1), 2) for r in range(Nr)]),
     )
-    bb = BoundaryBuilder()
+    bb = TagBuilder(EdgeTags)
     bb.extend(_curve_rows([(wall_q0 + m, 1) for m in range(2 * n)], arc, wall_tag))
     for which, sm, rows in seam_sides:
         bb.extend(_curve_rows(rows, sm, st.get(which, "")))

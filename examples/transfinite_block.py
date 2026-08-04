@@ -69,7 +69,7 @@ for i, u in enumerate(us):
         for k, w in enumerate(ws):
             P[i, j, k] = trilinear(CORNERS, u, v, w)
 
-mesh = HexMesh.from_grid(P, face_tags={s: s for s in SIDES}, order=ORDER)
+mesh = HexMesh.from_grid(P, side_tags={s: s for s in SIDES}, order=ORDER)
 
 # -- report + export ---------------------------------------------------------
 stats = mesh.quality_summary()
@@ -78,4 +78,4 @@ print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))

@@ -147,7 +147,7 @@ def test_open_sweep_has_the_expected_shape_and_caps():
     assert sec.n_points == NU * 4
     assert sec.n_quads == NU * 3
     assert _tube_deviation(sec) < 1e-13
-    assert set(sec.boundary_group_tags) == {"start", "end"}
+    assert set(sec.edge_group_tags) == {"start", "end"}
 
 
 # -- grading -----------------------------------------------------------------

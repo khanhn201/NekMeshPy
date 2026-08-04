@@ -100,9 +100,9 @@ def test_tags_follow_their_face():
     """Each face's ``element_tags`` name the boundary faces it becomes -- and follow
     the face itself, not the order it was handed in."""
     t = _unit_tet(2, tags=("bottom", "front", "left", "slant"))
-    names = set(t.boundary_group_tags)
+    names = set(t.face_group_tags)
     assert names == {"bottom", "front", "left", "slant"}
-    counts = {n: t.boundaries.count(n) for n in names}
+    counts = {n: t.face_tags.count(n) for n in names}
     assert set(counts.values()) == {3 * 2 * 2}          # 3 patches of n x n each
     # a tagged face's boundary rows must be genuine boundary faces
     hexes = t.hexes
@@ -111,7 +111,7 @@ def test_tags_follow_their_face():
         for s in range(6):
             k = tuple(sorted(int(v) for v in hexes[e][HexMesh.FACE_POINTS[s]]))
             key[k] = key.get(k, 0) + 1
-    for e, s, _tag in t.boundaries:
+    for e, s, _tag in t.face_tags:
         k = tuple(sorted(int(v) for v in hexes[e][HexMesh.FACE_POINTS[s - 1]]))
         assert key[k] == 1
 
@@ -200,12 +200,12 @@ def test_quadrant_faces_make_an_octant():
     rep = t.topology_report()
     assert rep.watertight and rep.conformal and rep.n_components == 1
     assert float(np.min(t.scaled_jacobian())) > 0.0
-    assert set(t.boundary_group_tags) == {"sphere"}
+    assert set(t.face_group_tags) == {"sphere"}
     # the tagged side really is on the sphere; the three quadrant sides are the flat
     # cuts through the ball, so they are not (and must not be).
     ids = np.unique(np.concatenate(
         [t.hexes[e][list(HexMesh.FACE_POINTS[s - 1])]
-         for e, s, tag in t.boundaries if tag == "sphere"]))
+         for e, s, tag in t.face_tags if tag == "sphere"]))
     assert np.allclose(np.linalg.norm(t.points[ids], axis=1), 1.0, atol=1e-12)
     flat = np.setdiff1d(_boundary_nodes(t), ids)
     assert flat.size > 0

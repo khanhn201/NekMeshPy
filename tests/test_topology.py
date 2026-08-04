@@ -98,9 +98,9 @@ def test_bifurcation_mesh_is_watertight(built_mesh):
     # the true (topological) boundary is exactly the wall + outlet faces; the
     # flux-measurement planes (flux_1/flux_2) are interior faces that also carry a name
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
-    exterior = int(np.isin(mesh.boundaries.tags, outer).sum())
+    exterior = int(np.isin(mesh.face_tags.tags, outer).sum())
     assert rep.n_boundary_faces == exterior
-    assert exterior < len(mesh.boundaries)      # flux planes are extra, interior
+    assert exterior < len(mesh.face_tags)      # flux planes are extra, interior
 
 
 def test_hexmesh_report_matches_free_function(built_mesh):
@@ -123,7 +123,7 @@ def test_boundary_helpers_match_topology(built_mesh):
     assert mesh.boundary_faces().shape[0] == rep.n_boundary_faces
     # boundary faces are the wall + outlet named faces (flux planes are interior)
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
-    exterior = mesh.boundaries.select(np.isin(mesh.boundaries.tags, outer))
+    exterior = mesh.face_tags.select(np.isin(mesh.face_tags.tags, outer))
     got = {(int(e), int(f)) for e, f in mesh.boundary_faces()}
     want = {(int(e), int(f)) for e, f, _t in exterior}
     assert got == want

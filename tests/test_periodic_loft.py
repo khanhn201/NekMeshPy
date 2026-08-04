@@ -86,8 +86,8 @@ def test_line_loft_end_point_tags():
     """``first_tag``/``last_tag`` name the 1-D end caps: the chain's two end points."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
     lm = LineMesh.loft(P, first_tag="inlet", last_tag="outlet")
-    assert lm.boundaries.rows.tolist() == [[0, 1], [1, 2]]
-    assert lm.boundary_group_tags == ["inlet", "outlet"]
+    assert lm.point_tags.rows.tolist() == [[0, 1], [1, 2]]
+    assert lm.point_group_tags == ["inlet", "outlet"]
 
 
 # -- rung 2: QuadMesh.loft ----------------------------------------------------
@@ -153,9 +153,9 @@ def test_quad_loft_loop_emits_no_cap_rows_but_keeps_side_walls():
     closed = QuadMesh.loft(profiles, loop=True)
     # 4 layers x 2 lines, one side-wall edge per layer per tagged end point
     assert closed.n_quads == 4 * 2
-    assert sorted(set(closed.boundaries.tags.tolist())) == ["left", "right"]
-    assert len(closed.boundaries) == 2 * 4
-    assert set(closed.boundaries.sides[:].tolist()) == {2, 4}   # never sides 1/3
+    assert sorted(set(closed.edge_tags.tags.tolist())) == ["left", "right"]
+    assert len(closed.edge_tags) == 2 * 4
+    assert set(closed.edge_tags.sides[:].tolist()) == {2, 4}   # never sides 1/3
 
 
 # -- rung 3: HexMesh.loft -----------------------------------------------------
@@ -175,9 +175,9 @@ def test_hex_loft_loop_builds_a_watertight_solid_torus(order):
     # the boundary is the wall only -- no cap faces (8 wall quads per section)
     n_wall = NSEC * 8
     assert report.n_boundary_faces == n_wall
-    assert len(solid.boundaries) == n_wall
-    assert sorted(set(solid.boundaries.tags.tolist())) == ["wall"]
-    assert set(solid.boundaries.sides[:].tolist()).isdisjoint({5, 6})
+    assert len(solid.face_tags) == n_wall
+    assert sorted(set(solid.face_tags.tags.tolist())) == ["wall"]
+    assert set(solid.face_tags.sides[:].tolist()).isdisjoint({5, 6})
 
 
 def test_hex_loft_loop_beats_repeating_the_first_profile():

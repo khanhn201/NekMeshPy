@@ -3,7 +3,7 @@
 Two arities live here.  **Binary**: ``blend`` morphs between two index-paired
 sections.  **Unary**: ``translate`` / ``rotate`` / ``scale`` / ``transform`` place a
 finished section.  All of them change only coordinates -- ``a``'s ``quad`` / ``flip``
-incidence, ``boundaries`` and ``boundary_tags`` ride through verbatim, so the input's
+incidence and ``edge_tags`` ride through verbatim, so the input's
 numbering *is* the output's and nothing is re-derived (the unary placements keep
 ``element_tags`` too; ``blend`` leaves them for the consuming ``loft``).  Both
 delegate their corner and shared-edge half one rung down to
@@ -39,7 +39,7 @@ def blend(a: QuadMesh, b: QuadMesh,
     """Linearly morph between two conformal sections ``a`` and ``b`` (identical
     ``quads``, equal point count), one section per fraction ``t`` with points
     ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
-    result carries ``a``'s ``quads``, ``boundaries`` and ``boundary_tags``
+    result carries ``a``'s ``quads`` and ``edge_tags``
     (positional BC markers follow the morph); per-quad ``element_tags`` are left
     for the consuming ``loft`` caps to assign, so a blended stack lofts directly.
     This is the profile-positioning step behind ``HexMesh.annulus``.
@@ -76,7 +76,7 @@ def blend(a: QuadMesh, b: QuadMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [QuadMesh(lm, a.quad, a.flip,
                 (1.0 - t) * ai + t * bi if ho else None,
-                boundaries=a.boundaries, order=a.order)
+                edge_tags=a.edge_tags, order=a.order)
             for t, lm in zip(fr, line_blend(a.lines, b.lines, fr))]
 
 
@@ -90,7 +90,7 @@ def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh
     affine map is a pure point-space placement, so nothing is re-derived."""
     return QuadMesh(line_affine(mesh.lines, matrix, offset), mesh.quad, mesh.flip,
                     affine.apply(mesh.interior, matrix, offset),
-                    boundaries=mesh.boundaries,
+                    edge_tags=mesh.edge_tags,
                     element_tags=mesh.element_tags, order=mesh.order)
 
 

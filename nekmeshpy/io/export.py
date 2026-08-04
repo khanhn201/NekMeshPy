@@ -54,7 +54,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
     if isinstance(groups, PhysicalGroups):
         return groups
     if groups is None:
-        names = mesh.boundary_group_tags
+        names = mesh.face_group_tags
         return PhysicalGroups(
             PhysicalGroup(name, i + 1) for i, name in enumerate(names))
     return PhysicalGroups(
@@ -70,7 +70,7 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     g = _as_groups(mesh, groups)
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
-    for elem, face, name in mesh.boundaries:
+    for elem, face, name in mesh.face_tags:
         conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
         name_rows.append(name)
     quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
@@ -122,7 +122,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
     emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    boundaries = mesh.boundaries
+    face_tags = mesh.face_tags
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
@@ -134,8 +134,8 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             fid.write(elements[i, :, 1].astype("<f8").tobytes())
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
-        fid.write(struct.pack("<d", float(len(boundaries))))
-        for elem0, face, name in boundaries:
+        fid.write(struct.pack("<d", float(len(face_tags))))
+        for elem0, face, name in face_tags:
             buf2: FloatArray = np.zeros(8, dtype="<f8")
             buf2[0] = float(elem0 + 1)
             buf2[1] = float(face)
@@ -332,7 +332,7 @@ def _hex_arrays(mesh: HexMesh,
     cell) above it, whose face nodes inherit the boundary face's tag.
 
     ``bc_id`` precedence is the un-welded writer's rule, applied in the shared-node
-    numbering: the boundary rows are scattered in ``mesh.boundaries`` order and the
+    numbering: the boundary rows are scattered in ``mesh.face_tags`` order and the
     **last row to touch a node wins** (this is exactly how two boundary faces sharing an
     edge *within* one hex have always been resolved).  Welding widens the same rule
     across elements: an untagged element never writes, so a node shared by a tagged face
@@ -344,7 +344,7 @@ def _hex_arrays(mesh: HexMesh,
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
-        for elem, face, name in mesh.boundaries:
+        for elem, face, name in mesh.face_tags:
             grp = g.get(name)
             if grp is None:
                 _log.warning("unknown boundary name: %s", name)
@@ -359,7 +359,7 @@ def _hex_arrays(mesh: HexMesh,
         mesh.quads.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    for elem, face, name in mesh.boundaries:
+    for elem, face, name in mesh.face_tags:
         grp = g.get(name)
         if grp is None:
             _log.warning("unknown boundary name: %s", name)
@@ -487,9 +487,9 @@ def quad_to_vtu(mesh: QuadMesh, fname: str) -> QuadMesh:
 def summary(mesh: HexMesh) -> None:
     """Log element/boundary counts, per-name face totals, and the topology report."""
     _log.info("mesh: %d hex elements, %d boundary faces",
-              mesh.hexes.shape[0], len(mesh.boundaries))
-    for name in mesh.boundary_group_tags:
-        _log.info("  %-14s: %d faces", name, mesh.boundaries.count(name))
+              mesh.hexes.shape[0], len(mesh.face_tags))
+    for name in mesh.face_group_tags:
+        _log.info("  %-14s: %d faces", name, mesh.face_tags.count(name))
     w = hex_weld(mesh)
     rep = topology.hex_report(w.points, w.hexes)
     _log.info("  watertight=%s  conformal=%s  components=%d  "

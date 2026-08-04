@@ -37,7 +37,7 @@ def plot(
     ax = fig.add_subplot(111, projection="3d")
     handles = []
     for ti, name in enumerate(names):
-        rows = mesh.boundaries.select(mesh.boundaries.mask_for(name))
+        rows = mesh.face_tags.select(mesh.face_tags.mask_for(name))
         if not len(rows):
             continue
         polys = [elements[e, mesh.FACE_POINTS[s - 1, :], :] for e, s, _ in rows]

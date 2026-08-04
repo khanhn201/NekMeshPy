@@ -24,8 +24,8 @@ def test_structured_grid():
     qm = QuadMesh.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
     assert qm.n_quads == 3 * 2
     assert qm.n_points == (3 + 1) * (2 + 1)
-    # no names passed -> no tagged boundaries; the outline is a topological query
-    assert qm.n_boundaries == 0
+    # no names passed -> no tagged edges; the outline is a topological query
+    assert qm.n_edge_tags == 0
     assert qm.boundary_edges().shape[0] == 2 * (3 + 2)   # 2*(nx+ny) perimeter edges
     assert np.asarray(qm.points).shape == (12, 3)     # (P,3) coordinates
 
@@ -91,7 +91,7 @@ def test_rectangle_counts_and_side_tags():
                             side_tags={"bottom": "wall", "left": "inlet"})
     assert qm.n_quads == 3 * 2 and qm.n_points == 4 * 3
     from collections import Counter
-    counts = Counter(qm.boundaries.tags.tolist())
+    counts = Counter(qm.edge_tags.tags.tolist())
     assert counts == {"wall": 3, "inlet": 2}          # only the named sides tagged
 
 
@@ -116,7 +116,7 @@ def test_rectangle_grading_via_fracs():
 # -- box / sphere (closed 3-D surfaces) --------------------------------------
 
 def test_box_is_closed_surface_with_face_tags():
-    qm = QuadMesh.box(2.0, 4, face_tags={
+    qm = QuadMesh.box(2.0, 4, patch_tags={
         "x_min": "inlet", "x_max": "outlet", "y_min": "bottom",
         "y_max": "top", "z_min": "front", "z_max": "back"})
     assert qm.n_quads == 6 * 4 * 4
@@ -138,7 +138,7 @@ def test_box_nonuniform_half_sizes_and_counts():
 
 def test_sphere_pairs_with_box_by_index():
     R, S, N = 0.5, 3.0, 4
-    box = QuadMesh.box(S, N, face_tags={"x_max": "outlet"})
+    box = QuadMesh.box(S, N, patch_tags={"x_max": "outlet"})
     sph = QuadMesh.sphere(R, N)
     assert np.array_equal(sph.quads, box.quads)       # identical connectivity
     assert sph.n_points == box.n_points
@@ -157,7 +157,7 @@ def test_sphere_box_annulus_is_watertight():
 
 
 def test_half_box_is_open_at_the_ground_with_face_tags():
-    qm = QuadMesh.half_box(2.0, 4, n_vertical=3, rim_tag="ground", face_tags={
+    qm = QuadMesh.half_box(2.0, 4, n_vertical=3, rim_tag="ground", patch_tags={
         "x_min": "inlet", "x_max": "outlet",
         "y_min": "front", "y_max": "back", "z_max": "top"})
     # four upright sides (4 x n_vertical each) + the flat lid
@@ -172,19 +172,19 @@ def test_half_box_is_open_at_the_ground_with_face_tags():
     # open at the rim, and every free edge is named
     rim = qm.boundary_edges()
     assert rim.shape[0] == 4 * 4
-    assert set(qm.boundaries.tags.tolist()) == {"ground"}
+    assert set(qm.edge_tags.tags.tolist()) == {"ground"}
 
 
 def test_hemisphere_pairs_with_half_box_by_index():
     R, S, N, NV = 0.5, 3.0, 4, 3
-    hb = QuadMesh.half_box(S, N, n_vertical=NV, face_tags={"x_max": "outlet"})
+    hb = QuadMesh.half_box(S, N, n_vertical=NV, patch_tags={"x_max": "outlet"})
     hs = QuadMesh.hemisphere(R, N, n_vertical=NV, rim_tag="ground")
     assert np.array_equal(hs.quads, hb.quads)          # identical connectivity
     assert hs.n_points == hb.n_points
     assert np.allclose(np.linalg.norm(hs.points, axis=1), R)   # all on the sphere
     assert np.min(hs.points[:, 2]) > -1e-15                    # upper half only
     assert set(hs.element_tags.dense(hs.n_quads).tolist()) == {"hemisphere"}
-    assert set(hs.boundaries.tags.tolist()) == {"ground"}
+    assert set(hs.edge_tags.tags.tolist()) == {"ground"}
 
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
@@ -208,7 +208,7 @@ def test_hemisphere_half_box_annulus_is_watertight():
     assert block.is_watertight() and block.is_conforming()
     assert float(np.min(block.scaled_jacobian())) > 0.0
     # the open rim sweeps into the ground annulus at z = 0
-    assert "ground" in block.boundary_group_tags
+    assert "ground" in block.face_group_tags
 
 
 def _circle(radius, n):
@@ -220,7 +220,7 @@ def test_ogrid_counts_and_boundary():
     # central n_side^2 + n_radial rings of 4*n_side quads
     assert qm.n_quads == 4 * 4 + 3 * (4 * 4)
     assert qm.n_points == (4 + 1) ** 2 + 3 * (4 * 4)
-    assert qm.n_boundaries == 0                       # no wall_name -> untagged
+    assert qm.n_edge_tags == 0                       # no wall_name -> untagged
     assert qm.boundary_edges().shape[0] == 4 * 4      # outer ring = the wall loop
 
 
@@ -262,7 +262,7 @@ def test_annulus_counts_and_boundary():
     # N azimuthal x n_radial rings of quads; (n_radial+1) rings of N points
     assert qm.n_quads == 16 * 3
     assert qm.n_points == 16 * (3 + 1)
-    assert qm.n_boundaries == 0                       # no names -> untagged
+    assert qm.n_edge_tags == 0                       # no names -> untagged
     assert qm.boundary_edges().shape[0] == 2 * 16     # inner + outer rings
     assert not np.any(np.isnan(np.asarray(qm.points)))
 
@@ -389,7 +389,7 @@ def test_half_ogrid_valid():
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))   # the diameter A1..A2
     qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
     assert qm.n_quads == 2 * Nt * Nt + 4 * Nt * Nr
-    assert qm.n_boundaries == 0                       # no wall_name -> untagged
+    assert qm.n_edge_tags == 0                       # no wall_name -> untagged
     # topological perimeter = wall arc + straight diameter, both 4*Nt edges
     assert qm.boundary_edges().shape[0] == 2 * (4 * Nt)
     assert not np.any(np.isnan(np.asarray(qm.points)))
@@ -554,7 +554,7 @@ def test_annulus_consumes_outer_loop_element_tags():
     qm = QuadMesh.annulus(inner, outer, geometric_spacing(6, 1.12),
                           inner_tag="cylinder")
     from collections import Counter
-    counts = Counter(qm.boundaries.tags.tolist())
+    counts = Counter(qm.edge_tags.tags.tolist())
     # inner ring (64 edges) all "cylinder"; outer ring split 16 per tagged side
     assert counts["cylinder"] == 64
     assert counts["outlet"] == counts["top"] == counts["inlet"] == counts["bottom"] == 16
@@ -570,10 +570,10 @@ def test_element_tags_propagate_line_to_hex_faces():
     block = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,
                             layers=uniform_spacing(2), first_tag="front",
                             last_tag="back")
-    assert set(block.boundary_group_tags) == {
+    assert set(block.face_group_tags) == {
         "cylinder", "inlet", "outlet", "top", "bottom", "front", "back"}
     # the four far-field sides carry equal face counts (symmetric split)
-    n = {s: block.boundaries.count(s)
+    n = {s: block.face_tags.count(s)
          for s in ("inlet", "outlet", "top", "bottom")}
     assert n["inlet"] == n["outlet"] == n["top"] == n["bottom"] > 0
 
@@ -585,8 +585,8 @@ def test_ogrid_reads_boundary_element_tags():
     # with no scalar wall_tag.  The wall ring (4*n_side edges) all inherit the tag.
     boundary = LineMesh.circle(0.5, 16, element_tags=["wall"] * 16)
     qm = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
-    assert qm.n_boundaries == 4 * 4
-    assert set(qm.boundaries.tags.tolist()) == {"wall"}
+    assert qm.n_edge_tags == 4 * 4
+    assert set(qm.edge_tags.tags.tolist()) == {"wall"}
 
 
 def test_ogrid_wall_tag_overrides_boundary_element_tags():
@@ -594,8 +594,8 @@ def test_ogrid_wall_tag_overrides_boundary_element_tags():
     boundary = LineMesh.circle(0.5, 16, element_tags=["ring"] * 16)
     qm = QuadMesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
                         wall_tag="override")
-    assert set(qm.boundaries.tags.tolist()) == {"override"}
-    assert qm.n_boundaries == 4 * 4
+    assert set(qm.edge_tags.tags.tolist()) == {"override"}
+    assert qm.n_edge_tags == 4 * 4
 
 
 def _tagged_arc(Nt, tags):
@@ -614,7 +614,7 @@ def test_half_ogrid_reads_arc_element_tags():
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))
     qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
     from collections import Counter
-    assert Counter(qm.boundaries.tags.tolist()) == {"a": 2 * Nt, "b": 2 * Nt}
+    assert Counter(qm.edge_tags.tags.tolist()) == {"a": 2 * Nt, "b": 2 * Nt}
 
 
 def test_half_ogrid_wall_tag_overrides_arc_element_tags():
@@ -623,8 +623,8 @@ def test_half_ogrid_wall_tag_overrides_arc_element_tags():
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))
     qm = QuadMesh.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5,
                              wall_tag="override")
-    assert set(qm.boundaries.tags.tolist()) == {"override"}
-    assert qm.n_boundaries == 4 * Nt
+    assert set(qm.edge_tags.tags.tolist()) == {"override"}
+    assert qm.n_edge_tags == 4 * Nt
 
 
 def _tagged_rect_edges(nx, ny, tags):
@@ -638,10 +638,10 @@ def _tagged_rect_edges(nx, ny, tags):
 
 
 def test_structured_reads_edge_element_tags():
-    # each side is named from its own edge's uniform element tag (no boundary_tags)
+    # each side is named from its own edge's uniform element tag (no edge_tags)
     qm = QuadMesh.structured(_tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"]))
     from collections import Counter
-    counts = Counter(qm.boundaries.tags.tolist())
+    counts = Counter(qm.edge_tags.tags.tolist())
     assert counts == {"wall": 3, "top": 3, "outlet": 2, "inlet": 2}
 
 
@@ -651,21 +651,21 @@ def test_structured_side_tags_override_edge_tags():
         _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
         side_tags={"bottom": "floor"})
     from collections import Counter
-    counts = Counter(qm.boundaries.tags.tolist())
+    counts = Counter(qm.edge_tags.tags.tolist())
     assert counts["floor"] == 3            # bottom overridden
     assert counts["wall"] == 3 + 2 + 2     # the other three sides keep their edge tag
 
 
 def test_structured_side_tags_empty_suppresses_edge_tag():
-    # a present-but-empty override (NO_BOUNDARY / "") suppresses a tagged edge -- e.g.
+    # a present-but-empty override (NO_TAG / "") suppresses a tagged edge -- e.g.
     # a shared edge that merge will weld away
-    from nekmeshpy import NO_BOUNDARY
+    from nekmeshpy import NO_TAG
     qm = QuadMesh.structured(
         _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
-        side_tags={"left": NO_BOUNDARY})
-    names = qm.boundaries.tags.tolist()
+        side_tags={"left": NO_TAG})
+    names = qm.edge_tags.tags.tolist()
     assert "wall" in names
-    assert qm.n_boundaries == 3 + 2 + 3    # left (ny=2 edges) suppressed
+    assert qm.n_edge_tags == 3 + 2 + 3    # left (ny=2 edges) suppressed
 
 
 def test_annulus_inner_tag_overrides_loop_element_tags():
@@ -677,7 +677,7 @@ def test_annulus_inner_tag_overrides_loop_element_tags():
     qm = QuadMesh.annulus(inner, outer, geometric_spacing(4, 1.12),
                           inner_tag="override")
     from collections import Counter
-    counts = Counter(qm.boundaries.tags.tolist())
+    counts = Counter(qm.edge_tags.tags.tolist())
     assert counts["override"] == 16        # inner ring overridden
     assert "body" not in counts
     # outer sides still come from the outer loop's element_tags
@@ -687,7 +687,7 @@ def test_annulus_inner_tag_overrides_loop_element_tags():
 # -- input validation --------------------------------------------------------
 
 def test_linemesh_rejects_2d_input():
-    # boundaries must be 3-D (N,3); a 2-D (N,2) array is rejected
+    # points must be 3-D (N,3); a 2-D (N,2) array is rejected
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
         LineMesh.loft([(0, 0), (1, 0)])
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
@@ -796,7 +796,7 @@ def test_spined_ogrid_valid_and_tagged():
     qm = QuadMesh.spined_ogrid(loop, uniform_spacing(Nr), center_scale=0.5)
     # two half-discs merged (no quads dropped, points welded along the spine)
     assert qm.n_quads == 2 * (2 * Nt * Nt + 4 * Nt * Nr)
-    assert set(qm.boundaries.tags.tolist()) == {"wall"}        # loop tag on the wall
+    assert set(qm.edge_tags.tags.tolist()) == {"wall"}        # loop tag on the wall
     assert not np.any(np.isnan(np.asarray(qm.points)))
 
 
@@ -902,7 +902,7 @@ def test_spined_ogrid_wall_tag_overrides_loop_tags():
     loop = _circle_loop(2, tag="skin")
     qm = QuadMesh.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5,
                                wall_tag="override")
-    assert set(qm.boundaries.tags.tolist()) == {"override"}
+    assert set(qm.edge_tags.tags.tolist()) == {"override"}
 
 
 def test_spined_ogrid_curved_spine_drives_interior_geometry():
@@ -951,7 +951,7 @@ def test_structured_accepts_edges_as_a_keyed_mapping():
     b = QuadMesh.structured(dict(zip(("bottom", "right", "top", "left"), seq)))
     assert np.array_equal(a.points, b.points)
     assert np.array_equal(a.quads, b.quads)
-    assert a.boundaries.tags.tolist() == b.boundaries.tags.tolist()
+    assert a.edge_tags.tags.tolist() == b.edge_tags.tags.tolist()
 
 
 def test_structured_edge_mapping_is_order_insensitive():

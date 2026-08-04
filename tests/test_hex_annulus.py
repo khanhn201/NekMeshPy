@@ -62,12 +62,12 @@ def test_quad_from_grid_edge_tags_land_on_correct_sides():
     xs = ys = np.linspace(0.0, 1.0, 3)
     X, Y = np.meshgrid(xs, ys, indexing="ij")               # (3,3) -> 4 quads
     P = np.stack([X, Y, np.zeros_like(X)], axis=-1)
-    qm = QuadMesh.from_grid(P, edge_tags={"x_min": "west", "y_max": "north"})
-    assert qm.boundary_group_tags == ["north", "west"]
-    for r in range(qm.n_boundaries):
-        q, s = int(qm.boundaries.elements[r]), int(qm.boundaries.sides[r])
+    qm = QuadMesh.from_grid(P, side_tags={"x_min": "west", "y_max": "north"})
+    assert qm.edge_group_tags == ["north", "west"]
+    for r in range(qm.n_edge_tags):
+        q, s = int(qm.edge_tags.elements[r]), int(qm.edge_tags.sides[r])
         mid = qm.points[qm.quads[q, QuadMesh.EDGE_POINTS[s - 1]]].mean(axis=0)
-        if str(qm.boundaries.tags[r]) == "west":
+        if str(qm.edge_tags.tags[r]) == "west":
             assert np.isclose(mid[0], 0.0)                  # x_min edge
         else:
             assert np.isclose(mid[1], 1.0)                  # y_max edge
@@ -83,14 +83,14 @@ def test_annulus_shell_watertight_and_tagged_from_element_tags():
 
     assert mesh.is_watertight() and mesh.is_conforming()
     assert float(mesh.scaled_jacobian().min()) > 0.0
-    assert set(mesh.boundary_group_tags) == {"body", "xp", "xm", "yp", "ym",
+    assert set(mesh.face_group_tags) == {"body", "xp", "xm", "yp", "ym",
                                              "zp", "zm"}
     assert mesh.element_group_tags == []                    # hexes stay untagged
     # inner element_tags -> inner wall (Chebyshev radius 1.0); outer -> radius 2.0
-    for r in range(mesh.n_boundaries):
-        e, f = int(mesh.boundaries.elements[r]), int(mesh.boundaries.sides[r])
+    for r in range(mesh.n_face_tags):
+        e, f = int(mesh.face_tags.elements[r]), int(mesh.face_tags.sides[r])
         cheb = float(np.max(np.abs(_face_pts(mesh, e, f))))
-        expected = 1.0 if str(mesh.boundaries.tags[r]) == "body" else 2.0
+        expected = 1.0 if str(mesh.face_tags.tags[r]) == "body" else 2.0
         assert cheb == pytest.approx(expected)
 
 
@@ -99,7 +99,7 @@ def test_annulus_scalar_wall_tags_fallback():
     inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads)
     mesh = HexMesh.annulus(inner, outer, uniform_spacing(2),
                            inner_tag="body", outer_tag="far")
-    assert set(mesh.boundary_group_tags) == {"body", "far"}
+    assert set(mesh.face_group_tags) == {"body", "far"}
 
 
 def test_annulus_scalar_tag_overrides_surface_element_tags():
@@ -111,7 +111,7 @@ def test_annulus_scalar_tag_overrides_surface_element_tags():
     mesh = HexMesh.annulus(inner, outer, uniform_spacing(3),
                            inner_tag="cylinder", outer_tag="far")
     # the per-quad surface tags are gone; each wall is a single overridden group
-    assert set(mesh.boundary_group_tags) == {"cylinder", "far"}
+    assert set(mesh.face_group_tags) == {"cylinder", "far"}
 
 
 def test_annulus_rejects_mismatched_point_counts():
@@ -146,7 +146,7 @@ def _two_quad_slices():
 def test_loft_per_quad_first_tag_and_scalar_last_tag():
     s0, s1 = _two_quad_slices()
     block = HexMesh.loft([s0, s1], first_tag=["capA", "capB"], last_tag="top")
-    tag_at = {(e, f): t for e, f, t in block.boundaries}
+    tag_at = {(e, f): t for e, f, t in block.face_tags}
     assert tag_at[(0, 5)] == "capA"        # per-quad bottom caps
     assert tag_at[(1, 5)] == "capB"
     assert tag_at[(0, 6)] == "top"         # scalar top cap on both columns

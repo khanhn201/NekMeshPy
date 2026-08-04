@@ -49,8 +49,8 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "hemisphere": "W  ", "ground": "W  ",
 # -- two paired surfaces: outer half box (tagged per patch) and inner hemisphere
 # half_box tags each patch with the far-field side it forms; hemisphere reuses the
 # same (N_FACE, N_HALF) connectivity, so the two pair by index for annulus.  The
-# ground rim rides on the inner surface, whose boundaries the shells inherit.
-outer = QuadMesh.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, face_tags={
+# ground rim rides on the inner surface, whose edge_tags the shells inherit.
+outer = QuadMesh.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "back", "y_min": "front", "z_max": "top"})
 inner = QuadMesh.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
@@ -65,4 +65,4 @@ mesh = HexMesh.annulus(inner, outer,
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))

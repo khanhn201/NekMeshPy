@@ -35,7 +35,7 @@ from .._typing import (
 )
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
-from ..model.tags import BoundaryBuilder, BoundaryTable, ElementTags
+from ..model.tags import ElementTags, PointTags, TagBuilder
 from ._query import boundary_points
 from .linemesh import LineMesh, _as_points
 
@@ -45,7 +45,7 @@ def loft(
     *,
     loop: bool = False,
     interior: PointArray | None = None,
-    boundaries: BoundaryTable | None = None,
+    point_tags: PointTags | None = None,
     element_tags: Sequence[str] | StrArray | None = None,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
@@ -67,7 +67,7 @@ def loft(
 
     ``element_tags`` is the dense per-line tag array (line ``m`` = point ``m`` ->
     ``m+1``, and for ``loop=True`` line ``N-1`` = point ``N-1`` -> ``0``);
-    ``boundaries`` / ``boundary_tags`` are passed through verbatim.
+    ``point_tags`` are passed through verbatim.
     ``first_tag`` / ``last_tag`` name the near / far **end points** of the chain
     (the 1-D end caps: line ``0`` side ``1`` and line ``L-1`` side ``2``).  A cap
     here is a single node, so each takes a scalar ``str`` or -- for shape parity
@@ -93,13 +93,13 @@ def loft(
     else:
         lines = np.column_stack([idx[:-1], idx[1:]])
 
-    bnd = boundaries if boundaries is not None else BoundaryTable.empty()
+    bnd = point_tags if point_tags is not None else PointTags.empty()
     # a chain's cap is a single end node, so ``_cap_tags`` normalizes to one tag --
     # the rung-1 form of the same scalar-or-per-element argument ``QuadMesh.loft`` /
     # ``HexMesh.loft`` take, so all three rungs accept the same shapes.
     first, last = LineMesh._cap_tags(first_tag)[0], LineMesh._cap_tags(last_tag)[0]
     if first or last:
-        bb = BoundaryBuilder()
+        bb = TagBuilder(PointTags)
         bb.extend(bnd)
         L = lines.shape[0]
         if first and L:
@@ -369,7 +369,7 @@ def merge(meshes: Sequence[LineMesh], *,
     points** (the degree-1 chain ends -- the 1-D analogue of the boundary
     vertices ``QuadMesh.merge``/``HexMesh.merge`` weld).  ``tol`` is the
     absolute coincidence distance (default ``1e-7`` x the extent).  Dense
-    ``element_tags`` and tagged ``boundaries`` concatenate with each block's
+    ``element_tags`` and ``point_tags`` concatenate with each block's
     line ids offset; interior points are never welded.  Closedness is not
     tracked anywhere -- it simply falls out of the welded connectivity: if no
     degree-1 end survives the result *is* a loop, so two shared-endpoint
@@ -383,20 +383,20 @@ def merge(meshes: Sequence[LineMesh], *,
     points, point_id = _weld(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
-    bnd_list: list[BoundaryTable] = []
+    bnd_list: list[PointTags] = []
     etag_list: list[ElementTags] = []
     noff = loff = 0
     for m, c in zip(meshes, counts):
         line_list.append(point_id[m.lines + noff])   # local -> welded id
         # ids shift by this block's offset; sides stay local to their element
         etag_list.append(m.element_tags.offset(loff))
-        bnd_list.append(m.boundaries.offset(loff))
+        bnd_list.append(m.point_tags.offset(loff))
         noff += c
         loff += m.n_lines
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
     etags = ElementTags.concat(etag_list)
-    bnd = BoundaryTable.concat(bnd_list)
+    bnd = PointTags.concat(bnd_list)
 
     # order-N: welding only touches endpoints (corners, which are re-numbered into
     # the merged points), and every high-order node of a line is *private*, so the

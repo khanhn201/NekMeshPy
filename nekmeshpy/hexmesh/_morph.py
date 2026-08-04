@@ -3,7 +3,7 @@
 Two arities live here.  **Binary**: ``blend`` morphs between two index-paired blocks.
 **Unary**: ``translate`` / ``rotate`` / ``scale`` / ``transform`` place a finished
 block.  All of them change only coordinates -- ``a``'s ``hex`` / ``face_orient``
-incidence, ``boundaries`` and ``boundary_tags`` ride through verbatim, so the input's
+incidence and ``face_tags`` ride through verbatim, so the input's
 numbering *is* the output's and nothing is re-derived (the unary placements keep
 ``element_tags`` too; ``blend`` leaves them for the caller).  Both delegate their
 corner, shared-edge and shared-face part one rung down to
@@ -39,7 +39,7 @@ def blend(a: HexMesh, b: HexMesh,
     """Linearly morph between two conformal blocks ``a`` and ``b`` (identical
     ``hexes``, equal point count), one block per fraction ``t`` with points
     ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
-    result carries ``a``'s ``hexes``, ``boundaries`` and ``boundary_tags``
+    result carries ``a``'s ``hexes`` and ``face_tags``
     (positional BC markers follow the morph); per-hex ``element_tags`` are left
     for the caller to assign.  The 3-D sibling of
     :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>`.
@@ -80,7 +80,7 @@ def blend(a: HexMesh, b: HexMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [HexMesh(faces, a.hex, a.face_orient,
                 (1.0 - t) * ai + t * bi if ho else None,
-                a.boundaries, order=a.order)
+                a.face_tags, order=a.order)
             for t, faces in zip(fr, quad_blend(a.quads, b.quads, fr))]
 
 
@@ -94,7 +94,7 @@ def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
     incidence rides through verbatim."""
     return HexMesh(quad_affine(mesh.quads, matrix, offset), mesh.hex,
                    mesh.face_orient, affine.apply(mesh.interior, matrix, offset),
-                   mesh.boundaries, mesh.element_tags,
+                   mesh.face_tags, mesh.element_tags,
                    order=mesh.order)
 
 

@@ -5,7 +5,7 @@ boundary tags."""
 import numpy as np
 import pytest
 
-from nekmeshpy import BoundaryTable, HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, LineMesh, PointTags, QuadMesh
 
 
 def _loop(radius):
@@ -26,15 +26,15 @@ def test_linemesh_blend_endpoints_and_midpoint():
     assert mid.boundary_points().size == 0
 
 
-def test_linemesh_blend_carries_boundary_tags_not_element_tags():
+def test_linemesh_blend_carries_point_tags_not_element_tags():
     pts_a = np.column_stack([np.linspace(0, 1, 5), np.zeros(5), np.zeros(5)])
     pts_b = np.column_stack([np.linspace(0, 1, 5), np.ones(5), np.zeros(5)])
     a = LineMesh.loft(pts_a, element_tags=["wall"] * 4,
-                      boundaries=BoundaryTable.from_pairs([[0, 1]], ["inlet"]))
+                      point_tags=PointTags.from_pairs([[0, 1]], ["inlet"]))
     b = LineMesh.loft(pts_b)
     mid = LineMesh.blend(a, b, [0.5])[0]
     # positional BC markers follow the morph; per-element region tags do not
-    assert mid.boundary_group_tags == ["inlet"]
+    assert mid.point_group_tags == ["inlet"]
     assert mid.element_group_tags == []
 
 

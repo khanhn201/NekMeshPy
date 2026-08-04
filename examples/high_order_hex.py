@@ -37,7 +37,7 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
 
 # -- two closed order-N quad surfaces, paired by index -----------------------
-cube = QuadMesh.box(S, N_FACE, order=ORDER, face_tags={
+cube = QuadMesh.box(S, N_FACE, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})

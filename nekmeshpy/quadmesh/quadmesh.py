@@ -2,8 +2,7 @@
 
 ``QuadMesh`` is a pure container: ``points`` ``(nn,3)`` and quad connectivity
 ``quads`` ``(nq,4)``, plus a dense per-quad ``element_tags`` and a sparse tagged
-boundary-edge list ``boundaries`` ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a
-coupled tags.  Factory classmethods fill a bounded region with quads;
+``edge_tags`` table naming ``[quad id, side 1-4]`` edges.  Factory classmethods fill a bounded region with quads;
 ``extrude``/``loft`` sweep a ``LineMesh`` into a quad section.
 
 This file stays a **pure container**: storage, validation, ``from_corners``, and the
@@ -36,14 +35,14 @@ from ..model import conform
 from ..model.interp import quad_edge_indices
 from ..model.tags import (
     NO_TAGS,
-    BoundaryTable,
+    EdgeTags,
     ElementTags,
     check_tag_range,
 )
 
-#: Boundary-name sentinel meaning "not a boundary": a side carrying this name emits
-#: no boundary row.  Equal to ``""`` so it reads as "unnamed" everywhere.
-NO_BOUNDARY: str = ""
+#: Tag sentinel meaning "leave this side unnamed": a side carrying it emits no
+#: side-tag row.  Equal to ``""`` so it reads as "unnamed" everywhere.
+NO_TAG: str = ""
 
 # default sweep axis / origin for extrude (module-level singletons; read-only)
 _Z_AXIS = np.array([0.0, 0.0, 1.0])
@@ -116,9 +115,8 @@ class QuadMesh:
     (structural conformality), exactly as corners are one row of ``points``.  The
     familiar ``points`` ``(P,3)`` / ``quads`` ``(Q,4)`` CCW connectivity views are
     **derived** on read; build from corners with :meth:`from_corners`.  Also
-    carries a dense per-quad ``element_tags`` and a sparse tagged-boundary list
-    ``boundaries`` ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a parallel
-    coupled tags."""
+    carries a sparse per-quad ``element_tags`` and an ``edge_tags`` table naming
+    ``[quad id, side 1-4]`` edges."""
 
     def __init__(
         self,
@@ -126,7 +124,7 @@ class QuadMesh:
         quad: IntArray,
         flip: BoolArray,
         interior: PointArray | None = None,
-        boundaries: BoundaryTable | None = None,
+        edge_tags: EdgeTags | None = None,
         element_tags: ElementTags | None = None,
         *,
         order: int = 1,
@@ -138,8 +136,8 @@ class QuadMesh:
         order), ``flip`` ``(Q,4)`` bool (True where the quad traverses that edge
         anti-canonically), and ``interior`` ``(Q,(order-1)**2,3)`` private per-quad
         nodes (omit / ``None`` at order 1).  Also an optional dense per-quad
-        ``element_tags`` ``(Q,)`` and a tagged-boundary list ``boundaries`` ``(Nbc,2)``
-        = ``[quad id, side 1-4]`` coupled with its tags.
+        ``element_tags`` and an :class:`EdgeTags <nekmeshpy.model.tags.EdgeTags>`
+        table naming ``[quad id, side 1-4]`` edges.
 
         ``.points`` / ``.quads`` are **derived** views over this B-rep, so a shared
         edge is literally one stored object referenced by every incident quad
@@ -184,10 +182,10 @@ class QuadMesh:
         #: which quads carry a region tag (sparse -- untagged stores nothing)
         self.element_tags: ElementTags = (
             NO_TAGS if element_tags is None else element_tags)
-        # tagged boundary edges: [quad id, side 1-4] coupled with their names
-        self.boundaries: BoundaryTable = (
-            BoundaryTable.empty() if boundaries is None else boundaries)
-        check_tag_range(self.element_tags, self.boundaries, Q, 4, "quads")
+        # tagged edges: [quad id, side 1-4] coupled with their names
+        self.edge_tags: EdgeTags = (
+            EdgeTags.empty() if edge_tags is None else edge_tags)
+        check_tag_range(self.element_tags, self.edge_tags, Q, 4, "quads")
 
         # corner connectivity is derived from quad/flip and immutable post-construction
         # (point moves don't change it), so memoize it once.
@@ -201,7 +199,7 @@ class QuadMesh:
         cls,
         points: PointArray,
         quads: IntArray,
-        boundaries: BoundaryTable | None = None,
+        edge_tags: EdgeTags | None = None,
         element_tags: ElementTags | None = None,
         *,
         order: int = 1,
@@ -236,7 +234,7 @@ class QuadMesh:
         conn: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         edges, elem_edges, flip = conform.unique_edges(conn, 2)
         lm = LineMesh(pts, edges)
-        return cls(lm, elem_edges, flip, None, boundaries, element_tags, order=1)
+        return cls(lm, elem_edges, flip, None, edge_tags, element_tags, order=1)
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(Q,4)`` recovered from the edge indices + flip: column
@@ -263,10 +261,10 @@ class QuadMesh:
         :meth:`LineMesh.__repr__ <nekmeshpy.linemesh.LineMesh.__repr__>`."""
         try:
             return ("<QuadMesh %d points, %d quads, order %d, element_tags=%s, "
-                    "boundary_tags=%s>"
+                    "edge_tags=%s>"
                     % (self.lines.points.shape[0], self.quad.shape[0], self._order,
                        _repr_tags(self.element_group_tags),
-                       _repr_tags(self.boundary_group_tags)))
+                       _repr_tags(self.edge_group_tags)))
         except Exception:                     # a repr must never break a debug session
             return "<QuadMesh (unprintable)>"
 
@@ -314,14 +312,14 @@ class QuadMesh:
         return self.quads.shape[0]
 
     @property
-    def n_boundaries(self) -> int:
-        """Number of tagged boundary edges."""
-        return len(self.boundaries)
+    def n_edge_tags(self) -> int:
+        """Number of tagged edges."""
+        return len(self.edge_tags)
 
     @property
-    def boundary_group_tags(self) -> list[str]:
-        """Sorted unique tags of the tagged boundary edges."""
-        return self.boundaries.group_tags
+    def edge_group_tags(self) -> list[str]:
+        """Sorted unique tags of the tagged edges."""
+        return self.edge_tags.group_tags
 
     @property
     def element_group_tags(self) -> list[str]:

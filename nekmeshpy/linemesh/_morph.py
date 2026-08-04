@@ -3,8 +3,8 @@
 Two arities live here.  **Binary**: ``blend`` morphs between two index-paired
 profiles.  **Unary**: ``translate`` / ``rotate`` / ``scale`` / ``transform`` place a
 finished curve, and ``reverse`` flips its traversal direction.  All but ``reverse``
-change only coordinates -- ``a``'s ``lines`` connectivity, ``boundaries`` and
-``boundary_tags`` ride through verbatim, so the input's numbering *is* the output's
+change only coordinates -- ``a``'s ``lines`` connectivity and ``point_tags`` ride
+through verbatim, so the input's numbering *is* the output's
 and nothing is re-derived (the placements keep ``element_tags`` too; ``blend`` leaves
 them for the consuming factory).  ``reverse`` is the mirror image: it moves no
 coordinate and instead relabels the index space with the bijection ``i -> N-1-i``,
@@ -31,7 +31,7 @@ from .._typing import (
     Vec3,
 )
 from ..model import affine
-from ..model.tags import BoundaryTable
+from ..model.tags import PointTags
 from .linemesh import LineMesh
 
 
@@ -41,8 +41,8 @@ def blend(a: LineMesh, b: LineMesh,
     count and identical ``lines`` connectivity -- which is exactly what makes
     both open or both closed), one profile per fraction
     ``t`` with points ``(1-t)*a + t*b`` -- so ``t=0`` reproduces ``a`` and ``t=1``
-    reproduces ``b``.  Each result carries ``a``'s connectivity, ``boundaries``
-    and ``boundary_tags`` (positional BC markers follow the morph); per-element
+    reproduces ``b``.  Each result carries ``a``'s connectivity and ``point_tags``
+    (positional BC markers follow the morph); per-element
     ``element_tags`` are left for the consuming factory/``loft`` to assign, so a
     blended stack feeds straight into ``loft`` or a section factory.  This is the
     profile-positioning step behind ``annulus`` (and any morphing sweep).
@@ -74,7 +74,7 @@ def blend(a: LineMesh, b: LineMesh,
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
         out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
-                       boundaries=a.boundaries, order=a.order))
+                       point_tags=a.point_tags, order=a.order))
     return out
 
 
@@ -90,7 +90,7 @@ def reverse(mesh: LineMesh) -> LineMesh:
     with no explicit ``interior`` re-fills it with straight GLL chords, silently
     discarding the curve at ``order > 1``.
 
-    ``element_tags`` reverse with their lines; ``boundaries`` are remapped (line
+    ``element_tags`` reverse with their lines; ``point_tags`` are remapped (line
     ``l`` -> ``L-1-l``, side ``s`` -> ``3-s``, since each line's two endpoints swap)
     and re-sorted, so a tagged end point stays on the same physical point.
 
@@ -104,8 +104,8 @@ def reverse(mesh: LineMesh) -> LineMesh:
     # relabel r(i) = n-1-i, then restore each line's canonical start->end direction:
     # reverse the element order and swap the two endpoints of every line.
     lines: IntArray = (n - 1 - mesh.lines)[::-1, ::-1]
-    b = mesh.boundaries
-    bnd = BoundaryTable(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
+    b = mesh.point_tags
+    bnd = PointTags(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
     return LineMesh(np.ascontiguousarray(mesh.points[::-1]),
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
@@ -121,10 +121,10 @@ def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh
     A ``LineMesh`` owns exactly two coordinate tables -- its ``points`` and its
     per-line private ``interior`` -- and both take the *same* map, so a curved
     element keeps its shape and its endpoints stay its corners.  Everything else
-    (connectivity, tags, boundaries) is topology and rides through untouched."""
+    (connectivity, element and point tags) is topology and rides through untouched."""
     return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
                     affine.apply(mesh.interior, matrix, offset),
-                    boundaries=mesh.boundaries,
+                    point_tags=mesh.point_tags,
                     element_tags=mesh.element_tags, order=mesh.order)
 
 

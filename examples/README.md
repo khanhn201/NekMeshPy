@@ -49,7 +49,7 @@ also writes a Nek field file (`bifurcation0.f00001`) carrying its high-order GLL
 | `flow_past_plate.py` | `QuadMesh.annulus` around a thin ellipse → span-`extrude` (body `plate`; far-field sides tagged on the outer loop; caps `front`/`back`) |
 | `flow_past_half_cylinder.py` | `QuadMesh.structured` over four tagged edges, the bottom one a welded semicircular bump → span-`loft` (caps `front`/`back`) |
 | `flow_past_sphere.py` | `HexMesh.annulus` between a closed sphere surface and a closed cube surface (six `QuadMesh.from_grid` patches → `QuadMesh.merge`, per-patch `element_tag`) — wall faces tagged from the surfaces' per-quad `element_tags` (body → `sphere`; far field → `inlet`/`outlet`/…) |
-| `flow_past_hemisphere.py` | five-patch half cubed-sphere on the ground, each `from_grid(face_tags=…)` → `merge` (body → `hemisphere`) |
+| `flow_past_hemisphere.py` | five-patch half cubed-sphere on the ground, each `half_box(patch_tags=…)` → `merge` (body → `hemisphere`) |
 | `high_order_curve.py` | `LineMesh.circle(order=ORDER)` — every arc node placed on the true circle; `.vtu` `VTK_LAGRANGE_CURVE` |
 | `high_order_quad.py` | `QuadMesh.sphere(order=ORDER)` — all `(N+1)²` surface nodes on the true sphere; `.vtu` `VTK_LAGRANGE_QUADRILATERAL` |
 | `high_order_hex.py` | `HexMesh.annulus(sphere, cube)` shell over two `order=ORDER` surfaces — curved inner wall on the true sphere; `.re2` stays linear, `.vtu` `VTK_LAGRANGE_HEXAHEDRON` |
@@ -67,7 +67,7 @@ positional 4-lists, so an unnamed side is simply absent rather than an empty slo
 way — either that Mapping or a 4-sequence in `bottom, right, top, left` order.
 Sections can also tag edges directly
 (`structured(side_tags=…)`, `annulus(inner_tag=…, outer_tag=…)`) and patches
-in place (`from_grid(face_tags=…)`). All propagate onto swept side faces via
+in place (`from_grid(side_tags=…)`). All propagate onto swept side faces via
 `loft`/`extrude`, which name the end caps (`first_tag=…, last_tag=…`). Faces
 welded away by `merge` stay untagged.
 

@@ -46,7 +46,7 @@ def _boundary_points(hexes: IntArray) -> IntArray:
 def boundary_faces(mesh: HexMesh) -> IntArray:
     """``(K,2)`` of ``[element id, local face (1-6)]`` for every face on the
     topological domain boundary (a quad carried by a single hex). Distinct from
-    the tagged ``boundaries``, which may also carry interior planes."""
+    the tagged ``face_tags``, which may also carry interior planes."""
     _, mask = _boundary_mask(mesh.hexes)
     rows = np.flatnonzero(mask)
     return np.column_stack([rows // 6, rows % 6 + 1]).astype(np.int64)
@@ -112,7 +112,7 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     HC, nu = w.hexes, w.n_points
     is_wall: BoolArray = np.zeros(nu, dtype=bool)
     is_fixed: BoolArray = np.zeros(nu, dtype=bool)
-    for elem, face, tag in mesh.boundaries:
+    for elem, face, tag in mesh.face_tags:
         ids = HC[elem, HexMesh.FACE_POINTS[face - 1, :]]
         if tag == wall:
             is_wall[ids] = True
@@ -144,8 +144,8 @@ def report(mesh: HexMesh) -> str:
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
     lines.append(quality.format_report(quality.summary(mesh.points, mesh.hexes)))
-    for name in mesh.boundary_group_tags:
-        n = mesh.boundaries.count(name)
+    for name in mesh.face_group_tags:
+        n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))
     lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.hexes)))
     return "\n".join(lines)

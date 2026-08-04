@@ -43,11 +43,11 @@ from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ..model.tags import (
-    BoundaryBuilder,
-    BoundaryTable,
     ElementTags,
+    FaceTags,
+    TagBuilder,
 )
-from ..quadmesh import NO_BOUNDARY, QuadMesh
+from ..quadmesh import NO_TAG, QuadMesh
 from ._query import _boundary_points
 from .hexmesh import HexMesh, _slice_block, _sweep_at
 
@@ -83,10 +83,10 @@ def loft(
     :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>`).
 
     ``slices`` is ``nz+1`` profiles sharing the same quad connectivity,
-    ``boundary_tags``, and ``element_tags``; consecutive profiles form ``nz`` hex
+    ``face_tags``, and ``element_tags``; consecutive profiles form ``nz`` hex
     layers. ``first_tag`` names the first bottom cap (face 5), ``last_tag`` the
     last top cap (face 6) -- each a scalar or a per-quad array. Side faces are
-    named from the section's ``boundary_tags`` (unnamed or ``NO_BOUNDARY`` edges
+    named from the section's ``edge_tags`` (unnamed or ``NO_TAG`` edges
     stay untagged), and every hex inherits its quad's ``element_tags``. Points
     are shared by construction.  ``element_tags`` is the orthogonal, **per-layer**
     dense tag array (length ``nz``, ``""`` = untagged): where a layer's tag is
@@ -118,14 +118,14 @@ def loft(
     disc sections.  A closed sweep has no bottom/top cap, so ``first_tag`` /
     ``last_tag`` with ``loop=True`` raise ``ValueError`` rather than being
     silently dropped, and no cap boundary row is emitted; side faces from the
-    section's ``boundary_tags`` are unaffected."""
+    section's ``edge_tags`` are unaffected."""
     slices = list(slices)
     if loop:
         reject_loop_caps("HexMesh.loft", first_tag, last_tag)
     quads = np.asarray(slices[0].quads, dtype=np.int64).reshape(-1, 4)
     # section (quad, side) -> name; each swept side face inherits its section edge
-    side_name: dict[tuple[int, int], str] = slices[0].boundaries.as_dict()
-    tag_sides = bool(slices[0].boundaries)
+    side_name: dict[tuple[int, int], str] = slices[0].edge_tags.as_dict()
+    tag_sides = bool(slices[0].edge_tags)
     M = quads.shape[0]
     n_prof = len(slices)
     # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
@@ -170,7 +170,7 @@ def loft(
                 "loft: element_tags is per layer, so it needs %d entries, got %d"
                 % (nz, layer_tags.shape[0]))
         etags = etags.overlay(ElementTags.blocks(layer_tags, M))
-    bb = BoundaryBuilder()
+    bb = TagBuilder(FaceTags)
     e = 0
     for i in range(nz):
         j = int(nxt[i])                     # the profile this layer sweeps to
@@ -181,7 +181,7 @@ def loft(
                 # section side s -> hex face s, or 5-s when the quad was flipped
                 for s in (1, 2, 3, 4):
                     nm = side_name.get((q, s))
-                    if nm is None or nm == NO_BOUNDARY:
+                    if nm is None or nm == NO_TAG:
                         continue
                     bb.add(e, (5 - s) if flip else s, nm)
             if i == 0 and first_caps[q]:
@@ -431,7 +431,7 @@ def loft_curve(
 
     ``element_tags`` is the per-layer tag array and the caps the per-quad ones, exactly
     as on :func:`loft`, which does all the assembly and whose numbering, tags,
-    boundaries and B-rep are carried up unchanged."""
+    face tags and B-rep are carried up unchanged."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
     _check_fraction_count(fr, loop=loop, name="loft_curve")
     if loop:
@@ -473,20 +473,20 @@ def merge(
     points, point_id = _weld(pos, [_boundary_points(m.hexes) for m in meshes], tol)
 
     hex_list: list[IntArray] = []
-    bnd_list: list[BoundaryTable] = []
+    bnd_list: list[FaceTags] = []
     etag_list: list[ElementTags] = []
     noff = eoff = 0
     for m, c in zip(meshes, counts):
         hex_list.append(point_id[m.hexes + noff])    # local -> concat -> welded id
         # ids shift by this block's offset; sides stay local to their element
         etag_list.append(m.element_tags.offset(eoff))
-        bnd_list.append(m.boundaries.offset(eoff))
+        bnd_list.append(m.face_tags.offset(eoff))
         noff += c
         eoff += m.hexes.shape[0]
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
     etags = ElementTags.concat(etag_list)
-    bnd = BoundaryTable.concat(bnd_list).ordered()
+    bnd = FaceTags.concat(bnd_list).ordered()
     # order-N: the private per-hex interiors just concatenate, but the shared edge /
     # face tables must be rebuilt against the *merged* topology -- gather each
     # block's nodes into its own element-local order, concatenate in merged element

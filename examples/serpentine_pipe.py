@@ -194,9 +194,9 @@ BUILD_SECONDS = time.perf_counter() - _t0
 # -- checks -------------------------------------------------------------------
 assert mesh.is_watertight(), "the swept coil must be a single watertight block"
 assert mesh.is_conforming(), "the swept coil must be conforming"
-assert set(mesh.boundary_group_tags) == {"wall", "inlet", "outlet"}, \
+assert set(mesh.face_group_tags) == {"wall", "inlet", "outlet"}, \
     "boundary groups must be exactly wall/inlet/outlet, got %s" % (
-        list(mesh.boundary_group_tags),)
+        list(mesh.face_group_tags),)
 stats = mesh.quality_summary()
 # Through the tightest (U_R = 5*R_PIPE) turn the inner wall traverses 4/5 of the
 # outer arc length, so the elements are graded across the tube -- but the bend
@@ -215,4 +215,4 @@ print("build time: %.2f s" % BUILD_SECONDS)
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))

@@ -20,7 +20,7 @@ The contract these pin down, in order of how badly getting it wrong would hurt:
 
 import numpy as np
 import pytest
-from conftest import assert_same_boundaries
+from conftest import assert_same_side_tags
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh
 from nekmeshpy.model import conform, frames
@@ -156,7 +156,7 @@ def test_a_straight_path_reproduces_extrude(order):
                          first_tag="in", last_tag="out")
     assert np.allclose(sw.points, ex.points, atol=1e-14)
     assert np.array_equal(sw.hexes, ex.hexes)
-    assert_same_boundaries(sw.boundaries, ex.boundaries)
+    assert_same_side_tags(sw.face_tags, ex.face_tags)
 
 
 def test_the_section_lands_at_station_zero_as_authored():
@@ -202,8 +202,8 @@ def test_loop_gives_a_closed_torus_with_no_duplicated_layer(order):
     assert tor.n_points == sec.n_points * nz        # no seam profile duplicated
     # closed in the sweep direction: the only boundary left is the tube wall, and it
     # is a single unbroken sleeve of one face per wall line per layer -- no caps
-    assert list(np.unique(tor.boundaries.tags)) == ["wall"]
-    assert len(tor.boundaries) == NU * nz
+    assert list(np.unique(tor.face_tags.tags)) == ["wall"]
+    assert len(tor.face_tags) == NU * nz
     assert tor.is_watertight() and tor.is_conforming()
     x, y, z = hex_nodes(tor).T
     assert np.max(np.hypot(np.hypot(x, y) - RB, z)) == pytest.approx(RP, abs=1e-13)
@@ -232,7 +232,7 @@ def test_the_wall_tag_rides_up_from_the_loop_and_the_caps_are_named():
     blk = HexMesh.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
                         first_tag="inlet", last_tag="outlet")
-    assert sorted(blk.boundary_group_tags) == ["inlet", "outlet", "wall"]
+    assert sorted(blk.face_group_tags) == ["inlet", "outlet", "wall"]
 
 
 def test_per_layer_element_tags_override_the_section_tags():
@@ -349,7 +349,7 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
     r = np.hypot(x, z)
     assert r.min() == pytest.approx(RB - RP, abs=1e-13)
     assert r.max() == pytest.approx(RB + RP, abs=1e-13)
-    assert sorted(rib.boundary_group_tags) == ["a", "b"]
+    assert sorted(rib.edge_group_tags) == ["a", "b"]
     assert rib.element_tags.group_tags == ["fin"]
 
 

@@ -1,7 +1,7 @@
 """Unit tests for the 1-D mesh sibling :class:`~nekmeshpy.LineMesh`: construction
 (open vs closed read off the ``lines`` connectivity -- stored nowhere), the two
 tag systems (dense per-line
-``element_tags`` + a sparse tagged ``boundaries`` table), the
+``element_tags`` + a sparse ``point_tags`` table), the
 ``loft`` / ``line`` / ``arc`` / ``circle`` / ``rectangle``
 factories (every curve meshed exactly at the points given -- no resampling), and
 the line -> quad -> hex tag ladder (``QuadMesh.extrude(LineMesh)`` and
@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import BoundaryTable, ElementTags, HexMesh, LineMesh, QuadMesh
+from nekmeshpy import ElementTags, HexMesh, LineMesh, PointTags, QuadMesh
 from nekmeshpy.model.fields import uniform_spacing
 
 # -- construction ------------------------------------------------------------
@@ -72,7 +72,7 @@ def test_boundary_table_columns_must_match_in_length():
     """The pairing is now structural: the table itself refuses a ragged build,
     so a LineMesh can no longer be given desynchronized rows and names."""
     with pytest.raises(ValueError, match="same length"):
-        BoundaryTable.from_pairs([[0, 1]], ["a", "b"])
+        PointTags.from_pairs([[0, 1]], ["a", "b"])
 
 
 # -- topological queries -----------------------------------------------------
@@ -87,10 +87,10 @@ def test_boundary_points_are_open_ends():
 def test_tagged_boundary_points_via_boundaries():
     # side 1 -> local vertex 0, side 2 -> local vertex 1 of the referenced line
     lm = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
-                       boundaries=BoundaryTable.from_pairs(
+                       point_tags=PointTags.from_pairs(
                            [[0, 1], [1, 2]], ["start", "end"]))
-    assert lm.n_boundaries == 2
-    assert lm.boundary_group_tags == ["end", "start"]
+    assert lm.n_point_tags == 2
+    assert lm.point_group_tags == ["end", "start"]
 
 
 # -- length + exact-mesh factories -------------------------------------------
@@ -274,13 +274,13 @@ def test_merge_open_chains_stay_open_and_carry_tags():
     # two collinear open chains meeting at (1,0,0); the shared point welds but the
     # far ends stay degree-1, so the result is still open.
     a = LineMesh.loft([(0, 0, 0), (1, 0, 0)], element_tags=["a"],
-                      boundaries=BoundaryTable.from_pairs([[0, 1]], ["start"]))
+                      point_tags=PointTags.from_pairs([[0, 1]], ["start"]))
     b = LineMesh.loft([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
     m = LineMesh.merge([a, b])
     assert m.boundary_points().tolist() == [0, 2]       # the two far ends survive
     assert m.n_points == 3                              # the shared point welded
     assert m.element_tags.dense(m.n_lines).tolist() == ["a", "b"]        # dense tags concatenate
-    assert m.boundary_group_tags == ["start"]           # sparse BC markers carried
+    assert m.point_group_tags == ["start"]           # sparse BC markers carried
 
 
 def test_merge_does_not_weld_interior_points():
@@ -296,16 +296,16 @@ def test_merge_does_not_weld_interior_points():
 # -- line -> quad tag ladder -------------------------------------------------
 
 def _quad_edge_mid(qm, row):
-    q, s = int(qm.boundaries.elements[row]), int(qm.boundaries.sides[row])
+    q, s = int(qm.edge_tags.elements[row]), int(qm.edge_tags.sides[row])
     return qm.points[qm.quads[q, QuadMesh.EDGE_POINTS[s - 1]]].mean(axis=0)
 
 
-def test_extrude_line_to_quad_carries_element_and_boundary_tags():
+def test_extrude_line_to_quad_carries_element_and_edge_tags():
     # an open line along +x, tagged per element, with tagged end points; sweep
     # along +y into a quad strip and check both tag chains land correctly.
     line = LineMesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
                          element_tags=["seg0", "seg1"],
-                         boundaries=BoundaryTable.from_pairs(
+                         point_tags=PointTags.from_pairs(
                              [[0, 1], [1, 2]], ["start", "end"]))
     qm = QuadMesh.extrude(line, axis=(0.0, 1.0, 0.0), length=1.0,
                           layers=uniform_spacing(1),
@@ -317,8 +317,8 @@ def test_extrude_line_to_quad_carries_element_and_boundary_tags():
     # boundary-point tags land on the correct side-wall edges: "start" at x=0,
     # "end" at x=2; caps "near" at y=0, "far" at y=1.  Assert by edge geometry.
     tag_of = {}
-    for r in range(qm.n_boundaries):
-        tag_of.setdefault(str(qm.boundaries.tags[r]), []).append(_quad_edge_mid(qm, r))
+    for r in range(qm.n_edge_tags):
+        tag_of.setdefault(str(qm.edge_tags.tags[r]), []).append(_quad_edge_mid(qm, r))
     assert np.isclose(np.array(tag_of["start"])[:, 0], 0.0).all()
     assert np.isclose(np.array(tag_of["end"])[:, 0], 2.0).all()
     assert np.isclose(np.array(tag_of["near"])[:, 1], 0.0).all()
@@ -381,7 +381,7 @@ def test_sweep_fractions_with_no_breaks_is_a_plain_subdivision():
 def test_repr_reports_counts_order_and_tag_groups():
     lm = LineMesh.circle(1.0, 8, element_tags=["wall"] * 8)
     assert repr(lm) == ("<LineMesh 8 points, 8 lines, order 1, "
-                        "element_tags={wall}, boundary_tags={}>")
+                        "element_tags={wall}, point_tags={}>")
 
 
 def test_repr_never_raises_on_a_half_built_container():

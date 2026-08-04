@@ -111,14 +111,14 @@ def test_tags_ride_up_from_the_line_level():
     s1 = LineMesh.line(np.zeros(3), np.array([R, 0.0, 0.0]), fr, element_tag="sym")
     s2 = _radius(np.pi / 2, fr)
     q = QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
-    assert q.boundary_group_tags == ["sym", "wall"]
-    counts = {t: q.boundaries.count(t) for t in q.boundary_group_tags}
+    assert q.edge_group_tags == ["sym", "wall"]
+    counts = {t: q.edge_tags.count(t) for t in q.edge_group_tags}
     assert counts["wall"] == 2 * n
     assert counts["sym"] == n + NR
     # an explicit override replaces the whole wall
     q2 = QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS,
                                  wall_tag="outer", side_tags={"seam2": "cut"})
-    assert q2.boundary_group_tags == ["cut", "outer", "sym"]
+    assert q2.edge_group_tags == ["cut", "outer", "sym"]
 
 
 def test_seam_fraction_helper_places_the_core_corner_on_the_square():

@@ -104,8 +104,8 @@ def test_repr_of_each_container_names_counts_and_tag_groups():
     block = HexMesh.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
                             first_tag="inlet", last_tag="outlet")
     assert repr(section).startswith("<QuadMesh ")
-    assert "order 1" in repr(section) and "boundary_tags={wall}" in repr(section)
+    assert "order 1" in repr(section) and "edge_tags={wall}" in repr(section)
     assert repr(block).startswith("<HexMesh ")
-    assert "boundary_tags={inlet,outlet,wall}" in repr(block)
+    assert "face_tags={inlet,outlet,wall}" in repr(block)
     tri = TriMesh(np.zeros((4, 3)), [[0, 1, 2], [0, 2, 3]])
     assert repr(tri) == "<TriMesh 4 points, 2 tris>"

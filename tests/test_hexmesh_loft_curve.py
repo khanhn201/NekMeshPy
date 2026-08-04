@@ -186,7 +186,7 @@ def test_open_sweep_has_the_expected_shape_and_caps():
     assert blk.n_points == sec.n_points * 4
     assert blk.n_hexes == sec.n_quads * 3
     assert _revolution_deviation(blk, order) < 1e-13
-    assert set(blk.boundary_group_tags) == {"start", "end"}
+    assert set(blk.face_group_tags) == {"start", "end"}
 
 
 # -- grading -----------------------------------------------------------------
@@ -213,7 +213,7 @@ def test_per_layer_element_tags_override_the_section_quad_tags():
         LineMesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     tagged = QuadMesh(base.lines, base.quad, base.flip, base.interior,
-                      base.boundaries,
+                      base.edge_tags,
                       ElementTags.uniform(base.n_quads, "fluid"))
     f = lambda t: tagged.rotate(t, axis=(0, 0, 1))                 # noqa: E731
     layers = ["", "hot", ""]
@@ -229,8 +229,8 @@ def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
     blk = HexMesh.loft_curve(f, np.linspace(0.0, 1.0, 3), order=1,
                              element_tags=["a", "b"],
                              first_tag="inlet", last_tag="outlet")
-    assert set(blk.boundary_group_tags) == {"wall", "inlet", "outlet"}
-    b = blk.boundaries
+    assert set(blk.face_group_tags) == {"wall", "inlet", "outlet"}
+    b = blk.face_tags
     # caps land on faces 5/6 of the first / last layer, the wall on side faces
     sides = lambda nm: set(np.unique(b.select(b.mask_for(nm)).sides))  # noqa: E731
     assert sides("inlet") == {5}

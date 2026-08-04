@@ -21,7 +21,7 @@ from ..linemesh import LineMesh
 from ..linemesh._assemble import loft as line_loft
 from ..model import conform
 from ..model.interp import coons_grid
-from ..model.tags import BoundaryTable
+from ..model.tags import PointTags
 from ..quadmesh import QuadMesh
 from ..quadmesh._assemble import loft as quad_loft
 from ._assemble import loft as hex_loft
@@ -280,13 +280,13 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
-    bnd = BoundaryTable.from_pairs([[0, 1]], [ti]) if ti else None
+    bnd = PointTags.from_pairs([[0, 1]], [ti]) if ti else None
 
     def profile(j: int, k: int) -> LineMesh:
         col: PointArray = lat[:, j, k, :]
         inner = (None if o == 1 else
                  np.stack([col[i * o + 1:i * o + o] for i in range(nl)], axis=0))
-        return line_loft(col[::o], interior=inner, order=o, boundaries=bnd)
+        return line_loft(col[::o], interior=inner, order=o, point_tags=bnd)
 
     def section(k: int) -> QuadMesh:
         return quad_loft([profile(j * o, k) for j in range(nm + 1)],

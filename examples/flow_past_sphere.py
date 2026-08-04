@@ -43,7 +43,7 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
 # -- two closed quad surfaces: outer cube (tagged per face) and inner sphere -
 # QuadMesh.box tags each face with the far-field side it forms; QuadMesh.sphere
 # reuses the same (N_FACE) connectivity, so the two pair by index for annulus.
-cube = QuadMesh.box(S, N_FACE, order=ORDER, face_tags={
+cube = QuadMesh.box(S, N_FACE, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})
@@ -58,4 +58,4 @@ mesh = HexMesh.annulus(sphere, cube,
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))

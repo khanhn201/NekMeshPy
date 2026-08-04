@@ -22,7 +22,7 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
 
 
 def _shell(order, n_face=2, n_radial=2):
-    cube = QuadMesh.box(3.0, n_face, order=order, face_tags={
+    cube = QuadMesh.box(3.0, n_face, order=order, patch_tags={
         "x_max": "outlet", "x_min": "inlet", "y_max": "top",
         "y_min": "bottom", "z_max": "back", "z_min": "front"})
     sphere = QuadMesh.sphere(1.0, n_face, order=order)
@@ -86,7 +86,7 @@ def test_blend_morphs_hex_curved_blocks():
                           edge_nodes=a.edge_nodes * 2.0,
                           face_nodes=a.face_nodes * 2.0,
                           interior=a.interior * 2.0,
-                          boundaries=a.boundaries,
+                          face_tags=a.face_tags,
                           order=3)
     lo, mid, hi = HexMesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3

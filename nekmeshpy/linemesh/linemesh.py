@@ -2,8 +2,8 @@
 
 The line sibling of QuadMesh/HexMesh; it can branch rather than being a single
 ordered path. It carries sparse per-line ``element_tags`` and a sparse tagged
-``boundaries`` table (a line's boundary is a point), both of which sweep up on
-extrude.
+:class:`~nekmeshpy.model.tags.PointTags` table of tagged end points, both of which
+sweep up on extrude.
 Open vs closed is a property of the ``lines`` connectivity itself -- a loop is a
 cycle of line elements with no degree-1 end point -- and is stored nowhere;
 factories build the common cases (``loft`` / ``line`` / ``arc`` / ``circle`` /
@@ -42,20 +42,20 @@ from .._typing import (
     PointArray,
     StrArray,
 )
-from ..model.tags import NO_TAGS, BoundaryTable, ElementTags, check_tag_range
+from ..model.tags import NO_TAGS, ElementTags, PointTags, check_tag_range
 
 
 def _as_points(points: NDArray[Any]) -> PointArray:
     """Normalize an array-like to a validated ``(N,3)`` float point array, raising
-    the one actionable "boundaries live in 3-D" error for anything else.  Shared by
+    the one actionable "points live in 3-D" error for anything else.  Shared by
     ``LineMesh.__init__`` and :meth:`LineMesh.loft` so both report it identically."""
     a: PointArray = np.asarray(points, dtype=float)
     if a.ndim == 1:
         a = a.reshape(1, -1)
     if a.ndim != 2 or a.shape[1] != 3:
         raise ValueError(
-            f"boundary points must be (N,3) 3-D coordinates; got "
-            f"{a.shape} -- add a z column (all boundaries live in 3-D)")
+            f"points must be (N,3) 3-D coordinates; got "
+            f"{a.shape} -- add a z column (all geometry lives in 3-D)")
     return a
 
 
@@ -75,7 +75,7 @@ def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
 
 class LineMesh:
     """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a
-    sparse per-line ``element_tags``, and a ``boundaries`` table of tagged end points
+    sparse per-line ``element_tags``, and a ``point_tags`` table of tagged end points
     (``side`` 1-2). Build with ``loft`` / ``line`` / ``arc`` / ``circle``
     / ``rectangle``."""
 
@@ -87,19 +87,19 @@ class LineMesh:
         points: NDArray[Any],
         lines: IntArray,
         interior: PointArray | None = None,
-        boundaries: BoundaryTable | None = None,
+        point_tags: PointTags | None = None,
         element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> None:
         """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), the **required**
         ``lines`` ``(L,2)`` connectivity, the per-line ``interior`` nodes, an optional
-        :class:`BoundaryTable <nekmeshpy.model.tags.BoundaryTable>` of tagged end
-        points, and an optional :class:`ElementTags
+        :class:`PointTags <nekmeshpy.model.tags.PointTags>` naming end points of
+        lines, and an optional :class:`ElementTags
         <nekmeshpy.model.tags.ElementTags>` naming whichever lines are tagged.
 
         The argument order is the ladder's: ``(rung below, incidence, interior,
-        boundaries, element_tags, *, order)``, matching
+        side tags, element_tags, *, order)``, matching
         :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` (``lines, quad, flip,
         interior, ...``) and :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>`
         (``quads, hex, face_orient, interior, ...``) position for position -- a line element has no orientation bit, so it simply
@@ -129,10 +129,10 @@ class LineMesh:
         self.element_tags: ElementTags = (
             NO_TAGS if element_tags is None else element_tags)
         #: tagged end points, ``side`` 1-2, coupled with their names
-        self.boundaries: BoundaryTable = (
-            BoundaryTable.empty() if boundaries is None else boundaries)
-        check_tag_range(self.element_tags, self.boundaries,
-                         self.lines.shape[0], 2, "lines")
+        self.point_tags: PointTags = (
+            PointTags.empty() if point_tags is None else point_tags)
+        check_tag_range(self.element_tags, self.point_tags,
+                        self.lines.shape[0], 2, "lines")
 
         self._order = int(order)
         #: ``(L, order-1, 3)`` per-line private high-order interior nodes (ascending GLL
@@ -187,10 +187,10 @@ class LineMesh:
         worse."""
         try:
             return ("<LineMesh %d points, %d lines, order %d, element_tags=%s, "
-                    "boundary_tags=%s>"
+                    "point_tags=%s>"
                     % (self.points.shape[0], self.lines.shape[0], self._order,
                        _repr_tags(self.element_group_tags),
-                       _repr_tags(self.boundary_group_tags)))
+                       _repr_tags(self.point_group_tags)))
         except Exception:                     # a repr must never break a debug session
             return "<LineMesh (unprintable)>"
 
@@ -213,9 +213,9 @@ class LineMesh:
         return self.lines.shape[0]
 
     @property
-    def n_boundaries(self) -> int:
-        """Number of tagged boundary points."""
-        return len(self.boundaries)
+    def n_point_tags(self) -> int:
+        """Number of tagged end points."""
+        return len(self.point_tags)
 
     @property
     def element_group_tags(self) -> list[str]:
@@ -223,9 +223,9 @@ class LineMesh:
         return self.element_tags.group_tags
 
     @property
-    def boundary_group_tags(self) -> list[str]:
-        """Sorted unique tags of the tagged boundary points present on the mesh."""
-        return self.boundaries.group_tags
+    def point_group_tags(self) -> list[str]:
+        """Sorted unique tags of the tagged end points present on the mesh."""
+        return self.point_tags.group_tags
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod

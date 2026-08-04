@@ -44,13 +44,13 @@ from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ..model.tags import (
-    BoundaryBuilder,
-    BoundaryTable,
+    EdgeTags,
     ElementTags,
+    TagBuilder,
 )
 from ._query import _boundary_mask
 from .quadmesh import (
-    NO_BOUNDARY,
+    NO_TAG,
     QuadMesh,
     _coons_at,
     _quad_interior_slots,
@@ -73,7 +73,7 @@ def loft(
     :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`).
 
     ``slices`` is ``nz+1`` line profiles sharing the same ``lines``,
-    ``element_tags``, and ``boundaries``; consecutive profiles form ``nz`` quad
+    ``element_tags``, and ``edge_tags``; consecutive profiles form ``nz`` quad
     layers.  For line ``(a, b)`` at layer ``i`` the column quad is
     ``[a_i, b_i, b_{i+1}, a_{i+1}]``.  The line's ``element_tags`` ride onto every
     quad in its column and tagged boundary points onto the swept wall edges;
@@ -107,7 +107,7 @@ def loft(
     no free boundary edge in the sweep direction.  A closed sweep has no near/far
     cap, so ``first_tag`` / ``last_tag`` with ``loop=True`` raise ``ValueError``
     rather than being silently dropped, and no cap boundary row is emitted.
-    (Side-wall boundaries derived from the profiles' own boundary points are
+    (Side-wall edge tags derived from the profiles' own tagged end points are
     unaffected.)
 
     The section's B-rep is assembled **layer by layer**, never re-derived from
@@ -305,9 +305,9 @@ def loft(
                                  islots % row, islots // row)
 
     # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
-    bb = BoundaryBuilder()
-    for l0, side, tag in slices[0].boundaries:
-        if tag == NO_BOUNDARY:
+    bb = TagBuilder(EdgeTags)
+    for l0, side, tag in slices[0].point_tags:
+        if tag == NO_TAG:
             continue
         qside = 4 if side == 1 else 2
         for ii in range(nz):
@@ -501,7 +501,7 @@ def loft_curve(
 def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     """Merge quad sections into one, welding coincident boundary points.
     ``tol`` is the absolute coincidence distance (default ``1e-7`` x the extent).
-    Tagged ``boundaries`` and dense ``element_tags`` concatenate with each
+    ``edge_tags`` and ``element_tags`` concatenate with each
     block's quad ids offset; an interior seam is not auto-dropped."""
     meshes = list(meshes)
     pos = [np.asarray(m.points, dtype=float).reshape(-1, 3) for m in meshes]
@@ -516,19 +516,19 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     points, point_id = _weld(pos, seams, tol)
 
     quad_list: list[IntArray] = []
-    bnd_list: list[BoundaryTable] = []
+    bnd_list: list[EdgeTags] = []
     etag_list: list[ElementTags] = []
     noff = qoff = 0
     for m, c in zip(meshes, counts):
         quad_list.append(point_id[m.quads + noff])   # local -> welded id
         # ids shift by this block's offset; sides stay local to their element
         etag_list.append(m.element_tags.offset(qoff))
-        bnd_list.append(m.boundaries.offset(qoff))
+        bnd_list.append(m.edge_tags.offset(qoff))
         noff += c
         qoff += m.n_quads
     quads = np.concatenate(quad_list, axis=0) if quad_list else np.zeros((0, 4), np.int64)
     etags = ElementTags.concat(etag_list)
-    bnd = BoundaryTable.concat(bnd_list).ordered()
+    bnd = EdgeTags.concat(bnd_list).ordered()
 
     # order-N: the private per-quad interiors just concatenate, but the shared edge
     # tables must be rebuilt against the *merged* topology -- gather each block's

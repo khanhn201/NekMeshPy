@@ -84,7 +84,7 @@ the far-field side it forms), take the body surface from `QuadMesh.sphere` at th
 pair by index — and fill the shell with `HexMesh.annulus`:
 
 ```python
-cube   = QuadMesh.box(S, n, face_tags={"x_min": "inlet", "x_max": "outlet",
+cube   = QuadMesh.box(S, n, patch_tags={"x_min": "inlet", "x_max": "outlet",
                                        "y_min": "bottom", "y_max": "top",
                                        "z_min": "front", "z_max": "back"})
 sphere = QuadMesh.sphere(R, n)                  # same quads, index-paired
@@ -97,7 +97,7 @@ half cubed-sphere shell.
 ## Stitch multiple blocks
 
 Build each block independently, then weld coincident seam points with
-`HexMesh.merge`. Leave a welded-away face **untagged** (`NO_BOUNDARY` / omitted
+`HexMesh.merge`. Leave a welded-away face **untagged** (`NO_TAG` / omitted
 side) so merge stays a plain concatenate with no stale interior tag.
 
 ```python

@@ -90,4 +90,4 @@ mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 print(mesh.report())
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))

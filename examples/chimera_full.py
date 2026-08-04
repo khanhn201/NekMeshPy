@@ -117,7 +117,7 @@ def _reindex_geometry(sec_a, tgt, sigma):
         vals = tgt.lines.interior[te]
         new_interior[e] = vals[::-1] if rev else vals
     new_lines = LineMesh(new_points, struct_edges, new_interior,
-                         tgt.lines.boundaries, tgt.lines.element_tags,
+                         tgt.lines.point_tags, tgt.lines.element_tags,
                          order=tgt.lines.order)
 
     quad_lookup: dict[frozenset[int], int] = {}
@@ -131,7 +131,7 @@ def _reindex_geometry(sec_a, tgt, sigma):
         new_qinterior[q] = tgt.interior[quad_lookup[corners]]
 
     return QuadMesh(new_lines, sec_a.quad, sec_a.flip, new_qinterior,
-                    tgt.boundaries, tgt.element_tags,
+                    tgt.edge_tags, tgt.element_tags,
                     order=tgt.order)
 
 
@@ -246,7 +246,7 @@ def port_disc(hexmesh, tag, template):
     (~2e-7 at this model's extent) and the outlet seam fails on 24 edges by
     ~1e-3.  Reading the target off the real mesh removes the guess entirely
     -- measured residual 0.0 at *both* ports."""
-    rows = hexmesh.boundaries.select(hexmesh.boundaries.mask_for(tag))
+    rows = hexmesh.face_tags.select(hexmesh.face_tags.mask_for(tag))
     poly = hexmesh.hexes[rows.elements[:, None],
                          hexmesh.FACE_POINTS[rows.sides - 1, :]]
     gids = np.unique(poly)
@@ -267,7 +267,7 @@ def port_disc(hexmesh, tag, template):
         idx, rev = ekey[(int(g[u]), int(g[v]))]
         vals = hn[idx]
         new_ei[e] = vals[::-1] if rev else vals
-    new_lines = LineMesh(hexmesh.points[g], tl.lines, new_ei, tl.boundaries,
+    new_lines = LineMesh(hexmesh.points[g], tl.lines, new_ei, tl.point_tags,
                          tl.element_tags, order=tl.order)
 
     hf, hfn = hexmesh.faces, hexmesh.face_nodes
@@ -279,7 +279,7 @@ def port_disc(hexmesh, tag, template):
     print("  port_disc[%s]: template paired to %.3e, now exact on chimera's own nodes"
           % (tag, dist.max()))
     return QuadMesh(new_lines, template.quad, template.flip, new_qi,
-                    template.boundaries, template.element_tags,
+                    template.edge_tags, template.element_tags,
                     order=template.order)
 
 
@@ -928,8 +928,8 @@ if chi_mesh is not None:
     # chimera's own inlet/outlet faces are welded away into interior planes
     # here, so their tags must go (the combined mesh's inlet/outlet are the
     # riser tops); a stale tagged interior face would export as a bogus BC.
-    chi_mesh.boundaries = chi_mesh.boundaries.select(
-        chi_mesh.boundaries.mask_for("wall"))
+    chi_mesh.face_tags = chi_mesh.face_tags.select(
+        chi_mesh.face_tags.mask_for("wall"))
     mesh_out = HexMesh.merge([*manifold, chi_mesh], tol=0.005)
 else:
     chi_in_cap = HexMesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
@@ -946,7 +946,7 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 export.to_fld(mesh, OUT_NAME + ".f00000")
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))
 
 stats = mesh.quality_summary()
 assert stats.min > 0.0, "inverted element: min scaled Jacobian %g" % stats.min

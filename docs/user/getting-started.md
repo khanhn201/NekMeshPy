@@ -58,7 +58,7 @@ print(stats.min, stats.mean, stats.n_inverted)
 
 assert mesh.is_watertight()          # closed, leak-tight boundary, single body
 assert mesh.is_conforming()          # no hanging-point / T-junction interfaces
-print(mesh.boundary_group_tags)      # ['inlet', 'outlet', 'wall']
+print(mesh.face_group_tags)          # ['inlet', 'outlet', 'wall']
 ```
 
 Every container has a `__repr__`, so `print(mesh)` gives the one-line inventory —

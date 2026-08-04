@@ -1,11 +1,23 @@
-"""The two tag tables every rung stores: :class:`BoundaryTable` and :class:`ElementTags`.
+"""The two tag tables every rung stores: a side-tag table and :class:`ElementTags`.
+
+The side-tag table has one name per rung, because the entity it names differs:
+:class:`PointTags` on a ``LineMesh``, :class:`EdgeTags` on a ``QuadMesh``,
+:class:`FaceTags` on a ``HexMesh``.  All three are the same three columns and the same
+operations; only the docstring and the valid ``sides`` range change.
+
+**These are not "the boundary".**  The word *boundary* is reserved throughout the
+toolkit for the topological domain boundary -- the facets borne by exactly one element,
+which ``boundary_faces`` / ``boundary_edges`` / ``boundary_points`` compute from
+connectivity.  A side-tag table is the *named subset* of that, and the two genuinely
+differ: an extruded pipe whose wall was never named has 192 boundary faces and 128
+tagged rows.
 
 Both are rung-agnostic *model data* -- they take no container and know nothing about
 lines, quads or hexes beyond an integer element id -- so they live here beside
 ``model.physical``'s :class:`~nekmeshpy.model.physical.PhysicalGroup` and
 ``model.quality``'s ``QualitySummary`` rather than in a sibling operation module.
 
-**Why they are types and not loose arrays.**  A tagged boundary is a *row*: an element,
+**Why they are types and not loose arrays.**  A tagged side is a *row*: an element,
 one of its sides, and a name.  Stored as two parallel arrays, every operation that
 reorders, offsets, filters or concatenates rows has to do it twice, by hand, correctly --
 which is what ``_order_bnd`` used to exist for, three times over.  Here the row is one
@@ -30,13 +42,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 import numpy as np
 
 from .._typing import BoolArray, IntArray, StrArray
 
-__all__ = ["BoundaryTable", "BoundaryBuilder", "ElementTags", "NO_TAGS",
-           "check_tag_range"]
+T = TypeVar("T", bound="SideTags")
+
+__all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
+           "ElementTags", "NO_TAGS", "check_tag_range"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -61,8 +76,16 @@ def _empty_str() -> StrArray:
 
 
 @dataclass(frozen=True, eq=False)
-class BoundaryTable:
-    """The tagged boundary rows of a mesh: ``elements``, ``sides``, ``tags``.
+class SideTags:
+    """Shared implementation of the three side-tag tables.
+
+    **Not constructed directly** -- build a :class:`PointTags`, :class:`EdgeTags` or
+    :class:`FaceTags`, whichever rung you are on.  It is documented because that is
+    where the row semantics live; the three subclasses add only their entity and the
+    valid ``sides`` range.  Every operation returns ``type(self)``, so a rung's table
+    stays its own type through sorting, offsetting, filtering and concatenation.
+
+    Rows are ``elements``, ``sides``, ``tags``.
 
     Row ``r`` names side ``sides[r]`` of element ``elements[r]``.  The side numbering is
     the rung's own -- 1-2 for a ``LineMesh`` end point, 1-4 for a ``QuadMesh`` edge, 1-6
@@ -93,21 +116,21 @@ class BoundaryTable:
         t = _str_array(self.tags)
         if not (e.shape[0] == s.shape[0] == t.shape[0]):
             raise ValueError(
-                "BoundaryTable: elements (%d), sides (%d) and tags (%d) must have the "
-                "same length" % (e.shape[0], s.shape[0], t.shape[0]))
+                "%s: elements (%d), sides (%d) and tags (%d) must have the same length"
+                % (type(self).__name__, e.shape[0], s.shape[0], t.shape[0]))
         object.__setattr__(self, "elements", _frozen(e))
         object.__setattr__(self, "sides", _frozen(s))
         object.__setattr__(self, "tags", _frozen(t))
 
     # -- construction ----------------------------------------------------
     @classmethod
-    def empty(cls) -> BoundaryTable:
+    def empty(cls: type[T]) -> T:
         """The no-rows table."""
         return cls(np.zeros(0, np.int64), np.zeros(0, np.int64), _empty_str())
 
     @classmethod
-    def from_pairs(cls, rows: Sequence[Sequence[int]] | IntArray,
-                   tags: Sequence[str] | StrArray) -> BoundaryTable:
+    def from_pairs(cls: type[T], rows: Sequence[Sequence[int]] | IntArray,
+                   tags: Sequence[str] | StrArray) -> T:
         """From the ``(Nb,2)`` ``[element, side]`` block + parallel ``tags``."""
         r: IntArray = np.asarray(rows, dtype=np.int64).reshape(-1, 2)
         return cls(r[:, 0], r[:, 1], tags)
@@ -142,10 +165,11 @@ class BoundaryTable:
             yield int(e), int(s), str(t)
 
     def __repr__(self) -> str:
-        return "<BoundaryTable %d rows {%s}>" % (len(self), ",".join(self.group_tags))
+        return "<%s %d rows {%s}>" % (type(self).__name__, len(self),
+                                      ",".join(self.group_tags))
 
     # -- operations ------------------------------------------------------
-    def ordered(self) -> BoundaryTable:
+    def ordered(self: T) -> T:
         """The rows stably sorted by ``(element, side)`` -- the canonical storage order.
 
         Exactly ``np.lexsort((sides, elements))``.  Call it where the old ``_order_bnd``
@@ -154,21 +178,21 @@ class BoundaryTable:
         if not len(self):
             return self
         p = np.lexsort((self.sides, self.elements))
-        return BoundaryTable(self.elements[p], self.sides[p], self.tags[p])
+        return type(self)(self.elements[p], self.sides[p], self.tags[p])
 
-    def offset(self, delta: int) -> BoundaryTable:
+    def offset(self: T, delta: int) -> T:
         """The same rows with every element id shifted by ``delta`` (for ``merge``)."""
         if not len(self):
             return self
-        return BoundaryTable(self.elements + int(delta), self.sides, self.tags)
+        return type(self)(self.elements + int(delta), self.sides, self.tags)
 
-    @staticmethod
-    def concat(tables: Sequence[BoundaryTable]) -> BoundaryTable:
+    @classmethod
+    def concat(cls: type[T], tables: Sequence[T]) -> T:
         """The tables' rows end to end, order preserved."""
         parts = [t for t in tables if len(t)]
         if not parts:
-            return BoundaryTable.empty()
-        return BoundaryTable(
+            return cls.empty()
+        return cls(
             np.concatenate([t.elements for t in parts]),
             np.concatenate([t.sides for t in parts]),
             np.concatenate([t.tags for t in parts]))
@@ -177,26 +201,51 @@ class BoundaryTable:
         """Boolean mask of the rows named ``tag``."""
         return np.asarray(self.tags == tag, dtype=bool)
 
-    def select(self, mask: BoolArray) -> BoundaryTable:
+    def select(self: T, mask: BoolArray) -> T:
         """The rows where ``mask`` is True, order preserved."""
         m = np.asarray(mask, dtype=bool)
-        return BoundaryTable(self.elements[m], self.sides[m], self.tags[m])
+        return type(self)(self.elements[m], self.sides[m], self.tags[m])
 
     def count(self, tag: str) -> int:
         """How many rows are named ``tag``."""
         return int(np.count_nonzero(self.tags == tag))
 
 
-class BoundaryBuilder:
-    """Accumulates :class:`BoundaryTable` rows one at a time.
+class PointTags(SideTags):
+    """Tagged **end points** of a ``LineMesh``'s lines: ``side`` 1-2 -> local vertex
+    ``side - 1``.  See :class:`SideTags` for the shared row semantics.
+
+    Deliberately not re-decorated with ``@dataclass``: it adds no fields, and a second
+    decoration would regenerate ``__repr__`` over the base's summarising one."""
+
+
+class EdgeTags(SideTags):
+    """Tagged **edges** of a ``QuadMesh``'s quads: ``side`` 1-4 -> the edge
+    ``EDGE_POINTS[side - 1]``.  See :class:`SideTags` for the shared row semantics."""
+
+
+class FaceTags(SideTags):
+    """Tagged **faces** of a ``HexMesh``'s hexes: ``side`` 1-6 -> the face
+    ``FACE_POINTS[side - 1]``.  See :class:`SideTags` for the shared row semantics.
+
+    These are the rows the ``.re2`` boundary block and the ``.vtu`` ``bc_id`` field are
+    written from -- named faces only, not every face on the domain boundary."""
+
+
+class TagBuilder(Generic[T]):
+    """Accumulates side-tag rows one at a time, then builds them into ``table_type``.
+
+    Parameterized by the rung's table (``TagBuilder(FaceTags)``) so a factory's loop
+    produces that rung's own type.
 
     The factories emit rows inside loops over elements and sides, which is what the
     paired ``bnd.append(...)`` / ``names.append(...)`` idiom used to be.  Backed by plain
     lists so **insertion order is preserved exactly** -- a dict- or set-backed builder
     would silently dedupe or reorder rows, and both stored order and ``(element, side)``
-    ties are observable downstream (see :class:`BoundaryTable`)."""
+    ties are observable downstream (see :class:`SideTags`)."""
 
-    def __init__(self) -> None:
+    def __init__(self, table_type: type[T]) -> None:
+        self._type: type[T] = table_type
         self._elements: list[int] = []
         self._sides: list[int] = []
         self._tags: list[str] = []
@@ -215,7 +264,7 @@ class BoundaryBuilder:
         if tag:
             self.add(element, side, tag)
 
-    def extend(self, table: BoundaryTable) -> None:
+    def extend(self, table: T) -> None:
         """Append every row of ``table``, in its order."""
         for e, s, t in table:
             self.add(e, s, t)
@@ -226,16 +275,16 @@ class BoundaryBuilder:
     def __bool__(self) -> bool:
         return bool(self._elements)
 
-    def build(self) -> BoundaryTable:
+    def build(self) -> T:
         """The rows as stored, in insertion order."""
         if not self._elements:
-            return BoundaryTable.empty()
-        return BoundaryTable(np.asarray(self._elements, dtype=np.int64),
-                             np.asarray(self._sides, dtype=np.int64),
-                             _str_array(self._tags))
+            return self._type.empty()
+        return self._type(np.asarray(self._elements, dtype=np.int64),
+                          np.asarray(self._sides, dtype=np.int64),
+                          _str_array(self._tags))
 
-    def build_ordered(self) -> BoundaryTable:
-        """:meth:`build` then :meth:`BoundaryTable.ordered`."""
+    def build_ordered(self) -> T:
+        """:meth:`build` then :meth:`SideTags.ordered`."""
         return self.build().ordered()
 
 
@@ -253,10 +302,10 @@ class ElementTags:
        Use the container's own ``n_lines`` / ``n_quads`` / ``n_hexes`` for that.
 
     Construction normalizes: empty tags are dropped, rows are sorted by id, and duplicate
-    ids are rejected.  That is safe here (unlike :class:`BoundaryTable`) because element
+    ids are rejected.  That is safe here (unlike the side-tag tables) because element
     tags are keyed by id -- nothing downstream observes row order.
 
-    ``eq`` is disabled for the same reason as :class:`BoundaryTable`."""
+    ``eq`` is disabled for the same reason as :class:`SideTags`."""
 
     ids: IntArray
     tags: StrArray
@@ -415,7 +464,7 @@ class ElementTags:
 NO_TAGS: ElementTags = ElementTags.empty()
 
 
-def check_tag_range(element_tags: ElementTags, boundaries: BoundaryTable,
+def check_tag_range(element_tags: ElementTags, side_tags: SideTags,
                     n_elements: int, n_sides: int, what: str) -> None:
     """Raise if either table names an element or side the mesh does not have.
 
@@ -430,12 +479,13 @@ def check_tag_range(element_tags: ElementTags, boundaries: BoundaryTable,
     if len(element_tags) and (int(element_tags.ids[-1]) >= n_elements):
         raise ValueError("element_tags names element %d but there are only %d %s"
                          % (int(element_tags.ids[-1]), n_elements, what))
-    if len(boundaries):
-        hi = int(boundaries.elements.max())
-        if hi >= n_elements or int(boundaries.elements.min()) < 0:
-            raise ValueError("boundaries names element %d but there are only %d %s"
-                             % (hi, n_elements, what))
-        s_lo, s_hi = int(boundaries.sides.min()), int(boundaries.sides.max())
+    if len(side_tags):
+        nm = type(side_tags).__name__
+        hi = int(side_tags.elements.max())
+        if hi >= n_elements or int(side_tags.elements.min()) < 0:
+            raise ValueError("%s names element %d but there are only %d %s"
+                             % (nm, hi, n_elements, what))
+        s_lo, s_hi = int(side_tags.sides.min()), int(side_tags.sides.max())
         if s_lo < 1 or s_hi > n_sides:
-            raise ValueError("boundaries side %d is outside 1..%d"
-                             % (s_hi if s_hi > n_sides else s_lo, n_sides))
+            raise ValueError("%s side %d is outside 1..%d"
+                             % (nm, s_hi if s_hi > n_sides else s_lo, n_sides))

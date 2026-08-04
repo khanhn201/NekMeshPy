@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray, Vec3
-from ..model.tags import BoundaryTable, ElementTags
+from ..model.tags import EdgeTags, ElementTags
 from ._assemble import merge
 from ._lift import from_grid
 from ._query import boundary_edges
@@ -80,11 +80,11 @@ def _axis_params(half_sizes: float | Sequence[float] | FloatArray,
 
 def box(half_sizes: float | Sequence[float] | FloatArray,
         n: int | Sequence[int] | IntArray, *,
-        face_tags: Mapping[str, str] | None = None,
+        patch_tags: Mapping[str, str] | None = None,
         order: int = 1) -> QuadMesh:
     """Closed box surface centred at the origin: six quad patches welded with
     :meth:`merge`.  ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n``
-    is a scalar or ``(nx, ny, nz)`` cells per axis.  ``face_tags`` (keyed
+    is a scalar or ``(nx, ny, nz)`` cells per axis.  ``patch_tags`` (keyed
     ``x_min`` / ``x_max`` / ... / ``z_max``) writes each face's dense per-quad
     ``element_tags`` -- e.g. the far-field side it forms; an absent face stays
     untagged so ``merge`` welds shared edges cleanly.
@@ -93,7 +93,7 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
     each flat face patch carries ``(order+1)**2`` straight-sided GLL nodes (exact,
     the faces are planar)."""
     hs, n_axis = _axis_params(half_sizes, n)
-    ft = face_tags or {}
+    ft = patch_tags or {}
     patches: list[QuadMesh] = []
     for nrm, u, v, key in _BOX_FACES:
         nv: Vec3 = np.asarray(nrm, dtype=float)
@@ -157,7 +157,7 @@ def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
     if not rim_tag:
         return qm
     rows = boundary_edges(qm)
-    bnd = BoundaryTable.from_pairs(rows, [rim_tag] * rows.shape[0]).ordered()
+    bnd = EdgeTags.from_pairs(rows, [rim_tag] * rows.shape[0]).ordered()
     return QuadMesh(qm.lines, qm.quad, qm.flip, qm.interior if qm.order > 1 else None,
                     bnd, qm.element_tags, order=qm.order)
 
@@ -165,7 +165,7 @@ def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
 def half_box(half_sizes: float | Sequence[float] | FloatArray,
              n: int | Sequence[int] | IntArray, *,
              n_vertical: int | None = None,
-             face_tags: Mapping[str, str] | None = None,
+             patch_tags: Mapping[str, str] | None = None,
              rim_tag: str = "",
              order: int = 1) -> QuadMesh:
     """The upper half of a :func:`box`: the five patches of the box surface that
@@ -175,7 +175,7 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
     ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n`` is a scalar or
     ``(nx, ny, nz)`` horizontal cells per axis, and ``n_vertical`` the cells over
     ``z in [0, sz]`` on the four upright side patches (default: ``nz``).  The top
-    patch is ``nx x ny``.  ``face_tags`` (keyed ``x_min`` / ``x_max`` / ``y_min`` /
+    patch is ``nx x ny``.  ``patch_tags`` (keyed ``x_min`` / ``x_max`` / ``y_min`` /
     ``y_max`` / ``z_max``) writes each patch's dense per-quad ``element_tags``;
     ``rim_tag`` names the ``z = 0`` rim edges (see :func:`hemisphere`).
 
@@ -190,7 +190,7 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
     nv = n_axis[2] if n_vertical is None else int(n_vertical)
     if nv < 1:
         raise ValueError("half_box needs n_vertical >= 1, got %d" % nv)
-    ft = face_tags or {}
+    ft = patch_tags or {}
     patches: list[QuadMesh] = []
     b_side = np.linspace(0.0, 1.0, nv + 1)                 # upper half only
     for nrm, u, key in _HALF_BOX_SIDES:
@@ -238,7 +238,7 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
     ``HexMesh.annulus`` turns into the inner wall faces.  ``rim_tag`` (e.g.
     ``ground``) names the rim edges, which the same sweep turns into the shell's
     side faces -- pass it on whichever surface is the ``annulus`` *inner* argument,
-    since that is the one whose ``boundaries`` the shells carry.
+    since that is the one whose ``edge_tags`` the shells carry.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     **every** ``(order+1)**2`` node of each patch is projected onto the true sphere

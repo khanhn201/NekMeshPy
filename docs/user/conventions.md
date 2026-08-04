@@ -29,12 +29,14 @@ Its stored state is the **B-rep**: a `quads` `QuadMesh` of the shared faces, `he
 `(E,(order-1)**3,3)`. `points` `(P,3)` and `hexes` `(E,8)` (Nek point order) are
 **derived read-only views** over it, so corner consistency is structural rather than
 maintained — see [Concepts](../user/concepts.md#high-order-order-n-elements).
-Alongside it are `boundaries`, a `BoundaryTable` of `(element id, face (1–6), tag)`
+Alongside it are `face_tags`, a `FaceTags` table of `(element id, face (1–6), tag)`
 rows, plus `element_tags`, an `ElementTags` naming only the hexes that carry a region
-tag (inherited from the swept quad).
+tag (inherited from the swept quad). `face_tags` is *not* "the boundary": it is the
+named subset of sides, while `boundary_faces()` derives the topological domain
+boundary from connectivity.
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
-`quad`/`flip`/`interior`, boundaries `(Nbc,2)` = `[quad id, side (1–4)]`, side `s` =
-edge `EDGE_POINTS[s-1]`). `weld()` returns a `WeldResult` NamedTuple —
+`quad`/`flip`/`interior`, `edge_tags` rows `[quad id, side (1–4)]`, side `s` =
+edge `EDGE_POINTS[s-1]`); `LineMesh` carries `point_tags` with side ∈ {1,2}. `weld()` returns a `WeldResult` NamedTuple —
 `.points` (the **live** array), `.hexes`, `.n_points`; the name is historical, since
 a `HexMesh` is already stored shared-point and nothing is welded or copied. Exporters
 expand via `points[hexes]`. Coordinates may be repositioned in place — writing

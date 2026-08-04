@@ -141,18 +141,26 @@ materializes the one-slot-per-element form where a caller wants it.
 Note `len(element_tags)` is the number of **tagged** elements, not the element
 count — use `n_lines` / `n_quads` / `n_hexes` for that.
 
-### `boundaries` — a `BoundaryTable`, coupling rows with their names
+### `point_tags` / `edge_tags` / `face_tags` — named sides
 
 `(element, side, tag)` rows in one object, rather than two arrays a caller has to
-keep in step. The "side" is the rung's own:
+keep in step. The slot is named for the entity it names, because the "side" is the
+rung's own:
 
-- `LineMesh`: `[elem id, side ∈ {1,2}]` → end **point** `s-1`.
-- `QuadMesh`: `[quad id, side ∈ {1..4}]` → **edge** `EDGE_POINTS[s-1]`.
-- `HexMesh`: `[elem id, face ∈ {1..6}]` → **face**.
+- `LineMesh.point_tags` (a `PointTags`): `[elem id, side ∈ {1,2}]` → end **point** `s-1`.
+- `QuadMesh.edge_tags` (an `EdgeTags`): `[quad id, side ∈ {1..4}]` → **edge** `EDGE_POINTS[s-1]`.
+- `HexMesh.face_tags` (a `FaceTags`): `[elem id, face ∈ {1..6}]` → **face**.
 
-On `extrude`, line end-point tags become quad boundary **edges**, then hex
-boundary **faces**. `boundary_group_tags` is the sorted unique set. See
-`examples/flow_past_cylinder.py`.
+These are **not** "the boundary". *Boundary* is reserved throughout for the
+topological domain boundary — the facets borne by exactly one element, which
+`boundary_faces()` / `boundary_edges()` / `boundary_points()` derive from
+connectivity. A side-tag table is the *named subset* of that, and the two genuinely
+differ: an extruded pipe whose wall was never named has 192 boundary faces and 0
+tagged rows.
+
+On `extrude`, line end-point tags become quad **edge** tags, then hex **face** tags.
+`point_group_tags` / `edge_group_tags` / `face_group_tags` are the sorted unique
+sets. See `examples/flow_past_cylinder.py`.
 
 Row order is meaningful and never changes implicitly — `ordered()` is the one
 explicit canonical sort. The `.re2` boundary block is written in stored order, and
@@ -169,12 +177,12 @@ factory reads:
 
 The factory args (`wall_tag`, `inner_tag`, `outer_tag`, `side_tags[side]`)
 are **overrides**: a non-empty arg replaces the line-level tag; an empty/absent
-one falls through (a present-but-empty `side_tags[side]` / `NO_BOUNDARY`
+one falls through (a present-but-empty `side_tags[side]` / `NO_TAG`
 suppresses the side). The named-side override is spelt `side_tags` — a
-**mapping** keyed `bottom` / `right` / `top` / `left`, on `QuadMesh.structured`
-and on both `rectangle` conveniences alike — not the positional 4-list it was and
-not `boundaries`, which everywhere else means the `BoundaryTable` of
-`(element, side, tag)` rows. Sweep end caps (`first_tag` / `last_tag`) are named at the
+**mapping** keyed `bottom` / `right` / `top` / `left`, on `QuadMesh.structured`,
+on both `rectangle` conveniences and on `from_grid` at both rungs — not the
+positional 4-list it was, and distinct from the stored `edge_tags` / `face_tags`
+tables of `(element, side, tag)` rows it feeds. Sweep end caps (`first_tag` / `last_tag`) are named at the
 hex level — no lower level exists for them.
 
 ## Section factories (`QuadMesh` classmethods)
@@ -228,7 +236,7 @@ returning a **new** mesh:
 | `mesh.scale(factor, center=(0,0,0))` | scale about `center` by a scalar or a `(3,)` per-axis vector (every factor must be positive) |
 | `mesh.transform(matrix, offset=(0,0,0))` | the general case the other three wrap: `p @ matrix.T + offset` |
 
-Only coordinates move: connectivity, `element_tags` and `boundaries`
+Only coordinates move: connectivity, `element_tags` and the side tags
 ride through verbatim, so a placed mesh keeps its numbering and its BC markers. The map
 reaches **every** node, private high-order `interior` tables included — a rotated
 {meth}`~nekmeshpy.linemesh.LineMesh.circle` is still an exact circle, and a rigid map
@@ -280,7 +288,7 @@ discs). A closed sweep has no near/far cap, so at every rung `loop=True`
 
 - **raises `ValueError`** if given `first_tag` / `last_tag` (scalar or per-element
   array) rather than silently dropping it, and
-- emits **no cap boundary rows** — side walls from the profiles' own boundary
+- emits **no cap tag rows** — side walls from the profiles' own tagged
   entities are unaffected.
 
 `QuadMesh.annulus` closes in the *ring* direction, which lives in the loops' own
@@ -510,7 +518,7 @@ high-order analog of `points` + `quads`. That is the single node numbering the `
 writer and the order-N quality metrics read; `nodes[conn_ho]` is the transient
 per-element block whenever one is genuinely needed.
 
-Both `element_tags` and `boundaries` propagate exactly as in the linear case;
+Both `element_tags` and the side tags propagate exactly as in the linear case;
 the extra nodes are geometry only and carry no tags of their own.
 
 (true-geometry-vs-straight-subdivision)=

@@ -1,9 +1,15 @@
-"""``model.tags`` -- the coupled boundary table and the sparse element-tag table.
+"""``model.tags`` -- the three side-tag tables and the sparse element-tag table.
+
+``PointTags`` / ``EdgeTags`` / ``FaceTags`` share one implementation, so the row
+semantics are exercised once (on ``EdgeTags``) plus a parity check that every operation
+returns the caller's own subclass.  They are deliberately *not* called "boundaries":
+they name a chosen subset of sides, which is a different set from the topological
+domain boundary that ``boundary_faces`` computes.
 
 The sparse element-tag operations are all defined as "the sparse form of" a dense numpy
 expression, so most of these tests assert exactly that: build a random dense reference,
 run the sparse op, and compare ``dense()`` against the expression it replaces.  The
-boundary tests concentrate on the two things the mesh's output depends on -- that
+side-tag tests concentrate on the two things the mesh's output depends on -- that
 ``ordered()`` is the same permutation the old ``_order_bnd`` applied, and that nothing
 else ever reorders rows.
 """
@@ -13,9 +19,11 @@ import pytest
 
 from nekmeshpy.model.tags import (
     NO_TAGS,
-    BoundaryBuilder,
-    BoundaryTable,
+    EdgeTags,
     ElementTags,
+    FaceTags,
+    PointTags,
+    TagBuilder,
 )
 
 VOCAB = ["", "wall", "inlet", "outlet", "a_much_longer_region_name"]
@@ -29,21 +37,21 @@ def random_dense(rng, n, p_tagged=0.4):
     return out
 
 
-# -- BoundaryTable -------------------------------------------------------
-def test_boundary_table_length_mismatch_raises():
+# -- the side-tag tables -------------------------------------------------------
+def test_side_tags_length_mismatch_raises():
     with pytest.raises(ValueError, match="same length"):
-        BoundaryTable([0, 1], [1, 2], ["wall"])
+        EdgeTags([0, 1], [1, 2], ["wall"])
 
 
-def test_boundary_table_empty():
-    t = BoundaryTable.empty()
+def test_side_tags_empty():
+    t = EdgeTags.empty()
     assert len(t) == 0 and not t
     assert t.group_tags == [] and t.rows.shape == (0, 2)
     assert list(t) == []
 
 
-def test_boundary_table_from_pairs_roundtrip():
-    t = BoundaryTable.from_pairs([[3, 2], [0, 1]], ["b", "a"])
+def test_side_tags_from_pairs_roundtrip():
+    t = EdgeTags.from_pairs([[3, 2], [0, 1]], ["b", "a"])
     assert np.array_equal(t.elements, [3, 0])
     assert np.array_equal(t.sides, [2, 1])
     assert np.array_equal(t.rows, [[3, 2], [0, 1]])
@@ -62,7 +70,7 @@ def test_ordered_matches_lexsort_including_ties():
         el = rng.integers(0, 5, size=n).astype(np.int64)
         sd = rng.integers(1, 4, size=n).astype(np.int64)
         tg = rng.choice(VOCAB[1:], size=n)
-        t = BoundaryTable(el, sd, tg).ordered()
+        t = EdgeTags(el, sd, tg).ordered()
         p = np.lexsort((sd, el))
         assert np.array_equal(t.elements, el[p])
         assert np.array_equal(t.sides, sd[p])
@@ -71,44 +79,44 @@ def test_ordered_matches_lexsort_including_ties():
 
 def test_construction_never_reorders():
     """Unsorted tables legitimately reach storage; only ``ordered()`` may sort."""
-    t = BoundaryTable.from_pairs([[0, 1], [0, 3], [0, 4], [0, 2]], list("abcd"))
+    t = EdgeTags.from_pairs([[0, 1], [0, 3], [0, 4], [0, 2]], list("abcd"))
     assert np.array_equal(t.sides, [1, 3, 4, 2])
     assert np.array_equal(t.ordered().sides, [1, 2, 3, 4])
     assert np.array_equal(t.ordered().tags, ["a", "d", "b", "c"])
 
 
 def test_offset_concat_select_count():
-    a = BoundaryTable.from_pairs([[0, 1], [1, 2]], ["wall", "inlet"])
-    b = BoundaryTable.from_pairs([[0, 3]], ["wall"])
-    m = BoundaryTable.concat([a, b.offset(2)])
+    a = EdgeTags.from_pairs([[0, 1], [1, 2]], ["wall", "inlet"])
+    b = EdgeTags.from_pairs([[0, 3]], ["wall"])
+    m = EdgeTags.concat([a, b.offset(2)])
     assert np.array_equal(m.elements, [0, 1, 2])
     assert m.count("wall") == 2 and m.count("inlet") == 1
     assert m.group_tags == ["inlet", "wall"]
     only_wall = m.select(m.mask_for("wall"))
     assert list(only_wall) == [(0, 1, "wall"), (2, 3, "wall")]
-    assert BoundaryTable.concat([]).group_tags == []
-    assert len(BoundaryTable.empty().offset(5)) == 0
+    assert EdgeTags.concat([]).group_tags == []
+    assert len(EdgeTags.empty().offset(5)) == 0
 
 
 def test_as_dict_is_last_row_wins_in_row_order():
-    t = BoundaryTable.from_pairs([[0, 1], [0, 1]], ["first", "second"])
+    t = EdgeTags.from_pairs([[0, 1], [0, 1]], ["first", "second"])
     assert t.as_dict() == {(0, 1): "second"}
 
 
-def test_boundary_table_columns_are_read_only():
-    t = BoundaryTable.from_pairs([[0, 1]], ["wall"])
+def test_side_tags_columns_are_read_only():
+    t = EdgeTags.from_pairs([[0, 1]], ["wall"])
     with pytest.raises(ValueError):
         t.elements[0] = 9
 
 
-def test_boundary_table_repr_summarises():
-    r = repr(BoundaryTable.from_pairs([[0, 1], [1, 2]], ["wall", "inlet"]))
-    assert r == "<BoundaryTable 2 rows {inlet,wall}>"
+def test_side_tags_repr_summarises():
+    r = repr(EdgeTags.from_pairs([[0, 1], [1, 2]], ["wall", "inlet"]))
+    assert r == "<EdgeTags 2 rows {inlet,wall}>"
 
 
-# -- BoundaryBuilder -----------------------------------------------------
+# -- TagBuilder -----------------------------------------------------
 def test_builder_preserves_insertion_order_and_duplicates():
-    bb = BoundaryBuilder()
+    bb = TagBuilder(EdgeTags)
     bb.add(2, 1, "b")
     bb.add(0, 1, "a")
     bb.add(2, 1, "b")            # a genuine duplicate must survive
@@ -118,17 +126,17 @@ def test_builder_preserves_insertion_order_and_duplicates():
 
 
 def test_builder_add_if_tagged_skips_empty():
-    bb = BoundaryBuilder()
+    bb = TagBuilder(EdgeTags)
     bb.add_if_tagged(0, 1, "")
     bb.add_if_tagged(1, 2, "wall")
     assert list(bb.build()) == [(1, 2, "wall")]
-    assert len(BoundaryBuilder().build()) == 0
+    assert len(TagBuilder(EdgeTags).build()) == 0
 
 
 def test_builder_extend():
-    bb = BoundaryBuilder()
+    bb = TagBuilder(EdgeTags)
     bb.add(0, 1, "a")
-    bb.extend(BoundaryTable.from_pairs([[5, 2]], ["b"]))
+    bb.extend(EdgeTags.from_pairs([[5, 2]], ["b"]))
     assert list(bb.build()) == [(0, 1, "a"), (5, 2, "b")]
 
 
@@ -270,3 +278,24 @@ def test_is_uniform():
 def test_group_tags_sorted_unique():
     t = ElementTags.from_dense(["b", "a", "b", ""])
     assert t.group_tags == ["a", "b"]
+
+
+# -- the three subclasses are distinct and self-propagating ---------------
+@pytest.mark.parametrize("cls", [PointTags, EdgeTags, FaceTags])
+def test_every_operation_returns_the_callers_own_subclass(cls):
+    """A rung's table must stay its own type through every derivation -- otherwise a
+    sorted or offset table would no longer satisfy its container's annotation."""
+    t = cls.from_pairs([[1, 2], [0, 1]], ["b", "a"])
+    for got in (t.ordered(), t.offset(3), t.select(t.mask_for("a")),
+                cls.concat([t, t]), cls.empty()):
+        assert type(got) is cls
+    assert type(TagBuilder(cls).build()) is cls
+    bb = TagBuilder(cls)
+    bb.add(0, 1, "x")
+    assert type(bb.build_ordered()) is cls
+    assert repr(t).startswith("<%s 2 rows" % cls.__name__)
+
+
+def test_length_mismatch_names_the_rungs_own_type():
+    with pytest.raises(ValueError, match="FaceTags: elements"):
+        FaceTags([0, 1], [1, 2], ["wall"])
