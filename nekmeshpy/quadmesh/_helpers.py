@@ -109,8 +109,7 @@ def _elevate(qm: QuadMesh, order: int,
         conform.entity_tol(points), "QuadMesh._elevate")
     lm = LineMesh(points, edges, order=order, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior,
-                    qm.boundaries, qm.boundary_tags,
-                    element_tags=qm.element_tags, order=order)
+                    qm.boundaries, qm.element_tags, order=order)
 
 
 def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray,

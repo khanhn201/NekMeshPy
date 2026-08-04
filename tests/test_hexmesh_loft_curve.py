@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import ElementTags, HexMesh, LineMesh, QuadMesh
 
 R, RT, NS, NV = 2.0, 0.6, 2, 6
 RADIAL = np.array([0.5, 1.0])
@@ -172,7 +172,8 @@ def test_order_one_equals_a_plain_loft_of_the_same_sections(loop):
     assert np.array_equal(got.hexes, want.hexes)
     assert np.array_equal(got.hex, want.hex)
     assert np.array_equal(got.face_orient, want.face_orient)
-    assert np.array_equal(got.element_tags, want.element_tags)
+    assert np.array_equal(got.element_tags.ids, want.element_tags.ids)
+    assert np.array_equal(got.element_tags.tags, want.element_tags.tags)
 
 
 def test_open_sweep_has_the_expected_shape_and_caps():
@@ -212,12 +213,12 @@ def test_per_layer_element_tags_override_the_section_quad_tags():
         LineMesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     tagged = QuadMesh(base.lines, base.quad, base.flip, base.interior,
-                      base.boundaries, base.boundary_tags,
-                      element_tags=["fluid"] * base.n_quads)
+                      base.boundaries,
+                      ElementTags.uniform(base.n_quads, "fluid"))
     f = lambda t: tagged.rotate(t, axis=(0, 0, 1))                 # noqa: E731
     layers = ["", "hot", ""]
     blk = HexMesh.loft_curve(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
-    tags = blk.element_tags.reshape(3, base.n_quads)   # hex (layer i, quad q)
+    tags = blk.element_tags.dense(blk.n_hexes).reshape(3, base.n_quads)   # hex (layer i, quad q)
     assert list(np.unique(tags[0])) == ["fluid"]
     assert list(np.unique(tags[1])) == ["hot"]         # non-empty layer tag wins
     assert list(np.unique(tags[2])) == ["fluid"]
@@ -229,12 +230,13 @@ def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
                              element_tags=["a", "b"],
                              first_tag="inlet", last_tag="outlet")
     assert set(blk.boundary_group_tags) == {"wall", "inlet", "outlet"}
-    b, t = blk.boundaries, blk.boundary_tags
+    b = blk.boundaries
     # caps land on faces 5/6 of the first / last layer, the wall on side faces
-    assert set(np.unique(b[t == "inlet"][:, 1])) == {5}
-    assert set(np.unique(b[t == "outlet"][:, 1])) == {6}
-    assert set(np.unique(b[t == "wall"][:, 1])) <= {1, 2, 3, 4}
-    assert list(np.unique(blk.element_tags)) == ["a", "b"]
+    sides = lambda nm: set(np.unique(b.select(b.mask_for(nm)).sides))  # noqa: E731
+    assert sides("inlet") == {5}
+    assert sides("outlet") == {6}
+    assert sides("wall") <= {1, 2, 3, 4}
+    assert blk.element_tags.group_tags == ["a", "b"]
 
 
 def test_loft_rejects_a_mis_sized_element_tags():

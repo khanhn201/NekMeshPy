@@ -15,7 +15,7 @@ def _scaled_jac(mesh):
 
 
 def _tag_count(mesh, name):
-    return int(np.sum(mesh.boundary_tags == name))
+    return mesh.boundaries.count(name)
 
 
 def test_circular_pipe(tmp_path):
@@ -63,7 +63,7 @@ def _wall_nodes(mesh):
         mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
         mesh.quads.interior, mesh.interior, mesh.order)
     ids = [conn[e][interp.hex_face_indices(s, mesh.order)]
-           for (e, s), tag in zip(mesh.boundaries, mesh.boundary_tags)
+           for e, s, tag in mesh.boundaries
            if tag == "wall"]
     return nodes[np.unique(np.concatenate(ids))]
 

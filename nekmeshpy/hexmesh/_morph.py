@@ -80,7 +80,7 @@ def blend(a: HexMesh, b: HexMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [HexMesh(faces, a.hex, a.face_orient,
                 (1.0 - t) * ai + t * bi if ho else None,
-                a.boundaries, a.boundary_tags, order=a.order)
+                a.boundaries, order=a.order)
             for t, faces in zip(fr, quad_blend(a.quads, b.quads, fr))]
 
 
@@ -94,7 +94,7 @@ def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
     incidence rides through verbatim."""
     return HexMesh(quad_affine(mesh.quads, matrix, offset), mesh.hex,
                    mesh.face_orient, affine.apply(mesh.interior, matrix, offset),
-                   mesh.boundaries, mesh.boundary_tags, mesh.element_tags,
+                   mesh.boundaries, mesh.element_tags,
                    order=mesh.order)
 
 

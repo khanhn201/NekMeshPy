@@ -29,8 +29,6 @@ def plot(
         _log.warning("plot skipped (matplotlib unavailable): %s", exc)
         return mesh
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    boundaries = mesh.boundaries
-    bnames = mesh.boundary_tags
     names = list(names)
     colors = [(0.80, 0.80, 0.82), (0.85, 0.20, 0.20),
               (0.20, 0.70, 0.25), (0.20, 0.35, 0.90)]
@@ -39,11 +37,10 @@ def plot(
     ax = fig.add_subplot(111, projection="3d")
     handles = []
     for ti, name in enumerate(names):
-        rows = boundaries[bnames == name, :]
-        if rows.shape[0] == 0:
+        rows = mesh.boundaries.select(mesh.boundaries.mask_for(name))
+        if not len(rows):
             continue
-        polys = [elements[rows[r, 0], mesh.FACE_POINTS[rows[r, 1] - 1, :], :]
-                 for r in range(rows.shape[0])]
+        polys = [elements[e, mesh.FACE_POINTS[s - 1, :], :] for e, s, _ in rows]
         pc = Poly3DCollection(polys, facecolor=colors[ti % len(colors)],
                               edgecolor=(0.15, 0.15, 0.15),
                               linewidths=0.2, alpha=alphas[ti % len(alphas)])

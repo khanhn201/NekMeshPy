@@ -35,7 +35,8 @@ import numpy as np
 
 from .._typing import BoolArray, IntArray, StrArray
 
-__all__ = ["BoundaryTable", "BoundaryBuilder", "ElementTags", "NO_TAGS"]
+__all__ = ["BoundaryTable", "BoundaryBuilder", "ElementTags", "NO_TAGS",
+           "check_tag_range"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -119,7 +120,8 @@ class BoundaryTable:
 
     @property
     def group_tags(self) -> list[str]:
-        """Sorted unique tags.  Unfiltered: a row exists only because it was named."""
+        """Sorted unique tags -- nothing is filtered out, since a row exists in the
+        first place only because it was named."""
         return sorted(set(self.tags.tolist()))
 
     def as_dict(self) -> dict[tuple[int, int], str]:
@@ -286,16 +288,17 @@ class ElementTags:
         return cls(np.zeros(0, np.int64), _empty_str())
 
     @classmethod
-    def from_dense(cls, values: Sequence[str] | StrArray,
-                   n: int | None = None) -> ElementTags:
+    def from_dense(cls, values: Sequence[str] | StrArray, n: int | None = None,
+                   what: str = "elements") -> ElementTags:
         """From a dense per-element array where ``""`` means untagged.
 
         ``n``, when given, is the element count the array must match -- the bridge for
-        every factory whose public argument stays dense."""
+        every factory whose public argument stays dense.  ``what`` names the rung's
+        elements so the error reads in the caller's own vocabulary."""
         v = _str_array(values)
         if n is not None and v.shape[0] != n:
-            raise ValueError("element_tags length (%d) must match elements (%d)"
-                             % (v.shape[0], n))
+            raise ValueError("element_tags length (%d) must match %s (%d)"
+                             % (v.shape[0], what, n))
         ids: IntArray = np.flatnonzero(v != "").astype(np.int64)
         return cls(ids, v[ids])
 
@@ -410,3 +413,29 @@ class ElementTags:
 
 #: The shared zero-length :class:`ElementTags` -- an untagged mesh allocates nothing.
 NO_TAGS: ElementTags = ElementTags.empty()
+
+
+def check_tag_range(element_tags: ElementTags, boundaries: BoundaryTable,
+                    n_elements: int, n_sides: int, what: str) -> None:
+    """Raise if either table names an element or side the mesh does not have.
+
+    A check the containers could not perform while the tags were loose arrays: a
+    dense per-element array is in range by construction, and nothing ever validated
+    the boundary rows at all.  Sparse ids make it cheap and worth doing -- it catches
+    the class of bug where a ``merge`` forgets to offset one of its blocks, which
+    previously surfaced only as a wrong tag in the exported file.
+
+    ``what`` names the rung's elements (``"lines"`` / ``"quads"`` / ``"hexes"``) so
+    the message points at the caller's own vocabulary."""
+    if len(element_tags) and (int(element_tags.ids[-1]) >= n_elements):
+        raise ValueError("element_tags names element %d but there are only %d %s"
+                         % (int(element_tags.ids[-1]), n_elements, what))
+    if len(boundaries):
+        hi = int(boundaries.elements.max())
+        if hi >= n_elements or int(boundaries.elements.min()) < 0:
+            raise ValueError("boundaries names element %d but there are only %d %s"
+                             % (hi, n_elements, what))
+        s_lo, s_hi = int(boundaries.sides.min()), int(boundaries.sides.max())
+        if s_lo < 1 or s_hi > n_sides:
+            raise ValueError("boundaries side %d is outside 1..%d"
+                             % (s_hi if s_hi > n_sides else s_lo, n_sides))

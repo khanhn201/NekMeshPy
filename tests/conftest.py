@@ -73,8 +73,7 @@ def conformal(mesh):
 
 
 def quad_from_entities(points, quads, edge_nodes=None, interior=None,
-                       boundaries=None, boundary_tags=None, element_tags=None,
-                       *, order=1):
+                       boundaries=None, element_tags=None, *, order=1):
     """Local test scaffold: build a ``QuadMesh`` from corner ``points`` ``(P,3)`` +
     CCW ``quads`` ``(Q,4)`` plus already-decomposed high-order tables.
 
@@ -89,13 +88,13 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
     conn = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges, elem_edges, flip = conform.unique_edges(conn, 2)
     lm = LineMesh(pts, edges, order=order, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, boundaries, boundary_tags,
+    return QuadMesh(lm, elem_edges, flip, interior, boundaries,
                     element_tags, order=order)
 
 
 def hex_from_entities(points, hexes, edge_nodes=None, face_nodes=None,
-                      interior=None, boundaries=None, boundary_tags=None,
-                      element_tags=None, *, order=1):
+                      interior=None, boundaries=None, element_tags=None,
+                      *, order=1):
     """Local test scaffold: build a ``HexMesh`` from corner ``points`` ``(P,3)`` +
     Nek-order ``hexes`` ``(E,8)`` plus already-decomposed high-order tables.
 
@@ -114,7 +113,7 @@ def hex_from_entities(points, hexes, edge_nodes=None, face_nodes=None,
     edge_lm = LineMesh(pts, q_edges, order=order, interior=edge_nodes)
     quads = QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
     return HexMesh(quads, elem_faces, face_orient, interior, boundaries,
-                   boundary_tags, element_tags, order=order)
+                   element_tags, order=order)
 
 
 def curved(mesh):
@@ -136,3 +135,13 @@ def read_re2_coords(path):
         rest = f.read()
     coords = elem_block.reshape(num_elem, 25)[:, 1:]  # drop the group double
     return num_elem, coords, rest
+
+
+def assert_same_boundaries(a, b):
+    """The two boundary tables carry the same rows in the same order.
+
+    ``BoundaryTable`` sets ``eq=False`` (the generated ``__eq__`` would compare
+    ndarray fields and raise), so equality is spelt column by column."""
+    assert np.array_equal(a.elements, b.elements)
+    assert np.array_equal(a.sides, b.sides)
+    assert np.array_equal(a.tags, b.tags)

@@ -28,16 +28,15 @@ def _wall_nodes(mesh, name):
     """
     nodes, conn_ho = conformal(mesh)
     order = mesh.order
-    sel = np.asarray(mesh.boundary_tags) == name
-    faces = np.asarray(mesh.boundaries)[sel]
-    assert faces.shape[0] > 0, "no boundary faces tagged %r" % name
+    faces = mesh.boundaries.select(mesh.boundaries.mask_for(name))
+    assert len(faces) > 0, "no boundary faces tagged %r" % name
     idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    picked = np.concatenate([conn_ho[e][idx[int(f)]] for e, f in faces])
+    picked = np.concatenate([conn_ho[e][idx[int(f)]] for e, f, _t in faces])
     return nodes[np.unique(picked)]
 
 
 def _tag_count(mesh, name):
-    return int(np.sum(mesh.boundary_tags == name))
+    return mesh.boundaries.count(name)
 
 
 def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):

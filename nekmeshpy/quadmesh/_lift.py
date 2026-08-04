@@ -25,7 +25,6 @@ import numpy as np
 
 from .._typing import (
     FloatArray,
-    IntArray,
     Point,
     PointArray,
     SmoothingMethod,
@@ -40,6 +39,7 @@ from ..linemesh._morph import transform as line_transform
 from ..linemesh._morph import translate
 from ..model import frames
 from ..model.fields import reject_loop_caps, validate_layers
+from ..model.tags import BoundaryBuilder
 from ._assemble import _loft_evaluated, loft
 from ._helpers import _apply_smoothing, _check_boundary
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
@@ -137,10 +137,10 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
     # inner_tag / outer_tag overrides that for the whole ring.
     inner_caps: str | StrArray = (
         inner_tag if inner_tag
-        else (inner.element_tags if inner.element_group_tags else ""))
+        else (inner.element_tags.dense(inner.n_lines) if inner.element_tags else ""))
     outer_caps: str | StrArray = (
         outer_tag if outer_tag
-        else (outer.element_tags if outer.element_group_tags else ""))
+        else (outer.element_tags.dense(outer.n_lines) if outer.element_tags else ""))
 
     # Blend the loops (carrying their curved blocks) and loft directly -- ring k =
     # blend_ho(inner, outer, t_k), so a high-order annulus is curved throughout, not
@@ -204,22 +204,20 @@ def from_grid(
     line_tags: StrArray = np.full(ni, element_tag)
     # tagged profile end points -> the two swept walls (loft: vertex 1 -> quad side
     # 4, vertex 2 -> side 2), which is exactly x_min / x_max.
-    pbnd: list[list[int]] = []
-    pnames: list[str] = []
+    pbb = BoundaryBuilder()
     for side in ("x_min", "x_max"):
         if side in tags:
             # loft carries profile end point side 1 -> quad side 4, side 2 -> 2
             vertex = 1 if _GRID_SIDES[side][1] == 4 else 2
-            pbnd.append([0 if vertex == 1 else ni - 1, vertex])
-            pnames.append(tags[side])
-    pbnd_a: IntArray = np.asarray(pbnd, dtype=np.int64).reshape(-1, 2)
+            pbb.add(0 if vertex == 1 else ni - 1, vertex, tags[side])
+    pbnd_t = pbb.build()
     # each profile is itself a ``LineMesh.loft`` of its ``i`` points: the rung below
     # builds the open ``i = 0..ni`` chain and, at order > 1, each segment's private
     # interior as the straight GLL blend of its two endpoints.  ``loft`` here builds
     # the sweep-direction rungs the same way and the quad interiors as the Coons
     # patch of the two, so a flat grid cell stays exact.
     slices = [line_loft(P[:, j, :], element_tags=line_tags,
-                        boundaries=pbnd_a, boundary_tags=pnames, order=order)
+                        boundaries=pbnd_t, order=order)
               for j in range(nj1)]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
     return loft(slices, first_tag=tags.get("y_min", ""),

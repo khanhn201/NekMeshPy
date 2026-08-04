@@ -102,7 +102,7 @@ def test_tags_follow_their_face():
     t = _unit_tet(2, tags=("bottom", "front", "left", "slant"))
     names = set(t.boundary_group_tags)
     assert names == {"bottom", "front", "left", "slant"}
-    counts = {n: int(np.sum(t.boundary_tags == n)) for n in names}
+    counts = {n: t.boundaries.count(n) for n in names}
     assert set(counts.values()) == {3 * 2 * 2}          # 3 patches of n x n each
     # a tagged face's boundary rows must be genuine boundary faces
     hexes = t.hexes
@@ -111,7 +111,7 @@ def test_tags_follow_their_face():
         for s in range(6):
             k = tuple(sorted(int(v) for v in hexes[e][HexMesh.FACE_POINTS[s]]))
             key[k] = key.get(k, 0) + 1
-    for e, s in t.boundaries:
+    for e, s, _tag in t.boundaries:
         k = tuple(sorted(int(v) for v in hexes[e][HexMesh.FACE_POINTS[s - 1]]))
         assert key[k] == 1
 
@@ -205,7 +205,7 @@ def test_quadrant_faces_make_an_octant():
     # cuts through the ball, so they are not (and must not be).
     ids = np.unique(np.concatenate(
         [t.hexes[e][list(HexMesh.FACE_POINTS[s - 1])]
-         for (e, s), tag in zip(t.boundaries, t.boundary_tags) if tag == "sphere"]))
+         for e, s, tag in t.boundaries if tag == "sphere"]))
     assert np.allclose(np.linalg.norm(t.points[ids], axis=1), 1.0, atol=1e-12)
     flat = np.setdiff1d(_boundary_nodes(t), ids)
     assert flat.size > 0

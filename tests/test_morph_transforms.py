@@ -12,6 +12,7 @@ side: it moves no coordinate and only relabels, carrying the high-order nodes wi
 
 import numpy as np
 import pytest
+from conftest import assert_same_boundaries
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh
 
@@ -65,9 +66,9 @@ def test_placement_keeps_topology_and_tags(order):
     ring, section, block = _meshes(order)
     for mesh in (ring, section, block):
         out = mesh.translate((1.0, 0.0, 0.0))
-        assert np.array_equal(out.element_tags, mesh.element_tags)
-        assert np.array_equal(out.boundaries, mesh.boundaries)
-        assert np.array_equal(out.boundary_tags, mesh.boundary_tags)
+        assert np.array_equal(out.element_tags.ids, mesh.element_tags.ids)
+        assert np.array_equal(out.element_tags.tags, mesh.element_tags.tags)
+        assert_same_boundaries(out.boundaries, mesh.boundaries)
         assert out.order == mesh.order
     assert np.array_equal(ring.translate((1.0, 0, 0)).lines, ring.lines)
     assert np.array_equal(section.rotate(0.3).quads, section.quads)
@@ -212,17 +213,18 @@ def test_reverse_is_an_involution(order):
     assert np.array_equal(back.points, lm.points)
     assert np.array_equal(back.lines, lm.lines)
     assert np.array_equal(back.interior, lm.interior)
-    assert np.array_equal(back.element_tags, lm.element_tags)
+    assert np.array_equal(back.element_tags.ids, lm.element_tags.ids)
+    assert np.array_equal(back.element_tags.tags, lm.element_tags.tags)
 
 
 def test_reverse_remaps_tags_and_boundaries_to_the_same_physical_points():
     lm = LineMesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
                        element_tags=["a", "b"], first_tag="in", last_tag="out")
     out = lm.reverse()
-    assert out.element_tags.tolist() == ["b", "a"]
+    assert out.element_tags.dense(out.n_lines).tolist() == ["b", "a"]
     # the tag that named the x=0 end still names it after the relabel
     tagged = {t: out.points[out.lines[e, s - 1]].tolist()
-              for (e, s), t in zip(out.boundaries, out.boundary_tags)}
+              for e, s, t in out.boundaries}
     assert tagged["in"] == [0.0, 0.0, 0.0]
     assert tagged["out"] == [2.0, 0.0, 0.0]
 
@@ -239,7 +241,6 @@ def test_line_loft_caps_accept_the_array_form_like_the_rungs_above():
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
     scalar = LineMesh.loft(P, first_tag="in", last_tag="out")
     array = LineMesh.loft(P, first_tag=["in"], last_tag=np.array(["out"]))
-    assert np.array_equal(array.boundaries, scalar.boundaries)
-    assert np.array_equal(array.boundary_tags, scalar.boundary_tags)
+    assert_same_boundaries(array.boundaries, scalar.boundaries)
     with pytest.raises(ValueError, match="must match cap nodes"):
         LineMesh.loft(P, first_tag=["in", "also-in"])

@@ -20,6 +20,7 @@ The contract these pin down, in order of how badly getting it wrong would hurt:
 
 import numpy as np
 import pytest
+from conftest import assert_same_boundaries
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh
 from nekmeshpy.model import conform, frames
@@ -155,8 +156,7 @@ def test_a_straight_path_reproduces_extrude(order):
                          first_tag="in", last_tag="out")
     assert np.allclose(sw.points, ex.points, atol=1e-14)
     assert np.array_equal(sw.hexes, ex.hexes)
-    assert np.array_equal(sw.boundaries, ex.boundaries)
-    assert np.array_equal(sw.boundary_tags, ex.boundary_tags)
+    assert_same_boundaries(sw.boundaries, ex.boundaries)
 
 
 def test_the_section_lands_at_station_zero_as_authored():
@@ -202,8 +202,8 @@ def test_loop_gives_a_closed_torus_with_no_duplicated_layer(order):
     assert tor.n_points == sec.n_points * nz        # no seam profile duplicated
     # closed in the sweep direction: the only boundary left is the tube wall, and it
     # is a single unbroken sleeve of one face per wall line per layer -- no caps
-    assert list(np.unique(tor.boundary_tags)) == ["wall"]
-    assert tor.boundaries.shape[0] == NU * nz
+    assert list(np.unique(tor.boundaries.tags)) == ["wall"]
+    assert len(tor.boundaries) == NU * nz
     assert tor.is_watertight() and tor.is_conforming()
     x, y, z = hex_nodes(tor).T
     assert np.max(np.hypot(np.hypot(x, y) - RB, z)) == pytest.approx(RP, abs=1e-13)
@@ -240,7 +240,7 @@ def test_per_layer_element_tags_override_the_section_tags():
     blk = HexMesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 4),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
                         element_tags=["", "hot", ""])
-    tags = blk.element_tags.reshape(3, sec.n_quads)      # hex e = layer*M + q
+    tags = blk.element_tags.dense(blk.n_hexes).reshape(3, sec.n_quads)      # hex e = layer*M + q
     assert list(np.unique(tags[1])) == ["hot"]
     assert list(np.unique(tags[0])) == list(np.unique(tags[2])) == [""]
 
@@ -350,7 +350,7 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
     assert r.min() == pytest.approx(RB - RP, abs=1e-13)
     assert r.max() == pytest.approx(RB + RP, abs=1e-13)
     assert sorted(rib.boundary_group_tags) == ["a", "b"]
-    assert list(np.unique(rib.element_tags)) == ["fin"]
+    assert rib.element_tags.group_tags == ["fin"]
 
 
 def test_quad_rung_needs_a_normal_for_a_collinear_profile():

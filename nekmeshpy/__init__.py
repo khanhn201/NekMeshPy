@@ -19,6 +19,7 @@ from .model import fields, topology
 from .model.fields import AxisLinearField, ConstantField, DistanceField, Field, MinField
 from .model.mesh import Mesh
 from .model.physical import PhysicalGroup, PhysicalGroups
+from .model.tags import BoundaryBuilder, BoundaryTable, ElementTags
 from .quadmesh import NO_BOUNDARY, QuadMesh
 from .quadmesh.smoothing import (
     SECTION_METHODS,
@@ -34,6 +35,7 @@ __all__ = [
     "QuadMesh",
     "HexMesh",
     "NO_BOUNDARY",
+    "BoundaryTable", "BoundaryBuilder", "ElementTags",
     "Mesh",
     "PhysicalGroup", "PhysicalGroups",
     "topology",

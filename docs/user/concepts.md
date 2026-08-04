@@ -129,17 +129,22 @@ in {mod}`nekmeshpy.trimesh.ops` (reached as `nekmeshpy.trimesh.ops`).
 Both **propagate up the ladder** (line → quad → hex) on `extrude` / `loft`, and
 both are no-ops when untagged.
 
-### `element_tags` — dense, per-element (region / material)
+### `element_tags` — an `ElementTags`, sparse (region / material)
 
-One tag per line / quad / hex (`""` = untagged). Set at construction on the
-`LineMesh`, copied by the section factories onto the section edges/quads and
-thence onto the hex faces/hexes. `element_group_tags` is the sorted unique
-non-empty set.
+Names whichever lines / quads / hexes carry a region tag, as `ids` + `tags`. An
+untagged mesh stores nothing at all, and there is no `""` sentinel: an element is
+either named or absent. Set at construction on the `LineMesh`, copied by the
+section factories onto the section edges/quads and thence onto the hex
+faces/hexes. `element_group_tags` is the sorted unique set; `dense(n)`
+materializes the one-slot-per-element form where a caller wants it.
 
-### `boundary_tags` — sparse, parallel with `boundaries`
+Note `len(element_tags)` is the number of **tagged** elements, not the element
+count — use `n_lines` / `n_quads` / `n_hexes` for that.
 
-A sparse string array parallel with `boundaries` `(Nbc,2)`. The second column is
-the "side" at each level:
+### `boundaries` — a `BoundaryTable`, coupling rows with their names
+
+`(element, side, tag)` rows in one object, rather than two arrays a caller has to
+keep in step. The "side" is the rung's own:
 
 - `LineMesh`: `[elem id, side ∈ {1,2}]` → end **point** `s-1`.
 - `QuadMesh`: `[quad id, side ∈ {1..4}]` → **edge** `EDGE_POINTS[s-1]`.
@@ -148,6 +153,10 @@ the "side" at each level:
 On `extrude`, line end-point tags become quad boundary **edges**, then hex
 boundary **faces**. `boundary_group_tags` is the sorted unique set. See
 `examples/flow_past_cylinder.py`.
+
+Row order is meaningful and never changes implicitly — `ordered()` is the one
+explicit canonical sort. The `.re2` boundary block is written in stored order, and
+the `.vtu` writer resolves a node touched by several rows to the **last** of them.
 
 ### Tag at the lowest level; upper overrides lower
 
@@ -164,8 +173,8 @@ one falls through (a present-but-empty `side_tags[side]` / `NO_BOUNDARY`
 suppresses the side). The named-side override is spelt `side_tags` — a
 **mapping** keyed `bottom` / `right` / `top` / `left`, on `QuadMesh.structured`
 and on both `rectangle` conveniences alike — not the positional 4-list it was and
-not `boundary_tags`, which everywhere else means the sparse
-`[element, side]`-parallel array. Sweep end caps (`first_tag` / `last_tag`) are named at the
+not `boundaries`, which everywhere else means the `BoundaryTable` of
+`(element, side, tag)` rows. Sweep end caps (`first_tag` / `last_tag`) are named at the
 hex level — no lower level exists for them.
 
 ## Section factories (`QuadMesh` classmethods)
@@ -219,7 +228,7 @@ returning a **new** mesh:
 | `mesh.scale(factor, center=(0,0,0))` | scale about `center` by a scalar or a `(3,)` per-axis vector (every factor must be positive) |
 | `mesh.transform(matrix, offset=(0,0,0))` | the general case the other three wrap: `p @ matrix.T + offset` |
 
-Only coordinates move: connectivity, `element_tags`, `boundaries` and `boundary_tags`
+Only coordinates move: connectivity, `element_tags` and `boundaries`
 ride through verbatim, so a placed mesh keeps its numbering and its BC markers. The map
 reaches **every** node, private high-order `interior` tables included — a rotated
 {meth}`~nekmeshpy.linemesh.LineMesh.circle` is still an exact circle, and a rigid map
@@ -501,7 +510,7 @@ high-order analog of `points` + `quads`. That is the single node numbering the `
 writer and the order-N quality metrics read; `nodes[conn_ho]` is the transient
 per-element block whenever one is genuinely needed.
 
-Both `element_tags` and `boundary_tags` propagate exactly as in the linear case;
+Both `element_tags` and `boundaries` propagate exactly as in the linear case;
 the extra nodes are geometry only and carry no tags of their own.
 
 (true-geometry-vs-straight-subdivision)=

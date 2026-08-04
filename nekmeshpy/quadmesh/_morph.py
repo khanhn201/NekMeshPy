@@ -76,8 +76,7 @@ def blend(a: QuadMesh, b: QuadMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [QuadMesh(lm, a.quad, a.flip,
                 (1.0 - t) * ai + t * bi if ho else None,
-                boundaries=a.boundaries, boundary_tags=a.boundary_tags,
-                order=a.order)
+                boundaries=a.boundaries, order=a.order)
             for t, lm in zip(fr, line_blend(a.lines, b.lines, fr))]
 
 
@@ -91,7 +90,7 @@ def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh
     affine map is a pure point-space placement, so nothing is re-derived."""
     return QuadMesh(line_affine(mesh.lines, matrix, offset), mesh.quad, mesh.flip,
                     affine.apply(mesh.interior, matrix, offset),
-                    boundaries=mesh.boundaries, boundary_tags=mesh.boundary_tags,
+                    boundaries=mesh.boundaries,
                     element_tags=mesh.element_tags, order=mesh.order)
 
 

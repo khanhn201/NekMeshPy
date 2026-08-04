@@ -390,7 +390,7 @@ def test_loop_tags_one_element_per_line_including_the_seam():
     tags = ["a", "a", "b", "b", "seam"]
     ring = LineMesh.loft_curve(_circle_f(), _ring_fractions(n), loop=True,
                                order=2, element_tags=tags)
-    assert ring.element_tags.tolist() == tags        # n tags, not n+1
+    assert ring.element_tags.dense(ring.n_lines).tolist() == tags        # n tags, not n+1
     with pytest.raises(ValueError, match="element_tags length"):
         LineMesh.loft_curve(_circle_f(), _ring_fractions(n), loop=True,
                             element_tags=tags + ["extra"])
@@ -414,7 +414,7 @@ def test_loop_rejects_fewer_than_three_fractions():
 def test_element_tags_land_on_the_elements():
     tags = ["a", "a", "b", "b", "b"]
     lm = LineMesh.loft_curve(_collar, _uniform(5), order=2, element_tags=tags)
-    assert lm.element_tags.tolist() == tags
+    assert lm.element_tags.dense(lm.n_lines).tolist() == tags
     assert lm.element_group_tags == ["a", "b"]
 
 

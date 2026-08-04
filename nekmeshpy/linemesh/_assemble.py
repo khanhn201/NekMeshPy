@@ -35,6 +35,7 @@ from .._typing import (
 )
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
+from ..model.tags import BoundaryBuilder, BoundaryTable, ElementTags
 from ._query import boundary_points
 from .linemesh import LineMesh, _as_points
 
@@ -44,9 +45,8 @@ def loft(
     *,
     loop: bool = False,
     interior: PointArray | None = None,
-    boundaries: IntArray | None = None,
-    boundary_tags: StrArray | Sequence[str] | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
+    boundaries: BoundaryTable | None = None,
+    element_tags: Sequence[str] | StrArray | None = None,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
     order: int = 1,
@@ -93,28 +93,20 @@ def loft(
     else:
         lines = np.column_stack([idx[:-1], idx[1:]])
 
-    bnd = boundaries
-    names = boundary_tags
+    bnd = boundaries if boundaries is not None else BoundaryTable.empty()
     # a chain's cap is a single end node, so ``_cap_tags`` normalizes to one tag --
     # the rung-1 form of the same scalar-or-per-element argument ``QuadMesh.loft`` /
     # ``HexMesh.loft`` take, so all three rungs accept the same shapes.
     first, last = LineMesh._cap_tags(first_tag)[0], LineMesh._cap_tags(last_tag)[0]
     if first or last:
-        rows = [[int(r[0]), int(r[1])]
-                for r in np.asarray(bnd if bnd is not None else
-                                    np.zeros((0, 2), np.int64),
-                                    dtype=np.int64).reshape(-1, 2)]
-        tags = [str(t) for t in np.asarray(
-            names if names is not None else np.empty(0, dtype=np.str_),
-            dtype=np.str_).reshape(-1).tolist()]
+        bb = BoundaryBuilder()
+        bb.extend(bnd)
         L = lines.shape[0]
         if first and L:
-            rows.append([0, 1])
-            tags.append(first)
+            bb.add(0, 1, first)
         if last and L:
-            rows.append([L - 1, 2])
-            tags.append(last)
-        bnd, names = LineMesh._order_bnd(rows, tags)
+            bb.add(L - 1, 2, last)
+        bnd = bb.build_ordered()
 
     if order > 1 and interior is None:
         # straight GLL blend between each line's two endpoints -- the same
@@ -123,7 +115,9 @@ def loft(
         b: PointArray = pts[lines[:, 1]]
         g = gll_nodes(order)[1:order]              # interior GLL nodes only
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
-    return LineMesh(pts, lines, interior, bnd, names, element_tags, order=order)
+    return LineMesh(pts, lines, interior, bnd,
+                    ElementTags.from_dense(element_tags, lines.shape[0], "lines")
+                    if element_tags is not None else None, order=order)
 
 
 def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
@@ -389,28 +383,20 @@ def merge(meshes: Sequence[LineMesh], *,
     points, point_id = _weld(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
-    bnd_list: list[IntArray] = []
-    name_list: list[StrArray] = []
-    etag_list: list[StrArray] = []
+    bnd_list: list[BoundaryTable] = []
+    etag_list: list[ElementTags] = []
     noff = loff = 0
     for m, c in zip(meshes, counts):
         line_list.append(point_id[m.lines + noff])   # local -> welded id
-        etag_list.append(m.element_tags)
-        if m.boundaries.shape[0]:
-            b: IntArray = m.boundaries.copy()
-            b[:, 0] += loff                          # shift line ids; sides local
-            bnd_list.append(b)
-            name_list.append(m.boundary_tags)
+        # ids shift by this block's offset; sides stay local to their element
+        etag_list.append(m.element_tags.offset(loff))
+        bnd_list.append(m.boundaries.offset(loff))
         noff += c
         loff += m.n_lines
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
-    etags = (np.concatenate(etag_list) if etag_list
-             else np.empty(0, dtype=np.str_))
-    bnd = (np.concatenate(bnd_list, axis=0) if bnd_list
-           else np.zeros((0, 2), np.int64))
-    names = (np.concatenate(name_list) if name_list
-             else np.empty(0, dtype=np.str_))
+    etags = ElementTags.concat(etag_list)
+    bnd = BoundaryTable.concat(bnd_list)
 
     # order-N: welding only touches endpoints (corners, which are re-numbered into
     # the merged points), and every high-order node of a line is *private*, so the
@@ -423,7 +409,7 @@ def merge(meshes: Sequence[LineMesh], *,
     if meshes:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
 
-    return LineMesh(points, lines, interior, bnd, names, etags, order=order)
+    return LineMesh(points, lines, interior, bnd, etags, order=order)
 
 
 #: Variable-arity combinators bound onto ``LineMesh`` as ``staticmethod``.

@@ -1,8 +1,9 @@
 """1-D mesh container: line elements ``(L,2)`` over a shared ``(N,3)`` point array.
 
 The line sibling of QuadMesh/HexMesh; it can branch rather than being a single
-ordered path. It carries a dense per-line ``element_tags`` and sparse tagged
-``boundaries`` (a line's boundary is a point), both of which sweep up on extrude.
+ordered path. It carries sparse per-line ``element_tags`` and a sparse tagged
+``boundaries`` table (a line's boundary is a point), both of which sweep up on
+extrude.
 Open vs closed is a property of the ``lines`` connectivity itself -- a loop is a
 cycle of line elements with no degree-1 end point -- and is stored nowhere;
 factories build the common cases (``loft`` / ``line`` / ``arc`` / ``circle`` /
@@ -41,7 +42,7 @@ from .._typing import (
     PointArray,
     StrArray,
 )
-from ..model.tags import BoundaryTable
+from ..model.tags import NO_TAGS, BoundaryTable, ElementTags, check_tag_range
 
 
 def _as_points(points: NDArray[Any]) -> PointArray:
@@ -74,8 +75,8 @@ def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
 
 class LineMesh:
     """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a
-    dense per-line ``element_tags``, and ``[line id, side 1-2]`` ``boundaries`` with
-    parallel ``boundary_tags``. Build with ``loft`` / ``line`` / ``arc`` / ``circle``
+    sparse per-line ``element_tags``, and a ``boundaries`` table of tagged end points
+    (``side`` 1-2). Build with ``loft`` / ``line`` / ``arc`` / ``circle``
     / ``rectangle``."""
 
     # local line "edges": row s-1 is side s -> the single local vertex it names.
@@ -86,19 +87,19 @@ class LineMesh:
         points: NDArray[Any],
         lines: IntArray,
         interior: PointArray | None = None,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        boundaries: BoundaryTable | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> None:
         """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), the **required**
         ``lines`` ``(L,2)`` connectivity, the per-line ``interior`` nodes, an optional
-        tagged-boundary list ``boundaries`` ``(Nbc,2)`` with parallel
-        ``boundary_tags``, and an optional dense ``element_tags`` ``(L,)``.
+        :class:`BoundaryTable <nekmeshpy.model.tags.BoundaryTable>` of tagged end
+        points, and an optional :class:`ElementTags
+        <nekmeshpy.model.tags.ElementTags>` naming whichever lines are tagged.
 
         The argument order is the ladder's: ``(rung below, incidence, interior,
-        boundaries, boundary_tags, element_tags, *, order)``, matching
+        boundaries, element_tags, *, order)``, matching
         :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` (``lines, quad, flip,
         interior, ...``) and :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>`
         (``quads, hex, face_orient, interior, ...``) position for position -- a line element has no orientation bit, so it simply
@@ -124,27 +125,14 @@ class LineMesh:
         self.points: PointArray = _as_points(points)
         self.lines: IntArray = np.asarray(lines, dtype=np.int64).reshape(-1, 2)
 
-        if element_tags is None:
-            self.element_tags: StrArray = np.full(
-                self.lines.shape[0], "", dtype=np.str_)
-        else:
-            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
-            if et.shape[0] != self.lines.shape[0]:
-                raise ValueError(
-                    "element_tags length (%d) must match lines (%d)"
-                    % (et.shape[0], self.lines.shape[0]))
-            self.element_tags = et
-
-        # tagged boundary points [line id, side 1-2] parallel with boundary_tags.
-        self.boundaries: IntArray = (
-            np.zeros((0, 2), np.int64) if boundaries is None
-            else np.asarray(boundaries, np.int64).reshape(-1, 2))
-        self.boundary_tags: StrArray = (
-            np.empty(0, dtype=np.str_) if boundary_tags is None
-            else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
-        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
-            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
-                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
+        #: which lines carry a region tag (sparse -- an untagged mesh stores nothing)
+        self.element_tags: ElementTags = (
+            NO_TAGS if element_tags is None else element_tags)
+        #: tagged end points, ``side`` 1-2, coupled with their names
+        self.boundaries: BoundaryTable = (
+            BoundaryTable.empty() if boundaries is None else boundaries)
+        check_tag_range(self.element_tags, self.boundaries,
+                         self.lines.shape[0], 2, "lines")
 
         self._order = int(order)
         #: ``(L, order-1, 3)`` per-line private high-order interior nodes (ascending GLL
@@ -227,18 +215,17 @@ class LineMesh:
     @property
     def n_boundaries(self) -> int:
         """Number of tagged boundary points."""
-        return self.boundaries.shape[0]
+        return len(self.boundaries)
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-line element tags present on the mesh."""
-        return sorted({t for t in self.element_tags.tolist() if t})
+        return self.element_tags.group_tags
 
     @property
     def boundary_group_tags(self) -> list[str]:
         """Sorted unique tags of the tagged boundary points present on the mesh."""
-        return sorted(set(self.boundary_tags.tolist()))
-
+        return self.boundaries.group_tags
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod
@@ -263,26 +250,12 @@ class LineMesh:
                              % (arr.shape[0], N))
         return [str(x) for x in arr.tolist()]
 
-    @staticmethod
-    def _order_bnd(
-        bnd: Sequence[Sequence[int]] | IntArray,
-        tags: Sequence[str] | StrArray,
-    ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(line id, side)``, applying the same
-        permutation to the parallel ``tags`` array.
-
-        Delegates to :class:`~nekmeshpy.model.tags.BoundaryTable` so the one
-        canonical ordering lives in one place; this wrapper keeps the paired-array
-        return while the containers are migrated onto the table."""
-        t = BoundaryTable.from_pairs(bnd, tags).ordered()
-        return t.rows, t.tags
-
     def _seg_tags(self) -> list[str] | None:
-        """The dense ``element_tags`` as a ``list[str]`` for the ordered ops, or
+        """The element tags densified to a ``list[str]`` for the ordered ops, or
         ``None`` if every element is untagged (so an untagged mesh stays untagged)."""
-        if self.element_tags.size and np.any(self.element_tags != ""):
-            return [str(x) for x in self.element_tags.tolist()]
-        return None
+        if not self.element_tags:
+            return None
+        return [str(x) for x in self.element_tags.dense(self.lines.shape[0]).tolist()]
 
     # -- arc length ------------------------------------------------------
     @property

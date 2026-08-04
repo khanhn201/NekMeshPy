@@ -54,3 +54,10 @@ behind the B-rep) — is internal; see
 .. automodule:: nekmeshpy.model.fields
    :members:
 ```
+
+## `model.tags`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.tags
+   :members:
+```

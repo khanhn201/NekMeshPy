@@ -4,7 +4,7 @@ boundary / edges and mesh the bounded region (``structured`` / ``rectangle`` /
 
 These are plain free functions returning a ``QuadMesh``; ``quadmesh/__init__.py``
 binds each entry of ``FACTORIES`` onto the class, so callers use ``QuadMesh.ogrid(...)``
-etc.  They build on the core constructors / ``loft`` / ``_order_bnd``, referenced by a
+etc.  They build on the core constructors / ``loft``, referenced by a
 lazy in-function import to avoid the import cycle with ``quadmesh.py`` (which the package
 imports to assemble the class); the shared ``_apply_smoothing`` / ``_check_boundary``
 live in ``_helpers.py``.  Internal toolkit code calls these free functions directly.
@@ -29,6 +29,7 @@ from ..linemesh._open import line
 from ..model import conform
 from ..model.fields import gll_nodes, validate_layers
 from ..model.interp import coons_grid
+from ..model.tags import BoundaryBuilder, BoundaryTable
 from ._assemble import merge
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
 
@@ -236,8 +237,8 @@ def _ring_overlays(ring_pts: Sequence[PointArray], wall: LineMesh,
 
 
 def _curve_rows(rows: Sequence[tuple[int, int]], curve: LineMesh,
-               override: str) -> tuple[list[list[int]], list[str]]:
-    """The tagged ``(boundaries, boundary_tags)`` rows naming one side of a region.
+               override: str) -> BoundaryTable:
+    """The tagged boundary rows naming one side of a region.
 
     ``rows[m]`` is the ``(quad id, quad side)`` that carries element ``m`` of
     ``curve``, so the side is named element by element from the curve's own per-line
@@ -246,14 +247,11 @@ def _curve_rows(rows: Sequence[tuple[int, int]], curve: LineMesh,
     ``override`` (a factory's ``wall_tag`` / ``side_tags[...]``) names the whole side
     instead, and an element left untagged either way emits no row at all."""
     seg = curve._seg_tags()
-    bnd: list[list[int]] = []
-    names: list[str] = []
+    bb = BoundaryBuilder()
     for m, (qid, side) in enumerate(rows):
-        nm = override if override else (seg[m] if seg is not None else "")
-        if nm:
-            bnd.append([qid, side])
-            names.append(nm)
-    return bnd, names
+        bb.add_if_tagged(qid, side, override if override
+                         else (seg[m] if seg is not None else ""))
+    return bb.build()
 
 
 def _sub_chain(chain: LineMesh, segs: IntArray, seg2line: IntArray) -> LineMesh:
@@ -292,9 +290,9 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
     ``side_tags`` (keyed by ``"bottom"`` / ``"right"`` / ``"top"`` /
     ``"left"``) overrides that -- a non-empty entry replaces the side's tag, a
     present-but-empty entry suppresses the side.  It is spelt ``side_tags``, not
-    ``boundary_tags``, because these are *named sides*: ``boundary_tags`` everywhere
-    else in the toolkit is the dense ``StrArray`` running parallel with a mesh's
-    ``boundaries (Nbc,2)`` rows, a different shape entirely.
+    ``boundaries``, because these are *named sides*: a mesh's ``boundaries`` is a
+    :class:`BoundaryTable <nekmeshpy.model.tags.BoundaryTable>` of
+    ``(element, side, tag)`` rows, a different shape entirely.
 
     The order comes from the edges (all four must agree).  At ``order > 1`` each
     edge's own private high-order ``interior`` is **stamped onto the matching side**
@@ -374,8 +372,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         if side not in side_rows:
             raise ValueError("structured side_tags side must be one of "
                              "bottom/right/top/left, got %r" % side)
-    bnd: list[list[int]] = []
-    names: list[str] = []
+    bb = BoundaryBuilder()
     # each side is named by its edge's uniform element tag; a non-empty
     # side_tags[side] overrides, a present-but-empty entry suppresses it.
     for side, rows in side_rows.items():
@@ -387,9 +384,8 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         if not nm:                       # NO_BOUNDARY / "" / untagged -> no row
             continue
         for q, s in rows:
-            bnd.append([q, s])
-            names.append(nm)
-    qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
+            bb.add(q, s, nm)
+    qm = QuadMesh.from_corners(points, quads, bb.build_ordered())
     if order > 1:
         # Every node already exists in ``S``; cut it into per-element blocks and let
         # the B-rep tables fall out.  No overlay is needed -- the boundary rows of the
@@ -408,8 +404,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         lm, elem_edges, flip, interior = entities_from_blocks(
             blocks, quads, points, order, "QuadMesh.structured")
         qm = QuadMesh(lm, elem_edges, flip, interior,
-                      qm.boundaries, qm.boundary_tags,
-                      element_tags=qm.element_tags, order=order)
+                      qm.boundaries, qm.element_tags, order=order)
     # smooth last: a repositioning smoother rejects order > 1 (high-order smoothing
     # is not implemented).
     return _apply_smoothing(qm, smoothing_method)
@@ -505,9 +500,8 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
     # wall edges = side 1 of the outermost ring's quads (rows n_side^2 +
     # (n_radial-1)*P onward), named from the boundary loop's own per-segment tags.
     wall_q0 = n_side * n_side + (n_radial - 1) * P
-    bnd, names = _curve_rows([(wall_q0 + m, 1) for m in range(P)],
-                            boundary, wall_tag)
-    qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
+    bnd = _curve_rows([(wall_q0 + m, 1) for m in range(P)], boundary, wall_tag)
+    qm = QuadMesh.from_corners(points, quads, bnd.ordered())
     # order-N: the ring quad is [b[k], b[kn], a[kn], a[k]] with b the outer layer, so
     # the outward-facing local side is 1.  ``layers[1:]`` are the ring curves, ring 0
     # being the straight block perimeter that stays with its bilinear guess.
@@ -635,10 +629,9 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     # wall arc edges = side 3 of the outermost ring's quads (rows (ni*nj) +
     # (Nr-1)*(4*Nt) onward); wall edge k tracks arc segment k.
     wall_q0 = ni * nj + (Nr - 1) * (4 * Nt)
-    bnd, names = _curve_rows([(wall_q0 + k, 3) for k in range(4 * Nt)],
-                            arc, wall_tag)
+    bnd = _curve_rows([(wall_q0 + k, 3) for k in range(4 * Nt)], arc, wall_tag)
     qm = QuadMesh.from_corners(points, np.array(quads, dtype=np.int64),
-                               *QuadMesh._order_bnd(bnd, names))
+                               bnd.ordered())
     # order-N: the ring quad here is [a[k], a[k+1], b[k+1], b[k]] with b the outer
     # layer, so the outward-facing local side is 3 (as the wall always was).
     # ``_blended_ring`` re-anchors each ring on its snapped spine end points.
@@ -856,13 +849,11 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
         ("seam2", seam2, [(j, 4) for j in range(n)]
          + [(q0 + r * (2 * n) + (2 * n - 1), 2) for r in range(Nr)]),
     )
-    bnd, names = _curve_rows([(wall_q0 + m, 1) for m in range(2 * n)],
-                            arc, wall_tag)
+    bb = BoundaryBuilder()
+    bb.extend(_curve_rows([(wall_q0 + m, 1) for m in range(2 * n)], arc, wall_tag))
     for which, sm, rows in seam_sides:
-        seam_bnd, seam_names = _curve_rows(rows, sm, st.get(which, ""))
-        bnd += seam_bnd
-        names += seam_names
-    qm = QuadMesh.from_corners(points, quads, *QuadMesh._order_bnd(bnd, names))
+        bb.extend(_curve_rows(rows, sm, st.get(which, "")))
+    qm = QuadMesh.from_corners(points, quads, bb.build_ordered())
 
     # -- order N.  Overlay every O-ring so the wall's curvature blends inward, and both
     # seams with their *own* nodes so a bowed radius is meshed exactly rather than

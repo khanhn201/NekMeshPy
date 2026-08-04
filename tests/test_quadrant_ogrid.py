@@ -112,7 +112,7 @@ def test_tags_ride_up_from_the_line_level():
     s2 = _radius(np.pi / 2, fr)
     q = QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     assert q.boundary_group_tags == ["sym", "wall"]
-    counts = {t: int(np.sum(q.boundary_tags == t)) for t in q.boundary_group_tags}
+    counts = {t: q.boundaries.count(t) for t in q.boundary_group_tags}
     assert counts["wall"] == 2 * n
     assert counts["sym"] == n + NR
     # an explicit override replaces the whole wall

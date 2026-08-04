@@ -112,11 +112,9 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     HC, nu = w.hexes, w.n_points
     is_wall: BoolArray = np.zeros(nu, dtype=bool)
     is_fixed: BoolArray = np.zeros(nu, dtype=bool)
-    for b in range(mesh.boundaries.shape[0]):
-        elem = int(mesh.boundaries[b, 0])
-        face = int(mesh.boundaries[b, 1])
+    for elem, face, tag in mesh.boundaries:
         ids = HC[elem, HexMesh.FACE_POINTS[face - 1, :]]
-        if mesh.boundary_tags[b] == wall:
+        if tag == wall:
             is_wall[ids] = True
         else:
             is_fixed[ids] = True
@@ -147,7 +145,7 @@ def report(mesh: HexMesh) -> str:
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
     lines.append(quality.format_report(quality.summary(mesh.points, mesh.hexes)))
     for name in mesh.boundary_group_tags:
-        n = int(np.sum(mesh.boundary_tags == name))
+        n = mesh.boundaries.count(name)
         lines.append("  %-14s : %d faces" % (name, n))
     lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.hexes)))
     return "\n".join(lines)

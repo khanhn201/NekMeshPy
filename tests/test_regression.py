@@ -28,12 +28,12 @@ def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
     assert mesh.hexes.shape == (7200, 8)         # (N,8) shared-point connectivity
     assert mesh.points.shape == (8137, 3)
-    assert mesh.boundaries.shape[0] == 1840
+    assert len(mesh.boundaries) == 1840
 
 
 def test_tag_face_counts(built_mesh):
     mesh = built_mesh["mesh"]
-    names = mesh.boundary_tags
+    names = mesh.boundaries.tags
     counts = {n: int(np.sum(names == n)) for n in
               ("wall", "trunk_outlet", "top_outlet_1", "top_outlet_2")}
     assert counts["wall"] == 1440

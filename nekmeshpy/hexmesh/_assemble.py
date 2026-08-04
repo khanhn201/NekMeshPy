@@ -42,6 +42,11 @@ from ..linemesh._assemble import _check_fraction_count, _refined_lattice, _weld
 from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
+from ..model.tags import (
+    BoundaryBuilder,
+    BoundaryTable,
+    ElementTags,
+)
 from ..quadmesh import NO_BOUNDARY, QuadMesh
 from ._query import _boundary_points
 from .hexmesh import HexMesh, _slice_block, _sweep_at
@@ -119,13 +124,8 @@ def loft(
         reject_loop_caps("HexMesh.loft", first_tag, last_tag)
     quads = np.asarray(slices[0].quads, dtype=np.int64).reshape(-1, 4)
     # section (quad, side) -> name; each swept side face inherits its section edge
-    sec_bnd = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
-    sec_tags = slices[0].boundary_tags
-    side_name: dict[tuple[int, int], str] = {
-        (int(sec_bnd[r, 0]), int(sec_bnd[r, 1])): str(sec_tags[r])
-        for r in range(sec_bnd.shape[0])}
-    tag_sides = bool(side_name)
-    qtag = np.asarray(slices[0].element_tags, dtype=np.str_).reshape(-1)
+    side_name: dict[tuple[int, int], str] = slices[0].boundaries.as_dict()
+    tag_sides = bool(slices[0].boundaries)
     M = quads.shape[0]
     n_prof = len(slices)
     # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
@@ -158,11 +158,8 @@ def loft(
     last_caps = ([""] * M if loop else HexMesh._cap_tags(last_tag, M))
 
     hexes = np.empty((nz * M, 8), dtype=np.int64)
-    # every layer repeats the section's per-quad tags (hex ``e = i*M + q``).  Tiling
-    # keeps the section's own string width: ``np.empty(..., dtype=np.str_)`` is
-    # ``<U1`` and would clip each tag to its first character on assignment.
-    etags: StrArray = (np.tile(qtag, nz) if qtag.size
-                       else np.full(nz * M, "", dtype=np.str_))
+    # every layer repeats the section's per-quad tags (hex ``e = i*M + q``)
+    etags: ElementTags = slices[0].element_tags.repeat_blocks(nz, M)
     if element_tags is not None:
         # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
         # section's per-quad tag on every hex of that layer.
@@ -172,10 +169,8 @@ def loft(
             raise ValueError(
                 "loft: element_tags is per layer, so it needs %d entries, got %d"
                 % (nz, layer_tags.shape[0]))
-        over: StrArray = np.repeat(layer_tags, M)    # hex e = i*M + q
-        etags = np.where(over != "", over, etags)
-    bnd: list[list[int]] = []
-    names: list[str] = []
+        etags = etags.overlay(ElementTags.blocks(layer_tags, M))
+    bb = BoundaryBuilder()
     e = 0
     for i in range(nz):
         j = int(nxt[i])                     # the profile this layer sweeps to
@@ -188,14 +183,11 @@ def loft(
                     nm = side_name.get((q, s))
                     if nm is None or nm == NO_BOUNDARY:
                         continue
-                    bnd.append([e, (5 - s) if flip else s])
-                    names.append(nm)
+                    bb.add(e, (5 - s) if flip else s, nm)
             if i == 0 and first_caps[q]:
-                bnd.append([e, 5])
-                names.append(first_caps[q])
+                bb.add(e, 5, first_caps[q])
             if i == nz - 1 and last_caps[q]:
-                bnd.append([e, 6])
-                names.append(last_caps[q])
+                bb.add(e, 6, last_caps[q])
             e += 1
 
     # order-N: each hex column is a straight GLL sweep between the two bounding
@@ -295,8 +287,7 @@ def loft(
             "HexMesh.loft")
     faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
-                   *HexMesh._order_bnd(bnd, names),
-                   element_tags=etags, order=order)
+                   bb.build_ordered(), etags, order=order)
 
 
 def _loft_evaluated(
@@ -481,25 +472,21 @@ def merge(
     counts = [p.shape[0] for p in pos]
     points, point_id = _weld(pos, [_boundary_points(m.hexes) for m in meshes], tol)
 
-    hex_list, bnd_list, name_list, etag_list = [], [], [], []
+    hex_list: list[IntArray] = []
+    bnd_list: list[BoundaryTable] = []
+    etag_list: list[ElementTags] = []
     noff = eoff = 0
     for m, c in zip(meshes, counts):
         hex_list.append(point_id[m.hexes + noff])    # local -> concat -> welded id
-        etag_list.append(np.asarray(m.element_tags, dtype=np.str_).reshape(-1))
-        if m.boundaries.shape[0]:
-            b: IntArray = m.boundaries.copy()
-            b[:, 0] += eoff
-            bnd_list.append(b)
-            name_list.append(m.boundary_tags)
+        # ids shift by this block's offset; sides stay local to their element
+        etag_list.append(m.element_tags.offset(eoff))
+        bnd_list.append(m.boundaries.offset(eoff))
         noff += c
         eoff += m.hexes.shape[0]
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
-    etags = (np.concatenate(etag_list) if etag_list
-             else np.empty(0, dtype=np.str_))
-    bnd = np.concatenate(bnd_list, axis=0) if bnd_list else np.zeros((0, 2), np.int64)
-    names = (np.concatenate(name_list) if name_list
-             else np.empty(0, dtype=np.str_))
+    etags = ElementTags.concat(etag_list)
+    bnd = BoundaryTable.concat(bnd_list).ordered()
     # order-N: the private per-hex interiors just concatenate, but the shared edge /
     # face tables must be rebuilt against the *merged* topology -- gather each
     # block's nodes into its own element-local order, concatenate in merged element
@@ -531,8 +518,7 @@ def merge(
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
     faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
-                   *HexMesh._order_bnd(bnd, names),
-                   element_tags=etags, order=order)
+                   bnd, etags, order=order)
 
 
 #: Variable-arity combinators bound onto ``HexMesh`` as ``staticmethod``.

@@ -43,6 +43,11 @@ from ..linemesh._assemble import _check_fraction_count, _refined_lattice, _weld
 from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
+from ..model.tags import (
+    BoundaryBuilder,
+    BoundaryTable,
+    ElementTags,
+)
 from ._query import _boundary_mask
 from .quadmesh import (
     NO_BOUNDARY,
@@ -234,7 +239,8 @@ def loft(
         rung_off[i_idx] + rung_slot[av]], axis=1)
     flip: BoolArray = np.tile(
         np.array([False, False, True, True]), (nz * L, 1))
-    etags: StrArray = np.asarray(slices[0].element_tags, dtype=np.str_)[l_idx]
+    # quad ``i*L + l`` inherits profile line ``l``'s tag
+    etags: ElementTags = slices[0].element_tags.gather(l_idx)
     if element_tags is not None:
         # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
         # profile's line tag on every quad of that layer.
@@ -244,8 +250,7 @@ def loft(
             raise ValueError(
                 "loft: element_tags is per layer, so it needs %d entries, got %d"
                 % (nz, layer_tags.shape[0]))
-        over = layer_tags[i_idx]
-        etags = np.where(over != "", over, etags)
+        etags = etags.overlay(ElementTags.blocks(layer_tags, L))
 
     # order-N: without ``sweep_nodes`` each column quad is a transfinite (Coons)
     # patch -- curved along the profile line (from the slices' own points + private
@@ -300,19 +305,13 @@ def loft(
                                  islots % row, islots // row)
 
     # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
-    sec_b = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
-    sec_t = slices[0].boundary_tags
-    bnd: list[list[int]] = []
-    names: list[str] = []
-    for r in range(sec_b.shape[0]):
-        tag = str(sec_t[r])
+    bb = BoundaryBuilder()
+    for l0, side, tag in slices[0].boundaries:
         if tag == NO_BOUNDARY:
             continue
-        l0 = int(sec_b[r, 0])
-        qside = 4 if int(sec_b[r, 1]) == 1 else 2
+        qside = 4 if side == 1 else 2
         for ii in range(nz):
-            bnd.append([ii * L + l0, qside])
-            names.append(tag)
+            bb.add(ii * L + l0, qside, tag)
     # caps: scalar tags the whole cap, an array tags per section line.  A periodic
     # sweep has no near/far cap edge at all, so it emits no cap row (and rejected
     # the tags above).
@@ -320,18 +319,13 @@ def loft(
         first_caps = QuadMesh._cap_tags(first_tag, L)
         last_caps = QuadMesh._cap_tags(last_tag, L)
         for l0 in range(L):
-            if first_caps[l0]:
-                bnd.append([l0, 1])
-                names.append(first_caps[l0])
+            bb.add_if_tagged(l0, 1, first_caps[l0])
         if nz:
             for l0 in range(L):
-                if last_caps[l0]:
-                    bnd.append([(nz - 1) * L + l0, 3])
-                    names.append(last_caps[l0])
-    b_ord, n_ord = QuadMesh._order_bnd(bnd, names)
+                bb.add_if_tagged((nz - 1) * L + l0, 3, last_caps[l0])
     lm = LineMesh(points, all_lines, order=order, interior=edge_nodes)
-    return QuadMesh(lm, quad, flip, interior, b_ord, n_ord,
-                    element_tags=etags, order=order)
+    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags,
+                    order=order)
 
 
 def _loft_evaluated(
@@ -521,24 +515,20 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
         seams.append(np.unique(edges[mask]))
     points, point_id = _weld(pos, seams, tol)
 
-    quad_list, bnd_list, name_list, etag_list = [], [], [], []
+    quad_list: list[IntArray] = []
+    bnd_list: list[BoundaryTable] = []
+    etag_list: list[ElementTags] = []
     noff = qoff = 0
     for m, c in zip(meshes, counts):
         quad_list.append(point_id[m.quads + noff])   # local -> welded id
-        etag_list.append(m.element_tags)
-        if m.boundaries.shape[0]:
-            b: IntArray = m.boundaries.copy()
-            b[:, 0] += qoff                          # shift quad ids; sides local
-            bnd_list.append(b)
-            name_list.append(m.boundary_tags)
+        # ids shift by this block's offset; sides stay local to their element
+        etag_list.append(m.element_tags.offset(qoff))
+        bnd_list.append(m.boundaries.offset(qoff))
         noff += c
         qoff += m.n_quads
     quads = np.concatenate(quad_list, axis=0) if quad_list else np.zeros((0, 4), np.int64)
-    etags = (np.concatenate(etag_list) if etag_list
-             else np.empty(0, dtype=np.str_))
-    bnd = np.concatenate(bnd_list, axis=0) if bnd_list else np.zeros((0, 2), np.int64)
-    names = np.concatenate(name_list) if name_list else np.empty(0, dtype=np.str_)
-    b_ord, n_ord = QuadMesh._order_bnd(bnd, names)
+    etags = ElementTags.concat(etag_list)
+    bnd = BoundaryTable.concat(bnd_list).ordered()
 
     # order-N: the private per-quad interiors just concatenate, but the shared edge
     # tables must be rebuilt against the *merged* topology -- gather each block's
@@ -560,8 +550,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
             conform.entity_tol(points), "QuadMesh.merge")
         interior = np.concatenate([m.interior for m in meshes], axis=0)
     lm = LineMesh(points, edges, order=order, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, b_ord, n_ord,
-                    element_tags=etags, order=order)
+    return QuadMesh(lm, elem_edges, flip, interior, bnd, etags, order=order)
 
 
 #: Variable-arity combinators bound onto ``QuadMesh`` as ``staticmethod``.

@@ -117,8 +117,8 @@ def _reindex_geometry(sec_a, tgt, sigma):
         vals = tgt.lines.interior[te]
         new_interior[e] = vals[::-1] if rev else vals
     new_lines = LineMesh(new_points, struct_edges, new_interior,
-                         tgt.lines.boundaries, tgt.lines.boundary_tags,
-                         tgt.lines.element_tags, order=tgt.lines.order)
+                         tgt.lines.boundaries, tgt.lines.element_tags,
+                         order=tgt.lines.order)
 
     quad_lookup: dict[frozenset[int], int] = {}
     tgt_quads = tgt.quads
@@ -131,7 +131,7 @@ def _reindex_geometry(sec_a, tgt, sigma):
         new_qinterior[q] = tgt.interior[quad_lookup[corners]]
 
     return QuadMesh(new_lines, sec_a.quad, sec_a.flip, new_qinterior,
-                    tgt.boundaries, tgt.boundary_tags, tgt.element_tags,
+                    tgt.boundaries, tgt.element_tags,
                     order=tgt.order)
 
 
@@ -193,7 +193,7 @@ def pattern_adapter(sec_a, sec_b, axis, n_layers=2, name=""):
         print("  hex corner pts (abs):\n%s" % np.round(result.points[hc], 4))
     return result, best_k
 
-FAST = True
+FAST = False
 ORDER = 2
 N_HALF = 8
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])
@@ -246,8 +246,9 @@ def port_disc(hexmesh, tag, template):
     (~2e-7 at this model's extent) and the outlet seam fails on 24 edges by
     ~1e-3.  Reading the target off the real mesh removes the guess entirely
     -- measured residual 0.0 at *both* ports."""
-    rows = hexmesh.boundaries[hexmesh.boundary_tags == tag]
-    poly = hexmesh.hexes[rows[:, 0][:, None], hexmesh.FACE_POINTS[rows[:, 1] - 1, :]]
+    rows = hexmesh.boundaries.select(hexmesh.boundaries.mask_for(tag))
+    poly = hexmesh.hexes[rows.elements[:, None],
+                         hexmesh.FACE_POINTS[rows.sides - 1, :]]
     gids = np.unique(poly)
     dist, loc = cKDTree(hexmesh.points[gids]).query(template.points)
     g = gids[loc]                              # template point i -> hexmesh point id
@@ -267,7 +268,7 @@ def port_disc(hexmesh, tag, template):
         vals = hn[idx]
         new_ei[e] = vals[::-1] if rev else vals
     new_lines = LineMesh(hexmesh.points[g], tl.lines, new_ei, tl.boundaries,
-                         tl.boundary_tags, tl.element_tags, order=tl.order)
+                         tl.element_tags, order=tl.order)
 
     hf, hfn = hexmesh.faces, hexmesh.face_nodes
     fkey = {frozenset(int(x) for x in hf[i]): i for i in range(hf.shape[0])}
@@ -278,8 +279,8 @@ def port_disc(hexmesh, tag, template):
     print("  port_disc[%s]: template paired to %.3e, now exact on chimera's own nodes"
           % (tag, dist.max()))
     return QuadMesh(new_lines, template.quad, template.flip, new_qi,
-                    template.boundaries, template.boundary_tags,
-                    template.element_tags, order=template.order)
+                    template.boundaries, template.element_tags,
+                    order=template.order)
 
 
 # chimera_chain's REAL inlet/outlet disc centres (probed: both at z = -17.5,
@@ -316,7 +317,7 @@ else:
 # reasonable-quality (~0.21 min scaled Jacobian) octant split; CENTER_SCALE
 # has no effect on this at all (checked). main axis -> x, branch -> -y.
 # -----------------------------------------------------------------------------
-T1_PHI_W = np.deg2rad(170.0)
+T1_PHI_W = np.deg2rad(165.0)
 T1_RATIO = 0.999
 ROT_T1 = -np.deg2rad(120.0)
 AXIS_T1 = (1.0, -1.0, 1.0)
@@ -455,7 +456,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
                                        path_tangents=T3)[1]
         return disc.transform(m, o)
 
-    conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*2)
+    conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
     end_sec = _end_section(db)
     print("  [%s] end_sec center=%s normal=%s" %
          (tag, end_sec.points.mean(axis=0), normal_of(end_sec)))
@@ -474,7 +475,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # da_c[1], not the nominal t1_center[1] -- same reasoning as _end_section
     # above (da is no more exactly centred on t1_center than db is).
     riser = build_bend_mesh(da, da_c, moves_r, 0.0 if a_sign > 0 else np.pi,
-                            da_c[1], n_slices, last_tag=tag)
+                            da_c[1], n_slices*8, last_tag=tag)
     # conn_chi's own end and the adapter's own start are the *same* physical
     # points (both derived from db via the same sweep_placements machinery),
     # but the adapter's internal 90-degree roll search (see pattern_adapter)
@@ -927,9 +928,8 @@ if chi_mesh is not None:
     # chimera's own inlet/outlet faces are welded away into interior planes
     # here, so their tags must go (the combined mesh's inlet/outlet are the
     # riser tops); a stale tagged interior face would export as a bogus BC.
-    _keep = chi_mesh.boundary_tags == "wall"
-    chi_mesh.boundaries = chi_mesh.boundaries[_keep]
-    chi_mesh.boundary_tags = chi_mesh.boundary_tags[_keep]
+    chi_mesh.boundaries = chi_mesh.boundaries.select(
+        chi_mesh.boundaries.mask_for("wall"))
     mesh_out = HexMesh.merge([*manifold, chi_mesh], tol=0.005)
 else:
     chi_in_cap = HexMesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
@@ -945,6 +945,7 @@ OUT_NAME = "chimera_full"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+export.to_fld(mesh, OUT_NAME + ".f00000")
 print("groups:", ", ".join(mesh.boundary_group_tags))
 
 stats = mesh.quality_summary()

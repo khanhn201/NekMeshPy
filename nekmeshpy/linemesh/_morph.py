@@ -31,6 +31,7 @@ from .._typing import (
     Vec3,
 )
 from ..model import affine
+from ..model.tags import BoundaryTable
 from .linemesh import LineMesh
 
 
@@ -73,8 +74,7 @@ def blend(a: LineMesh, b: LineMesh,
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
         out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
-                       boundaries=a.boundaries,
-                       boundary_tags=a.boundary_tags, order=a.order))
+                       boundaries=a.boundaries, order=a.order))
     return out
 
 
@@ -104,14 +104,15 @@ def reverse(mesh: LineMesh) -> LineMesh:
     # relabel r(i) = n-1-i, then restore each line's canonical start->end direction:
     # reverse the element order and swap the two endpoints of every line.
     lines: IntArray = (n - 1 - mesh.lines)[::-1, ::-1]
-    bnd: IntArray = mesh.boundaries
-    if bnd.size:
-        bnd = np.column_stack([L - 1 - bnd[:, 0], 3 - bnd[:, 1]])
-    rows, names = LineMesh._order_bnd(bnd, mesh.boundary_tags)
+    b = mesh.boundaries
+    bnd = BoundaryTable(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
     return LineMesh(np.ascontiguousarray(mesh.points[::-1]),
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
-                    rows, names, mesh.element_tags[::-1], order=mesh.order)
+                    bnd,
+                    mesh.element_tags.renumber(
+                        (L - 1 - np.arange(L, dtype=np.int64))),
+                    order=mesh.order)
 
 
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
@@ -123,7 +124,7 @@ def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh
     (connectivity, tags, boundaries) is topology and rides through untouched."""
     return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
                     affine.apply(mesh.interior, matrix, offset),
-                    boundaries=mesh.boundaries, boundary_tags=mesh.boundary_tags,
+                    boundaries=mesh.boundaries,
                     element_tags=mesh.element_tags, order=mesh.order)
 
 

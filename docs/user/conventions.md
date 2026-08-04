@@ -29,8 +29,9 @@ Its stored state is the **B-rep**: a `quads` `QuadMesh` of the shared faces, `he
 `(E,(order-1)**3,3)`. `points` `(P,3)` and `hexes` `(E,8)` (Nek point order) are
 **derived read-only views** over it, so corner consistency is structural rather than
 maintained — see [Concepts](../user/concepts.md#high-order-order-n-elements).
-Alongside it are `boundaries` `(Nbc,2)` = `[element id, face (1–6)]` with parallel
-`boundary_tags`, plus a dense `element_tags` `(E,)` inherited from the swept quad.
+Alongside it are `boundaries`, a `BoundaryTable` of `(element id, face (1–6), tag)`
+rows, plus `element_tags`, an `ElementTags` naming only the hexes that carry a region
+tag (inherited from the swept quad).
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
 `quad`/`flip`/`interior`, boundaries `(Nbc,2)` = `[quad id, side (1–4)]`, side `s` =
 edge `EDGE_POINTS[s-1]`). `weld()` returns a `WeldResult` NamedTuple —

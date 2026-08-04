@@ -122,8 +122,18 @@ the high-order analog of `points` + `quads` — and that is what the `.vtu` writ
 `mesh.scaled_jacobian(high_order=True)` read.
 
 All three containers share the same constructor argument order: `(rung below, incidence,
-[orientation,] interior, boundaries, boundary_tags, element_tags, *, order)`. A line
-element has no orientation bit, so `LineMesh` simply has no `flip` slot. There is no
+[orientation,] interior, boundaries, element_tags, *, order)`. A line
+element has no orientation bit, so `LineMesh` simply has no `flip` slot.
+
+Both tag slots are types from `model/tags.py`, not loose arrays. `boundaries` is a
+`BoundaryTable` — `(element, side, tag)` rows in one object, so the permutation /
+offset / filter / concat that used to be applied twice by hand (that is what the three
+`_order_bnd` copies were) is now one call that cannot desynchronize. Its **row order is
+meaningful**: `ordered()` is the only sort, because `.re2` writes rows in stored order
+and `.vtu` gives a node touched by several rows the last one's tag. `element_tags` is an
+`ElementTags`, sparse `ids + tags` — `""` was never a real tag, so an untagged mesh now
+stores nothing. Note `len()` on it is the *tagged* count. Factory keyword arguments stay
+dense (`element_tags=["wall"] * n`); the containers take the sparse types. There is no
 `Point` class — a point is a `(3,)` numpy array — and input **must** be 3-D; a `(N,2)`
 array is a `ValueError`, never padded to `z=0`. Open vs closed is read off the `lines`
 connectivity and stored nowhere: a loop is a cycle carrying the explicit wrap row.

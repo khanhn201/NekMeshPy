@@ -21,6 +21,7 @@ from ..linemesh import LineMesh
 from ..linemesh._assemble import loft as line_loft
 from ..model import conform
 from ..model.interp import coons_grid
+from ..model.tags import BoundaryTable
 from ..quadmesh import QuadMesh
 from ..quadmesh._assemble import loft as quad_loft
 from ._assemble import loft as hex_loft
@@ -29,7 +30,7 @@ from ._assemble import merge
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .hexmesh import HexMesh
+from .hexmesh import HexMesh
 
 
 def _lin(n: int) -> PointArray:
@@ -254,7 +255,7 @@ def _face_tag(qm: QuadMesh, who: str) -> str:
         raise ValueError(
             "%s: a face must carry one element tag or none, got %s -- a tetrahedron "
             "side is a single boundary patch" % (who, list(names)))
-    if names and not np.all(qm.element_tags == names[0]):
+    if names and not qm.element_tags.is_uniform(qm.n_quads):
         raise ValueError(
             "%s: face tagged %r has untagged quads -- tag the whole face or none of it"
             % (who, names[0]))
@@ -279,14 +280,13 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
-    bnd = np.array([[0, 1]], dtype=np.int64) if ti else None
+    bnd = BoundaryTable.from_pairs([[0, 1]], [ti]) if ti else None
 
     def profile(j: int, k: int) -> LineMesh:
         col: PointArray = lat[:, j, k, :]
         inner = (None if o == 1 else
                  np.stack([col[i * o + 1:i * o + o] for i in range(nl)], axis=0))
-        return line_loft(col[::o], interior=inner, order=o, boundaries=bnd,
-                         boundary_tags=[ti] if ti else None)
+        return line_loft(col[::o], interior=inner, order=o, boundaries=bnd)
 
     def section(k: int) -> QuadMesh:
         return quad_loft([profile(j * o, k) for j in range(nm + 1)],

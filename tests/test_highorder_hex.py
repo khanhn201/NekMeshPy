@@ -87,7 +87,7 @@ def test_blend_morphs_hex_curved_blocks():
                           face_nodes=a.face_nodes * 2.0,
                           interior=a.interior * 2.0,
                           boundaries=a.boundaries,
-                          boundary_tags=a.boundary_tags, order=3)
+                          order=3)
     lo, mid, hi = HexMesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)

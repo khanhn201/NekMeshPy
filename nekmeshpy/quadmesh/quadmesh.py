@@ -3,7 +3,7 @@
 ``QuadMesh`` is a pure container: ``points`` ``(nn,3)`` and quad connectivity
 ``quads`` ``(nq,4)``, plus a dense per-quad ``element_tags`` and a sparse tagged
 boundary-edge list ``boundaries`` ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a
-parallel ``boundary_tags``.  Factory classmethods fill a bounded region with quads;
+coupled tags.  Factory classmethods fill a bounded region with quads;
 ``extrude``/``loft`` sweep a ``LineMesh`` into a quad section.
 
 This file stays a **pure container**: storage, validation, ``from_corners``, and the
@@ -34,7 +34,12 @@ from ..linemesh import LineMesh
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import quad_edge_indices
-from ..model.tags import BoundaryTable
+from ..model.tags import (
+    NO_TAGS,
+    BoundaryTable,
+    ElementTags,
+    check_tag_range,
+)
 
 #: Boundary-name sentinel meaning "not a boundary": a side carrying this name emits
 #: no boundary row.  Equal to ``""`` so it reads as "unnamed" everywhere.
@@ -113,7 +118,7 @@ class QuadMesh:
     **derived** on read; build from corners with :meth:`from_corners`.  Also
     carries a dense per-quad ``element_tags`` and a sparse tagged-boundary list
     ``boundaries`` ``(Nbc,2)`` = ``[quad id, side 1-4]`` with a parallel
-    ``boundary_tags``."""
+    coupled tags."""
 
     def __init__(
         self,
@@ -121,9 +126,8 @@ class QuadMesh:
         quad: IntArray,
         flip: BoolArray,
         interior: PointArray | None = None,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        boundaries: BoundaryTable | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> None:
@@ -135,7 +139,7 @@ class QuadMesh:
         anti-canonically), and ``interior`` ``(Q,(order-1)**2,3)`` private per-quad
         nodes (omit / ``None`` at order 1).  Also an optional dense per-quad
         ``element_tags`` ``(Q,)`` and a tagged-boundary list ``boundaries`` ``(Nbc,2)``
-        = ``[quad id, side 1-4]`` with a parallel ``boundary_tags``.
+        = ``[quad id, side 1-4]`` coupled with its tags.
 
         ``.points`` / ``.quads`` are **derived** views over this B-rep, so a shared
         edge is literally one stored object referenced by every incident quad
@@ -177,24 +181,13 @@ class QuadMesh:
                     % (Q, k, ia.shape))
             self.interior = ia
         # dense per-quad region/material tag ("" = untagged)
-        if element_tags is None:
-            self.element_tags: StrArray = np.full(Q, "", dtype=np.str_)
-        else:
-            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
-            if et.shape[0] != Q:
-                raise ValueError("element_tags length (%d) must match quads (%d)"
-                                 % (et.shape[0], Q))
-            self.element_tags = et
-        # tagged boundary edges [quad id, side 1-4] parallel with boundary_tags
-        self.boundaries: IntArray = (
-            np.zeros((0, 2), np.int64) if boundaries is None
-            else np.asarray(boundaries, np.int64).reshape(-1, 2))
-        self.boundary_tags: StrArray = (
-            np.empty(0, dtype=np.str_) if boundary_tags is None
-            else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
-        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
-            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
-                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
+        #: which quads carry a region tag (sparse -- untagged stores nothing)
+        self.element_tags: ElementTags = (
+            NO_TAGS if element_tags is None else element_tags)
+        # tagged boundary edges: [quad id, side 1-4] coupled with their names
+        self.boundaries: BoundaryTable = (
+            BoundaryTable.empty() if boundaries is None else boundaries)
+        check_tag_range(self.element_tags, self.boundaries, Q, 4, "quads")
 
         # corner connectivity is derived from quad/flip and immutable post-construction
         # (point moves don't change it), so memoize it once.
@@ -208,9 +201,8 @@ class QuadMesh:
         cls,
         points: PointArray,
         quads: IntArray,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        boundaries: BoundaryTable | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> QuadMesh:
@@ -244,8 +236,7 @@ class QuadMesh:
         conn: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         edges, elem_edges, flip = conform.unique_edges(conn, 2)
         lm = LineMesh(pts, edges)
-        return cls(lm, elem_edges, flip, None, boundaries, boundary_tags,
-                   element_tags, order=1)
+        return cls(lm, elem_edges, flip, None, boundaries, element_tags, order=1)
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(Q,4)`` recovered from the edge indices + flip: column
@@ -325,33 +316,19 @@ class QuadMesh:
     @property
     def n_boundaries(self) -> int:
         """Number of tagged boundary edges."""
-        return self.boundaries.shape[0]
+        return len(self.boundaries)
 
     @property
     def boundary_group_tags(self) -> list[str]:
         """Sorted unique tags of the tagged boundary edges."""
-        return sorted(set(self.boundary_tags.tolist()))
+        return self.boundaries.group_tags
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-quad element tags present on the section."""
-        return sorted({t for t in self.element_tags.tolist() if t})
+        return self.element_tags.group_tags
 
     # -- helpers for the operation modules -----------------------------
-    @staticmethod
-    def _order_bnd(
-        bnd: Sequence[Sequence[int]] | IntArray,
-        names: Sequence[str] | StrArray,
-    ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(quad id, side)``, permuting the
-        parallel tags array to match.
-
-        Delegates to :class:`~nekmeshpy.model.tags.BoundaryTable` so the one
-        canonical ordering lives in one place; this wrapper keeps the paired-array
-        return while the containers are migrated onto the table."""
-        t = BoundaryTable.from_pairs(bnd, names).ordered()
-        return t.rows, t.tags
-
     @staticmethod
     def _cap_tags(cap: str | Sequence[str] | StrArray, L: int) -> list[str]:
         """Normalize a cap tag to one tag per section line (length ``L``): a scalar

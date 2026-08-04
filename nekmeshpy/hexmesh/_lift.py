@@ -120,10 +120,10 @@ def annulus(
     # wall tags from the surfaces' per-quad element_tags; scalar arg overrides
     inner_caps: str | StrArray = (
         inner_tag if inner_tag
-        else (inner.element_tags if inner.element_group_tags else ""))
+        else (inner.element_tags.dense(inner.n_quads) if inner.element_tags else ""))
     outer_caps: str | StrArray = (
         outer_tag if outer_tag
-        else (outer.element_tags if outer.element_group_tags else ""))
+        else (outer.element_tags.dense(outer.n_quads) if outer.element_tags else ""))
     return loft(shells, first_tag=inner_caps, last_tag=outer_caps)
 
 def from_grid(

@@ -2,7 +2,7 @@
 
 ``HexMesh`` stores ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` connectivity in Nek
 order, a sparse tagged ``boundaries`` ``(Nbc,2)`` = ``[element id, face 1-6]`` with
-parallel ``boundary_tags``, and a dense per-hex ``element_tags``. Boundary tags map
+coupled tags, and sparse per-hex ``element_tags``. Boundary tags map
 to Nek BC codes only at export.
 
 It is built complete, not incrementally: from arrays or via the factory
@@ -33,7 +33,12 @@ from .._typing import (
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import corner_indices
-from ..model.tags import BoundaryTable
+from ..model.tags import (
+    NO_TAGS,
+    BoundaryTable,
+    ElementTags,
+    check_tag_range,
+)
 from ..quadmesh import QuadMesh
 
 # default sweep axis / origin for extrude
@@ -89,7 +94,7 @@ class HexMesh:
     """An all-hexahedral volume mesh in shared-point form.
 
     Stores ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` connectivity (Nek order), a
-    sparse tagged ``boundaries`` with parallel ``boundary_tags``, and a dense
+    a sparse tagged ``boundaries`` table, and sparse
     per-hex ``element_tags``. Immutable topology; build via a factory or the array
     constructor."""
 
@@ -103,9 +108,8 @@ class HexMesh:
         hex: IntArray,
         face_orient: IntArray,
         interior: PointArray | None = None,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        boundaries: BoundaryTable | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> None:
@@ -117,7 +121,7 @@ class HexMesh:
         canonical), and ``interior`` ``(E,(order-1)**3,3)`` private per-hex nodes (omit /
         ``None`` at order 1).  Also an optional dense per-hex ``element_tags`` ``(E,)``
         and a tagged-boundary list ``boundaries`` ``(Nbc,2)`` = ``[hex id, face 1-6]``
-        with a parallel ``boundary_tags``.
+        coupled with its tags.
 
         ``.points`` / ``.hexes`` are **derived** views over this B-rep, so
         a shared face is literally one stored object referenced by every incident hex
@@ -156,23 +160,12 @@ class HexMesh:
                     "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
                     % (E, k, ia.shape))
             self.interior = ia
-        if element_tags is None:
-            self.element_tags: StrArray = np.full(E, "", dtype=np.str_)
-        else:
-            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
-            if et.shape[0] != E:
-                raise ValueError("element_tags length (%d) must match hexes (%d)"
-                                 % (et.shape[0], E))
-            self.element_tags = et
-        self.boundaries: IntArray = (
-            np.zeros((0, 2), np.int64) if boundaries is None
-            else np.asarray(boundaries, np.int64).reshape(-1, 2))
-        self.boundary_tags: StrArray = (
-            np.empty(0, dtype=np.str_) if boundary_tags is None
-            else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
-        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
-            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
-                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
+        #: which hexes carry a region tag (sparse -- untagged stores nothing)
+        self.element_tags: ElementTags = (
+            NO_TAGS if element_tags is None else element_tags)
+        self.boundaries: BoundaryTable = (
+            BoundaryTable.empty() if boundaries is None else boundaries)
+        check_tag_range(self.element_tags, self.boundaries, E, 6, "hexes")
 
         # corner connectivity + per-hex edge incidence are derived from the shared
         # faces and immutable post-construction (point moves don't change them), so
@@ -185,9 +178,8 @@ class HexMesh:
         cls,
         points: PointArray,
         hexes: IntArray,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        boundaries: BoundaryTable | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> HexMesh:
@@ -219,7 +211,7 @@ class HexMesh:
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
         quads = QuadMesh.from_corners(pts, canonical_conn)
         return cls(quads, elem_faces, face_orient, None, boundaries,
-                   boundary_tags, element_tags, order=1)
+                   element_tags, order=1)
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(E,8)`` (Nek order) recovered from the shared faces via
@@ -309,17 +301,17 @@ class HexMesh:
     @property
     def n_boundaries(self) -> int:
         """Number of tagged boundary faces."""
-        return self.boundaries.shape[0]
+        return len(self.boundaries)
 
     @property
     def boundary_group_tags(self) -> list[str]:
         """Sorted unique tags of the tagged boundary faces."""
-        return sorted(set(self.boundary_tags.tolist()))
+        return self.boundaries.group_tags
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-hex element tags present on the mesh."""
-        return sorted({t for t in self.element_tags.tolist() if t})
+        return self.element_tags.group_tags
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod
@@ -343,16 +335,3 @@ class HexMesh:
         t = P[[4, 5, 6, 7], :].mean(axis=0) - P[[0, 1, 2, 3], :].mean(axis=0)
         return float(np.dot(np.cross(r, s), t))
 
-    @staticmethod
-    def _order_bnd(
-        bnd: Sequence[Sequence[int]] | IntArray,
-        names: Sequence[str] | StrArray,
-    ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(element id, face)``, applying the same
-        permutation to the parallel ``names`` array.
-
-        Delegates to :class:`~nekmeshpy.model.tags.BoundaryTable` so the one
-        canonical ordering lives in one place; this wrapper keeps the paired-array
-        return while the containers are migrated onto the table."""
-        t = BoundaryTable.from_pairs(bnd, names).ordered()
-        return t.rows, t.tags

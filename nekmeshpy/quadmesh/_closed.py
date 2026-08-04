@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray, Vec3
+from ..model.tags import BoundaryTable, ElementTags
 from ._assemble import merge
 from ._lift import from_grid
 from ._query import boundary_edges
@@ -33,7 +34,7 @@ from ._query import boundary_edges
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from .quadmesh import QuadMesh
+from .quadmesh import QuadMesh
 
 # the six box faces: outward normal n with right-handed tangents (u x v = n),
 # each mapped to its {x,y,z}_{min,max} side key.
@@ -135,7 +136,7 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
         """Push every node of ``a`` (last axis = xyz) radially onto the sphere."""
         return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
 
-    etags = np.full(cube.n_quads, element_tag)
+    etags = ElementTags.uniform(cube.n_quads, element_tag)
     # the cube's B-rep is reused verbatim (same topology, same edge numbering); only
     # the node coordinates move, so there is nothing to re-derive or reconcile.
     lines = LineMesh(project(cube.points), cube.lines.lines, order=order,
@@ -156,9 +157,9 @@ def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
     if not rim_tag:
         return qm
     rows = boundary_edges(qm)
-    bnd, names = QuadMesh._order_bnd(rows, [rim_tag] * rows.shape[0])
+    bnd = BoundaryTable.from_pairs(rows, [rim_tag] * rows.shape[0]).ordered()
     return QuadMesh(qm.lines, qm.quad, qm.flip, qm.interior if qm.order > 1 else None,
-                    bnd, names, element_tags=qm.element_tags, order=qm.order)
+                    bnd, qm.element_tags, order=qm.order)
 
 
 def half_box(half_sizes: float | Sequence[float] | FloatArray,
@@ -254,7 +255,7 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
         """Push every node of ``a`` (last axis = xyz) radially onto the sphere."""
         return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
 
-    etags = np.full(cube.n_quads, element_tag)
+    etags = ElementTags.uniform(cube.n_quads, element_tag)
     lines = LineMesh(project(cube.points), cube.lines.lines, order=order,
                      interior=project(cube.lines.interior) if order > 1 else None)
     qm = QuadMesh(lines, cube.quad, cube.flip,

@@ -175,7 +175,7 @@ def test_per_layer_element_tags_override_the_profile_line_tags():
     f = lambda t: base.rotate(t, axis=(0, 0, 1))                   # noqa: E731
     layers = ["", "hot", ""]
     sec = QuadMesh.loft_curve(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
-    tags = sec.element_tags.reshape(3, NU)      # quad (layer i, line l) = i*NU + l
+    tags = sec.element_tags.dense(sec.n_quads).reshape(3, NU)      # quad (layer i, line l) = i*NU + l
     assert list(np.unique(tags[0])) == ["wall"]
     assert list(np.unique(tags[1])) == ["hot"]  # non-empty layer tag wins
     assert list(np.unique(tags[2])) == ["wall"]
