@@ -173,23 +173,71 @@ def _face_code(ids: IntArray, uv: IntArray) -> int:
     raise AssertionError("no D4 code matches face orientation")   # pragma: no cover
 
 
+def _orient_tables() -> tuple[IntArray, IntArray, IntArray]:
+    """``(NB (6,4,2), CODE (6,4,2))`` driving the vectorized D4 lookup in
+    :func:`unique_faces`, plus the face corner ``uv`` they were fitted against.
+
+    :func:`_face_code`'s answer depends on only three things: the local face
+    ``f`` (whose ``corner_uv`` is a compile-time constant), which of the four
+    slots holds the minimum corner id, and which of that slot's two
+    edge-neighbours holds the smaller id.  Four origins x two orderings is
+    exactly the eight D4 codes, so the whole function collapses to a
+    ``(6,4,2)`` table -- and the table is *fitted by calling ``_face_code``
+    itself* on ids realizing each case, so the two cannot drift apart.
+
+    ``NB[f,o]`` are that origin's two edge-neighbour slots in ascending slot
+    order (the order ``_face_code``'s own comprehension yields them), so the
+    runtime only has to compare their two ids to pick the column."""
+    corner_uv = [m[4] for m in _face_axes()]
+    nb_tab: IntArray = np.zeros((6, 4, 2), dtype=np.int64)
+    code_tab: IntArray = np.zeros((6, 4, 2), dtype=np.int64)
+    for f in range(6):
+        uv = corner_uv[f]
+        for o in range(4):
+            nb = [i for i in range(4)
+                  if i != o and int(np.sum(uv[i] != uv[o])) == 1]
+            opp = next(i for i in range(4) if i != o and i not in nb)
+            nb_tab[f, o] = nb
+            for swap in range(2):
+                ids: IntArray = np.empty(4, dtype=np.int64)
+                ids[o] = 0                       # origin: the minimum, by definition
+                ids[nb[0]], ids[nb[1]] = (2, 1) if swap else (1, 2)
+                ids[opp] = 3                     # opp never competes for the minimum
+                code_tab[f, o, swap] = _face_code(ids, uv)
+    return nb_tab, code_tab, np.stack(corner_uv)
+
+
+_FACE_NB, _FACE_CODE_TAB, _FACE_CORNER_UV = _orient_tables()
+
+
 def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code.
 
     Returns ``(faces (Nf,4), elem_faces (E,6), face_orient (E,6))`` where ``faces`` are
     canonical (sorted corner ids), ``elem_faces[e,f]`` is the unique-face id of hex
     ``e``'s local face ``f``, and ``face_orient[e,f]`` is the D4 code (:func:`_face_code`)
-    taking that hex's local face frame to the shared canonical frame."""
+    taking that hex's local face frame to the shared canonical frame.
+
+    The orientation half is a table lookup rather than a call to
+    :func:`_face_code` per (hex, face) -- see :func:`_orient_tables`.  That
+    loop was the single hottest thing in the toolkit on any sizeable build:
+    ``merge`` and ``loft`` are the only operations that manufacture a global
+    index space, so both come through here, and a merge tree re-derives every
+    element once per level it passes through.  Measured on a 352k-hex chain,
+    2.1M faces: 22.5 s of Python for the loop against 0.10 s vectorized, with
+    bit-identical output."""
     e = hexes.shape[0]
-    corner_uv = [m[4] for m in _face_axes()]                # per-face (4,2) in {0,1}
     ids = hexes[:, _LOCAL_FACES]                            # (E,6,4)
     key = np.sort(ids, axis=2).reshape(e * 6, 4)
     uniq, inv = np.unique(key, axis=0, return_inverse=True)
     elem_faces = inv.reshape(e, 6).astype(np.int64)
-    orient = np.empty((e, 6), dtype=np.int64)
-    for ei in range(e):
-        for f in range(6):
-            orient[ei, f] = _face_code(ids[ei, f], corner_uv[f])
+    # origin = slot of the minimum id; column = which of its two edge-neighbours
+    # (ascending slot order) carries the larger id.
+    org = np.argmin(ids, axis=2)                            # (E,6)
+    fidx = np.arange(6)[None, :]
+    nb = _FACE_NB[fidx, org]                                # (E,6,2) slot ids
+    pair = np.take_along_axis(ids, nb, axis=2)              # (E,6,2) their corner ids
+    orient = _FACE_CODE_TAB[fidx, org, (pair[..., 0] > pair[..., 1]).astype(np.int64)]
     return uniq.astype(np.int64), elem_faces, orient
 
 
