@@ -45,7 +45,7 @@ from .._typing import (
 from ..model.tags import NO_TAGS, ElementTags, PointTags, check_tag_range
 
 
-def _as_points(points: NDArray[Any]) -> PointArray:
+def _as_points(points: PointArray) -> PointArray:
     """Normalize an array-like to a validated ``(N,3)`` float point array, raising
     the one actionable "points live in 3-D" error for anything else.  Shared by
     ``LineMesh.__init__`` and :meth:`LineMesh.loft` so both report it identically."""
@@ -84,7 +84,7 @@ class LineMesh:
 
     def __init__(
         self,
-        points: NDArray[Any],
+        points: PointArray,
         lines: IntArray,
         interior: PointArray | None = None,
         point_tags: PointTags | None = None,
