@@ -41,6 +41,7 @@ from .._typing import (
     PointArray,
     StrArray,
 )
+from ..model.tags import BoundaryTable
 
 
 def _as_points(points: NDArray[Any]) -> PointArray:
@@ -268,14 +269,13 @@ class LineMesh:
         tags: Sequence[str] | StrArray,
     ) -> tuple[IntArray, StrArray]:
         """Stably order boundary rows by ``(line id, side)``, applying the same
-        permutation to the parallel ``tags`` array."""
-        b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
-        nm: StrArray = np.asarray(tags, dtype=np.str_).reshape(-1)
-        if b.shape[0]:
-            order = np.lexsort((b[:, 1], b[:, 0]))
-            b = b[order]
-            nm = nm[order]
-        return b, nm
+        permutation to the parallel ``tags`` array.
+
+        Delegates to :class:`~nekmeshpy.model.tags.BoundaryTable` so the one
+        canonical ordering lives in one place; this wrapper keeps the paired-array
+        return while the containers are migrated onto the table."""
+        t = BoundaryTable.from_pairs(bnd, tags).ordered()
+        return t.rows, t.tags
 
     def _seg_tags(self) -> list[str] | None:
         """The dense ``element_tags`` as a ``list[str]`` for the ordered ops, or

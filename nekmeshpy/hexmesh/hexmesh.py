@@ -33,6 +33,7 @@ from .._typing import (
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import corner_indices
+from ..model.tags import BoundaryTable
 from ..quadmesh import QuadMesh
 
 # default sweep axis / origin for extrude
@@ -348,11 +349,10 @@ class HexMesh:
         names: Sequence[str] | StrArray,
     ) -> tuple[IntArray, StrArray]:
         """Stably order boundary rows by ``(element id, face)``, applying the same
-        permutation to the parallel ``names`` array."""
-        b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
-        nm: StrArray = np.asarray(names, dtype=np.str_).reshape(-1)
-        if b.shape[0]:
-            order = np.lexsort((b[:, 1], b[:, 0]))
-            b = b[order]
-            nm = nm[order]
-        return b, nm
+        permutation to the parallel ``names`` array.
+
+        Delegates to :class:`~nekmeshpy.model.tags.BoundaryTable` so the one
+        canonical ordering lives in one place; this wrapper keeps the paired-array
+        return while the containers are migrated onto the table."""
+        t = BoundaryTable.from_pairs(bnd, names).ordered()
+        return t.rows, t.tags

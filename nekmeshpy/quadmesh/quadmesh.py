@@ -34,6 +34,7 @@ from ..linemesh import LineMesh
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import quad_edge_indices
+from ..model.tags import BoundaryTable
 
 #: Boundary-name sentinel meaning "not a boundary": a side carrying this name emits
 #: no boundary row.  Equal to ``""`` so it reads as "unnamed" everywhere.
@@ -343,14 +344,13 @@ class QuadMesh:
         names: Sequence[str] | StrArray,
     ) -> tuple[IntArray, StrArray]:
         """Stably order boundary rows by ``(quad id, side)``, permuting the
-        parallel tags array to match."""
-        b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
-        nm: StrArray = np.asarray(names, dtype=np.str_).reshape(-1)
-        if b.shape[0]:
-            order = np.lexsort((b[:, 1], b[:, 0]))
-            b = b[order]
-            nm = nm[order]
-        return b, nm
+        parallel tags array to match.
+
+        Delegates to :class:`~nekmeshpy.model.tags.BoundaryTable` so the one
+        canonical ordering lives in one place; this wrapper keeps the paired-array
+        return while the containers are migrated onto the table."""
+        t = BoundaryTable.from_pairs(bnd, names).ordered()
+        return t.rows, t.tags
 
     @staticmethod
     def _cap_tags(cap: str | Sequence[str] | StrArray, L: int) -> list[str]:
