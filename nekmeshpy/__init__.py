@@ -20,7 +20,6 @@ from .model.fields import AxisLinearField, ConstantField, DistanceField, Field, 
 from .model.mesh import Mesh
 from .model.physical import PhysicalGroup, PhysicalGroups
 from .model.tags import (
-    NO_TAGS,
     EdgeTags,
     ElementTags,
     FaceTags,
@@ -41,7 +40,7 @@ __all__ = [
     "trimesh",
     "QuadMesh",
     "HexMesh",
-    "NO_TAG", "NO_TAGS",
+    "NO_TAG",
     "PointTags", "EdgeTags", "FaceTags", "TagBuilder", "ElementTags",
     "Mesh",
     "PhysicalGroup", "PhysicalGroups",

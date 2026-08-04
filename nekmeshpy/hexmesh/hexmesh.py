@@ -33,7 +33,6 @@ from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import corner_indices
 from ..model.tags import (
-    NO_TAGS,
     ElementTags,
     FaceTags,
     check_tag_range,
@@ -161,7 +160,7 @@ class HexMesh:
             self.interior = ia
         #: which hexes carry a region tag (sparse -- untagged stores nothing)
         self.element_tags: ElementTags = (
-            NO_TAGS if element_tags is None else element_tags)
+            ElementTags.empty() if element_tags is None else element_tags)
         self.face_tags: FaceTags = (
             FaceTags.empty() if face_tags is None else face_tags)
         check_tag_range(self.element_tags, self.face_tags, E, 6, "hexes")

@@ -34,7 +34,6 @@ from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import quad_edge_indices
 from ..model.tags import (
-    NO_TAGS,
     EdgeTags,
     ElementTags,
     check_tag_range,
@@ -181,7 +180,7 @@ class QuadMesh:
         # dense per-quad region/material tag ("" = untagged)
         #: which quads carry a region tag (sparse -- untagged stores nothing)
         self.element_tags: ElementTags = (
-            NO_TAGS if element_tags is None else element_tags)
+            ElementTags.empty() if element_tags is None else element_tags)
         # tagged edges: [quad id, side 1-4] coupled with their names
         self.edge_tags: EdgeTags = (
             EdgeTags.empty() if edge_tags is None else edge_tags)

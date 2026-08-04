@@ -51,7 +51,7 @@ from .._typing import BoolArray, IntArray, StrArray
 T = TypeVar("T", bound="SideTags")
 
 __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
-           "ElementTags", "NO_TAGS", "check_tag_range"]
+           "ElementTags", "check_tag_range"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -295,7 +295,7 @@ class ElementTags:
     ``ids`` are the tagged elements (strictly ascending, unique) and ``tags[i]`` names
     ``ids[i]``.  Every tag is non-empty -- an element is either named or absent, which is
     what ``""`` always meant in the dense array this replaces.  An untagged mesh is
-    :data:`NO_TAGS`, which allocates nothing.
+    ``ElementTags.empty()``, which stores no ids and no tags at all.
 
     .. warning::
        ``len()`` is the number of **tagged** elements, not the mesh's element count.
@@ -333,7 +333,11 @@ class ElementTags:
     # -- construction ----------------------------------------------------
     @classmethod
     def empty(cls) -> ElementTags:
-        """The nothing-tagged table."""
+        """The nothing-tagged table -- what an untagged mesh stores.
+
+        Spelt the same way as :meth:`SideTags.empty` on purpose: both tag slots of a
+        container are defaulted on adjacent lines, so one name for "the empty one" at
+        both keeps that pair readable."""
         return cls(np.zeros(0, np.int64), _empty_str())
 
     @classmethod
@@ -461,9 +465,6 @@ class ElementTags:
 
 
 #: The shared zero-length :class:`ElementTags` -- an untagged mesh allocates nothing.
-NO_TAGS: ElementTags = ElementTags.empty()
-
-
 def check_tag_range(element_tags: ElementTags, side_tags: SideTags,
                     n_elements: int, n_sides: int, what: str) -> None:
     """Raise if either table names an element or side the mesh does not have.

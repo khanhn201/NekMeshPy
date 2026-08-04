@@ -42,7 +42,7 @@ from .._typing import (
     PointArray,
     StrArray,
 )
-from ..model.tags import NO_TAGS, ElementTags, PointTags, check_tag_range
+from ..model.tags import ElementTags, PointTags, check_tag_range
 
 
 def _as_points(points: PointArray) -> PointArray:
@@ -127,7 +127,7 @@ class LineMesh:
 
         #: which lines carry a region tag (sparse -- an untagged mesh stores nothing)
         self.element_tags: ElementTags = (
-            NO_TAGS if element_tags is None else element_tags)
+            ElementTags.empty() if element_tags is None else element_tags)
         #: tagged end points, ``side`` 1-2, coupled with their names
         self.point_tags: PointTags = (
             PointTags.empty() if point_tags is None else point_tags)

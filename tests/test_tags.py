@@ -18,7 +18,6 @@ import numpy as np
 import pytest
 
 from nekmeshpy.model.tags import (
-    NO_TAGS,
     EdgeTags,
     ElementTags,
     FaceTags,
@@ -142,9 +141,10 @@ def test_builder_extend():
 
 # -- ElementTags: construction / normalization ---------------------------
 def test_element_tags_empty_allocates_nothing():
-    assert len(NO_TAGS) == 0 and not NO_TAGS
-    assert NO_TAGS.ids.nbytes == 0 and NO_TAGS.tags.nbytes == 0
-    assert NO_TAGS.group_tags == []
+    empty = ElementTags.empty()
+    assert len(empty) == 0 and not empty
+    assert empty.ids.nbytes == 0 and empty.tags.nbytes == 0
+    assert empty.group_tags == []
 
 
 def test_from_dense_drops_empties_and_matches_length():
@@ -249,8 +249,8 @@ def test_overlay_matches_np_where():
 
 def test_overlay_edge_cases():
     a = ElementTags.uniform(2, "base")
-    assert a.overlay(NO_TAGS) is a
-    assert NO_TAGS.overlay(a) is a
+    assert a.overlay(ElementTags.empty()) is a
+    assert ElementTags.empty().overlay(a) is a
 
 
 def test_offset_and_concat_for_merge():
@@ -272,7 +272,7 @@ def test_is_uniform():
     assert ElementTags.uniform(4, "wall").is_uniform(4)
     assert not ElementTags.uniform(4, "wall").is_uniform(5)       # partly tagged
     assert not ElementTags.from_dense(["a", "b"]).is_uniform(2)   # two vocabularies
-    assert not NO_TAGS.is_uniform(3)
+    assert not ElementTags.empty().is_uniform(3)
 
 
 def test_group_tags_sorted_unique():
