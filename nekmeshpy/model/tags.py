@@ -3,7 +3,11 @@
 The side-tag table has one name per rung, because the entity it names differs:
 :class:`PointTags` on a ``LineMesh``, :class:`EdgeTags` on a ``QuadMesh``,
 :class:`FaceTags` on a ``HexMesh``.  All three are the same three columns and the same
-operations; only the docstring and the valid ``sides`` range change.
+operations; what differs is the valid ``sides`` range, and that is exactly what earns
+them separate types -- each declares its own ``SIDES`` (2 / 4 / 6) and **validates
+itself at construction**, so a side 6 is a legal ``FaceTags`` row and a rejected
+``EdgeTags`` one.  Only the element *count* is left to the container, through
+``check_within``: it is the mesh's number, not the table's.
 
 **These are not "the boundary".**  The word *boundary* is reserved throughout the
 toolkit for the topological domain boundary -- the facets borne by exactly one element,
@@ -42,7 +46,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import ClassVar, Generic, TypeVar
 
 import numpy as np
 
@@ -51,7 +55,7 @@ from .._typing import BoolArray, IntArray, StrArray
 T = TypeVar("T", bound="SideTags")
 
 __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
-           "ElementTags", "check_tag_range"]
+           "ElementTags"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -106,21 +110,56 @@ class SideTags:
     fields raises ``ValueError: truth value of an array ... is ambiguous``.  Compare the
     columns explicitly instead."""
 
+    #: How many sides the rung's element has -- 2 / 4 / 6 going up the ladder.  The
+    #: subclasses set it, and it is the whole reason they exist as separate types:
+    #: it makes ``1 <= side <= SIDES`` checkable by the table itself, with no mesh in
+    #: sight.  ``0`` on the base means "rung unknown, upper bound unchecked".
+    SIDES: ClassVar[int] = 0
+
     elements: IntArray
     sides: IntArray
     tags: StrArray
 
     def __post_init__(self) -> None:
+        cls = type(self).__name__
         e = np.asarray(self.elements, dtype=np.int64).reshape(-1)
         s = np.asarray(self.sides, dtype=np.int64).reshape(-1)
         t = _str_array(self.tags)
         if not (e.shape[0] == s.shape[0] == t.shape[0]):
             raise ValueError(
                 "%s: elements (%d), sides (%d) and tags (%d) must have the same length"
-                % (type(self).__name__, e.shape[0], s.shape[0], t.shape[0]))
+                % (cls, e.shape[0], s.shape[0], t.shape[0]))
+        if e.shape[0]:
+            if int(e.min()) < 0:
+                raise ValueError("%s: negative element id %d"
+                                 % (cls, int(e.min())))
+            lo, hi = int(s.min()), int(s.max())
+            top = self.SIDES or hi
+            if lo < 1 or hi > top:
+                raise ValueError("%s: side %d is outside 1..%d"
+                                 % (cls, lo if lo < 1 else hi, top))
         object.__setattr__(self, "elements", _frozen(e))
         object.__setattr__(self, "sides", _frozen(s))
         object.__setattr__(self, "tags", _frozen(t))
+
+    def check_within(self, n_elements: int, what: str) -> None:
+        """Raise if any row names an element the mesh does not have.
+
+        The one check the table cannot make for itself: the side range comes from
+        :attr:`SIDES` and negative ids are always wrong, so both are enforced at
+        construction, but the element **count** is the mesh's, not the table's.  A
+        container calls this with its own count -- the number it alone knows -- rather
+        than the table carrying a copy of it through every ``offset`` and ``concat``,
+        which is a second place for it to go stale.
+
+        Catches the bug class where a ``merge`` forgets to offset one of its blocks,
+        which used to surface only as a wrong tag in the exported file."""
+        if not len(self):
+            return
+        hi = int(self.elements.max())
+        if hi >= n_elements:
+            raise ValueError("%s names element %d but there are only %d %s"
+                             % (type(self).__name__, hi, n_elements, what))
 
     # -- construction ----------------------------------------------------
     @classmethod
@@ -218,10 +257,14 @@ class PointTags(SideTags):
     Deliberately not re-decorated with ``@dataclass``: it adds no fields, and a second
     decoration would regenerate ``__repr__`` over the base's summarising one."""
 
+    SIDES: ClassVar[int] = 2
+
 
 class EdgeTags(SideTags):
     """Tagged **edges** of a ``QuadMesh``'s quads: ``side`` 1-4 -> the edge
     ``EDGE_POINTS[side - 1]``.  See :class:`SideTags` for the shared row semantics."""
+
+    SIDES: ClassVar[int] = 4
 
 
 class FaceTags(SideTags):
@@ -230,6 +273,8 @@ class FaceTags(SideTags):
 
     These are the rows the ``.re2`` boundary block and the ``.vtu`` ``bc_id`` field are
     written from -- named faces only, not every face on the domain boundary."""
+
+    SIDES: ClassVar[int] = 6
 
 
 class TagBuilder(Generic[T]):
@@ -463,30 +508,13 @@ class ElementTags:
         m = np.asarray(new_id_of, dtype=np.int64).reshape(-1)
         return ElementTags(m[self.ids], self.tags)
 
+    def check_within(self, n_elements: int, what: str) -> None:
+        """Raise if any tagged id names an element the mesh does not have.
 
-#: The shared zero-length :class:`ElementTags` -- an untagged mesh allocates nothing.
-def check_tag_range(element_tags: ElementTags, side_tags: SideTags,
-                    n_elements: int, n_sides: int, what: str) -> None:
-    """Raise if either table names an element or side the mesh does not have.
+        The element **count** is the only thing about itself this table cannot know --
+        negative ids are rejected at construction.  See
+        :meth:`SideTags.check_within`, which this mirrors."""
+        if len(self) and int(self.ids[-1]) >= n_elements:
+            raise ValueError("element_tags names element %d but there are only %d %s"
+                             % (int(self.ids[-1]), n_elements, what))
 
-    A check the containers could not perform while the tags were loose arrays: a
-    dense per-element array is in range by construction, and nothing ever validated
-    the boundary rows at all.  Sparse ids make it cheap and worth doing -- it catches
-    the class of bug where a ``merge`` forgets to offset one of its blocks, which
-    previously surfaced only as a wrong tag in the exported file.
-
-    ``what`` names the rung's elements (``"lines"`` / ``"quads"`` / ``"hexes"``) so
-    the message points at the caller's own vocabulary."""
-    if len(element_tags) and (int(element_tags.ids[-1]) >= n_elements):
-        raise ValueError("element_tags names element %d but there are only %d %s"
-                         % (int(element_tags.ids[-1]), n_elements, what))
-    if len(side_tags):
-        nm = type(side_tags).__name__
-        hi = int(side_tags.elements.max())
-        if hi >= n_elements or int(side_tags.elements.min()) < 0:
-            raise ValueError("%s names element %d but there are only %d %s"
-                             % (nm, hi, n_elements, what))
-        s_lo, s_hi = int(side_tags.sides.min()), int(side_tags.sides.max())
-        if s_lo < 1 or s_hi > n_sides:
-            raise ValueError("%s side %d is outside 1..%d"
-                             % (nm, s_hi if s_hi > n_sides else s_lo, n_sides))

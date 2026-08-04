@@ -299,3 +299,53 @@ def test_every_operation_returns_the_callers_own_subclass(cls):
 def test_length_mismatch_names_the_rungs_own_type():
     with pytest.raises(ValueError, match="FaceTags: elements"):
         FaceTags([0, 1], [1, 2], ["wall"])
+
+
+# -- validation the table does for itself ---------------------------------
+@pytest.mark.parametrize("cls,n_sides", [(PointTags, 2), (EdgeTags, 4), (FaceTags, 6)])
+def test_side_range_is_enforced_by_the_type_with_no_mesh_present(cls, n_sides):
+    """``SIDES`` is what makes the three types worth having as separate types: the
+    valid side range is a property of the rung, so the table checks it itself rather
+    than waiting for a container to be built from it."""
+    assert cls.SIDES == n_sides
+    cls.from_pairs([[0, 1], [0, n_sides]], ["a", "b"])          # both ends are fine
+    with pytest.raises(ValueError, match=r"side %d is outside 1\.\.%d"
+                                         % (n_sides + 1, n_sides)):
+        cls.from_pairs([[0, n_sides + 1]], ["a"])
+    with pytest.raises(ValueError, match=r"side 0 is outside 1\.\.%d" % n_sides):
+        cls.from_pairs([[0, 0]], ["a"])
+    with pytest.raises(ValueError, match="negative element id"):
+        cls.from_pairs([[-1, 1]], ["a"])
+
+
+def test_a_side_valid_one_rung_up_is_rejected_one_rung_down():
+    """The check the shared base could not make: side 6 is a legal hex face and an
+    illegal quad edge, so routing an EdgeTags through a 6-sided check would pass."""
+    FaceTags.from_pairs([[0, 6]], ["top"])
+    with pytest.raises(ValueError, match=r"EdgeTags: side 6 is outside 1\.\.4"):
+        EdgeTags.from_pairs([[0, 6]], ["top"])
+
+
+def test_check_within_is_the_only_thing_needing_the_mesh():
+    """Element *count* is the mesh's, not the table's -- so it is the one check a
+    container passes in, and the tables spell it the same way."""
+    ft = FaceTags.from_pairs([[3, 1]], ["wall"])
+    ft.check_within(4, "hexes")                                  # 0..3 -> fine
+    with pytest.raises(ValueError, match="FaceTags names element 3 but there are only 3"):
+        ft.check_within(3, "hexes")
+    et = ElementTags([3], ["fluid"])
+    et.check_within(4, "hexes")
+    with pytest.raises(ValueError, match="element_tags names element 3"):
+        et.check_within(3, "hexes")
+    FaceTags.empty().check_within(0, "hexes")                    # empty is always fine
+    ElementTags.empty().check_within(0, "hexes")
+
+
+def test_the_container_still_rejects_an_out_of_range_element():
+    from nekmeshpy import HexMesh, LineMesh, QuadMesh
+    ring = LineMesh.circle(1.0, 8)
+    sec = QuadMesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
+    blk = HexMesh.extrude(sec, length=1.0, layers=2)
+    with pytest.raises(ValueError, match="FaceTags names element"):
+        HexMesh(blk.quads, blk.hex, blk.face_orient, None,
+                FaceTags.from_pairs([[blk.n_hexes, 1]], ["wall"]))

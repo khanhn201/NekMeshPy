@@ -35,7 +35,6 @@ from ..model.interp import corner_indices
 from ..model.tags import (
     ElementTags,
     FaceTags,
-    check_tag_range,
 )
 from ..quadmesh import QuadMesh
 
@@ -163,7 +162,8 @@ class HexMesh:
             ElementTags.empty() if element_tags is None else element_tags)
         self.face_tags: FaceTags = (
             FaceTags.empty() if face_tags is None else face_tags)
-        check_tag_range(self.element_tags, self.face_tags, E, 6, "hexes")
+        self.element_tags.check_within(E, "hexes")
+        self.face_tags.check_within(E, "hexes")
 
         # corner connectivity + per-hex edge incidence are derived from the shared
         # faces and immutable post-construction (point moves don't change them), so

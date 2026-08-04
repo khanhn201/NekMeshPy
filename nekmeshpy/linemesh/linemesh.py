@@ -42,7 +42,7 @@ from .._typing import (
     PointArray,
     StrArray,
 )
-from ..model.tags import ElementTags, PointTags, check_tag_range
+from ..model.tags import ElementTags, PointTags
 
 
 def _as_points(points: PointArray) -> PointArray:
@@ -131,8 +131,8 @@ class LineMesh:
         #: tagged end points, ``side`` 1-2, coupled with their names
         self.point_tags: PointTags = (
             PointTags.empty() if point_tags is None else point_tags)
-        check_tag_range(self.element_tags, self.point_tags,
-                        self.lines.shape[0], 2, "lines")
+        self.element_tags.check_within(self.lines.shape[0], "lines")
+        self.point_tags.check_within(self.lines.shape[0], "lines")
 
         self._order = int(order)
         #: ``(L, order-1, 3)`` per-line private high-order interior nodes (ascending GLL

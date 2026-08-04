@@ -36,7 +36,6 @@ from ..model.interp import quad_edge_indices
 from ..model.tags import (
     EdgeTags,
     ElementTags,
-    check_tag_range,
 )
 
 #: Tag sentinel meaning "leave this side unnamed": a side carrying it emits no
@@ -184,7 +183,8 @@ class QuadMesh:
         # tagged edges: [quad id, side 1-4] coupled with their names
         self.edge_tags: EdgeTags = (
             EdgeTags.empty() if edge_tags is None else edge_tags)
-        check_tag_range(self.element_tags, self.edge_tags, Q, 4, "quads")
+        self.element_tags.check_within(Q, "quads")
+        self.edge_tags.check_within(Q, "quads")
 
         # corner connectivity is derived from quad/flip and immutable post-construction
         # (point moves don't change it), so memoize it once.

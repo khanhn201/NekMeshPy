@@ -125,7 +125,12 @@ All three containers share the same constructor argument order: `(rung below, in
 [orientation,] interior, side_tags, element_tags, *, order)`. A line
 element has no orientation bit, so `LineMesh` simply has no `flip` slot.
 
-Both tag slots are types from `model/tags.py`, not loose arrays. The side-tag slot is
+Both tag slots are types from `model/tags.py`, not loose arrays, and each
+**validates itself at construction** — a `PointTags`/`EdgeTags`/`FaceTags` declares its
+own `SIDES` (2/4/6) and rejects an out-of-range side or a negative id with no mesh in
+sight, which is what makes them three types rather than one. The single check a table
+cannot make for itself is the element *count*; the containers pass their own in via
+`tags.check_within(n, "quads")`. The side-tag slot is
 named for the entity it names — `mesh.point_tags` on a `LineMesh`, `.edge_tags` on a
 `QuadMesh`, `.face_tags` on a `HexMesh` (`PointTags` / `EdgeTags` / `FaceTags`, one
 shared implementation over a private `_SideTags`). **`boundary` is reserved for the
