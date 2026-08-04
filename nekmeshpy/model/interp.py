@@ -19,6 +19,8 @@ factory contributes only its geometry map:
   side / hex edge, for overlaying a true boundary curve and for entity decomposition.
 * :func:`hex_face_indices` -- the block slots on a hex face, for tagging boundary nodes.
 * :func:`coons_grid` -- the transfinite (Coons) blend factored out of ``structured``.
+* :func:`coons_grid_fn` -- the continuous form of ``coons_grid``, for boundaries given
+  as functions rather than pre-sampled arrays.
 * :func:`blend_ho` -- ``(1-t)A + tB`` on blocks.
 * :func:`scaled_jacobian_ho` -- the order-N scaled-Jacobian quality metric, sampled at
   a block's GLL nodes (reduces to the corner metric at order 1).
@@ -28,6 +30,8 @@ keeps the golden byte-identical.
 """
 
 from __future__ import annotations
+
+from typing import Callable
 
 import numpy as np
 
@@ -179,6 +183,29 @@ def coons_grid(cb: PointArray, ct: PointArray, cl: PointArray, cr: PointArray,
             + (1 - uu) * cl[None, :, :] + uu * cr[None, :, :]
             - ((1 - uu) * (1 - vv) * P00 + uu * (1 - vv) * P10
                + (1 - uu) * vv * P01 + uu * vv * P11))
+
+
+def coons_grid_fn(
+    cb: Callable[[FloatArray], PointArray], ct: Callable[[FloatArray], PointArray],
+    cl: Callable[[FloatArray], PointArray], cr: Callable[[FloatArray], PointArray],
+) -> Callable[[FloatArray, FloatArray], PointArray]:
+    """The continuous form of :func:`coons_grid`: ``cb``/``ct``/``cl``/``cr`` are
+    boundary *functions* rather than pre-sampled arrays, evaluable at any node
+    lattice rather than only where the boundaries happen to already be meshed.
+
+    Returns ``f(x, y)`` matching the row-wise contract
+    :func:`~nekmeshpy.quadmesh.loft_curve`'s callback wants: ``x`` the varying
+    row lattice, ``y`` a single value (repeated to ``x``'s shape by the caller).
+    That degenerate case -- one row of a grid, rather than the whole grid -- is
+    exactly what :func:`coons_grid` computes when handed a one-element ``v``, so
+    this samples the boundaries onto ``x``/that one ``y`` and calls it directly:
+    one Coons formula, not a second one reimplemented for the continuous case."""
+    def f(x: FloatArray, y: FloatArray) -> PointArray:
+        xa = np.asarray(x, dtype=float)
+        y0 = np.array([float(np.ravel(np.asarray(y, dtype=float))[0])])
+        return coons_grid(cb(xa), ct(xa), cl(y0), cr(y0), xa, y0)[:, 0, :]
+
+    return f
 
 
 def blend_ho(a: PointArray, b: PointArray, t: float) -> PointArray:

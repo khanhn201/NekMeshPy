@@ -914,6 +914,28 @@ def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
     return fr
 
 
+def quadrant_disc(arcs: Sequence[LineMesh], center: Point, radial: int | FloatArray,
+                  *, center_scale: float = 0.5, wall_tag: str = "") -> QuadMesh:
+    """Full disc from its four wall arcs and centre point: the four-quadrant
+    analogue of :func:`ogrid`.
+
+    ``arcs[q]`` is the wall running from corner ``q`` to corner ``q + 1`` (mod 4),
+    all at the same order and node count.  Builds the four ``O -> corner`` seams
+    once each -- shared by both neighboring quadrants, which is what makes them weld
+    bit-exactly rather than to a tolerance -- sampled at
+    :func:`quadrant_seam_fractions`, the same fan :func:`quadrant_ogrid` requires of
+    any seam it is handed, then merges the four quadrants those seams and ``arcs``
+    bound."""
+    from ._assemble import merge
+    n = (np.asarray(arcs[0].points).shape[0] - 1) // 2
+    fr = quadrant_seam_fractions(n, radial, center_scale=center_scale)
+    seams = [line(center, a.points[0], fr, order=arcs[0].order) for a in arcs]
+    seams.append(seams[0])
+    return merge([quadrant_ogrid(arcs[q], seams[q], seams[q + 1], radial,
+                                 center_scale=center_scale, wall_tag=wall_tag)
+                 for q in range(4)])
+
+
 def spine_fractions(n_theta: int, radial: int | FloatArray,
                     center_scale: float = 0.5) -> FloatArray:
     """The normalized ``A1 -> A2`` positions of the ``2*n_theta+1 + 2*Nradial`` spine
@@ -1043,4 +1065,5 @@ FACTORIES: dict[str, Callable[..., QuadMesh]] = {
     "half_ogrid": half_ogrid,
     "quadrant_ogrid": quadrant_ogrid,
     "spined_ogrid": spined_ogrid,
+    "quadrant_disc": quadrant_disc,
 }

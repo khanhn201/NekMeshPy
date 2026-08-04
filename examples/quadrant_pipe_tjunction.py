@@ -66,6 +66,12 @@ which is exactly what a ``quadrant_ogrid`` has, and the slabs reuse that factory
 ring formula ``(1-tau)*perimeter + tau*wall``, so the two halves of every shared ring
 band agree and the cap welds.
 
+The wall triangle's tip -- the point its three patches converge to, and the direction
+the octant core's far corner is placed along -- defaults to the plain centroid of the
+three arcs' midpoints. ``CAP_TIP_BIAS`` reweights that toward the branch-facing arc
+(always the crotch's ``ab`` argument), sliding the tip -- and the visible fan of mesh
+lines around it -- closer to the branch.
+
 Order
 -----
 
@@ -98,6 +104,7 @@ from collections import namedtuple
 import numpy as np
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy.model.interp import coons_grid_fn as coons_fn
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -111,6 +118,16 @@ H_BRANCH = 2.5               # branch opening plane, x = H_BRANCH
 N_QUAD = 3                   # cells per quadrant half-arc; a quadrant spans 2*N_QUAD
 RADIAL = np.array([0.0, 0.45, 0.8, 1.0])   # O-ring positions, core perimeter -> wall
 CENTER_SCALE = 0.55          # core corner at CENTER_SCALE * R along the arc midpoint
+
+#: Weight of the branch-facing arc (``ab`` in every :func:`cap` call, always the
+#: branch's own footprint quadrant) when locating each crotch's wall-triangle "tip" --
+#: the wall point its three patches converge to.  The remaining weight is split evenly
+#: between the two side arcs.  ``1/3`` is the plain centroid of the three arc
+#: midpoints (the original, symmetric placement); raise it toward ``1.0`` to pull the
+#: tip closer to the branch, lower it toward ``0.0`` to push it toward the bypass wall.
+#: Keep it inside ``(0, 1)`` -- either endpoint collapses one patch's spoke to zero
+#: length.
+CAP_TIP_BIAS = 1.0 / 3.0
 
 PHI_W = np.deg2rad(112.5)    # bypass edge: the two z = 0 wall corners, at +-PHI_W
 
@@ -272,14 +289,6 @@ def disc(pieces):
                            for arc, s1, s2 in pieces])
 
 
-def arc_disc(arcs, center):
-    """A section from its four wall arcs and its centre point; each shared radius is
-    built once and handed to both of its quadrants."""
-    seams = [seam(a.points[0], center) for a in arcs]
-    seams.append(seams[0])
-    return disc([(arcs[q], seams[q], seams[q + 1]) for q in range(4)])
-
-
 def plain_walls(composite, z, sign):
     """The plain four-quadrant disc at height ``z`` that a leg morphs into: seams at
     ``+-45`` / ``+-135`` degrees so one quadrant faces the branch, running in the
@@ -347,21 +356,6 @@ def arc_mids(walls):
     return [w.g(w.fr[N:N + 1])[0] for w in walls]
 
 
-def coons_fn(cb, ct, cl, cr):
-    """A transfinite patch of four boundary *functions* -- the continuous form of
-    ``model.interp.coons_grid``, evaluable at any node lattice."""
-    def f(x, y):
-        xa = np.asarray(x, dtype=float)[:, None]
-        ya = np.asarray(y, dtype=float)[:, None]
-        z, u = np.zeros(1), np.ones(1)
-        p00, p10, p01, p11 = cb(z)[0], cb(u)[0], ct(z)[0], ct(u)[0]
-        return ((1 - ya) * cb(x) + ya * ct(x) + (1 - xa) * cl(y) + xa * cr(y)
-                - ((1 - xa) * (1 - ya) * p00 + xa * (1 - ya) * p10
-                   + (1 - xa) * ya * p01 + xa * ya * p11))
-
-    return f
-
-
 def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node.
 
@@ -375,16 +369,18 @@ def wall_patch(fn, tag):
         fr, order=ORDER, element_tags=[tag] * N)
 
 
-def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None):
+def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None, tip_bias=CAP_TIP_BIAS):
     """The curved wall triangle between three arcs, as the three patches about its
-    centroid that :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` wants.
+    tip that :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` wants.
 
     Built in the cylinder's own ``(phi, z)`` parameters throughout, so every node of
     every patch lands on the wall exactly.  ``mids`` lets a caller that already has
     ``arc_mids((w_ab, w_bc, w_ca))`` (``cap()``, for its tetra ``center``) pass it
-    straight through instead of it being recomputed here."""
+    straight through instead of it being recomputed here.  ``tip_bias`` is
+    :data:`CAP_TIP_BIAS`'s weight on ``w_ab`` (always the branch arc, by this file's
+    calling convention), split evenly onto ``w_bc``/``w_ca`` otherwise -- see there."""
     u_ab, u_bc, u_ca = arc_mids((w_ab, w_bc, w_ca)) if mids is None else mids
-    wc = (u_ab + u_bc + u_ca) / 3.0
+    wc = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
 
     def half(w, i0, i1):
         """Half an arc on ``[0, 1]``, remapped **through its own node values** -- a
@@ -413,28 +409,33 @@ def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None):
                             half(w_bc, 2 * N, N), spoke(u_ca)), tag)])
 
 
-def cap(sa, sb, sc, ab, bc, ca):
+def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
     """A crotch: the curvilinear tetrahedron whose four sides are the three quadrant
     faces meeting at ``O`` and the patch of pipe wall between their arcs.
 
     Each of ``ab``/``bc``/``ca`` is that arc as a ``(LineMesh, Wall)`` pair -- the mesh
     the quadrant face is built on, the parametrization the wall patch is evaluated on.
-    :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` does the rest: one hex
-    block per corner, inheriting the split each face already carries, which is exactly
-    the octant of a 3-D O-grid this region wants."""
+    ``ab`` is always the branch's own footprint arc, by this file's calling
+    convention, which is what lets ``tip_bias`` (:data:`CAP_TIP_BIAS`) pull the wall
+    triangle's tip toward it. :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>`
+    does the rest: one hex block per corner, inheriting the split each face already
+    carries, which is exactly the octant of a 3-D O-grid this region wants."""
     (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
     # The centre is the octant core's far corner: out along the ray from ``O`` through
-    # the wall point midway between the three arcs, at ``CENTER_SCALE * sqrt(1.5) * R``.
+    # the wall tip (see wall_triangle's own wc), at ``CENTER_SCALE * sqrt(1.5) * R``.
     # Each quadrant face puts its own core corner at ``CENTER_SCALE * R`` along its arc
-    # midpoint, and on the ideal octant the cube corner spanned by those three lies
-    # ``sqrt(3/2)`` times as far out -- so the core block meets all three faces' cores
-    # squarely.  ``tetra``'s default (the centroid of the four face centres) is well
-    # inside that and would flatten the corner cells.
+    # midpoint, and on the ideal (untipped) octant the cube corner spanned by those
+    # three lies ``sqrt(3/2)`` times as far out -- so the core block meets all three
+    # faces' cores squarely.  ``tetra``'s default (the centroid of the four face
+    # centres) is well inside that and would flatten the corner cells.
     mids = arc_mids((w_ab, w_bc, w_ca))
-    wc = cyl_pts(np.mean(mids, axis=0)[None, :])[0]
+    u_ab, u_bc, u_ca = mids
+    wc_param = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
+    wc = cyl_pts(wc_param[None, :])[0]
     return HexMesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
                           quadrant(m_ca, sc, sa),
-                          wall_triangle(w_ab, w_bc, w_ca, mids=mids)],
+                          wall_triangle(w_ab, w_bc, w_ca, mids=mids,
+                                       tip_bias=tip_bias)],
                          center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN))
 
 
@@ -454,8 +455,10 @@ def leg(composite, walls, sign, end_tag):
     w_plain = plain_walls(walls, z, sign)
 
     def station(s):
-        return arc_disc([wall_mesh(blend_wall(walls[q], w_plain[q], s))
-                         for q in range(4)], np.array([0.0, 0.0, s * z]))
+        return QuadMesh.quadrant_disc(
+            [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
+            np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
+            wall_tag="wall")
 
     plain = station(1.0)
     return [HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
@@ -470,7 +473,9 @@ def branch():
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
     c_open = np.array([H_BRANCH, 0.0, 0.0])
-    sections = [arc_disc([w[i] for w in walls], t[i] * c_open) for i in range(t.size)]
+    sections = [QuadMesh.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+                                       center_scale=CENTER_SCALE, wall_tag="wall")
+               for i in range(t.size)]
     return HexMesh.loft(sections, last_tag="branch")
 
 
