@@ -16,8 +16,8 @@ last is capped.  The two chains are mirror images, so their ``k``-th junctions
 face each other across their own copy of the serpentine coil -- ``N_T2``
 parallel coils stacked down ``-y``, each planar in its own x-z plane.  The
 coil's shape is traced from a reference photo and is **fixed**: it is only
-placed, never rescaled (see ``COIL_MOVES``, shared verbatim with
-``serpentine_pipe.py``).  The chimera ports sit exactly ``H1 + RUN_T1_T2`` = 10
+placed, never rescaled (see ``coil_lib``, whose move table ``serpentine_pipe.py``
+builds standing alone).  The chimera ports sit exactly ``H1 + RUN_T1_T2`` = 10
 above the first coil in y.
 
     PYTHONPATH=. python examples/chimera_full.py
@@ -70,7 +70,9 @@ from nekmeshpy.model.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from tjunction_lib import build_tjunction  # noqa: E402  (needs the path above)
+from coil_lib import MOVES as COIL_MOVES_LIB  # noqa: E402  (needs the path above)
+from coil_lib import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
+from tjunction_lib import build_tjunction  # noqa: E402
 
 FAST = False
 ORDER = 2
@@ -490,31 +492,10 @@ print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
 # T1-to-T2 joins above), not by forcing an exact but colliding registration.
 # -----------------------------------------------------------------------------
 
-# -- the coil's own fixed shape (traced from the reference photo; do not
-# reshape or rescale -- see trace_serp3.py) ----------------------------------
-PASS_LEN = 136.0
-U_R = 2.5        # tight radius: bottom turns + top hairpins
-U_R_MID = 4.0    # wider radius: middle bridge between the two half-coils
-R_HOOK = U_R_MID
-HOOK_JOG = 5.0
-HOOK_DROP = 20.0
-RAISE = 4.0      # extra length on the middle two passes -> raised middle bridge
-
-_hook_in = [("line", HOOK_DROP, 0.0), ("arc", R_HOOK, 90.0),
-            ("line", HOOK_JOG, 0.0), ("arc", R_HOOK, -90.0)]
-_hook_out = [("arc", R_HOOK, -90.0), ("line", HOOK_JOG, 0.0),
-             ("arc", R_HOOK, 90.0), ("line", HOOK_DROP, 0.0)]
-
-COIL_MOVES = (_hook_in
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, 180.0)]
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R_MID, 180.0)]
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, 180.0)]
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]
-    + [("line", PASS_LEN + RAISE, 0.0)]
-    + _hook_out)
+# -- the coil's own fixed shape --------------------------------------------
+# Traced from a reference photo; do not reshape or rescale.  It lives in coil_lib
+# because serpentine_pipe.py builds the same physical part standing alone.
+COIL_MOVES = COIL_MOVES_LIB
 
 _coil_local = turtle_path(COIL_MOVES, start=(0.0, 0.0), heading=0.0)
 _coil_end_uv = _coil_local.centerline(np.array([1.0]))[0]
@@ -561,14 +542,9 @@ def _end_section(section, moves, heading, y_fixed):
 
 
 TOTAL_COIL = _coil_local.total_length
-# The sweep target must subdivide even the tightest (U_R) 180-degree turn into
-# several stations -- sweep_fractions rounds a segment's own length/target to
-# the *nearest* station count, so a target only a little under the arc's own
-# length (2*pi*U_R/2 = 7.85) rounds down to a single, unsubdivided station
-# spanning the full 180 degrees: two opposite-facing cross-sections linearly
-# interpolated into one wildly distorted (near-zero-volume) hex. Measured:
-# 6.0 does exactly this (round(7.85/6.0) == 1); 2.0 does not.
-COIL_TARGET_LEN = 2.0
+# The sweep target is the coil's own (see coil_lib): it must subdivide even the
+# tightest U_R 180-degree turn into several stations.
+COIL_TARGET_LEN = COIL_TARGET_LEN_LIB
 
 
 def build_coil(dbr_i, dbr_o):

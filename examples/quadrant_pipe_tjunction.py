@@ -99,12 +99,11 @@ all of them.
 """
 
 import logging
-from collections import namedtuple
 
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.interp import coons_grid_fn as coons_fn
+from nekmeshpy.model import surfaces
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -203,63 +202,41 @@ def cyl_params(p):
 #: deliberately take the long way round (the bypass runs *behind* the pipe, from
 #: ``+PHI_W`` to ``2*pi - PHI_W``), and because morphing a leg in ``(phi, z)`` is what
 #: keeps its transition stations on the wall (see :func:`leg`).
-Wall = namedtuple("Wall", "g fr")
+#: A wall curve is a :class:`~nekmeshpy.model.surfaces.SurfaceCurve`, carried as its
+#: parametrization rather than as points, which is what keeps every derived curve
+#: exactly *on* the cylinder.
 
 
 def cyl_pts(u):
-    """``(K, 2)`` wall parameters to ``(K, 3)`` points."""
+    """``(K, 2)`` wall parameters to ``(K, 3)`` points -- this junction's surface map."""
     return cyl(u[:, 0], u[:, 1])
 
 
 def wall_mesh(w):
-    """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return linemesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    """A wall curve as a ``LineMesh`` on the cylinder, exact at every node."""
+    return linemesh.on_surface(w, cyl_pts, order=ORDER)
 
 
 def ruled_wall(pa, pb):
     """The straight ``(phi, z)`` segment between two stations, on ``[0, 1]``."""
-    pa, pb = np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)
-
-    def g(x):
-        xi = np.asarray(x, dtype=float)[:, None]
-        return (1.0 - xi) * pa + xi * pb
-
-    return Wall(g, np.linspace(0.0, 1.0, 2 * N_QUAD + 1))
+    return surfaces.ruled(pa, pb, 2 * N_QUAD)
 
 
 def foot_wall(fr):
     """A footprint quadrant, in the branch angle it is analytic in."""
-    return Wall(lambda t: cyl_params(footprint(t)), np.asarray(fr, dtype=float))
+    return surfaces.curve(lambda t: cyl_params(footprint(t)), fr)
 
 
 def plain_wall(w, phi0, phi1, z):
     """The plain-disc arc ``phi0 -> phi1`` at height ``z``, reparametrized onto
     ``w``'s domain so the two can be blended station by station (see :func:`leg`)."""
-    t0, t1 = float(w.fr[0]), float(w.fr[-1])
-
-    def g(x):
-        xi = (np.asarray(x, dtype=float) - t0) / (t1 - t0)
-        return np.stack([phi0 + xi * (phi1 - phi0), np.full(xi.shape, z)], axis=1)
-
-    return Wall(g, w.fr)
-
-
-def blend_wall(w0, w1, lam):
-    """The two curves interpolated **in parameter space**, hence still on the wall."""
-    return Wall(lambda x: (1.0 - lam) * w0.g(x) + lam * w1.g(x), w0.fr)
-
-
-def reverse_wall(w):
-    """The same curve traversed the other way: ``loft_fn`` takes a descending
-    parameter sequence for exactly this."""
-    return Wall(w.g, w.fr[::-1])
+    return surfaces.reparam(w, (phi0, z), (phi1, z))
 
 
 def shift_wall(w, turns):
     """The same curve with ``phi`` shifted by whole turns -- the identical points,
     rebranched so that curves meeting at a corner can be blended in ``phi``."""
-    d = np.array([2.0 * np.pi * turns, 0.0])
-    return Wall(lambda x: w.g(x) + d, w.fr)
+    return surfaces.shift(w, (2.0 * np.pi * turns, 0.0))
 
 
 def seam(target, center=ORIGIN):
@@ -353,67 +330,14 @@ def arc_mids(walls):
     """The ``(phi, z)`` mid-node of each of a crotch's three arcs -- the nodes the
     wall triangle splits at, taken from the arcs' own sampling rather than at the
     midpoint of the parameter range, which is not the same point on a graded arc."""
-    return [w.g(w.fr[N:N + 1])[0] for w in walls]
-
-
-def wall_patch(fn, tag):
-    """One patch of the wall triangle, evaluated on the cylinder at every node.
-
-    Spelt as a nested ``loft_fn`` rather than ``QuadMesh.from_grid`` because
-    ``from_grid`` blends straight from corners: at ``order > 1`` its interior nodes
-    would leave the wall."""
-    fr = np.linspace(0.0, 1.0, N + 1)
-    return quadmesh.loft_fn(
-        lambda y: linemesh.loft_fn(
-            lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
-        fr, order=ORDER, element_tags=[tag] * N)
-
-
-def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None, tip_bias=CAP_TIP_BIAS):
-    """The curved wall triangle between three arcs, as the three patches about its
-    tip that :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` wants.
-
-    Built in the cylinder's own ``(phi, z)`` parameters throughout, so every node of
-    every patch lands on the wall exactly.  ``mids`` lets a caller that already has
-    ``arc_mids((w_ab, w_bc, w_ca))`` (``cap()``, for its tetra ``center``) pass it
-    straight through instead of it being recomputed here.  ``tip_bias`` is
-    :data:`CAP_TIP_BIAS`'s weight on ``w_ab`` (always the branch arc, by this file's
-    calling convention), split evenly onto ``w_bc``/``w_ca`` otherwise -- see there."""
-    u_ab, u_bc, u_ca = arc_mids((w_ab, w_bc, w_ca)) if mids is None else mids
-    wc = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
-
-    def half(w, i0, i1):
-        """Half an arc on ``[0, 1]``, remapped **through its own node values** -- a
-        plain linear remap would slide the shared nodes off the arc wherever its
-        spacing is graded, as the footprint's arc-length spacing is."""
-        step = 1 if i1 > i0 else -1
-        idx = np.arange(i0, i1 + step, step)
-        fr, m = w.fr[idx], idx.size - 1
-
-        def rep(s):
-            s = np.clip(np.asarray(s, dtype=float), 0.0, 1.0) * m
-            i = np.clip(np.floor(s).astype(int), 0, m - 1)
-            return (1.0 - (s - i)) * fr[i] + (s - i) * fr[i + 1]
-
-        return lambda s: w.g(rep(s))
-
-    def spoke(mid):
-        return lambda s: mid + np.asarray(s, dtype=float)[:, None] * (wc - mid)
-
-    return quadmesh.merge([
-        wall_patch(coons_fn(half(w_ab, 0, N), spoke(u_ca),
-                            half(w_ca, 2 * N, N), spoke(u_ab)), tag),
-        wall_patch(coons_fn(half(w_ab, 2 * N, N), spoke(u_bc),
-                            half(w_bc, 0, N), spoke(u_ab)), tag),
-        wall_patch(coons_fn(half(w_ca, 0, N), spoke(u_bc),
-                            half(w_bc, 2 * N, N), spoke(u_ca)), tag)])
+    return [surfaces.node(w, N) for w in walls]
 
 
 def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
     """A crotch: the curvilinear tetrahedron whose four sides are the three quadrant
     faces meeting at ``O`` and the patch of pipe wall between their arcs.
 
-    Each of ``ab``/``bc``/``ca`` is that arc as a ``(LineMesh, Wall)`` pair -- the mesh
+    Each of ``ab``/``bc``/``ca`` is that arc as a ``(LineMesh, SurfaceCurve)`` pair -- the mesh
     the quadrant face is built on, the parametrization the wall patch is evaluated on.
     ``ab`` is always the branch's own footprint arc, by this file's calling
     convention, which is what lets ``tip_bias`` (:data:`CAP_TIP_BIAS`) pull the wall
@@ -422,20 +346,22 @@ def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
     carries, which is exactly the octant of a 3-D O-grid this region wants."""
     (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
     # The centre is the octant core's far corner: out along the ray from ``O`` through
-    # the wall tip (see wall_triangle's own wc), at ``CENTER_SCALE * sqrt(1.5) * R``.
+    # the wall tip (quadmesh.tri_patch_tip), at ``CENTER_SCALE * sqrt(1.5) * R``.
     # Each quadrant face puts its own core corner at ``CENTER_SCALE * R`` along its arc
     # midpoint, and on the ideal (untipped) octant the cube corner spanned by those
     # three lies ``sqrt(3/2)`` times as far out -- so the core block meets all three
     # faces' cores squarely.  ``tetra``'s default (the centroid of the four face
     # centres) is well inside that and would flatten the corner cells.
     mids = arc_mids((w_ab, w_bc, w_ca))
-    u_ab, u_bc, u_ca = mids
-    wc_param = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
+    # the solid apex is placed against the patch's own tip, read from the same helper
+    # tri_patch uses, so the two cannot drift apart
+    wc_param = quadmesh.tri_patch_tip(*mids, tip_bias=tip_bias)
     wc = cyl_pts(wc_param[None, :])[0]
     return hexmesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
                           quadrant(m_ca, sc, sa),
-                          wall_triangle(w_ab, w_bc, w_ca, mids=mids,
-                                       tip_bias=tip_bias)],
+                          quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca, order=ORDER,
+                                             tip_bias=tip_bias, mids=mids,
+                                             element_tag="wall")],
                          center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN))
 
 
@@ -456,7 +382,7 @@ def leg(composite, walls, sign, end_tag):
 
     def station(s):
         return quadmesh.quadrant_disc(
-            [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
+            [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
             np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
@@ -486,12 +412,12 @@ blocks = [*leg(COMPOSITE_R, W_R, 1, "outlet"),
           # authored a full turn away in a leg's unwrapped list are shifted back.
           cap(SP[0], SP[3], SWP,                        # +y crotch: P1, P2, W+
               (linemesh.reverse(FQ[3]), foot_wall(FQ_FR[3][::-1])),
-              (linemesh.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
-              (linemesh.reverse(SIDE_RP), reverse_wall(W_R[1]))),
+              (linemesh.reverse(SIDE_LP), shift_wall(surfaces.reverse(W_L[3]), 1)),
+              (linemesh.reverse(SIDE_RP), surfaces.reverse(W_R[1]))),
           cap(SP[2], SP[1], SWM,                        # -y crotch: P3, P4, W-
               (linemesh.reverse(FQ[1]), foot_wall(FQ_FR[1][::-1])),
-              (linemesh.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
-              (linemesh.reverse(SIDE_LM), reverse_wall(W_L[1])))]
+              (linemesh.reverse(SIDE_RM), shift_wall(surfaces.reverse(W_R[3]), -1)),
+              (linemesh.reverse(SIDE_LM), surfaces.reverse(W_L[1])))]
 mesh = hexmesh.merge(blocks)
 
 print(hexmesh.report(mesh))

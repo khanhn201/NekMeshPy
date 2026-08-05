@@ -10,20 +10,23 @@ samplings a caller has to derive for one live here beside it.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Callable
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, Point, PointArray, SmoothingMethod, Vec3
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
+from ..linemesh.assemble import loft_fn as line_loft_fn
 from ..linemesh.morph import reverse as line_reverse
 from ..linemesh.shape import line
-from ..model import conform
+from ..model import conform, surfaces
 from ..model.fields import gll_nodes, validate_layers
-from ..model.interp import coons_grid
+from ..model.interp import coons_grid, coons_grid_fn
+from ..model.surfaces import SurfaceCurve, SurfaceMap
 from ..model.tags import EdgeTags, ElementTags, TagBuilder
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
-from .assemble import merge
+from .assemble import loft_fn, merge
 from .lift import from_grid
 from .quadmesh import QuadMesh
 from .query import boundary_edges
@@ -1247,6 +1250,77 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
                   element_tags=etags, order=order)
     return _tag_rim(qm, rim_tag)
 
+def _patch(fn: Callable[[FloatArray, FloatArray], FloatArray], surface: SurfaceMap,
+           n: int, order: int, tag: str) -> QuadMesh:
+    """One ``n``-by-``n`` patch of a surface, from a parameter-space Coons map --
+    evaluated on the surface at every node, corners and private interiors alike."""
+    fr = np.linspace(0.0, 1.0, n + 1)
+    return loft_fn(
+        lambda y: line_loft_fn(
+            lambda x: surface(fn(x, np.full(np.shape(x), y))), fr, order=order),
+        fr, order=order, element_tags=[tag] * n)
+
+
+def tri_patch(surface: SurfaceMap, ab: SurfaceCurve, bc: SurfaceCurve,
+              ca: SurfaceCurve, *, order: int = 1, tip_bias: float = 1.0 / 3.0,
+              mids: Sequence[FloatArray] | None = None,
+              element_tag: str = "") -> QuadMesh:
+    """The curved triangle bounded by three surface curves, meshed as the **three
+    quadrilateral patches** about an interior tip -- the all-quad split of a triangle,
+    and the shape :func:`HexMesh.tetra <nekmeshpy.hexmesh.shape.tetra>` wants for the
+    curved side of a curvilinear tetrahedron.
+
+    Each of the three curves is split at its own middle node and the six halves are
+    paired across spokes running to the tip, giving three Coons patches that share the
+    tip and meet along the spokes.  Every node is placed by evaluating ``surface``, so
+    the patch is exact on it at any order.
+
+    The three curves must have the same odd node count ``2n+1`` -- they are split at
+    node ``n``, and that split point is read off each curve's **own** sampling rather
+    than at the midpoint of its parameter range, which on a graded curve is a different
+    point and would stop the patch meeting its neighbour.
+
+    ``tip_bias`` weights ``ab`` when locating the tip: ``1/3`` is the centroid of the
+    three middle nodes, and larger values pull the tip toward ``ab``.  ``mids=`` passes
+    the three middle parameters in when the caller has already computed them (to place
+    a matching solid tip, say), so the two cannot disagree."""
+    ns = {c.fr.size for c in (ab, bc, ca)}
+    if len(ns) != 1:
+        raise ValueError("tri_patch: the three curves must share a node count, got %s"
+                         % sorted(ns))
+    k = ns.pop()
+    if k < 3 or k % 2 == 0:
+        raise ValueError(
+            "tri_patch: each curve needs an odd node count 2n+1 (at least 3) so it can "
+            "be split at its own middle node; got %d" % k)
+    n = (k - 1) // 2
+    u_ab, u_bc, u_ca = (
+        [surfaces.node(c, n) for c in (ab, bc, ca)] if mids is None else list(mids))
+    tip = tri_patch_tip(u_ab, u_bc, u_ca, tip_bias=tip_bias)
+    seg, spk = surfaces.segment, surfaces.spoke
+    return merge([
+        _patch(coons_grid_fn(seg(ab, 0, n), spk(u_ca, tip),
+                             seg(ca, 2 * n, n), spk(u_ab, tip)),
+               surface, n, order, element_tag),
+        _patch(coons_grid_fn(seg(ab, 2 * n, n), spk(u_bc, tip),
+                             seg(bc, 0, n), spk(u_ab, tip)),
+               surface, n, order, element_tag),
+        _patch(coons_grid_fn(seg(ca, 0, n), spk(u_bc, tip),
+                             seg(bc, 2 * n, n), spk(u_ca, tip)),
+               surface, n, order, element_tag)])
+
+
+def tri_patch_tip(u_ab: FloatArray, u_bc: FloatArray, u_ca: FloatArray, *,
+                  tip_bias: float = 1.0 / 3.0) -> FloatArray:
+    """Where :func:`tri_patch` puts its tip, in surface parameters, given the three
+    curves' middle nodes.
+
+    Exposed because a caller placing something *against* the patch -- the apex of the
+    curvilinear tetrahedron it caps, say -- needs the identical point, and recomputing
+    the weighting by hand is how the two drift apart."""
+    return tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
+
+
 __all__ = [
     "box",
     "half_box",
@@ -1262,4 +1336,6 @@ __all__ = [
     "spine_fractions",
     "spined_ogrid",
     "structured",
+    "tri_patch",
+    "tri_patch_tip",
 ]

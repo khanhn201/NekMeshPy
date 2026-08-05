@@ -82,6 +82,8 @@ from .shape import (
     spine_fractions,
     spined_ogrid,
     structured,
+    tri_patch,
+    tri_patch_tip,
 )
 
 __all__ = [
@@ -129,4 +131,6 @@ __all__ = [
     "sweep_path",
     "transform",
     "translate",
+    "tri_patch",
+    "tri_patch_tip",
 ]

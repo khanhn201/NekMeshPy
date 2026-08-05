@@ -37,6 +37,8 @@ Produces ``serpentine_pipe.re2`` and ``serpentine_pipe.vtu``.
 """
 
 import logging
+import os
+import sys
 import time
 
 import numpy as np
@@ -46,21 +48,14 @@ from nekmeshpy.model import paths
 from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.paths import turtle_path
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # -- path parameters ---------------------------------------------------------
-# These are ``chimera_full.py``'s own ``COIL_MOVES`` numbers verbatim: that
-# script sweeps this exact coil between its two T2 branches, so the two stay
-# the same physical part.  Change them here and there together.
-R_PIPE = 0.5                  # pipe (tube) radius -- the swept cross-section
-PASS_LEN = 136.0              # length of a full vertical pass
-U_R = 2.5                     # tight U-turn radius: bottom turns + top hairpins
-U_R_MID = 4.0                 # wider radius of the raised middle bridge
-R_HOOK = U_R_MID              # the two end hooks turn at the same radius
-HOOK_JOG = 5.0                # the hook's short sideways step
-HOOK_DROP = 20.0              # the hook's straight run out to the inlet / outlet
-RAISE = 4.0                   # extra length on passes 1/4/5/8 -- what lifts the
-                              # middle bridge above the two flanking hairpins
+# The coil's shape lives in coil_lib because chimera_full.py sweeps a copy of this
+# exact part between each of its T2 branch pairs. One part, one move table.
+from coil_lib import MOVES, R_PIPE, TARGET_LEN  # noqa: E402  (needs the path above)
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # The turtle walks in its own ``(u, v)``: ``u`` is the pass direction, ``v`` the
 # pass-to-pass stacking.  Mapping u -> world +z and v -> world -x reproduces
@@ -75,15 +70,8 @@ PLANE_NORMAL = (0.0, 1.0, 0.0)       # the coil is planar: y is the plane normal
 N_SIDE = 5                   # central square block cells per side (loop = 4*N_SIDE pts)
 N_RADIAL = 3                 # O-ring layers out to the wall
 CENTER_SCALE = 0.5
-TARGET_LEN = 2.0             # target hex length along the sweep. NOT cubic here: this
-                             # coil is slender (a pass is 272 tube radii long), so
-                             # ~1.6*R_PIPE would cost ~100k hexes. The real floor is
-                             # the tightest turn -- sweep_fractions rounds a segment's
-                             # length/target to the NEAREST station count, so a target
-                             # near a U-turn's own arc length (pi*U_R = 7.85) rounds
-                             # down to ONE station spanning the whole 180 deg: two
-                             # opposed sections lerped into a near-zero-volume hex.
-                             # 2.0 puts 4 stations in that turn; 8.0 would put 1.
+# TARGET_LEN comes from coil_lib too: it is a property of this coil's own
+# geometry (the tightest turn), not of how any one script meshes it.
 ORDER = 2                    # polynomial order; 1 = linear. Both smoothers stay off:
                              # a repositioning smoother moves corner nodes only and
                              # rejects order > 1. sweep evaluates the path at the
@@ -95,26 +83,6 @@ OUT_NAME = "serpentine_pipe"
 
 # boundary name -> Nek BC code, applied only at export
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-
-# -- the move table: ("line", length, 0.0) or ("arc", radius, signed turn in deg) --
-# a positive turn is counter-clockwise in the (u, v) plane.  The two hooks are
-# each other's time reversal (reverse the order, negate every turn), which is
-# what lands both openings on the same v facing the same way.
-HOOK_IN = [("line", HOOK_DROP, 0.0), ("arc", R_HOOK, +90.0),
-           ("line", HOOK_JOG, 0.0), ("arc", R_HOOK, -90.0)]
-HOOK_OUT = [("arc", R_HOOK, -90.0), ("line", HOOK_JOG, 0.0),
-            ("arc", R_HOOK, +90.0), ("line", HOOK_DROP, 0.0)]
-
-MOVES = (HOOK_IN
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]   # pass 1 -> bottom
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, +180.0)]           # pass 2 -> top hairpin
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]           # pass 3 -> bottom
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R_MID, +180.0)]  # 4 -> RAISED bridge
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]   # pass 5 -> bottom
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, +180.0)]           # pass 6 -> top hairpin
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]           # pass 7 -> bottom
-    + [("line", PASS_LEN + RAISE, 0.0)]                         # pass 8
-    + HOOK_OUT)
 
 # -- turtle-walk the move table, then lift it onto the coil's own plane -------
 # paths.embed maps the walk's own (u, v) to origin + u*AXIS_U + v*AXIS_V, and gives

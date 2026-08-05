@@ -15,8 +15,9 @@ import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
 from ..model.paths import SpacePath
+from ..model.surfaces import SurfaceCurve, SurfaceMap
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
-from .assemble import _eval_curve, loft
+from .assemble import _eval_curve, loft, loft_fn
 from .linemesh import LineMesh
 
 
@@ -236,6 +237,23 @@ def path_fractions(path: SpacePath, *, target_length: float | None = None,
                            float(target_length))   # type: ignore[arg-type]
 
 
+def on_surface(curve: SurfaceCurve, surface: SurfaceMap, *, order: int = 1,
+               element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
+    """Mesh a :class:`SurfaceCurve <nekmeshpy.model.surfaces.SurfaceCurve>` by
+    evaluating ``surface`` on it -- one element between consecutive nodes of
+    ``curve.fr``, exact on the surface at **every** node.
+
+    The surface map reaches the private GLL interiors as well as the corners, because
+    this is a :func:`loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` and not a
+    ``loft`` of sampled points: sampling the curve into an array first would
+    straight-subdivide between the samples and put the interior nodes off the surface
+    at ``order > 1``.
+
+    ``curve.fr`` may descend, which traverses the curve backwards."""
+    return loft_fn(lambda x: surface(curve.g(x)), curve.fr, order=order,
+                   element_tags=element_tags)
+
+
 def circle(radius: float, n: int, *,
            center: Point = (0.0, 0.0, 0.0),
            normal: Vec3 = (0.0, 0.0, 1.0),
@@ -345,6 +363,7 @@ __all__ = [
     "arclength_fractions",
     "circle",
     "line",
+    "on_surface",
     "path_fractions",
     "rectangle",
     "sweep_fractions",

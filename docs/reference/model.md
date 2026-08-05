@@ -61,6 +61,18 @@ module docstring describes the two forms.
    :exclude-members: Move
 ```
 
+## `model.surfaces`
+
+`SurfaceMap` — a `(K,2) -> (K,3)` callable — is excluded below for the same
+reason as `paths.Move`: it is a `typing` alias, and autodoc renders those through
+`typing`'s own docstring, which does not survive `-n`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.surfaces
+   :members:
+   :exclude-members: SurfaceMap
+```
+
 ## `model.fields`
 
 ```{eval-rst}
