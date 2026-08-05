@@ -6,13 +6,13 @@ import numpy as np
 import pytest
 from conftest import run_example
 
-from nekmeshpy import AxisLinearField, ConstantField, HexMesh, export, fields
+from nekmeshpy import AxisLinearField, ConstantField, export, fields, hexmesh
 from nekmeshpy.hexmesh import quality
 from nekmeshpy.model.fields import distribution_from_field
 
 
 def _scaled_jac(mesh):
-    X, HC, _ = mesh.weld()
+    X, HC, _ = hexmesh.query.weld(mesh)
     return quality.scaled_jacobian(X, HC)
 
 
@@ -33,7 +33,7 @@ def test_from_grid_grading():
         for j, y in enumerate((0.0, 1.0)):
             for k, z in enumerate((0.0, 1.0)):
                 P[i, j, k] = (x, y, z)
-    mesh = HexMesh.from_grid(P)
+    mesh = hexmesh.lift.from_grid(P)
     xu = np.unique(np.round(mesh.points[:, 0], 8))
     d = np.diff(xu)
     assert d[-1] > d[0]

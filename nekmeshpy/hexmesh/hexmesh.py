@@ -1,9 +1,8 @@
 """All-hex mesh container.
 
 ``HexMesh`` stores ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` connectivity in Nek
-order, a sparse tagged ``boundaries`` ``(Nbc,2)`` = ``[element id, face 1-6]`` with
-parallel ``boundary_tags``, and a dense per-hex ``element_tags``. Boundary tags map
-to Nek BC codes only at export.
+order, a ``face_tags`` table naming ``[element id, face 1-6]`` faces, and sparse
+per-hex ``element_tags``. Face tags map to Nek BC codes only at export.
 
 It is built complete, not incrementally: from arrays or via the factory
 classmethods ``loft`` / ``extrude`` / ``annulus`` / ``merge`` / ``from_grid``. The
@@ -12,9 +11,9 @@ topology is fixed at construction, but coordinates may be repositioned in place.
 This file stays a **pure container**: storage, validation, ``from_corners``, and the
 derived views.  Every operation on a finished block lives beside it as a free function
 bound onto the class in ``hexmesh/__init__.py``, split by arity and by rung delta --
-``_assemble.py`` (the n-ary ``loft`` / ``merge``, which build a new index space),
-``_lift.py`` (``extrude`` / ``annulus`` / ``from_grid``, which delegate to it),
-``_morph.py`` (``blend``) and ``_query.py`` (queries, topology and reporting).  Adding
+``assemble.py`` (the n-ary ``loft`` / ``merge``, which build a new index space),
+``lift.py`` (``extrude`` / ``annulus`` / ``from_grid``, which delegate to it),
+``morph.py`` (``blend``) and ``query.py`` (queries, topology and reporting).  Adding
 an operation touches only the sibling module, never this one.
 """
 
@@ -33,6 +32,10 @@ from .._typing import (
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
 from ..model.interp import corner_indices
+from ..model.tags import (
+    ElementTags,
+    FaceTags,
+)
 from ..quadmesh import QuadMesh
 
 # default sweep axis / origin for extrude
@@ -59,7 +62,7 @@ def _slice_block(s: QuadMesh, order: int) -> PointArray:
     natively from that section's B-rep (shared corners ++ shared edge-interior nodes in
     element traversal order ++ private quad interiors).  A loft column's geometry is a
     straight sweep between two such in-plane blocks, so this is the only intermediate
-    :meth:`HexMesh.loft` needs -- no per-element hex block is ever materialized."""
+    :func:`hexmesh.assemble.loft <nekmeshpy.hexmesh.assemble.loft>` needs -- no per-element hex block is ever materialized."""
     row = order + 1
     out: PointArray = np.empty((s.quads.shape[0], row * row, 3), dtype=float)
     out[:, corner_indices(order, 2), :] = s.points[s.quads]
@@ -88,7 +91,7 @@ class HexMesh:
     """An all-hexahedral volume mesh in shared-point form.
 
     Stores ``points`` ``(P,3)``, ``hexes`` ``(N,8)`` connectivity (Nek order), a
-    sparse tagged ``boundaries`` with parallel ``boundary_tags``, and a dense
+    a ``face_tags`` table, and sparse
     per-hex ``element_tags``. Immutable topology; build via a factory or the array
     constructor."""
 
@@ -102,9 +105,8 @@ class HexMesh:
         hex: IntArray,
         face_orient: IntArray,
         interior: PointArray | None = None,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        face_tags: FaceTags | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> None:
@@ -115,8 +117,8 @@ class HexMesh:
         order), ``face_orient`` ``(E,6)`` D4 codes (element-local face frame ->
         canonical), and ``interior`` ``(E,(order-1)**3,3)`` private per-hex nodes (omit /
         ``None`` at order 1).  Also an optional dense per-hex ``element_tags`` ``(E,)``
-        and a tagged-boundary list ``boundaries`` ``(Nbc,2)`` = ``[hex id, face 1-6]``
-        with a parallel ``boundary_tags``.
+        and a :class:`FaceTags <nekmeshpy.model.tags.FaceTags>` table naming
+        ``[hex id, face 1-6]`` faces.
 
         ``.points`` / ``.hexes`` are **derived** views over this B-rep, so
         a shared face is literally one stored object referenced by every incident hex
@@ -155,23 +157,13 @@ class HexMesh:
                     "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
                     % (E, k, ia.shape))
             self.interior = ia
-        if element_tags is None:
-            self.element_tags: StrArray = np.full(E, "", dtype=np.str_)
-        else:
-            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
-            if et.shape[0] != E:
-                raise ValueError("element_tags length (%d) must match hexes (%d)"
-                                 % (et.shape[0], E))
-            self.element_tags = et
-        self.boundaries: IntArray = (
-            np.zeros((0, 2), np.int64) if boundaries is None
-            else np.asarray(boundaries, np.int64).reshape(-1, 2))
-        self.boundary_tags: StrArray = (
-            np.empty(0, dtype=np.str_) if boundary_tags is None
-            else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
-        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
-            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
-                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
+        #: which hexes carry a region tag (sparse -- untagged stores nothing)
+        self.element_tags: ElementTags = (
+            ElementTags.empty() if element_tags is None else element_tags)
+        self.face_tags: FaceTags = (
+            FaceTags.empty() if face_tags is None else face_tags)
+        self.element_tags.check_within(E, "hexes")
+        self.face_tags.check_within(E, "hexes")
 
         # corner connectivity + per-hex edge incidence are derived from the shared
         # faces and immutable post-construction (point moves don't change them), so
@@ -184,9 +176,8 @@ class HexMesh:
         cls,
         points: PointArray,
         hexes: IntArray,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        face_tags: FaceTags | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> HexMesh:
@@ -217,8 +208,8 @@ class HexMesh:
         conn: IntArray = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
         quads = QuadMesh.from_corners(pts, canonical_conn)
-        return cls(quads, elem_faces, face_orient, None, boundaries,
-                   boundary_tags, element_tags, order=1)
+        return cls(quads, elem_faces, face_orient, None, face_tags,
+                   element_tags, order=1)
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(E,8)`` (Nek order) recovered from the shared faces via
@@ -242,10 +233,10 @@ class HexMesh:
         :meth:`LineMesh.__repr__ <nekmeshpy.linemesh.LineMesh.__repr__>`."""
         try:
             return ("<HexMesh %d points, %d hexes, order %d, element_tags=%s, "
-                    "boundary_tags=%s>"
+                    "face_tags=%s>"
                     % (self.quads.lines.points.shape[0], self.hex.shape[0], self._order,
                        _repr_tags(self.element_group_tags),
-                       _repr_tags(self.boundary_group_tags)))
+                       _repr_tags(self.face_group_tags)))
         except Exception:                     # a repr must never break a debug session
             return "<HexMesh (unprintable)>"
 
@@ -306,19 +297,19 @@ class HexMesh:
         return self.points.shape[0]
 
     @property
-    def n_boundaries(self) -> int:
-        """Number of tagged boundary faces."""
-        return self.boundaries.shape[0]
+    def n_face_tags(self) -> int:
+        """Number of tagged faces."""
+        return len(self.face_tags)
 
     @property
-    def boundary_group_tags(self) -> list[str]:
-        """Sorted unique tags of the tagged boundary faces."""
-        return sorted(set(self.boundary_tags.tolist()))
+    def face_group_tags(self) -> list[str]:
+        """Sorted unique tags of the tagged faces."""
+        return self.face_tags.group_tags
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-hex element tags present on the mesh."""
-        return sorted({t for t in self.element_tags.tolist() if t})
+        return self.element_tags.group_tags
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod
@@ -342,17 +333,3 @@ class HexMesh:
         t = P[[4, 5, 6, 7], :].mean(axis=0) - P[[0, 1, 2, 3], :].mean(axis=0)
         return float(np.dot(np.cross(r, s), t))
 
-    @staticmethod
-    def _order_bnd(
-        bnd: Sequence[Sequence[int]] | IntArray,
-        names: Sequence[str] | StrArray,
-    ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(element id, face)``, applying the same
-        permutation to the parallel ``names`` array."""
-        b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
-        nm: StrArray = np.asarray(names, dtype=np.str_).reshape(-1)
-        if b.shape[0]:
-            order = np.lexsort((b[:, 1], b[:, 0]))
-            b = b[order]
-            nm = nm[order]
-        return b, nm

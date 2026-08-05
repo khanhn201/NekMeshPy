@@ -19,7 +19,14 @@ from .model import fields, topology
 from .model.fields import AxisLinearField, ConstantField, DistanceField, Field, MinField
 from .model.mesh import Mesh
 from .model.physical import PhysicalGroup, PhysicalGroups
-from .quadmesh import NO_BOUNDARY, QuadMesh
+from .model.tags import (
+    EdgeTags,
+    ElementTags,
+    FaceTags,
+    PointTags,
+    TagBuilder,
+)
+from .quadmesh import NO_TAG, QuadMesh
 from .quadmesh.smoothing import (
     SECTION_METHODS,
     register_section_smoothing,
@@ -33,7 +40,8 @@ __all__ = [
     "trimesh",
     "QuadMesh",
     "HexMesh",
-    "NO_BOUNDARY",
+    "NO_TAG",
+    "PointTags", "EdgeTags", "FaceTags", "TagBuilder", "ElementTags",
     "Mesh",
     "PhysicalGroup", "PhysicalGroups",
     "topology",

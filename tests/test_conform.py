@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from conftest import conformal, curved, hex_from_entities, quad_from_entities
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, LineMesh, hexmesh, linemesh, quadmesh
 from nekmeshpy.model import conform
 from nekmeshpy.model.interp import corner_indices
 
@@ -29,9 +29,9 @@ from nekmeshpy.model.interp import corner_indices
 def _shell(order, n_face=2, n_radial=2):
     """A cubed-sphere annulus: many hexes with genuinely curved shared faces in varied
     relative orientations -- the real exerciser for the D4 face machinery."""
-    cube = QuadMesh.box(3.0, n_face, order=order)
-    sphere = QuadMesh.sphere(1.0, n_face, order=order)
-    return HexMesh.annulus(sphere, cube, radial=np.linspace(0.0, 1.0, n_radial + 1))
+    cube = quadmesh.shape.box(3.0, n_face, order=order)
+    sphere = quadmesh.shape.sphere(1.0, n_face, order=order)
+    return hexmesh.lift.annulus(sphere, cube, radial=np.linspace(0.0, 1.0, n_radial + 1))
 
 
 def _unique_coord_count(block, tol=1e-9):
@@ -47,7 +47,7 @@ def _unique_coord_count(block, tol=1e-9):
 def test_quad_round_trip_through_entity_store(order):
     """The B-rep tables are a lossless description: feeding a mesh's own entity tables
     back through ``quad_from_entities`` rebuilds an identical mesh."""
-    qm = QuadMesh.rectangle([[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]],
                             3, 2, order=order)
     rebuilt = quad_from_entities(qm.points, qm.quads, edge_nodes=qm.edge_nodes,
                                  interior=qm.interior, order=order)
@@ -61,8 +61,8 @@ def test_quad_round_trip_through_entity_store(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_ogrid_round_trip(order):
     # order rides on the boundary loop; no repositioning smoother (rejected at N>1)
-    loop = LineMesh.circle(2.0, 16, order=order)
-    qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
+    loop = linemesh.shape.circle(2.0, 16, order=order)
+    qm = quadmesh.shape.ogrid(loop, 4, [0.0, 0.5, 1.0])
     assert qm.order == order
     rebuilt = quad_from_entities(qm.points, qm.quads, edge_nodes=qm.edge_nodes,
                                  interior=qm.interior, order=order)
@@ -78,7 +78,7 @@ def test_ogrid_round_trip(order):
 @pytest.mark.parametrize("order", [2, 3, 5])
 def test_conformal_walk_dedups_and_reconstructs(order):
     nx, ny = 3, 2
-    qm = QuadMesh.rectangle([[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]],
                             nx, ny, order=order)
     nodes, conn = conformal(qm)
     m = (order + 1) ** 2
@@ -108,7 +108,7 @@ def test_conformal_walk_dedups_and_reconstructs(order):
 def test_shared_edge_resolves_to_same_nodes(order):
     """Two quads sharing an edge reference identical global node ids for it."""
     nx, ny = 2, 1
-    qm = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                             nx, ny, order=order)
     assert qm.n_quads == 2
     _, conn = conformal(qm)
@@ -125,7 +125,7 @@ def test_edge_nodes_canonical_between_incident_quads(order):
     """The stored edge_nodes are read back consistently regardless of each quad's
     traversal direction: gather (canonical -> element order, honouring flip) and
     scatter (element order -> canonical) are exact inverses."""
-    qm = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                             2, 1, order=order)
     # edge_nodes has one row per unique edge, each (order-1, 3)
     assert qm.edge_nodes.shape == (qm.edges.shape[0], order - 1, 3)
@@ -144,7 +144,7 @@ def test_edge_nodes_canonical_between_incident_quads(order):
 def test_non_conforming_edge_nodes_rejected(order):
     """Element-local edge nodes whose incident copies disagree beyond ``entity_tol``
     are a loud error, never a silent weld."""
-    qm = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
                             2, 2, order=order)
     local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.flip)
     # perturb every edge-interior node of quad 0 -- at least one of its edges is
@@ -159,7 +159,7 @@ def test_corners_are_single_sourced_so_cannot_disagree():
     """Corner consistency is now *structural*, not validated: the conformal walk reads
     the corner slots straight out of ``points[quads]``, so no stored high-order copy can
     ever contradict them -- including after an in-place point move."""
-    qm = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
                             2, 2, order=3)
     nodes, conn = conformal(qm)
     assert np.allclose(nodes[conn][:, corner_indices(3, 2), :], qm.points[qm.quads])
@@ -171,7 +171,7 @@ def test_corners_are_single_sourced_so_cannot_disagree():
 # -- line: interior is private (no shared edges) ------------------------
 @pytest.mark.parametrize("order", [2, 3, 5])
 def test_line_conformal_private_interior(order):
-    lm = LineMesh.line([0, 0, 0], [3, 0, 0], [0.0, 0.25, 0.6, 1.0], order=order)
+    lm = linemesh.shape.line([0, 0, 0], [3, 0, 0], [0.0, 0.25, 0.6, 1.0], order=order)
     nodes, conn = conformal(lm)
     assert conn.shape == (lm.lines.shape[0], order + 1)
     block = nodes[conn]
@@ -184,7 +184,7 @@ def test_line_conformal_private_interior(order):
 
 # -- order-1 no-op ------------------------------------------------------
 def test_order1_conformal_is_points_and_conn():
-    qm = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]], 2, 2)
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]], 2, 2)
     nodes, conn = conformal(qm)
     assert np.allclose(nodes, qm.points)
     # conn is in lexicographic block order (== quads under the corner winding perm)
@@ -206,7 +206,7 @@ def test_quadmesh_brep_storage(order):
     corners live once on ``lines.points``, ``quad``/``flip`` index its edges, and the
     derived ``.points``/``.quads`` round-trip the corner input exactly."""
     # two quads in a row, sharing exactly the middle vertical edge
-    src = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+    src = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                              2, 1, order=order)
     qm = quad_from_entities(src.points, src.quads, edge_nodes=src.edge_nodes,
                             interior=src.interior, order=order)
@@ -231,7 +231,7 @@ def test_quadmesh_brep_shares_edge_nodes_across_incident_quads():
     """At order > 1 the seam edge's interior nodes are stored once and read back
     identically from both incident quads -- edge conformality is structural."""
     order = 3
-    qm = QuadMesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+    qm = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                             2, 1, order=order)
     # the shared seam edge is one row of the edge LineMesh, referenced by both quads
     shared = set(qm.quad[0].tolist()) & set(qm.quad[1].tolist())
@@ -246,9 +246,9 @@ def test_quadmesh_brep_shares_edge_nodes_across_incident_quads():
 def test_line_merge_propagates_high_order(order):
     """LineMesh.merge welds endpoints but must carry each line's private interior
     through (previously it silently dropped the high-order nodes)."""
-    a = LineMesh.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=order)
-    b = LineMesh.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=order)
-    merged = LineMesh.merge([a, b])
+    a = linemesh.shape.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=order)
+    b = linemesh.shape.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=order)
+    merged = linemesh.assemble.merge([a, b])
     assert merged.order == order
     assert merged.interior.shape == (merged.lines.shape[0], order - 1, 3)
     # the merged interior nodes equal the originals' (welding only touches endpoints)
@@ -259,14 +259,14 @@ def test_line_merge_propagates_high_order(order):
 
 
 def test_line_merge_rejects_mismatched_order():
-    a = LineMesh.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=2)
-    b = LineMesh.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=3)
+    a = linemesh.shape.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=2)
+    b = linemesh.shape.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=3)
     with pytest.raises(ValueError, match="same order"):
-        LineMesh.merge([a, b])
+        linemesh.assemble.merge([a, b])
 
 
 def test_order1_line_conformal():
-    lm = LineMesh.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
+    lm = linemesh.assemble.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
     nodes, conn = conformal(lm)
     assert np.allclose(nodes, lm.points)
     assert np.array_equal(conn, lm.lines)
@@ -374,7 +374,7 @@ def test_shared_hex_face_resolves_to_same_nodes(order):
     y = z = np.array([0.0, 1.0])
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     grid = np.stack([X, Y, Z], axis=-1)
-    hm = HexMesh.from_grid(grid, order=order)
+    hm = hexmesh.lift.from_grid(grid, order=order)
     assert hm.n_hexes == 2
     _, conn = conformal(hm)
     shared = set(conn[0].tolist()) & set(conn[1].tolist())
@@ -431,7 +431,7 @@ def test_hex_entity_gather_scatter_round_trip(order):
 def test_order1_hex_conformal():
     x = np.linspace(0, 1, 3)
     X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
-    hm = HexMesh.from_grid(np.stack([X, Y, Z], axis=-1))
+    hm = hexmesh.lift.from_grid(np.stack([X, Y, Z], axis=-1))
     nodes, conn = conformal(hm)
     assert np.allclose(nodes, hm.points)
     assert np.allclose(nodes[conn][:, corner_indices(1, 3), :], hm.points[hm.hexes])

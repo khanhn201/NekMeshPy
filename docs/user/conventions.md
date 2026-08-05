@@ -9,7 +9,7 @@
   input required — a `(N,2)` array is rejected, not padded**; `lines` is a
   **required** constructor argument — the container never synthesizes a default
   chain, so nothing in it can imply a wrap. Connectivity is authored one rung up by
-  {meth}`~nekmeshpy.linemesh.LineMesh.loft`, whose `loop=False` / `loop=True` spell
+  {func}`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`, whose `loop=False` / `loop=True` spell
   the chain and the ring); the mesh containers
   (`TriMesh` / `QuadMesh` / `HexMesh` / `Mesh`) store a `(P,3)` `points` array
   (mutate with `mesh.points[:] = X`).
@@ -29,11 +29,14 @@ Its stored state is the **B-rep**: a `quads` `QuadMesh` of the shared faces, `he
 `(E,(order-1)**3,3)`. `points` `(P,3)` and `hexes` `(E,8)` (Nek point order) are
 **derived read-only views** over it, so corner consistency is structural rather than
 maintained — see [Concepts](../user/concepts.md#high-order-order-n-elements).
-Alongside it are `boundaries` `(Nbc,2)` = `[element id, face (1–6)]` with parallel
-`boundary_tags`, plus a dense `element_tags` `(E,)` inherited from the swept quad.
+Alongside it are `face_tags`, a `FaceTags` table of `(element id, face (1–6), tag)`
+rows, plus `element_tags`, an `ElementTags` naming only the hexes that carry a region
+tag (inherited from the swept quad). `face_tags` is *not* "the boundary": it is the
+named subset of sides, while `boundary_faces()` derives the topological domain
+boundary from connectivity.
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
-`quad`/`flip`/`interior`, boundaries `(Nbc,2)` = `[quad id, side (1–4)]`, side `s` =
-edge `EDGE_POINTS[s-1]`). `weld()` returns a `WeldResult` NamedTuple —
+`quad`/`flip`/`interior`, `edge_tags` rows `[quad id, side (1–4)]`, side `s` =
+edge `EDGE_POINTS[s-1]`); `LineMesh` carries `point_tags` with side ∈ {1,2}. `weld()` returns a `WeldResult` NamedTuple —
 `.points` (the **live** array), `.hexes`, `.n_points`; the name is historical, since
 a `HexMesh` is already stored shared-point and nothing is welded or copied. Exporters
 expand via `points[hexes]`. Coordinates may be repositioned in place — writing

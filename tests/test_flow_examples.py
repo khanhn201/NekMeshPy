@@ -9,13 +9,13 @@ import numpy as np
 import pytest
 from conftest import conformal, run_example
 
-from nekmeshpy import topology
+from nekmeshpy import hexmesh, topology
 from nekmeshpy.hexmesh import quality
 from nekmeshpy.model.interp import hex_face_indices
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(*mesh.weld()[:2])
+    return quality.scaled_jacobian(*hexmesh.query.weld(mesh)[:2])
 
 
 def _wall_nodes(mesh, name):
@@ -28,25 +28,24 @@ def _wall_nodes(mesh, name):
     """
     nodes, conn_ho = conformal(mesh)
     order = mesh.order
-    sel = np.asarray(mesh.boundary_tags) == name
-    faces = np.asarray(mesh.boundaries)[sel]
-    assert faces.shape[0] > 0, "no boundary faces tagged %r" % name
+    faces = mesh.face_tags.select(mesh.face_tags.mask_for(name))
+    assert len(faces) > 0, "no boundary faces tagged %r" % name
     idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    picked = np.concatenate([conn_ho[e][idx[int(f)]] for e, f in faces])
+    picked = np.concatenate([conn_ho[e][idx[int(f)]] for e, f, _t in faces])
     return nodes[np.unique(picked)]
 
 
 def _tag_count(mesh, name):
-    return int(np.sum(mesh.boundary_tags == name))
+    return mesh.face_tags.count(name)
 
 
 def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):
     # one watertight, conformal, positively-oriented block
-    assert mesh.is_watertight() and mesh.is_conforming()
-    assert topology.hex_report(*mesh.weld()[:2]).n_components == 1
+    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
+    assert topology.hex_report(*hexmesh.query.weld(mesh)[:2]).n_components == 1
     assert float(np.min(_scaled_jac(mesh))) > jac_floor
     # exactly the expected named groups, all non-empty
-    assert set(mesh.boundary_group_tags) == groups
+    assert set(mesh.face_group_tags) == groups
     for name in groups:
         assert _tag_count(mesh, name) > 0
     # inlet and outlet flow openings are present and the body is embedded

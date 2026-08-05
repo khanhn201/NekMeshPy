@@ -13,22 +13,20 @@ from __future__ import annotations
 import logging
 import struct
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Union
+from typing import Any, Union
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
-from ..hexmesh._query import weld as hex_weld
+from ..hexmesh import HexMesh
+from ..hexmesh.query import weld as hex_weld
+from ..linemesh import LineMesh
 from ..model import conform, topology
 from ..model.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
 from ..model.physical import PhysicalGroup, PhysicalGroups
-
-if TYPE_CHECKING:
-    from ..hexmesh import HexMesh
-    from ..linemesh import LineMesh
-    from ..quadmesh import QuadMesh
+from ..quadmesh import QuadMesh
 
 # VTK cell-type ids: linear + high-order (Lagrange) line / quad / hex.
 _VTK_LINE = 3
@@ -54,7 +52,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
     if isinstance(groups, PhysicalGroups):
         return groups
     if groups is None:
-        names = mesh.boundary_group_tags
+        names = mesh.face_group_tags
         return PhysicalGroups(
             PhysicalGroup(name, i + 1) for i, name in enumerate(names))
     return PhysicalGroups(
@@ -68,15 +66,11 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
     X, HC, _ = hex_weld(mesh)          # WeldResult unpacks as (points, hexes, n)
     g = _as_groups(mesh, groups)
-    b = mesh.boundaries
-    bnames = mesh.boundary_tags
-
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
-    for r in range(b.shape[0]):
-        elem, face = int(b[r, 0]), int(b[r, 1])
+    for elem, face, name in mesh.face_tags:
         conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
-        name_rows.append(str(bnames[r]))
+        name_rows.append(name)
     quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
                  else np.zeros((0, 4), np.int64))
     quad_name = np.array(name_rows, dtype=np.str_)
@@ -126,8 +120,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
     emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    boundaries = mesh.boundaries
-    bnames = mesh.boundary_tags
+    face_tags = mesh.face_tags
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
@@ -139,13 +132,10 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             fid.write(elements[i, :, 1].astype("<f8").tobytes())
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
-        fid.write(struct.pack("<d", float(boundaries.shape[0])))
-        for b in range(boundaries.shape[0]):
-            elem = int(boundaries[b, 0]) + 1
-            face = int(boundaries[b, 1])
-            name = str(bnames[b])
+        fid.write(struct.pack("<d", float(len(face_tags))))
+        for elem0, face, name in face_tags:
             buf2: FloatArray = np.zeros(8, dtype="<f8")
-            buf2[0] = float(elem)
+            buf2[0] = float(elem0 + 1)
             buf2[1] = float(face)
             grp = g.get(name)
             if grp is not None:
@@ -340,7 +330,7 @@ def _hex_arrays(mesh: HexMesh,
     cell) above it, whose face nodes inherit the boundary face's tag.
 
     ``bc_id`` precedence is the un-welded writer's rule, applied in the shared-node
-    numbering: the boundary rows are scattered in ``mesh.boundaries`` order and the
+    numbering: the boundary rows are scattered in ``mesh.face_tags`` order and the
     **last row to touch a node wins** (this is exactly how two boundary faces sharing an
     edge *within* one hex have always been resolved).  Welding widens the same rule
     across elements: an untagged element never writes, so a node shared by a tagged face
@@ -352,12 +342,10 @@ def _hex_arrays(mesh: HexMesh,
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
-        for i in range(mesh.boundaries.shape[0]):
-            elem = int(mesh.boundaries[i, 0])
-            face = int(mesh.boundaries[i, 1])
-            grp = g.get(str(mesh.boundary_tags[i]))
+        for elem, face, name in mesh.face_tags:
+            grp = g.get(name)
             if grp is None:
-                _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
+                _log.warning("unknown boundary name: %s", name)
                 continue
             bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
         return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
@@ -369,12 +357,10 @@ def _hex_arrays(mesh: HexMesh,
         mesh.quads.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    for i in range(mesh.boundaries.shape[0]):
-        elem = int(mesh.boundaries[i, 0])
-        face = int(mesh.boundaries[i, 1])
-        grp = g.get(str(mesh.boundary_tags[i]))
+    for elem, face, name in mesh.face_tags:
+        grp = g.get(name)
         if grp is None:
-            _log.warning("unknown boundary name: %s", str(mesh.boundary_tags[i]))
+            _log.warning("unknown boundary name: %s", name)
             continue
         bc[conn_ho[elem, face_idx[face]]] = grp.tag
     nodes = _to_equispaced(nodes, conn_ho, order, 3)
@@ -499,10 +485,9 @@ def quad_to_vtu(mesh: QuadMesh, fname: str) -> QuadMesh:
 def summary(mesh: HexMesh) -> None:
     """Log element/boundary counts, per-name face totals, and the topology report."""
     _log.info("mesh: %d hex elements, %d boundary faces",
-              mesh.hexes.shape[0], mesh.boundaries.shape[0])
-    for name in mesh.boundary_group_tags:
-        _log.info("  %-14s: %d faces",
-                  name, int(np.sum(mesh.boundary_tags == name)))
+              mesh.hexes.shape[0], len(mesh.face_tags))
+    for name in mesh.face_group_tags:
+        _log.info("  %-14s: %d faces", name, mesh.face_tags.count(name))
     w = hex_weld(mesh)
     rep = topology.hex_report(w.points, w.hexes)
     _log.info("  watertight=%s  conformal=%s  components=%d  "

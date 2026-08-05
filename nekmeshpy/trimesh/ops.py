@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
@@ -11,10 +10,8 @@ import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
-from ..linemesh._assemble import loft as line_loft
-
-if TYPE_CHECKING:
-    from .trimesh import TriMesh
+from ..linemesh.assemble import loft as line_loft
+from .trimesh import TriMesh
 
 
 # -- Laplace ------------------------------------------------------------
@@ -137,7 +134,7 @@ def _chain_segments(segs: FloatArray) -> LineMesh | None:
     Marching a scalar field over triangles emits its level set as an unordered soup
     of segments, so this ordering walk is a *surface* operation, not a ``LineMesh``
     constructor: it lives beside its only caller and hands the ordered points to
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` with ``loop=True``, which
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` with ``loop=True``, which
     is what authors the wrapping ``lines``."""
     if segs is None or len(segs) == 0:
         return None

@@ -3,23 +3,21 @@
 Two arities live here.  **Binary**: ``blend`` morphs between two index-paired
 profiles.  **Unary**: ``translate`` / ``rotate`` / ``scale`` / ``transform`` place a
 finished curve, and ``reverse`` flips its traversal direction.  All but ``reverse``
-change only coordinates -- ``a``'s ``lines`` connectivity, ``boundaries`` and
-``boundary_tags`` ride through verbatim, so the input's numbering *is* the output's
+change only coordinates -- ``a``'s ``lines`` connectivity and ``point_tags`` ride
+through verbatim, so the input's numbering *is* the output's
 and nothing is re-derived (the placements keep ``element_tags`` too; ``blend`` leaves
 them for the consuming factory).  ``reverse`` is the mirror image: it moves no
 coordinate and instead relabels the index space with the bijection ``i -> N-1-i``,
 which is still rung-preserving and still invents no numbering.
 
-Free functions bound onto :class:`~nekmeshpy.LineMesh` by ``linemesh/__init__.py``
-(the binary ``blend`` as a ``staticmethod``, the unary placements as instance
-methods, so ``lm.translate(v)`` reads as it should); internal toolkit code imports
-them from here directly rather than through the bound ``LineMesh.<name>`` sugar.
-"""
+Free functions assigned into the :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` class body (see
+``linemesh.py``) -- the binary ``blend`` wrapped in ``staticmethod``, the unary
+placements bare, so ``lm.translate(v)`` reads as it should.  Internal toolkit code
+imports them from here directly.  """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
 
@@ -31,6 +29,7 @@ from .._typing import (
     Vec3,
 )
 from ..model import affine
+from ..model.tags import PointTags
 from .linemesh import LineMesh
 
 
@@ -40,8 +39,8 @@ def blend(a: LineMesh, b: LineMesh,
     count and identical ``lines`` connectivity -- which is exactly what makes
     both open or both closed), one profile per fraction
     ``t`` with points ``(1-t)*a + t*b`` -- so ``t=0`` reproduces ``a`` and ``t=1``
-    reproduces ``b``.  Each result carries ``a``'s connectivity, ``boundaries``
-    and ``boundary_tags`` (positional BC markers follow the morph); per-element
+    reproduces ``b``.  Each result carries ``a``'s connectivity and ``point_tags``
+    (positional BC markers follow the morph); per-element
     ``element_tags`` are left for the consuming factory/``loft`` to assign, so a
     blended stack feeds straight into ``loft`` or a section factory.  This is the
     profile-positioning step behind ``annulus`` (and any morphing sweep).
@@ -73,8 +72,7 @@ def blend(a: LineMesh, b: LineMesh,
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
         out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
-                       boundaries=a.boundaries,
-                       boundary_tags=a.boundary_tags, order=a.order))
+                            point_tags=a.point_tags, order=a.order))
     return out
 
 
@@ -90,12 +88,12 @@ def reverse(mesh: LineMesh) -> LineMesh:
     with no explicit ``interior`` re-fills it with straight GLL chords, silently
     discarding the curve at ``order > 1``.
 
-    ``element_tags`` reverse with their lines; ``boundaries`` are remapped (line
+    ``element_tags`` reverse with their lines; ``point_tags`` are remapped (line
     ``l`` -> ``L-1-l``, side ``s`` -> ``3-s``, since each line's two endpoints swap)
     and re-sorted, so a tagged end point stays on the same physical point.
 
     The relabel is a bijection of the *existing* index space, not a new one, so this
-    is a rung-preserving morph rather than an ``_assemble`` operation -- and it
+    is a rung-preserving morph rather than an ``assemble`` operation -- and it
     applies to any connectivity, branching or cyclic, not just a simple chain.  It
     is 1-D only: a quad or hex has no single traversal direction to flip (the
     analogous operation there is an orientation flip, which is a different thing)."""
@@ -104,14 +102,15 @@ def reverse(mesh: LineMesh) -> LineMesh:
     # relabel r(i) = n-1-i, then restore each line's canonical start->end direction:
     # reverse the element order and swap the two endpoints of every line.
     lines: IntArray = (n - 1 - mesh.lines)[::-1, ::-1]
-    bnd: IntArray = mesh.boundaries
-    if bnd.size:
-        bnd = np.column_stack([L - 1 - bnd[:, 0], 3 - bnd[:, 1]])
-    rows, names = LineMesh._order_bnd(bnd, mesh.boundary_tags)
+    b = mesh.point_tags
+    bnd = PointTags(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
     return LineMesh(np.ascontiguousarray(mesh.points[::-1]),
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
-                    rows, names, mesh.element_tags[::-1], order=mesh.order)
+                    bnd,
+                    mesh.element_tags.renumber(
+                        (L - 1 - np.arange(L, dtype=np.int64))),
+                    order=mesh.order)
 
 
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
@@ -120,18 +119,18 @@ def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh
     A ``LineMesh`` owns exactly two coordinate tables -- its ``points`` and its
     per-line private ``interior`` -- and both take the *same* map, so a curved
     element keeps its shape and its endpoints stay its corners.  Everything else
-    (connectivity, tags, boundaries) is topology and rides through untouched."""
+    (connectivity, element and point tags) is topology and rides through untouched."""
     return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
                     affine.apply(mesh.interior, matrix, offset),
-                    boundaries=mesh.boundaries, boundary_tags=mesh.boundary_tags,
+                    point_tags=mesh.point_tags,
                     element_tags=mesh.element_tags, order=mesh.order)
 
 
 def transform(mesh: LineMesh, matrix: FloatArray,
               offset: Vec3 | Sequence[float] = affine.ORIGIN) -> LineMesh:
     """A new curve with every node mapped through the affine ``p @ matrix.T +
-    offset``.  The general case behind :func:`translate` / :func:`rotate` /
-    :func:`scale`; reach for it for a map they do not name (a shear, a mirror, a
+    offset``.  The general case behind :func:`translate <nekmeshpy.linemesh.morph.translate>` / :func:`rotate <nekmeshpy.linemesh.morph.rotate>` /
+    :func:`scale <nekmeshpy.linemesh.morph.scale>`; reach for it for a map they do not name (a shear, a mirror, a
     pre-composed matrix)."""
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
@@ -158,19 +157,3 @@ def scale(mesh: LineMesh, factor: float | Vec3 | Sequence[float],
     """A new curve scaled about ``center`` by ``factor`` -- a scalar (uniform) or a
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
-
-
-#: Rung-preserving combinators bound onto ``LineMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "blend": blend,
-}
-
-#: Unary placements bound onto ``LineMesh`` as instance methods -- they take the mesh
-#: they act on, so ``lm.translate(v)`` is the natural spelling.
-METHODS: dict[str, Any] = {
-    "reverse": reverse,
-    "transform": transform,
-    "translate": translate,
-    "rotate": rotate,
-    "scale": scale,
-}

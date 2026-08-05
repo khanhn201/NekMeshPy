@@ -1,4 +1,4 @@
-"""Shared internals for the planar :class:`~nekmeshpy.LineMesh` factories.
+"""Shared internals for the planar :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` factories.
 
 ``_in_plane_axes`` returns an orthonormal ``(e1, e2)`` frame spanning the plane with a
 given normal, so a factory can place a planar loop (``circle`` / ``rectangle``) or an
@@ -6,8 +6,8 @@ open curve (``arc``) in any plane. The axes are world-aligned so an axis-aligned
 is not rotated.
 
 ``_arc_points`` / ``_arc_interior`` place nodes on the **exact** circle of a given
-radius in that frame; ``circle`` (closed, ``_closed.py``) and ``arc`` (open,
-``_open.py``) share them so both put their high-order GLL nodes on the true arc rather
+radius in that frame; ``circle`` (closed, ``shape.py``) and ``arc`` (open,
+``shape.py``) share them so both put their high-order GLL nodes on the true arc rather
 than on the chord.
 """
 

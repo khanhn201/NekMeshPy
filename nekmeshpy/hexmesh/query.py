@@ -6,14 +6,14 @@ topology / validity surface lives (``topology_report``, ``is_watertight``,
 ``is_conforming``, ``report``) along with the shared-point view the smoothers drive
 (``weld``, ``classify_points``).
 
-Free functions bound onto :class:`~nekmeshpy.HexMesh` by ``hexmesh/__init__.py``;
+Free functions bound onto :class:`HexMesh <nekmeshpy.hexmesh.hexmesh.HexMesh>` by ``hexmesh/__init__.py``;
 internal toolkit code imports them from here directly rather than through the bound
 ``HexMesh.<name>`` sugar.
 """
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import numpy as np
 
@@ -46,7 +46,7 @@ def _boundary_points(hexes: IntArray) -> IntArray:
 def boundary_faces(mesh: HexMesh) -> IntArray:
     """``(K,2)`` of ``[element id, local face (1-6)]`` for every face on the
     topological domain boundary (a quad carried by a single hex). Distinct from
-    the tagged ``boundaries``, which may also carry interior planes."""
+    the tagged ``face_tags``, which may also carry interior planes."""
     _, mask = _boundary_mask(mesh.hexes)
     rows = np.flatnonzero(mask)
     return np.column_stack([rows // 6, rows % 6 + 1]).astype(np.int64)
@@ -72,7 +72,7 @@ def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
     return quality.scaled_jacobian(mesh.points, mesh.hexes)
 
 def quality_summary(mesh: HexMesh, *, high_order: bool = False) -> QualitySummary:
-    """Aggregate scaled-Jacobian statistics (see :meth:`scaled_jacobian` for the
+    """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` for the
     ``high_order`` flag)."""
     from . import quality
     if high_order:
@@ -81,7 +81,7 @@ def quality_summary(mesh: HexMesh, *, high_order: bool = False) -> QualitySummar
 
 
 class WeldResult(NamedTuple):
-    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld`.
+    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld <nekmeshpy.hexmesh.query.weld>`.
 
     The name is historical.  A ``HexMesh`` is *already* stored shared-point -- one
     ``(P,3)`` array single-sourced through the whole B-rep ladder -- so nothing is
@@ -112,11 +112,9 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     HC, nu = w.hexes, w.n_points
     is_wall: BoolArray = np.zeros(nu, dtype=bool)
     is_fixed: BoolArray = np.zeros(nu, dtype=bool)
-    for b in range(mesh.boundaries.shape[0]):
-        elem = int(mesh.boundaries[b, 0])
-        face = int(mesh.boundaries[b, 1])
+    for elem, face, tag in mesh.face_tags:
         ids = HC[elem, HexMesh.FACE_POINTS[face - 1, :]]
-        if mesh.boundary_tags[b] == wall:
+        if tag == wall:
             is_wall[ids] = True
         else:
             is_fixed[ids] = True
@@ -146,8 +144,8 @@ def report(mesh: HexMesh) -> str:
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
     lines.append(quality.format_report(quality.summary(mesh.points, mesh.hexes)))
-    for name in mesh.boundary_group_tags:
-        n = int(np.sum(mesh.boundary_tags == name))
+    for name in mesh.face_group_tags:
+        n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))
     lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.hexes)))
     return "\n".join(lines)
@@ -156,22 +154,3 @@ def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
     Ei = HC[:, he[:, 0]].ravel()
     Ej = HC[:, he[:, 1]].ravel()
     return np.unique(np.sort(np.column_stack([Ei, Ej]), axis=1), axis=0)
-
-
-#: Read-only queries bound onto ``HexMesh``.
-METHODS: dict[str, Any] = {
-    "_boundary_mask": _boundary_mask,
-    "_boundary_points": _boundary_points,
-    "boundary_faces": boundary_faces,
-    "boundary_elements": boundary_elements,
-    "boundary_points": boundary_points,
-    "scaled_jacobian": scaled_jacobian,
-    "quality_summary": quality_summary,
-    "weld": weld,
-    "classify_points": classify_points,
-    "topology_report": topology_report,
-    "is_watertight": is_watertight,
-    "is_conforming": is_conforming,
-    "report": report,
-    "_unique_edges": _unique_edges,
-}

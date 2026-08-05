@@ -3,10 +3,10 @@
 ``extrude`` sweeps one section straight; ``annulus`` fills between two index-paired
 closed surfaces; ``from_grid`` builds a block from one structured point grid.  All
 three are thin: they position profiles and hand them to
-:func:`~nekmeshpy.hexmesh._assemble.loft`, which owns the index space, so the numbering
+:func:`~nekmeshpy.hexmesh.assemble.loft`, which owns the index space, so the numbering
 they expose is the loft's carried up unchanged.
 
-Free functions bound onto :class:`~nekmeshpy.HexMesh` by ``hexmesh/__init__.py``;
+Free functions bound onto :class:`HexMesh <nekmeshpy.hexmesh.hexmesh.HexMesh>` by ``hexmesh/__init__.py``;
 internal toolkit code imports them from here directly rather than through the bound
 ``HexMesh.<name>`` sugar.
 """
@@ -14,7 +14,7 @@ internal toolkit code imports them from here directly rather than through the bo
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable, Literal
+from typing import Callable, Literal
 
 import numpy as np
 
@@ -25,15 +25,15 @@ from .._typing import (
     StrArray,
     Vec3,
 )
-from ..linemesh._assemble import _sweep_lattice, _sweep_path
+from ..linemesh.assemble import _sweep_lattice, _sweep_path
 from ..model import frames
 from ..model.fields import reject_loop_caps, validate_layers
 from ..quadmesh import QuadMesh
-from ..quadmesh._lift import from_grid as quad_from_grid
-from ..quadmesh._morph import blend as quad_blend
-from ..quadmesh._morph import transform as quad_transform
-from ..quadmesh._morph import translate
-from ._assemble import _loft_evaluated, loft
+from ..quadmesh.lift import from_grid as quad_from_grid
+from ..quadmesh.morph import blend as quad_blend
+from ..quadmesh.morph import transform as quad_transform
+from ..quadmesh.morph import translate
+from .assemble import _loft_evaluated, loft
 from .hexmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, HexMesh
 
 
@@ -60,7 +60,7 @@ def extrude(
     of ``loft``.
 
     ``length`` and ``layers`` are positional-or-keyword, like ``path`` /
-    ``fractions`` on the sibling :func:`sweep`: they are required, so making them
+    ``fractions`` on the sibling :func:`sweep <nekmeshpy.hexmesh.lift.sweep>`: they are required, so making them
     keyword-only bought nothing. Every existing
     ``extrude(section, axis=..., length=..., layers=...)`` call still binds."""
     axis_u: Vec3 = np.asarray(axis, dtype=float)
@@ -120,30 +120,30 @@ def annulus(
     # wall tags from the surfaces' per-quad element_tags; scalar arg overrides
     inner_caps: str | StrArray = (
         inner_tag if inner_tag
-        else (inner.element_tags if inner.element_group_tags else ""))
+        else (inner.element_tags.dense(inner.n_quads) if inner.element_tags else ""))
     outer_caps: str | StrArray = (
         outer_tag if outer_tag
-        else (outer.element_tags if outer.element_group_tags else ""))
+        else (outer.element_tags.dense(outer.n_quads) if outer.element_tags else ""))
     return loft(shells, first_tag=inner_caps, last_tag=outer_caps)
 
 def from_grid(
     P: PointArray,
     *,
-    face_tags: Mapping[str, str] | None = None,
+    side_tags: Mapping[str, str] | None = None,
     element_tag: str = "",
     order: int = 1,
 ) -> HexMesh:
     """Build hexes from a structured point grid ``P`` ``(ni+1,nj+1,nk+1,3)``.
-    ``face_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
+    ``side_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
     ``z_min``/``z_max``) to boundary names on the six outer sides; a side left out
-    or mapped to ``NO_BOUNDARY`` emits no boundary row. ``element_tag`` is written
+    or mapped to ``NO_TAG`` emits no tag row. ``element_tag`` is written
     to every hex's ``element_tags``.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
     each hex carries ``(order+1)**3`` straight-sided (trilinear) GLL nodes.
 
-    Built as a :meth:`loft` of the grid's **``k``-sections**: section ``k`` is
-    the :meth:`QuadMesh.from_grid <nekmeshpy.quadmesh.QuadMesh.from_grid>` of the
+    Built as a :func:`loft <nekmeshpy.hexmesh.assemble.loft>` of the grid's **``k``-sections**: section ``k`` is
+    the :func:`QuadMesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>` of the
     slab ``P[:, :, k, :]`` (itself a ``LineMesh`` loft), and the sweep runs
     ``k = 0..nk``.  Every tagged side rides a channel the rung below already has:
     the section's four ``edge_tags`` become the ``x_min`` / ``x_max`` / ``y_min`` /
@@ -159,16 +159,16 @@ def from_grid(
     ``(k*(nj+1) + j)*(ni+1) + i`` and grid cell ``(i, j, k)`` is hex
     ``(k*nj + j)*ni + i``, i.e. ``points`` equals
     ``P.transpose(2, 1, 0, 3).reshape(-1, 3)`` -- *not* the ``P.reshape(-1, 3)``
-    (``k``-fastest) order this factory used historically.  ``boundaries`` stays
+    (``k``-fastest) order this factory used historically.  ``face_tags`` stays
     lexsorted by ``(element, face)``, so its row order follows the hex ids; each
     tagged row still names the same physical side."""
     P = np.asarray(P, dtype=float)
-    tags = {s: n for s, n in (face_tags or {}).items() if n}
+    tags = {s: n for s, n in (side_tags or {}).items() if n}
     for side in tags:
         _GRID_SIDES[side]        # reject an unknown side name (KeyError)
     # x/y sides are the section's own edges; z sides are the sweep's end caps.
-    edge_tags = {s: n for s, n in tags.items() if _GRID_SIDES[s][0] == "side"}
-    slices = [quad_from_grid(P[:, :, k, :], edge_tags=edge_tags,
+    side_map = {s: n for s, n in tags.items() if _GRID_SIDES[s][0] == "side"}
+    slices = [quad_from_grid(P[:, :, k, :], side_tags=side_map,
                              element_tag=element_tag, order=order)
               for k in range(P.shape[2])]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
@@ -198,7 +198,7 @@ def sweep(
 
     Sweep one cross-section along a **curved** path: the section is carried by a moving
     orthonormal frame, so at every station it is placed by a *rigid* motion -- the
-    curved generalization of :func:`extrude`, which is this with a straight path and a
+    curved generalization of :func:`extrude <nekmeshpy.hexmesh.lift.extrude>`, which is this with a straight path and a
     constant frame.
 
     **The section is moved rigidly, not point-by-point.**  Through a bend of radius
@@ -212,21 +212,21 @@ def sweep(
     in-plane extent -- but it is not silently meshed either: the folded layer comes out
     mixed-winding and ``loft`` rejects it, naming the sweep as the likely cause.
 
-    ``path`` is **vectorized** -- ``(K,) -> (K,3)`` -- unlike ``loft_curve``'s
+    ``path`` is **vectorized** -- ``(K,) -> (K,3)`` -- unlike ``loft_fn``'s
     profile-at-a-time callable, and deliberately so: a rotation-minimizing frame is a
     *sequential* integration along the curve, so it cannot be evaluated at one isolated
-    parameter.  (``loft_curve``'s ``f`` is scalar for its own reason: it returns a
+    parameter.  (``loft_fn``'s ``f`` is scalar for its own reason: it returns a
     *mesh*, and a callable handing back one mesh can only take one parameter value.
-    ``LineMesh.loft_curve``'s ``f`` returns coordinates, so it is vectorized again.
+    ``LineMesh.loft_fn``'s ``f`` returns coordinates, so it is vectorized again.
     The three shapes disagree because the three return types do.)  ``sweep`` samples
     the whole node lattice
     ``_refined_lattice(fractions, order)`` in one call, builds the frame field on it,
     places the section at every level -- corner levels *and* the intermediate GLL levels
-    -- and delegates to :func:`loft` through ``sweep_nodes``.  So the sweep direction is
+    -- and delegates to :func:`loft <nekmeshpy.hexmesh.assemble.loft>` through ``sweep_nodes``.  So the sweep direction is
     exact at any order, not straight-subdivided between slices.
 
     ``fractions`` are the path parameter values themselves, in ``path``'s own units, and
-    grade the sweep exactly as they do on ``loft_curve``.  ``loop=True`` takes the
+    grade the sweep exactly as they do on ``loft_fn``.  ``loop=True`` takes the
     trailing wrap value; the closing profile is the *identical* placement as the first
     (not a re-evaluation), so a closed sweep welds exactly rather than to a tolerance.
 
@@ -261,7 +261,7 @@ def sweep(
     error anywhere.  There is no safe default, so there is no default; pass the centre
     the boundary loop was built about.  ``normal=`` overrides the section's own fitted
     plane, needed only when it is not planar (which is otherwise a ``ValueError``
-    rather than a silent shear).  Tags behave exactly as on :func:`loft`:
+    rather than a silent shear).  Tags behave exactly as on :func:`loft <nekmeshpy.hexmesh.assemble.loft>`:
     ``element_tags`` is per sweep layer and overrides the section's own where non-empty,
     and ``first_tag`` / ``last_tag`` cap the ends (rejected when ``loop=True``).
 
@@ -284,12 +284,3 @@ def sweep(
         profs.append(profs[0])          # the seam profile *is* the first placement
     return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="sweep")
-
-
-#: Rung-raising combinators bound onto ``HexMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "extrude": extrude,
-    "sweep": sweep,
-    "annulus": annulus,
-    "from_grid": from_grid,
-}

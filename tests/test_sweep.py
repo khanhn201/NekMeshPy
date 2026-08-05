@@ -20,8 +20,9 @@ The contract these pin down, in order of how badly getting it wrong would hurt:
 
 import numpy as np
 import pytest
+from conftest import assert_same_side_tags
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.model import conform, frames
 from nekmeshpy.model.fields import uniform_spacing
 
@@ -53,9 +54,9 @@ def straight(s):
 
 def disc(order=1, normal=(0, 0, 1), center=(RB, 0.0, 0.0), tag="wall"):
     """An O-grid disc of radius ``RP``, wall-tagged on the loop (the lowest rung)."""
-    ring = LineMesh.circle(RP, NU, center=center, normal=normal, order=order,
+    ring = linemesh.shape.circle(RP, NU, center=center, normal=normal, order=order,
                            element_tags=[tag] * NU)
-    return QuadMesh.ogrid(ring, NS, uniform_spacing(NR))
+    return quadmesh.shape.ogrid(ring, NS, uniform_spacing(NR))
 
 
 def hex_nodes(b):
@@ -76,7 +77,7 @@ def tube_radius(nodes):
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
 def test_every_node_lies_on_the_true_bent_tube(order):
-    blk = HexMesh.sweep(disc(order), elbow, np.linspace(0.0, 1.0, 5),
+    blk = hexmesh.lift.sweep(disc(order), elbow, np.linspace(0.0, 1.0, 5),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0))
     assert np.max(tube_radius(hex_nodes(blk))) == pytest.approx(RP, abs=1e-13)
 
@@ -88,7 +89,7 @@ def test_a_plain_loft_of_the_same_placements_is_straight_along_the_sweep(order):
     fr = np.linspace(0.0, 1.0, 5)
     places = frames.sweep_placements(sec.points, elbow(fr), orientation="fixed",
                                      up=(0, 1, 0), origin=(RB, 0.0, 0.0))
-    plain = HexMesh.loft([sec.transform(m, o) for m, o in places])
+    plain = hexmesh.assemble.loft([quadmesh.morph.transform(sec, m, o) for m, o in places])
     # the wall bulges off the true tube -- small in absolute terms, but far above the
     # 1e-13 the evaluated sweep achieves, and it does not shrink with the order
     assert np.max(tube_radius(hex_nodes(plain))) > RP + 1e-6
@@ -120,7 +121,7 @@ def test_inboard_and_outboard_walls_travel_different_distances():
     the outer wall sweeps ``pi*(RB+RP)`` and the inner ``pi*(RB-RP)``.  A point-by-point
     offset would give both of them ``pi*RB``.
     """
-    blk = HexMesh.sweep(disc(1), uturn, np.linspace(0.0, 1.0, 33),
+    blk = hexmesh.lift.sweep(disc(1), uturn, np.linspace(0.0, 1.0, 33),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0))
     r = np.hypot(blk.points[:, 0], blk.points[:, 2])
     assert r.max() == pytest.approx(RB + RP, abs=1e-12)
@@ -138,7 +139,7 @@ def test_a_bend_tighter_than_the_section_folds_and_is_caught_not_hidden():
         return np.stack([0.2 * np.cos(a), np.zeros_like(a), 0.2 * np.sin(a)], axis=-1)
 
     with pytest.raises(ValueError, match="a sweep folded the section"):
-        HexMesh.sweep(disc(1, center=(0.2, 0.0, 0.0)), tight,
+        hexmesh.lift.sweep(disc(1, center=(0.2, 0.0, 0.0)), tight,
                       np.linspace(0.0, 1.0, 17), orientation="fixed", up=(0, 1, 0),
                       origin=(0.2, 0.0, 0.0))
 
@@ -148,15 +149,14 @@ def test_a_bend_tighter_than_the_section_folds_and_is_caught_not_hidden():
 @pytest.mark.parametrize("order", [1, 2])
 def test_a_straight_path_reproduces_extrude(order):
     sec = disc(order, center=(0.0, 0.0, 0.0))
-    sw = HexMesh.sweep(sec, straight, np.linspace(0.0, 2.0, 5),
+    sw = hexmesh.lift.sweep(sec, straight, np.linspace(0.0, 2.0, 5),
                        orientation="fixed", up=(1, 0, 0), origin=(0.0, 0.0, 0.0),
                        first_tag="in", last_tag="out")
-    ex = HexMesh.extrude(sec, axis=(0, 0, 1), length=2.0, layers=uniform_spacing(4),
+    ex = hexmesh.lift.extrude(sec, axis=(0, 0, 1), length=2.0, layers=uniform_spacing(4),
                          first_tag="in", last_tag="out")
     assert np.allclose(sw.points, ex.points, atol=1e-14)
     assert np.array_equal(sw.hexes, ex.hexes)
-    assert np.array_equal(sw.boundaries, ex.boundaries)
-    assert np.array_equal(sw.boundary_tags, ex.boundary_tags)
+    assert_same_side_tags(sw.face_tags, ex.face_tags)
 
 
 def test_the_section_lands_at_station_zero_as_authored():
@@ -165,8 +165,8 @@ def test_the_section_lands_at_station_zero_as_authored():
     sec = disc(2)
     fr = np.linspace(0.0, 1.0, 5)
     kw = dict(origin=(RB, 0.0, 0.0), tangent=elbow_t)
-    a = HexMesh.sweep(sec, elbow, fr, orientation="fixed", up=(0, 1, 0), **kw)
-    b = HexMesh.sweep(sec, elbow, fr, orientation="transport", **kw)
+    a = hexmesh.lift.sweep(sec, elbow, fr, orientation="fixed", up=(0, 1, 0), **kw)
+    b = hexmesh.lift.sweep(sec, elbow, fr, orientation="transport", **kw)
     # a planar path has zero torsion, so the transport frame *is* the fixed-up frame
     assert np.allclose(a.points, b.points, atol=1e-13)
     assert np.allclose(a.points[:sec.n_points], sec.points, atol=1e-13)
@@ -177,8 +177,8 @@ def test_differenced_tangents_tilt_the_frames_and_an_analytic_tangent_fixes_it()
     placed exactly but the frames are finite differences, so the section is tilted."""
     sec, fr = disc(1), np.linspace(0.0, 1.0, 5)
     kw = dict(orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0))
-    diffed = HexMesh.sweep(sec, elbow, fr, **kw)
-    exact = HexMesh.sweep(sec, elbow, fr, tangent=elbow_t, **kw)
+    diffed = hexmesh.lift.sweep(sec, elbow, fr, **kw)
+    exact = hexmesh.lift.sweep(sec, elbow, fr, tangent=elbow_t, **kw)
     # the inlet cap should lie exactly in the z = 0 plane; differencing tilts it
     n = sec.n_points
     assert np.max(np.abs(diffed.points[:n, 2])) > 1e-5
@@ -196,51 +196,51 @@ def test_loop_gives_a_closed_torus_with_no_duplicated_layer(order):
 
     sec = disc(order, normal=(0, 1, 0))
     nz = 12
-    tor = HexMesh.sweep(sec, ring_path, np.linspace(0.0, 2.0 * np.pi, nz + 1),
+    tor = hexmesh.lift.sweep(sec, ring_path, np.linspace(0.0, 2.0 * np.pi, nz + 1),
                         loop=True, origin=(RB, 0.0, 0.0))
     assert tor.n_hexes == sec.n_quads * nz          # nz layers, not nz-1
     assert tor.n_points == sec.n_points * nz        # no seam profile duplicated
     # closed in the sweep direction: the only boundary left is the tube wall, and it
     # is a single unbroken sleeve of one face per wall line per layer -- no caps
-    assert list(np.unique(tor.boundary_tags)) == ["wall"]
-    assert tor.boundaries.shape[0] == NU * nz
-    assert tor.is_watertight() and tor.is_conforming()
+    assert list(np.unique(tor.face_tags.tags)) == ["wall"]
+    assert len(tor.face_tags) == NU * nz
+    assert hexmesh.query.is_watertight(tor) and hexmesh.query.is_conforming(tor)
     x, y, z = hex_nodes(tor).T
     assert np.max(np.hypot(np.hypot(x, y) - RB, z)) == pytest.approx(RP, abs=1e-13)
 
 
 def test_loop_rejects_end_caps():
     with pytest.raises(ValueError):
-        HexMesh.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5), loop=True,
+        hexmesh.lift.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5), loop=True,
                       origin=(RB, 0.0, 0.0), first_tag="in")
 
 
 def test_loop_needs_three_fractions():
     with pytest.raises(ValueError, match="at least 3 fractions"):
-        HexMesh.sweep(disc(1), elbow, np.array([0.0, 1.0]), loop=True,
+        hexmesh.lift.sweep(disc(1), elbow, np.array([0.0, 1.0]), loop=True,
                       origin=(RB, 0.0, 0.0))
 
 
 def test_needs_two_fractions():
     with pytest.raises(ValueError, match="at least 2 fractions"):
-        HexMesh.sweep(disc(1), elbow, np.array([0.0]), origin=(RB, 0.0, 0.0))
+        hexmesh.lift.sweep(disc(1), elbow, np.array([0.0]), origin=(RB, 0.0, 0.0))
 
 
 # -- tags ----------------------------------------------------------------------
 
 def test_the_wall_tag_rides_up_from_the_loop_and_the_caps_are_named():
-    blk = HexMesh.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
+    blk = hexmesh.lift.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
                         first_tag="inlet", last_tag="outlet")
-    assert sorted(blk.boundary_group_tags) == ["inlet", "outlet", "wall"]
+    assert sorted(blk.face_group_tags) == ["inlet", "outlet", "wall"]
 
 
 def test_per_layer_element_tags_override_the_section_tags():
     sec = disc(1)
-    blk = HexMesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 4),
+    blk = hexmesh.lift.sweep(sec, elbow, np.linspace(0.0, 1.0, 4),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
                         element_tags=["", "hot", ""])
-    tags = blk.element_tags.reshape(3, sec.n_quads)      # hex e = layer*M + q
+    tags = blk.element_tags.dense(blk.n_hexes).reshape(3, sec.n_quads)      # hex e = layer*M + q
     assert list(np.unique(tags[1])) == ["hot"]
     assert list(np.unique(tags[0])) == list(np.unique(tags[2])) == [""]
 
@@ -252,32 +252,32 @@ def test_the_order_is_the_sections_own(order):
     """``sweep`` takes no ``order``: a rigid placement cannot change the section's
     order, so asking the caller to restate it could only ever disagree with it."""
     sec = disc(order)
-    blk = HexMesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 5), origin=(RB, 0.0, 0.0),
+    blk = hexmesh.lift.sweep(sec, elbow, np.linspace(0.0, 1.0, 5), origin=(RB, 0.0, 0.0),
                         orientation="fixed", up=(0, 1, 0))
     assert blk.order == sec.order == order
 
 
 def test_rejects_a_path_that_does_not_return_k_by_3():
     with pytest.raises(ValueError, match=r"\(5,3\) array of centreline points"):
-        HexMesh.sweep(disc(1), lambda s: np.zeros((len(s), 2)),
+        hexmesh.lift.sweep(disc(1), lambda s: np.zeros((len(s), 2)),
                       np.linspace(0.0, 1.0, 5), origin=(RB, 0.0, 0.0))
 
 
 def test_fixed_without_up_is_an_actionable_error():
     with pytest.raises(ValueError, match="orientation='fixed' needs up="):
-        HexMesh.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
+        hexmesh.lift.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
                       origin=(RB, 0.0, 0.0), orientation="fixed")
 
 
 def test_rejects_an_unknown_orientation():
     with pytest.raises(ValueError, match="'transport', 'fixed' or 'frenet'"):
-        HexMesh.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
+        hexmesh.lift.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
                       origin=(RB, 0.0, 0.0), orientation="rmf")
 
 
 def test_a_per_station_up_must_match_the_lattice():
     with pytest.raises(ValueError, match=r"must be \(5,3\)"):
-        HexMesh.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
+        hexmesh.lift.sweep(disc(1), elbow, np.linspace(0.0, 1.0, 5),
                       origin=(RB, 0.0, 0.0), orientation="fixed",
                       up=np.tile([0.0, 1.0, 0.0], (4, 1)))
 
@@ -285,9 +285,9 @@ def test_a_per_station_up_must_match_the_lattice():
 def test_a_per_station_up_is_accepted():
     fr = np.linspace(0.0, 1.0, 5)
     up = np.tile([0.0, 1.0, 0.0], (fr.shape[0], 1))
-    got = HexMesh.sweep(disc(1), elbow, fr, orientation="fixed", up=up,
+    got = hexmesh.lift.sweep(disc(1), elbow, fr, orientation="fixed", up=up,
                         origin=(RB, 0.0, 0.0))
-    want = HexMesh.sweep(disc(1), elbow, fr, orientation="fixed", up=(0, 1, 0),
+    want = hexmesh.lift.sweep(disc(1), elbow, fr, orientation="fixed", up=(0, 1, 0),
                          origin=(RB, 0.0, 0.0))
     assert np.allclose(got.points, want.points, atol=1e-13)
 
@@ -298,14 +298,14 @@ def test_a_per_station_up_needs_the_fixed_frame():
     that this combination can be named and rejected."""
     fr = np.linspace(0.0, 1.0, 5)
     with pytest.raises(ValueError, match="needs orientation='fixed'"):
-        HexMesh.sweep(disc(1), elbow, fr, origin=(RB, 0.0, 0.0),
+        hexmesh.lift.sweep(disc(1), elbow, fr, origin=(RB, 0.0, 0.0),
                       orientation="transport",
                       up=np.tile([0.0, 1.0, 0.0], (fr.shape[0], 1)))
 
 
 def test_frenet_refuses_the_straight_run_it_cannot_frame():
     with pytest.raises(ValueError):
-        HexMesh.sweep(disc(1, center=(0.0, 0.0, 0.0)), straight,
+        hexmesh.lift.sweep(disc(1, center=(0.0, 0.0, 0.0)), straight,
                       np.linspace(0.0, 2.0, 5), origin=(0.0, 0.0, 0.0),
                       orientation="frenet")
 
@@ -315,9 +315,9 @@ def test_frenet_refuses_the_straight_run_it_cannot_frame():
 def test_twist_rolls_the_section_about_the_tangent_without_moving_the_axis():
     fr = np.linspace(0.0, 2.0, 9)
     sec = disc(1, center=(0.0, 0.0, 0.0))
-    plain = HexMesh.sweep(sec, straight, fr, orientation="fixed", up=(1, 0, 0),
+    plain = hexmesh.lift.sweep(sec, straight, fr, orientation="fixed", up=(1, 0, 0),
                           origin=(0.0, 0.0, 0.0))
-    holed = HexMesh.sweep(sec, straight, fr, orientation="fixed", up=(1, 0, 0),
+    holed = hexmesh.lift.sweep(sec, straight, fr, orientation="fixed", up=(1, 0, 0),
                           origin=(0.0, 0.0, 0.0), twist=np.pi / 2)
     # same z levels, same radii -- a pure roll
     assert np.allclose(np.sort(holed.points[:, 2]), np.sort(plain.points[:, 2]))
@@ -336,9 +336,9 @@ def test_twist_rolls_the_section_about_the_tangent_without_moving_the_axis():
 
 @pytest.mark.parametrize("order", [1, 3])
 def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
-    seg = LineMesh.line((RB - RP, 0, 0), (RB + RP, 0, 0), np.linspace(0.0, 1.0, 5),
+    seg = linemesh.shape.line((RB - RP, 0, 0), (RB + RP, 0, 0), np.linspace(0.0, 1.0, 5),
                         element_tag="fin", order=order)
-    rib = QuadMesh.sweep(seg, elbow, np.linspace(0.0, 1.0, 6),
+    rib = quadmesh.lift.sweep(seg, elbow, np.linspace(0.0, 1.0, 6),
                          origin=(RB, 0.0, 0.0), normal=(0, 0, 1),
                          orientation="fixed", up=(0, 1, 0),
                          first_tag="a", last_tag="b")
@@ -349,14 +349,14 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
     r = np.hypot(x, z)
     assert r.min() == pytest.approx(RB - RP, abs=1e-13)
     assert r.max() == pytest.approx(RB + RP, abs=1e-13)
-    assert sorted(rib.boundary_group_tags) == ["a", "b"]
-    assert list(np.unique(rib.element_tags)) == ["fin"]
+    assert sorted(rib.edge_group_tags) == ["a", "b"]
+    assert rib.element_tags.group_tags == ["fin"]
 
 
 def test_quad_rung_needs_a_normal_for_a_collinear_profile():
-    seg = LineMesh.line((0, 0, 0), (1, 0, 0), np.linspace(0.0, 1.0, 5))
+    seg = linemesh.shape.line((0, 0, 0), (1, 0, 0), np.linspace(0.0, 1.0, 5))
     with pytest.raises(ValueError, match="collapses onto the normal"):
-        QuadMesh.sweep(seg, elbow, np.linspace(0.0, 1.0, 4), normal=(1, 0, 0),
+        quadmesh.lift.sweep(seg, elbow, np.linspace(0.0, 1.0, 4), normal=(1, 0, 0),
                        origin=(0.0, 0.0, 0.0))
 
 

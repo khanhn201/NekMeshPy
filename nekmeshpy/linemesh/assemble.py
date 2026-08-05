@@ -1,6 +1,6 @@
 """Variable-arity ``LineMesh`` operations -- the only ones that build a numbering.
 
-``loft`` (``n`` points -> a line mesh, rung delta +1), ``loft_curve`` (a callable ->
+``loft`` (``n`` points -> a line mesh, rung delta +1), ``loft_fn`` (a callable ->
 the same, sampled rather than given) and ``merge`` (``n`` line meshes -> one, rung
 delta 0) are the n-ary operations at this rung, and they are the only code here that
 manufactures a global point/element index space from scratch: ``loft`` numbers the
@@ -8,21 +8,20 @@ chain it authors, ``merge`` builds the ``remap`` / ``survivors`` / ``point_id`` 
 of the weld.  Every fixed-arity operation either reuses an existing numbering
 (``blend``) or delegates to one of these two.
 
-``loft_curve`` lives here rather than with the shape factories because it authors
+``loft_fn`` lives here rather than with the shape factories because it authors
 connectivity exactly as ``loft`` does -- it *is* ``loft``, with the profiles evaluated
 from a parametrization instead of handed in -- and so takes the same ``loop`` flag.
 Being open or closed is therefore not a property of the function: the same ``f`` meshes
 either way.
 
-Free functions bound onto :class:`~nekmeshpy.LineMesh` by ``linemesh/__init__.py``;
-internal toolkit code imports them from here directly rather than through the bound
-``LineMesh.<name>`` sugar.
+Reached as ``linemesh.assemble.loft(...)`` through the package namespace.  Nothing is
+bound onto the container, so ``linemesh.py`` imports no sibling and every sibling
+imports the container plainly -- there is no cycle here to guard against.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import numpy as np
 
@@ -35,8 +34,9 @@ from .._typing import (
 )
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
-from ._query import boundary_points
+from ..model.tags import ElementTags, PointTags, TagBuilder
 from .linemesh import LineMesh, _as_points
+from .query import boundary_points
 
 
 def loft(
@@ -44,17 +44,16 @@ def loft(
     *,
     loop: bool = False,
     interior: PointArray | None = None,
-    boundaries: IntArray | None = None,
-    boundary_tags: StrArray | Sequence[str] | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
+    point_tags: PointTags | None = None,
+    element_tags: Sequence[str] | StrArray | None = None,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
     order: int = 1,
 ) -> LineMesh:
     """Loft a stack of point "profiles" into a 1-D mesh -- the bottom rung of the
     uniform sweep primitive shared with
-    :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>` and
-    :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`.
+    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>` and
+    :func:`HexMesh.loft <nekmeshpy.hexmesh.assemble.loft>`.
 
     One dimension below a quad loft each profile is a **single point**, so the
     rungs joining consecutive profiles *are* the line elements: ``points``
@@ -67,12 +66,12 @@ def loft(
 
     ``element_tags`` is the dense per-line tag array (line ``m`` = point ``m`` ->
     ``m+1``, and for ``loop=True`` line ``N-1`` = point ``N-1`` -> ``0``);
-    ``boundaries`` / ``boundary_tags`` are passed through verbatim.
+    ``point_tags`` are passed through verbatim.
     ``first_tag`` / ``last_tag`` name the near / far **end points** of the chain
     (the 1-D end caps: line ``0`` side ``1`` and line ``L-1`` side ``2``).  A cap
     here is a single node, so each takes a scalar ``str`` or -- for shape parity
-    with :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>` /
-    :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`, whose caps carry one tag
+    with :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>` /
+    :func:`HexMesh.loft <nekmeshpy.hexmesh.assemble.loft>`, whose caps carry one tag
     per section line / quad -- a one-element array-like.  A closed sweep has no
     near/far cap, so passing either with ``loop=True`` raises ``ValueError``
     rather than silently dropping it.
@@ -93,28 +92,20 @@ def loft(
     else:
         lines = np.column_stack([idx[:-1], idx[1:]])
 
-    bnd = boundaries
-    names = boundary_tags
+    bnd = point_tags if point_tags is not None else PointTags.empty()
     # a chain's cap is a single end node, so ``_cap_tags`` normalizes to one tag --
     # the rung-1 form of the same scalar-or-per-element argument ``QuadMesh.loft`` /
     # ``HexMesh.loft`` take, so all three rungs accept the same shapes.
     first, last = LineMesh._cap_tags(first_tag)[0], LineMesh._cap_tags(last_tag)[0]
     if first or last:
-        rows = [[int(r[0]), int(r[1])]
-                for r in np.asarray(bnd if bnd is not None else
-                                    np.zeros((0, 2), np.int64),
-                                    dtype=np.int64).reshape(-1, 2)]
-        tags = [str(t) for t in np.asarray(
-            names if names is not None else np.empty(0, dtype=np.str_),
-            dtype=np.str_).reshape(-1).tolist()]
+        bb = TagBuilder(PointTags)
+        bb.extend(bnd)
         L = lines.shape[0]
         if first and L:
-            rows.append([0, 1])
-            tags.append(first)
+            bb.add(0, 1, first)
         if last and L:
-            rows.append([L - 1, 2])
-            tags.append(last)
-        bnd, names = LineMesh._order_bnd(rows, tags)
+            bb.add(L - 1, 2, last)
+        bnd = bb.build_ordered()
 
     if order > 1 and interior is None:
         # straight GLL blend between each line's two endpoints -- the same
@@ -123,7 +114,9 @@ def loft(
         b: PointArray = pts[lines[:, 1]]
         g = gll_nodes(order)[1:order]              # interior GLL nodes only
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
-    return LineMesh(pts, lines, interior, bnd, names, element_tags, order=order)
+    return LineMesh(pts, lines, interior, bnd,
+                    ElementTags.from_dense(element_tags, lines.shape[0], "lines")
+                    if element_tags is not None else None, order=order)
 
 
 def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
@@ -132,7 +125,7 @@ def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
     node ``a`` sits at ``fr[i] + g[a]*(fr[i+1] - fr[i])`` for the GLL nodes ``g`` on
     ``[0, 1]``, and the chain ends at ``fr[-1]``.
 
-    This is the 1-D twin of :func:`~nekmeshpy.quadmesh._open._refined_params`; the
+    This is the 1-D twin of :func:`~nekmeshpy.quadmesh.shape._refined_params`; the
     grading rides in ``fractions`` rather than being assumed uniform, so each element's
     private interior lands inside that element's own span.  At ``order == 1``
     (``g = [0, 1]``) it is exactly ``fractions``, so the order-1 placement falls out by
@@ -150,7 +143,7 @@ def _check_fraction_count(fr: FloatArray, *, loop: bool, name: str) -> None:
     profile rather than a level of its own).
 
     The guard :func:`_sweep_lattice` runs before it can build a lattice, factored out
-    on its own because a rung's ``loft_curve`` needs it *before* its ``order`` is
+    on its own because a rung's ``loft_fn`` needs it *before* its ``order`` is
     settled (``order`` is itself read off a profile ``f`` returns, and ``f`` is not
     called until the fraction count is known to be sane) and so cannot go through
     :func:`_sweep_lattice` outright.  Both paths raise the identical two messages."""
@@ -170,7 +163,7 @@ def _sweep_lattice(fractions: FloatArray, order: int, *, loop: bool,
 
     The shared front half of every evaluated sweep whose ``order`` is already known --
     ``sweep`` at the quad and hex rungs -- so the guard deciding how many layers there
-    are reads identically wherever a caller meets it.  A ``loft_curve``, whose order is
+    are reads identically wherever a caller meets it.  A ``loft_fn``, whose order is
     not yet settled at this point, calls :func:`_check_fraction_count` directly instead
     and builds the lattice once ``order`` is known."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
@@ -217,10 +210,10 @@ def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointAr
     return P
 
 
-def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
-               loop: bool = False, order: int = 1,
-               element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
-    """Loft a curve given as its own analytic parametrization -- :func:`loft` with the
+def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
+            loop: bool = False, order: int = 1,
+            element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
+    """Loft a curve given as its own analytic parametrization -- :func:`loft <nekmeshpy.linemesh.assemble.loft>` with the
     profiles **evaluated** rather than handed in, so **every** node (corners *and* the
     private high-order ``interior``) comes from calling ``f`` and nothing is ever
     placed on a chord.
@@ -231,8 +224,8 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
 
     **Why vectorized here and scalar one rung up.**  ``f`` returns *coordinates*, and a
     whole lattice of them is just a ``(K,3)`` array -- so the natural call is one, on
-    the whole lattice, which is also the cheapest.  ``QuadMesh.loft_curve`` /
-    ``HexMesh.loft_curve`` instead take a **scalar** ``Callable[[float], LineMesh]`` /
+    the whole lattice, which is also the cheapest.  ``QuadMesh.loft_fn`` /
+    ``HexMesh.loft_fn`` instead take a **scalar** ``Callable[[float], LineMesh]`` /
     ``Callable[[float], QuadMesh]``, because a callable returning a *single mesh* can
     only be handed a single parameter value: there is no array-of-meshes to return.
     ``sweep``'s ``path`` is vectorized again, for a third reason -- the default frame
@@ -242,7 +235,7 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     ``order`` (default 1) is **constructive** at this rung, not inherited: ``f`` hands
     back points, not a mesh, so there is nothing to read an order off -- the argument
     is what *decides* the node lattice ``f`` is sampled on.  That is why it stays an
-    ``int`` here while ``QuadMesh.loft_curve`` / ``HexMesh.loft_curve`` default it to
+    ``int`` here while ``QuadMesh.loft_fn`` / ``HexMesh.loft_fn`` default it to
     ``None`` and infer it from the profile ``f`` returns.
 
     ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
@@ -250,12 +243,12 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     ``len(fractions) - 1`` line elements.  The caller states the domain by choosing the
     values -- for an ``f`` written on ``[0, 1]`` they are exactly the normalized
     fractions the sibling
-    :meth:`LineMesh.line <nekmeshpy.linemesh.LineMesh.line>` takes, and an ``f`` written
+    :func:`linemesh.shape.line <nekmeshpy.linemesh.shape.line>` takes, and an ``f`` written
     on any other interval is sampled in its own units
     (``np.linspace(0.0, np.pi, n + 1)`` for a uniform chain over ``[0, pi]``).  A
     descending sequence runs the curve backwards; nothing here requires ascending order.
 
-    ``loop=True`` closes the curve, exactly as it does for :func:`loft`: the last
+    ``loop=True`` closes the curve, exactly as it does for :func:`loft <nekmeshpy.linemesh.assemble.loft>`: the last
     element joins back to the first point, so ``n+1`` fractions give ``n`` points
     *and* ``n`` lines, with no duplicated point and no degree-1 end.  The seam element
     is a real element with its own high-order nodes, and they can only be evaluated if
@@ -268,8 +261,7 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     be silently kinked shut.
 
     The values grade the nodes in **parameter** space; for nodes spaced evenly by **arc
-    length** pass :meth:`LineMesh.arclength_fractions
-    <nekmeshpy.linemesh.LineMesh.arclength_fractions>`, whose chord-length table
+    length** pass :func:`linemesh.shape.arclength_fractions <nekmeshpy.linemesh.shape.arclength_fractions>`, whose chord-length table
     perturbs only *where along* the curve the nodes sit -- every node still lies on the
     curve to machine precision, because it is placed by evaluating ``f`` and never by
     interpolating the table.  At ``order > 1`` the grading is honored **per element**:
@@ -277,11 +269,11 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     ``fractions[i] .. fractions[i+1]`` span.
 
     This is the general sibling of
-    :meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`, which is the special case
+    :func:`linemesh.shape.arc <nekmeshpy.linemesh.shape.arc>`, which is the special case
     ``f = circle`` (kept separate because it can place its nodes without an inversion
-    and to the last ulp).  Reach for ``loft_curve`` whenever a curve has a closed form
+    and to the last ulp).  Reach for ``loft_fn`` whenever a curve has a closed form
     that is not a circular arc -- an ellipse, a helix, a cylinder-cylinder intersection
-    -- instead of sampling it into an array and calling :func:`loft`, which can only
+    -- instead of sampling it into an array and calling :func:`loft <nekmeshpy.linemesh.assemble.loft>`, which can only
     subdivide straight between the samples and therefore loses the curve at
     ``order > 1``.  For a curve with **no** closed form (a scanned polyline) there is
     nothing to evaluate; resample it with ``trimesh.ops.resample_polyline`` and accept
@@ -293,10 +285,10 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
     ni = fr.shape[0] - 1
     if ni < 1:
         raise ValueError(
-            "loft_curve needs at least 2 fractions (one element), got %d" % fr.shape[0])
+            "loft_fn needs at least 2 fractions (one element), got %d" % fr.shape[0])
     if loop and ni < 2:
         raise ValueError(
-            "loft_curve(loop=True) needs at least 3 fractions (two elements), got %d -- "
+            "loft_fn(loop=True) needs at least 3 fractions (two elements), got %d -- "
             "the last one is the wrap back to the first point, so it is not a point of "
             "its own" % fr.shape[0])
 
@@ -312,7 +304,7 @@ def loft_curve(f: Callable[[FloatArray], PointArray], fractions: float | FloatAr
         tol = entity_tol(corners)
         if gap > tol:
             raise ValueError(
-                "loft_curve(loop=True) needs the last fraction to map back to the "
+                "loft_fn(loop=True) needs the last fraction to map back to the "
                 "first point, but f(%g) and f(%g) are %g apart (tolerance %g).  Pass "
                 "the trailing wrap value -- np.linspace(0, 2*np.pi, n+1) for a "
                 "2*pi-periodic f -- so the seam element's own nodes can be evaluated."
@@ -375,7 +367,7 @@ def merge(meshes: Sequence[LineMesh], *,
     points** (the degree-1 chain ends -- the 1-D analogue of the boundary
     vertices ``QuadMesh.merge``/``HexMesh.merge`` weld).  ``tol`` is the
     absolute coincidence distance (default ``1e-7`` x the extent).  Dense
-    ``element_tags`` and tagged ``boundaries`` concatenate with each block's
+    ``element_tags`` and ``point_tags`` concatenate with each block's
     line ids offset; interior points are never welded.  Closedness is not
     tracked anywhere -- it simply falls out of the welded connectivity: if no
     degree-1 end survives the result *is* a loop, so two shared-endpoint
@@ -389,28 +381,20 @@ def merge(meshes: Sequence[LineMesh], *,
     points, point_id = _weld(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
-    bnd_list: list[IntArray] = []
-    name_list: list[StrArray] = []
-    etag_list: list[StrArray] = []
+    bnd_list: list[PointTags] = []
+    etag_list: list[ElementTags] = []
     noff = loff = 0
     for m, c in zip(meshes, counts):
         line_list.append(point_id[m.lines + noff])   # local -> welded id
-        etag_list.append(m.element_tags)
-        if m.boundaries.shape[0]:
-            b: IntArray = m.boundaries.copy()
-            b[:, 0] += loff                          # shift line ids; sides local
-            bnd_list.append(b)
-            name_list.append(m.boundary_tags)
+        # ids shift by this block's offset; sides stay local to their element
+        etag_list.append(m.element_tags.offset(loff))
+        bnd_list.append(m.point_tags.offset(loff))
         noff += c
         loff += m.n_lines
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
-    etags = (np.concatenate(etag_list) if etag_list
-             else np.empty(0, dtype=np.str_))
-    bnd = (np.concatenate(bnd_list, axis=0) if bnd_list
-           else np.zeros((0, 2), np.int64))
-    names = (np.concatenate(name_list) if name_list
-             else np.empty(0, dtype=np.str_))
+    etags = ElementTags.concat(etag_list)
+    bnd = PointTags.concat(bnd_list)
 
     # order-N: welding only touches endpoints (corners, which are re-numbered into
     # the merged points), and every high-order node of a line is *private*, so the
@@ -423,12 +407,4 @@ def merge(meshes: Sequence[LineMesh], *,
     if meshes:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
 
-    return LineMesh(points, lines, interior, bnd, names, etags, order=order)
-
-
-#: Variable-arity combinators bound onto ``LineMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "loft": loft,
-    "loft_curve": loft_curve,
-    "merge": merge,
-}
+    return LineMesh(points, lines, interior, bnd, etags, order=order)

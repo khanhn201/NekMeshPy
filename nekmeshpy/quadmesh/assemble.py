@@ -1,6 +1,6 @@
 """Variable-arity ``QuadMesh`` operations -- the only ones that build a numbering.
 
-``loft`` (``n`` line profiles -> a section, rung delta +1), ``loft_curve`` (the same,
+``loft`` (``n`` line profiles -> a section, rung delta +1), ``loft_fn`` (the same,
 with the profiles evaluated from a parametrization rather than handed in) and ``merge``
 (``n`` sections -> one, rung delta 0) are the n-ary operations at this rung, and the
 only code here
@@ -10,7 +10,7 @@ layer-by-layer B-rep it assembles (``prof_off`` / ``rung_off``, global id
 the weld.  Every fixed-arity operation either reuses an existing numbering (``blend``)
 or delegates here (``extrude``, ``from_grid``, the region factories).
 
-``loft_curve`` lives here rather than with the region fills for the same reason its
+``loft_fn`` lives here rather than with the region fills for the same reason its
 line-rung twin does -- it *is* ``loft``, and it delegates the whole assembly to it
 through ``sweep_nodes``, contributing only the evaluation.
 
@@ -19,7 +19,7 @@ shared entity is ever duplicated and nothing needs reconciling; ``merge`` *rewri
 against a new corner numbering, so it must re-scatter the shared edge nodes owner-wins
 and verify every other incident copy.
 
-Free functions bound onto :class:`~nekmeshpy.QuadMesh` by ``quadmesh/__init__.py``;
+Free functions bound onto :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>` by ``quadmesh/__init__.py``;
 internal toolkit code imports them from here directly rather than through the bound
 ``QuadMesh.<name>`` sugar.
 """
@@ -27,7 +27,6 @@ internal toolkit code imports them from here directly rather than through the bo
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
 
 import numpy as np
 
@@ -39,17 +38,22 @@ from .._typing import (
     StrArray,
 )
 from ..linemesh import LineMesh
-from ..linemesh._assemble import _check_fraction_count, _refined_lattice, _weld
+from ..linemesh.assemble import _check_fraction_count, _refined_lattice, _weld
 from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
-from ._query import _boundary_mask
+from ..model.tags import (
+    EdgeTags,
+    ElementTags,
+    TagBuilder,
+)
 from .quadmesh import (
-    NO_BOUNDARY,
+    NO_TAG,
     QuadMesh,
     _coons_at,
     _quad_interior_slots,
 )
+from .query import _boundary_mask
 
 
 def loft(
@@ -62,13 +66,13 @@ def loft(
     last_tag: str | Sequence[str] | StrArray = "",
 ) -> QuadMesh:
     """Loft a stack of conformal ``LineMesh`` profiles into a quad section
-    (the general primitive behind :meth:`extrude`, and the middle rung of the
+    (the general primitive behind :func:`extrude <nekmeshpy.quadmesh.lift.extrude>`, and the middle rung of the
     uniform sweep shared with
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` and
-    :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`).
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
+    :func:`HexMesh.loft <nekmeshpy.hexmesh.assemble.loft>`).
 
     ``slices`` is ``nz+1`` line profiles sharing the same ``lines``,
-    ``element_tags``, and ``boundaries``; consecutive profiles form ``nz`` quad
+    ``element_tags``, and ``edge_tags``; consecutive profiles form ``nz`` quad
     layers.  For line ``(a, b)`` at layer ``i`` the column quad is
     ``[a_i, b_i, b_{i+1}, a_{i+1}]``.  The line's ``element_tags`` ride onto every
     quad in its column and tagged boundary points onto the swept wall edges;
@@ -85,13 +89,13 @@ def loft(
     ``order > 1`` a swept curved surface is high-order in storage and linear in
     geometry between consecutive slices -- exact input rings do not save it.
     ``sweep_nodes`` is the escape hatch, and the exact analogue of
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`'s ``interior``
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`'s ``interior``
     override one rung down: ``sweep_nodes[i]`` is the ``order-1`` profiles lying
     strictly *between* slice ``i`` and the slice it sweeps to, at that layer's
     interior GLL levels.  Supplied, they replace both interpolations -- the rung
     lines' interiors and the quads' private interiors are then read straight out of
     them, so every node is a genuine profile point and nothing is blended.
-    :meth:`loft_curve` builds them by evaluating a parametrization on the refined
+    :func:`loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` builds them by evaluating a parametrization on the refined
     sweep lattice; that is the intended way in.
 
     ``loop=True`` makes the sweep **periodic**: the last profile is joined back to
@@ -102,7 +106,7 @@ def loft(
     no free boundary edge in the sweep direction.  A closed sweep has no near/far
     cap, so ``first_tag`` / ``last_tag`` with ``loop=True`` raise ``ValueError``
     rather than being silently dropped, and no cap boundary row is emitted.
-    (Side-wall boundaries derived from the profiles' own boundary points are
+    (Side-wall edge tags derived from the profiles' own tagged end points are
     unaffected.)
 
     The section's B-rep is assembled **layer by layer**, never re-derived from
@@ -234,7 +238,8 @@ def loft(
         rung_off[i_idx] + rung_slot[av]], axis=1)
     flip: BoolArray = np.tile(
         np.array([False, False, True, True]), (nz * L, 1))
-    etags: StrArray = np.asarray(slices[0].element_tags, dtype=np.str_)[l_idx]
+    # quad ``i*L + l`` inherits profile line ``l``'s tag
+    etags: ElementTags = slices[0].element_tags.gather(l_idx)
     if element_tags is not None:
         # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
         # profile's line tag on every quad of that layer.
@@ -244,8 +249,7 @@ def loft(
             raise ValueError(
                 "loft: element_tags is per layer, so it needs %d entries, got %d"
                 % (nz, layer_tags.shape[0]))
-        over = layer_tags[i_idx]
-        etags = np.where(over != "", over, etags)
+        etags = etags.overlay(ElementTags.blocks(layer_tags, L))
 
     # order-N: without ``sweep_nodes`` each column quad is a transfinite (Coons)
     # patch -- curved along the profile line (from the slices' own points + private
@@ -300,19 +304,13 @@ def loft(
                                  islots % row, islots // row)
 
     # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
-    sec_b = np.asarray(slices[0].boundaries, dtype=np.int64).reshape(-1, 2)
-    sec_t = slices[0].boundary_tags
-    bnd: list[list[int]] = []
-    names: list[str] = []
-    for r in range(sec_b.shape[0]):
-        tag = str(sec_t[r])
-        if tag == NO_BOUNDARY:
+    bb = TagBuilder(EdgeTags)
+    for l0, side, tag in slices[0].point_tags:
+        if tag == NO_TAG:
             continue
-        l0 = int(sec_b[r, 0])
-        qside = 4 if int(sec_b[r, 1]) == 1 else 2
+        qside = 4 if side == 1 else 2
         for ii in range(nz):
-            bnd.append([ii * L + l0, qside])
-            names.append(tag)
+            bb.add(ii * L + l0, qside, tag)
     # caps: scalar tags the whole cap, an array tags per section line.  A periodic
     # sweep has no near/far cap edge at all, so it emits no cap row (and rejected
     # the tags above).
@@ -320,18 +318,13 @@ def loft(
         first_caps = QuadMesh._cap_tags(first_tag, L)
         last_caps = QuadMesh._cap_tags(last_tag, L)
         for l0 in range(L):
-            if first_caps[l0]:
-                bnd.append([l0, 1])
-                names.append(first_caps[l0])
+            bb.add_if_tagged(l0, 1, first_caps[l0])
         if nz:
             for l0 in range(L):
-                if last_caps[l0]:
-                    bnd.append([(nz - 1) * L + l0, 3])
-                    names.append(last_caps[l0])
-    b_ord, n_ord = QuadMesh._order_bnd(bnd, names)
+                bb.add_if_tagged((nz - 1) * L + l0, 3, last_caps[l0])
     lm = LineMesh(points, all_lines, order=order, interior=edge_nodes)
-    return QuadMesh(lm, quad, flip, interior, b_ord, n_ord,
-                    element_tags=etags, order=order)
+    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags,
+                    order=order)
 
 
 def _loft_evaluated(
@@ -343,7 +336,7 @@ def _loft_evaluated(
     element_tags: StrArray | Sequence[str] | None = None,
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
-    name: str = "loft_curve",
+    name: str = "loft_fn",
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
     node lattice rather than handed in: validate, close the loop, split, delegate.
@@ -352,14 +345,14 @@ def _loft_evaluated(
     profile per entry of the sweep lattice ``t`` (``nz*order + 1`` of them; ``t`` is in
     the caller's own parameter units and is used only in error messages);
     ``profs[i*order]`` are the corner-level slices and the ``order-1`` profiles between
-    consecutive ones are that layer's :func:`loft` ``sweep_nodes``.  Every profile must
+    consecutive ones are that layer's :func:`loft <nekmeshpy.quadmesh.assemble.loft>` ``sweep_nodes``.  Every profile must
     be index-paired and conformal with the first, and with ``loop=True`` the trailing
     wrap profile must reproduce the first point-for-point
     (``model.conform.entity_tol``) before it is dropped -- its layer's intermediates
     stay, since they are what curve the seam.  ``name`` is the caller's name for the
     error messages.
 
-    Factored out of :func:`loft_curve` so a sweep that already *has* the profile list
+    Factored out of :func:`loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` so a sweep that already *has* the profile list
     (rather than a callable to evaluate) reuses the same contract instead of restating
     it -- which is exactly what ``QuadMesh.sweep`` needs, because a
     rotation-minimizing frame is integrated along the whole path and cannot be
@@ -411,7 +404,7 @@ def _loft_evaluated(
                 first_tag=first_tag, last_tag=last_tag)
 
 
-def loft_curve(
+def loft_fn(
     f: Callable[[float], LineMesh],
     fractions: FloatArray,
     *,
@@ -421,14 +414,14 @@ def loft_curve(
     first_tag: str | Sequence[str] | StrArray = "",
     last_tag: str | Sequence[str] | StrArray = "",
 ) -> QuadMesh:
-    """Loft a section from a **parametrized family of profiles** -- :func:`loft` with
+    """Loft a section from a **parametrized family of profiles** -- :func:`loft <nekmeshpy.quadmesh.assemble.loft>` with
     the slices evaluated rather than handed in, so **every** node (the corners *and*
     the sweep-direction high-order nodes) comes from calling ``f`` and nothing is
     blended along the sweep.
 
     This is the quad rung of
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`, and it
-    exists for the same reason: a plain :func:`loft` has only the corner-level
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`, and it
+    exists for the same reason: a plain :func:`loft <nekmeshpy.quadmesh.assemble.loft>` has only the corner-level
     profiles to go on, so at ``order > 1`` it subdivides the sweep straight and a
     swept curved surface ends up high-order in storage and linear in geometry (a
     torus lofted from *exact* rings puts its interior nodes tens of percent of the
@@ -446,8 +439,8 @@ def loft_curve(
     **Why ``f`` is scalar here and ``sweep``'s ``path`` is vectorized.**  ``f`` returns
     a *mesh*, and a callable that hands back one mesh can only be given one parameter
     value -- there is no array-of-meshes for a vectorized form to return (which is also
-    why :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`, whose
-    ``f`` returns plain coordinates, *is* vectorized).  :func:`sweep`'s ``path`` is
+    why :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`, whose
+    ``f`` returns plain coordinates, *is* vectorized).  :func:`sweep <nekmeshpy.quadmesh.lift.sweep>`'s ``path`` is
     vectorized for a different reason again: it returns coordinates *and* the default
     frame generator is a sequential integration along the whole curve, so it cannot be
     evaluated at one isolated parameter at all.
@@ -459,7 +452,7 @@ def loft_curve(
     so it cannot be built before the order is known).  Pass an explicit ``int`` to
     assert it instead: a profile of a different order is then a ``ValueError`` naming
     the mismatch, and no probe call is made.  There is no inference at the line rung --
-    ``LineMesh.loft_curve``'s ``f`` returns points, not a mesh, so its ``order`` is
+    ``LineMesh.loft_fn``'s ``f`` returns points, not a mesh, so its ``order`` is
     constructive rather than inherited.
 
     ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
@@ -478,12 +471,12 @@ def loft_curve(
     closed sweep has no near/far cap, so ``first_tag`` / ``last_tag`` are rejected.
 
     ``element_tags`` is the per-layer tag array and the caps the per-line ones,
-    exactly as on :func:`loft`, which does all the assembly and whose numbering is
+    exactly as on :func:`loft <nekmeshpy.quadmesh.assemble.loft>`, which does all the assembly and whose numbering is
     carried up unchanged."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    _check_fraction_count(fr, loop=loop, name="loft_curve")
+    _check_fraction_count(fr, loop=loop, name="loft_fn")
     if loop:
-        reject_loop_caps("QuadMesh.loft_curve", first_tag, last_tag)
+        reject_loop_caps("QuadMesh.loft_fn", first_tag, last_tag)
     if order is None:
         # The node lattice the profiles are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the
@@ -493,7 +486,7 @@ def loft_curve(
         probe = f(float(fr[0]))
         if not isinstance(probe, LineMesh):
             raise TypeError(
-                "loft_curve: f must return a LineMesh profile, but f(%g) returned %s. "
+                "loft_fn: f must return a LineMesh profile, but f(%g) returned %s. "
                 "Pass order= explicitly only if you also fix f." % (fr[0], type(probe)))
         order = probe.order
 
@@ -507,7 +500,7 @@ def loft_curve(
 def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     """Merge quad sections into one, welding coincident boundary points.
     ``tol`` is the absolute coincidence distance (default ``1e-7`` x the extent).
-    Tagged ``boundaries`` and dense ``element_tags`` concatenate with each
+    ``edge_tags`` and ``element_tags`` concatenate with each
     block's quad ids offset; an interior seam is not auto-dropped."""
     meshes = list(meshes)
     pos = [np.asarray(m.points, dtype=float).reshape(-1, 3) for m in meshes]
@@ -521,24 +514,20 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
         seams.append(np.unique(edges[mask]))
     points, point_id = _weld(pos, seams, tol)
 
-    quad_list, bnd_list, name_list, etag_list = [], [], [], []
+    quad_list: list[IntArray] = []
+    bnd_list: list[EdgeTags] = []
+    etag_list: list[ElementTags] = []
     noff = qoff = 0
     for m, c in zip(meshes, counts):
         quad_list.append(point_id[m.quads + noff])   # local -> welded id
-        etag_list.append(m.element_tags)
-        if m.boundaries.shape[0]:
-            b: IntArray = m.boundaries.copy()
-            b[:, 0] += qoff                          # shift quad ids; sides local
-            bnd_list.append(b)
-            name_list.append(m.boundary_tags)
+        # ids shift by this block's offset; sides stay local to their element
+        etag_list.append(m.element_tags.offset(qoff))
+        bnd_list.append(m.edge_tags.offset(qoff))
         noff += c
         qoff += m.n_quads
     quads = np.concatenate(quad_list, axis=0) if quad_list else np.zeros((0, 4), np.int64)
-    etags = (np.concatenate(etag_list) if etag_list
-             else np.empty(0, dtype=np.str_))
-    bnd = np.concatenate(bnd_list, axis=0) if bnd_list else np.zeros((0, 2), np.int64)
-    names = np.concatenate(name_list) if name_list else np.empty(0, dtype=np.str_)
-    b_ord, n_ord = QuadMesh._order_bnd(bnd, names)
+    etags = ElementTags.concat(etag_list)
+    bnd = EdgeTags.concat(bnd_list).ordered()
 
     # order-N: the private per-quad interiors just concatenate, but the shared edge
     # tables must be rebuilt against the *merged* topology -- gather each block's
@@ -560,13 +549,4 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
             conform.entity_tol(points), "QuadMesh.merge")
         interior = np.concatenate([m.interior for m in meshes], axis=0)
     lm = LineMesh(points, edges, order=order, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, b_ord, n_ord,
-                    element_tags=etags, order=order)
-
-
-#: Variable-arity combinators bound onto ``QuadMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "loft": loft,
-    "loft_curve": loft_curve,
-    "merge": merge,
-}
+    return QuadMesh(lm, elem_edges, flip, interior, bnd, etags, order=order)

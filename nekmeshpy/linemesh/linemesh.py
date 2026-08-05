@@ -1,8 +1,9 @@
 """1-D mesh container: line elements ``(L,2)`` over a shared ``(N,3)`` point array.
 
 The line sibling of QuadMesh/HexMesh; it can branch rather than being a single
-ordered path. It carries a dense per-line ``element_tags`` and sparse tagged
-``boundaries`` (a line's boundary is a point), both of which sweep up on extrude.
+ordered path. It carries sparse per-line ``element_tags`` and a sparse tagged
+:class:`~nekmeshpy.model.tags.PointTags` table of tagged end points, both of which
+sweep up on extrude.
 Open vs closed is a property of the ``lines`` connectivity itself -- a loop is a
 cycle of line elements with no degree-1 end point -- and is stored nowhere;
 factories build the common cases (``loft`` / ``line`` / ``arc`` / ``circle`` /
@@ -11,7 +12,7 @@ resampling here.
 
 ``lines`` is a **required** constructor argument: the container never invents
 connectivity, so there is nothing in ``LineMesh`` that could imply a wrap.  The
-bottom rung of the uniform sweep primitive, :meth:`LineMesh.loft`, is what authors it
+bottom rung of the uniform sweep primitive, :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`, is what authors it
 -- one dimension below ``QuadMesh.loft``/``HexMesh.loft``, each "profile" is a single
 point and the rungs joining consecutive profiles *are* the line elements, with
 ``loop=True`` adding the closing rung from the last point back to the first.  It is
@@ -21,10 +22,10 @@ with its ``lines`` spelled out.
 
 This file stays a **pure container**: storage, validation, and the derived views.
 Every operation on a finished mesh lives beside it as a free function bound onto the
-class in ``linemesh/__init__.py``, split by arity and by rung delta -- ``_assemble.py``
-(the n-ary ``loft`` / ``merge``, which build a new index space), ``_morph.py`` (the
-rung-preserving ``blend``), ``_query.py`` (read-only queries), ``_open.py`` /
-``_closed.py`` (shape factories).  Adding an operation touches only the sibling module,
+class in ``linemesh/__init__.py``, split by arity and by rung delta -- ``assemble.py``
+(the n-ary ``loft`` / ``merge``, which build a new index space), ``morph.py`` (the
+rung-preserving ``blend``), ``query.py`` (read-only queries), ``shape.py`` /
+``shape.py`` (shape factories).  Adding an operation touches only the sibling module,
 never this one.
 """
 
@@ -41,19 +42,20 @@ from .._typing import (
     PointArray,
     StrArray,
 )
+from ..model.tags import ElementTags, PointTags
 
 
-def _as_points(points: NDArray[Any]) -> PointArray:
+def _as_points(points: PointArray) -> PointArray:
     """Normalize an array-like to a validated ``(N,3)`` float point array, raising
-    the one actionable "boundaries live in 3-D" error for anything else.  Shared by
-    ``LineMesh.__init__`` and :meth:`LineMesh.loft` so both report it identically."""
+    the one actionable "points live in 3-D" error for anything else.  Shared by
+    ``LineMesh.__init__`` and :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` so both report it identically."""
     a: PointArray = np.asarray(points, dtype=float)
     if a.ndim == 1:
         a = a.reshape(1, -1)
     if a.ndim != 2 or a.shape[1] != 3:
         raise ValueError(
-            f"boundary points must be (N,3) 3-D coordinates; got "
-            f"{a.shape} -- add a z column (all boundaries live in 3-D)")
+            f"points must be (N,3) 3-D coordinates; got "
+            f"{a.shape} -- add a z column (all geometry lives in 3-D)")
     return a
 
 
@@ -73,8 +75,8 @@ def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
 
 class LineMesh:
     """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a
-    dense per-line ``element_tags``, and ``[line id, side 1-2]`` ``boundaries`` with
-    parallel ``boundary_tags``. Build with ``loft`` / ``line`` / ``arc`` / ``circle``
+    sparse per-line ``element_tags``, and a ``point_tags`` table of tagged end points
+    (``side`` 1-2). Build with ``loft`` / ``line`` / ``arc`` / ``circle``
     / ``rectangle``."""
 
     # local line "edges": row s-1 is side s -> the single local vertex it names.
@@ -82,22 +84,22 @@ class LineMesh:
 
     def __init__(
         self,
-        points: NDArray[Any],
+        points: PointArray,
         lines: IntArray,
         interior: PointArray | None = None,
-        boundaries: IntArray | None = None,
-        boundary_tags: StrArray | Sequence[str] | None = None,
-        element_tags: StrArray | Sequence[str] | None = None,
+        point_tags: PointTags | None = None,
+        element_tags: ElementTags | None = None,
         *,
         order: int = 1,
     ) -> None:
         """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), the **required**
         ``lines`` ``(L,2)`` connectivity, the per-line ``interior`` nodes, an optional
-        tagged-boundary list ``boundaries`` ``(Nbc,2)`` with parallel
-        ``boundary_tags``, and an optional dense ``element_tags`` ``(L,)``.
+        :class:`PointTags <nekmeshpy.model.tags.PointTags>` naming end points of
+        lines, and an optional :class:`ElementTags
+        <nekmeshpy.model.tags.ElementTags>` naming whichever lines are tagged.
 
         The argument order is the ladder's: ``(rung below, incidence, interior,
-        boundaries, boundary_tags, element_tags, *, order)``, matching
+        side tags, element_tags, *, order)``, matching
         :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` (``lines, quad, flip,
         interior, ...``) and :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>`
         (``quads, hex, face_orient, interior, ...``) position for position -- a line element has no orientation bit, so it simply
@@ -107,7 +109,7 @@ class LineMesh:
         chain" default and therefore nothing here that could imply a wrap.  Callers
         either own their ``lines`` outright (``merge``'s rewelded lines, ``blend``'s
         copy of ``a.lines``, the quad/hex edge meshes built from
-        ``conform.unique_edges``) or author them with :meth:`loft`, which is the only
+        ``conform.unique_edges``) or author them with :func:`loft <nekmeshpy.linemesh.assemble.loft>`, which is the only
         connectivity-generating entry point (``loop=False`` chain / ``loop=True``
         ring).
 
@@ -123,27 +125,14 @@ class LineMesh:
         self.points: PointArray = _as_points(points)
         self.lines: IntArray = np.asarray(lines, dtype=np.int64).reshape(-1, 2)
 
-        if element_tags is None:
-            self.element_tags: StrArray = np.full(
-                self.lines.shape[0], "", dtype=np.str_)
-        else:
-            et = np.asarray(element_tags, dtype=np.str_).reshape(-1)
-            if et.shape[0] != self.lines.shape[0]:
-                raise ValueError(
-                    "element_tags length (%d) must match lines (%d)"
-                    % (et.shape[0], self.lines.shape[0]))
-            self.element_tags = et
-
-        # tagged boundary points [line id, side 1-2] parallel with boundary_tags.
-        self.boundaries: IntArray = (
-            np.zeros((0, 2), np.int64) if boundaries is None
-            else np.asarray(boundaries, np.int64).reshape(-1, 2))
-        self.boundary_tags: StrArray = (
-            np.empty(0, dtype=np.str_) if boundary_tags is None
-            else np.asarray(boundary_tags, dtype=np.str_).reshape(-1))
-        if self.boundary_tags.shape[0] != self.boundaries.shape[0]:
-            raise ValueError("boundary_tags length (%d) must match boundaries (%d)"
-                             % (self.boundary_tags.shape[0], self.boundaries.shape[0]))
+        #: which lines carry a region tag (sparse -- an untagged mesh stores nothing)
+        self.element_tags: ElementTags = (
+            ElementTags.empty() if element_tags is None else element_tags)
+        #: tagged end points, ``side`` 1-2, coupled with their names
+        self.point_tags: PointTags = (
+            PointTags.empty() if point_tags is None else point_tags)
+        self.element_tags.check_within(self.lines.shape[0], "lines")
+        self.point_tags.check_within(self.lines.shape[0], "lines")
 
         self._order = int(order)
         #: ``(L, order-1, 3)`` per-line private high-order interior nodes (ascending GLL
@@ -198,10 +187,10 @@ class LineMesh:
         worse."""
         try:
             return ("<LineMesh %d points, %d lines, order %d, element_tags=%s, "
-                    "boundary_tags=%s>"
+                    "point_tags=%s>"
                     % (self.points.shape[0], self.lines.shape[0], self._order,
                        _repr_tags(self.element_group_tags),
-                       _repr_tags(self.boundary_group_tags)))
+                       _repr_tags(self.point_group_tags)))
         except Exception:                     # a repr must never break a debug session
             return "<LineMesh (unprintable)>"
 
@@ -224,20 +213,19 @@ class LineMesh:
         return self.lines.shape[0]
 
     @property
-    def n_boundaries(self) -> int:
-        """Number of tagged boundary points."""
-        return self.boundaries.shape[0]
+    def n_point_tags(self) -> int:
+        """Number of tagged end points."""
+        return len(self.point_tags)
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-line element tags present on the mesh."""
-        return sorted({t for t in self.element_tags.tolist() if t})
+        return self.element_tags.group_tags
 
     @property
-    def boundary_group_tags(self) -> list[str]:
-        """Sorted unique tags of the tagged boundary points present on the mesh."""
-        return sorted(set(self.boundary_tags.tolist()))
-
+    def point_group_tags(self) -> list[str]:
+        """Sorted unique tags of the tagged end points present on the mesh."""
+        return self.point_tags.group_tags
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod
@@ -262,32 +250,10 @@ class LineMesh:
                              % (arr.shape[0], N))
         return [str(x) for x in arr.tolist()]
 
-    @staticmethod
-    def _order_bnd(
-        bnd: Sequence[Sequence[int]] | IntArray,
-        tags: Sequence[str] | StrArray,
-    ) -> tuple[IntArray, StrArray]:
-        """Stably order boundary rows by ``(line id, side)``, applying the same
-        permutation to the parallel ``tags`` array."""
-        b: IntArray = np.asarray(bnd, dtype=np.int64).reshape(-1, 2)
-        nm: StrArray = np.asarray(tags, dtype=np.str_).reshape(-1)
-        if b.shape[0]:
-            order = np.lexsort((b[:, 1], b[:, 0]))
-            b = b[order]
-            nm = nm[order]
-        return b, nm
-
     def _seg_tags(self) -> list[str] | None:
-        """The dense ``element_tags`` as a ``list[str]`` for the ordered ops, or
+        """The element tags densified to a ``list[str]`` for the ordered ops, or
         ``None`` if every element is untagged (so an untagged mesh stays untagged)."""
-        if self.element_tags.size and np.any(self.element_tags != ""):
-            return [str(x) for x in self.element_tags.tolist()]
-        return None
-
-    # -- arc length ------------------------------------------------------
-    @property
-    def length(self) -> float:
-        """Total (open) arc length through the points in index order."""
-        P = self.points
-        return float(np.sum(np.sqrt(np.sum(np.diff(P, axis=0) ** 2, axis=1))))
+        if not self.element_tags:
+            return None
+        return [str(x) for x in self.element_tags.dense(self.lines.shape[0]).tolist()]
 

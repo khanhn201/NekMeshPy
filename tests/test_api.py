@@ -6,10 +6,11 @@ import numpy as np
 
 from nekmeshpy import (
     SECTION_METHODS,
-    LineMesh,
     PhysicalGroups,
-    QuadMesh,
     export,
+    hexmesh,
+    linemesh,
+    quadmesh,
     register_section_smoothing,
     set_section_smoothing,
 )
@@ -47,9 +48,9 @@ def test_section_smoothing_registry_extensible():
         return qm
 
     assert "noop_test" in SECTION_METHODS
-    qm = QuadMesh.structured(
-        [LineMesh.loft([(0, 0, 0), (1, 0, 0)]), LineMesh.loft([(1, 0, 0), (1, 1, 0)]),
-         LineMesh.loft([(1, 1, 0), (0, 1, 0)]), LineMesh.loft([(0, 1, 0), (0, 0, 0)])])
+    qm = quadmesh.shape.structured(
+        [linemesh.assemble.loft([(0, 0, 0), (1, 0, 0)]), linemesh.assemble.loft([(1, 0, 0), (1, 1, 0)]),
+         linemesh.assemble.loft([(1, 1, 0), (0, 1, 0)]), linemesh.assemble.loft([(0, 1, 0), (0, 0, 0)])])
     set_section_smoothing(qm, "noop_test")
     assert calls.get("hit") is True
     del SECTION_METHODS["noop_test"]
@@ -57,12 +58,12 @@ def test_section_smoothing_registry_extensible():
 
 def test_quality_module_matches_mesh(built_mesh):
     mesh = built_mesh["mesh"]
-    X, HC, _ = mesh.weld()
+    X, HC, _ = hexmesh.query.weld(mesh)
     sj = quality.scaled_jacobian(X, HC)
-    assert np.allclose(sj, mesh.scaled_jacobian())
+    assert np.allclose(sj, hexmesh.query.scaled_jacobian(mesh))
     stats = quality.summary(X, HC)
     assert stats.n_inverted == 0
-    assert mesh.quality_summary() == stats
+    assert hexmesh.query.quality_summary(mesh) == stats
 
 
 # -- validate_layers: an int is n uniform layers ------------------------------
@@ -75,14 +76,13 @@ def test_int_layer_count_is_uniform_spacing():
 
 
 def test_int_layer_count_reaches_the_factories_bit_identically():
-    from nekmeshpy import HexMesh
     from nekmeshpy.model.fields import uniform_spacing
-    circ = LineMesh.circle(1.0, 8)
-    a = QuadMesh.ogrid(circ, 2, uniform_spacing(2))
-    b = QuadMesh.ogrid(circ, 2, 2)
+    circ = linemesh.shape.circle(1.0, 8)
+    a = quadmesh.shape.ogrid(circ, 2, uniform_spacing(2))
+    b = quadmesh.shape.ogrid(circ, 2, 2)
     assert a.points.tobytes() == b.points.tobytes()
-    ha = HexMesh.extrude(a, axis=(0, 0, 1), length=1.0, layers=uniform_spacing(3))
-    hb = HexMesh.extrude(b, axis=(0, 0, 1), length=1.0, layers=3)
+    ha = hexmesh.lift.extrude(a, axis=(0, 0, 1), length=1.0, layers=uniform_spacing(3))
+    hb = hexmesh.lift.extrude(b, axis=(0, 0, 1), length=1.0, layers=3)
     assert ha.points.tobytes() == hb.points.tobytes()
 
 
@@ -99,13 +99,13 @@ def test_layer_count_rejects_zero_and_floats():
 # -- repr on the quad / hex / tri containers ----------------------------------
 
 def test_repr_of_each_container_names_counts_and_tag_groups():
-    from nekmeshpy import HexMesh, TriMesh
-    section = QuadMesh.ogrid(LineMesh.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
-    block = HexMesh.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
+    from nekmeshpy import TriMesh
+    section = quadmesh.shape.ogrid(linemesh.shape.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
+    block = hexmesh.lift.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
                             first_tag="inlet", last_tag="outlet")
     assert repr(section).startswith("<QuadMesh ")
-    assert "order 1" in repr(section) and "boundary_tags={wall}" in repr(section)
+    assert "order 1" in repr(section) and "edge_tags={wall}" in repr(section)
     assert repr(block).startswith("<HexMesh ")
-    assert "boundary_tags={inlet,outlet,wall}" in repr(block)
+    assert "face_tags={inlet,outlet,wall}" in repr(block)
     tri = TriMesh(np.zeros((4, 3)), [[0, 1, 2], [0, 2, 3]])
     assert repr(tri) == "<TriMesh 4 points, 2 tris>"

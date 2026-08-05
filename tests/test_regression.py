@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 from conftest import GOLDEN, read_re2_coords
 
+from nekmeshpy import hexmesh
 from nekmeshpy.hexmesh import quality
 
 # Residual is scipy.spsolve vs MATLAB backslash; ~2.7e-13 observed.
@@ -28,12 +29,12 @@ def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
     assert mesh.hexes.shape == (7200, 8)         # (N,8) shared-point connectivity
     assert mesh.points.shape == (8137, 3)
-    assert mesh.boundaries.shape[0] == 1840
+    assert len(mesh.face_tags) == 1840
 
 
 def test_tag_face_counts(built_mesh):
     mesh = built_mesh["mesh"]
-    names = mesh.boundary_tags
+    names = mesh.face_tags.tags
     counts = {n: int(np.sum(names == n)) for n in
               ("wall", "trunk_outlet", "top_outlet_1", "top_outlet_2")}
     assert counts["wall"] == 1440
@@ -43,7 +44,7 @@ def test_tag_face_counts(built_mesh):
 
 
 def test_scaled_jacobian_quality(built_mesh):
-    X, HC, _ = built_mesh["mesh"].weld()
+    X, HC, _ = hexmesh.query.weld(built_mesh["mesh"])
     sj = quality.scaled_jacobian(X, HC)
     # values for the order-3 pipeline whose wall is refit analytically before meshing:
     # each private station ring as a truncated-Fourier loop (``fourier_ring``) and each

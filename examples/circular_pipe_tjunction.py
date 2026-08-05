@@ -26,11 +26,11 @@ import logging
 import numpy as np
 
 from nekmeshpy import (
-    HexMesh,
-    LineMesh,
-    QuadMesh,
     TriMesh,
     export,
+    hexmesh,
+    linemesh,
+    quadmesh,
     smoothing,
 )
 
@@ -73,7 +73,7 @@ def arc_main_lower():
     ``e1 = +y``, ``e2 = -z``, so sweeping ``theta`` from ``0`` to ``pi`` walks
     ``+y -> -z -> -y``; at ``ORDER > 1`` every GLL node lands on the exact circle
     (an explicit point array would only be straight-subdivided between samples)."""
-    return LineMesh.arc(R, N_HALF, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+    return linemesh.shape.arc(R, N_HALF, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
                         start_theta=0.0, end_theta=np.pi, order=ORDER)
 
 
@@ -84,7 +84,7 @@ def arc_collar(xside):
     ``p(t) = (xside*R sin t, R cos t, R sin t)``, ``t: 0 -> pi`` -- it lies in the
     plane ``x = xside*z`` with semi-axes ``R*sqrt(2)`` and ``R``.
 
-    :meth:`LineMesh.loft_curve` evaluates that form at every node, corners *and* the
+    :meth:`LineMesh.loft_fn` evaluates that form at every node, corners *and* the
     interior GLL nodes, so the collar is exact to machine precision at any ``ORDER``.
     Its arc length has no closed form, so the even-by-arc-length grading is an
     explicit first step: :meth:`LineMesh.arclength_fractions` inverts a chord table
@@ -100,8 +100,8 @@ def arc_collar(xside):
         return np.column_stack(
             [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
 
-    return LineMesh.loft_curve(
-        f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
+    return linemesh.assemble.loft_fn(
+        f, linemesh.shape.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
         order=ORDER)
 
 
@@ -110,7 +110,7 @@ def join_arcs(p, q):
     (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
     :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
     crossing."""
-    return LineMesh.merge([p, q.reverse()])
+    return linemesh.assemble.merge([p, linemesh.morph.reverse(q)])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------
@@ -121,7 +121,7 @@ def opening_main(x0):
     in-plane frame ``e1 = +y``, ``e2 = -z``, so point ``k`` lands on
     ``(0, R cos, -R sin)`` -- the required clockwise traversal from ``+y``.
     At ``ORDER > 1`` every GLL node lands on the exact circle."""
-    return LineMesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+    return linemesh.shape.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
                            order=ORDER)
 
 
@@ -131,7 +131,7 @@ def opening_branch(z0):
     ``aRB``. ``normal = +z`` gives ``e1 = +x``, ``e2 = +y``; the ``start_theta =
     pi/2`` phase turns ``(cos, sin)`` into ``(-sin, cos)`` so index 0 is ``+y``.
     At ``ORDER > 1`` every GLL node lands on the exact circle."""
-    return LineMesh.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
+    return linemesh.shape.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
                            start_theta=np.pi / 2, order=ORDER)
 
 
@@ -141,14 +141,14 @@ def leg_slices(open_ring, seam_ring, n_slices):
     disc :meth:`QuadMesh.spined_ogrid`-ed over its natural straight A1..A2 diameter
     (two half-discs welded along it). End stations keep the raw algebraic fill;
     interior ones use ``SMOOTHING_METHOD``."""
-    loops = LineMesh.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_slices))
+    loops = linemesh.morph.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_slices))
     slices = []
     for s, loop in enumerate(loops):
         m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None
         # spined_ogrid splits the loop along its A1..A2 chord (default spine) and
         # merges the two half-discs; wall_tag names every wall edge (see
         # flow_past_cylinder.py for the tag-flow-down convention).
-        slices.append(QuadMesh.spined_ogrid(
+        slices.append(quadmesh.shape.spined_ogrid(
             loop, RADIAL, center_scale=CENTER_SCALE, wall_tag="wall",
             smoothing_method=m))
     return slices
@@ -209,15 +209,15 @@ seam_right = join_arcs(a_lm, a_rb)    # main-right : lower main wall + x>=0 coll
 seam_branch = join_arcs(a_lb, a_rb)   # branch     : the full collar
 
 blocks = [
-    HexMesh.loft(leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN),
+    hexmesh.assemble.loft(leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN),
                  first_tag="inlet"),
-    HexMesh.loft(leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN),
+    hexmesh.assemble.loft(leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN),
                  first_tag="outlet"),
-    HexMesh.loft(leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH),
+    hexmesh.assemble.loft(leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH),
                  first_tag="branch"),
 ]
 
-mesh = HexMesh.merge(blocks)
+mesh = hexmesh.assemble.merge(blocks)
 
 if SMOOTH_ITERS > 0:
     smoothing.smooth(mesh, wall_surface(), smooth_iters=SMOOTH_ITERS,
@@ -225,7 +225,7 @@ if SMOOTH_ITERS > 0:
                      project_to_stl=True)
 
 # -- report + export ---------------------------------------------------------
-print(mesh.report())
+print(hexmesh.query.report(mesh))
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

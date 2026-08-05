@@ -9,19 +9,15 @@ the minimum scaled Jacobian.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
 
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
-from ..trimesh import ops
+from ..trimesh import TriMesh, ops
 from . import quality
-from ._query import _unique_edges, classify_points, weld
-
-if TYPE_CHECKING:
-    from ..trimesh import TriMesh
-    from .hexmesh import HexMesh
+from .hexmesh import HexMesh
+from .query import _unique_edges, classify_points, weld
 
 _log = logging.getLogger("nekmeshpy")
 

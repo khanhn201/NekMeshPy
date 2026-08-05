@@ -41,7 +41,7 @@ import time
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.paths import turtle_path
 
@@ -157,7 +157,7 @@ def tangent(s):
 # junction, so an element that straddled one would be fitted across two different
 # geometries. sweep_fractions subdivides each piece on its own at ~TARGET_LEN, so
 # every junction is reproduced exactly rather than approached by a global linspace.
-FRACTIONS = LineMesh.sweep_fractions(S_BREAKS * TOTAL, TOTAL, TARGET_LEN)
+FRACTIONS = linemesh.shape.sweep_fractions(S_BREAKS * TOTAL, TOTAL, TARGET_LEN)
 
 assert np.all(np.diff(FRACTIONS) > 0.0), "sweep stations must be strictly increasing"
 assert np.isin(S_BREAKS, FRACTIONS).all(), "every junction must carry a sweep station"
@@ -172,8 +172,8 @@ START_TANGENT = tuple(tangent(np.array([0.0]))[0])
 # outer ring and the sweep carries it onto the side faces. ogrid has no order=
 # kwarg -- the order is inherited from the loop, which must carry exactly 4*N_SIDE
 # points so the wall is meshed exactly.
-section = QuadMesh.ogrid(
-    LineMesh.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
+section = quadmesh.shape.ogrid(
+    linemesh.shape.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
                     element_tags=["wall"] * (4 * N_SIDE), order=ORDER),
     N_SIDE, uniform_spacing(N_RADIAL),
     center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)
@@ -186,17 +186,17 @@ section = QuadMesh.ogrid(
 # circle's centre, because the O-grid's centroid misses it slightly. tangent= hands
 # in the analytic derivative so the sections stay exactly perpendicular (see above).
 _t0 = time.perf_counter()
-mesh = HexMesh.sweep(section, centerline, FRACTIONS, tangent=tangent,
+mesh = hexmesh.lift.sweep(section, centerline, FRACTIONS, tangent=tangent,
                      orientation="fixed", up=PLANE_NORMAL, origin=START,
                      first_tag="inlet", last_tag="outlet")
 BUILD_SECONDS = time.perf_counter() - _t0
 
 # -- checks -------------------------------------------------------------------
-assert mesh.is_watertight(), "the swept coil must be a single watertight block"
-assert mesh.is_conforming(), "the swept coil must be conforming"
-assert set(mesh.boundary_group_tags) == {"wall", "inlet", "outlet"}, \
+assert hexmesh.query.is_watertight(mesh), "the swept coil must be a single watertight block"
+assert hexmesh.query.is_conforming(mesh), "the swept coil must be conforming"
+assert set(mesh.face_group_tags) == {"wall", "inlet", "outlet"}, \
     "boundary groups must be exactly wall/inlet/outlet, got %s" % (
-        list(mesh.boundary_group_tags),)
+        list(mesh.face_group_tags),)
 stats = mesh.quality_summary()
 # Through the tightest (U_R = 5*R_PIPE) turn the inner wall traverses 4/5 of the
 # outer arc length, so the elements are graded across the tube -- but the bend
@@ -215,4 +215,4 @@ print("build time: %.2f s" % BUILD_SECONDS)
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
-print("groups:", ", ".join(mesh.boundary_group_tags))
+print("groups:", ", ".join(mesh.face_group_tags))

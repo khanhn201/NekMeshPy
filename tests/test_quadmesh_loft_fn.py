@@ -1,12 +1,12 @@
-"""Unit tests for ``QuadMesh.loft_curve`` -- ``QuadMesh.loft`` with the profiles
+"""Unit tests for ``QuadMesh.loft_fn`` -- ``QuadMesh.loft`` with the profiles
 **evaluated** from a parametrization instead of handed in -- and for the
 ``sweep_nodes`` / per-layer ``element_tags`` arguments it delegates through.
 
-The contract, one rung up from ``LineMesh.loft_curve``: a plain ``loft`` sees only the
+The contract, one rung up from ``LineMesh.loft_fn``: a plain ``loft`` sees only the
 corner-level profiles, so at ``order > 1`` it subdivides the *sweep* straight, and a
 swept curved surface comes out high-order in storage and linear in geometry.  Lofting a
 torus from **exact** rings still puts its interior nodes tens of percent of the tube
-radius off the true surface.  ``loft_curve`` evaluates the profiles at the intermediate
+radius off the true surface.  ``loft_fn`` evaluates the profiles at the intermediate
 GLL levels too, so every node is a genuine profile point and the surface is exact.
 
 The load-bearing regression here is the *other* direction: ``loft`` with
@@ -17,7 +17,7 @@ what keeps the goldens frozen.
 import numpy as np
 import pytest
 
-from nekmeshpy import LineMesh, QuadMesh
+from nekmeshpy import linemesh, quadmesh
 from nekmeshpy.model import conform
 
 R, RT, NU, NV = 2.0, 0.6, 8, 6
@@ -25,7 +25,7 @@ R, RT, NU, NV = 2.0, 0.6, 8, 6
 
 def _tube_ring(order):
     """One tube cross-section of the torus, sitting at ``theta = 0``."""
-    return LineMesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
+    return linemesh.shape.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            order=order)
 
 
@@ -36,7 +36,7 @@ def _torus_f(order):
     affine ops move no index, so every profile stays index-paired with the first.
     """
     base = _tube_ring(order)
-    return lambda t: base.rotate(t, axis=(0, 0, 1))
+    return lambda t: linemesh.morph.rotate(base, t, axis=(0, 0, 1))
 
 
 def _ring_fractions(n=NV):
@@ -64,23 +64,23 @@ def test_plain_loft_of_exact_rings_is_straight_along_the_sweep(order):
     """The baseline: exact input profiles do *not* give an exact swept surface."""
     f = _torus_f(order)
     fr = _ring_fractions()
-    straight = QuadMesh.loft([f(t) for t in fr[:-1]], loop=True)
+    straight = quadmesh.assemble.loft([f(t) for t in fr[:-1]], loop=True)
     # off by a sizeable fraction of the tube radius -- not float noise
     assert _tube_deviation(straight) > 0.1 * RT
 
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
 def test_every_node_lies_on_the_true_torus(order):
-    torus = QuadMesh.loft_curve(_torus_f(order), _ring_fractions(),
-                                loop=True, order=order)
+    torus = quadmesh.assemble.loft_fn(_torus_f(order), _ring_fractions(),
+                             loop=True, order=order)
     assert _tube_deviation(torus) < 1e-13
 
 
 @pytest.mark.parametrize("order", [1, 2, 3])
 def test_corners_are_exact_at_every_order(order):
     """Corners were always exact; the fix must not disturb them."""
-    torus = QuadMesh.loft_curve(_torus_f(order), _ring_fractions(),
-                                loop=True, order=order)
+    torus = quadmesh.assemble.loft_fn(_torus_f(order), _ring_fractions(),
+                             loop=True, order=order)
     x, y, z = torus.points.T
     assert np.max(np.abs(np.hypot(np.hypot(x, y) - R, z) - RT)) < 1e-14
 
@@ -89,8 +89,8 @@ def test_corners_are_exact_at_every_order(order):
 
 @pytest.mark.parametrize("order", [1, 2, 3])
 def test_loop_gives_a_closed_surface_with_no_duplicated_layer(order):
-    torus = QuadMesh.loft_curve(_torus_f(order), _ring_fractions(),
-                                loop=True, order=order)
+    torus = quadmesh.assemble.loft_fn(_torus_f(order), _ring_fractions(),
+                             loop=True, order=order)
     assert torus.n_points == NU * NV        # no seam profile duplicated
     assert torus.n_quads == NU * NV         # NV layers, not NV-1
     # a torus is closed: every edge is shared by exactly two quads
@@ -105,24 +105,24 @@ def test_loop_rejects_a_family_that_does_not_close():
     # a full turn *plus* a bit: f(fr[-1]) does not land back on f(fr[0])
     fr = np.linspace(0.0, 2.0 * np.pi + 0.3, NV + 1)
     with pytest.raises(ValueError, match="map back to the first profile"):
-        QuadMesh.loft_curve(lambda t: base.rotate(t, axis=(0, 0, 1)), fr,
-                            loop=True, order=2)
+        quadmesh.assemble.loft_fn(lambda t: linemesh.morph.rotate(base, t, axis=(0, 0, 1)), fr,
+                         loop=True, order=2)
 
 
 def test_loop_rejects_end_caps():
     with pytest.raises(ValueError):
-        QuadMesh.loft_curve(_torus_f(1), _ring_fractions(), loop=True,
-                            first_tag="in")
+        quadmesh.assemble.loft_fn(_torus_f(1), _ring_fractions(), loop=True,
+                         first_tag="in")
 
 
 def test_loop_rejects_fewer_than_three_fractions():
     with pytest.raises(ValueError, match="at least 3 fractions"):
-        QuadMesh.loft_curve(_torus_f(1), np.array([0.0, 2.0 * np.pi]), loop=True)
+        quadmesh.assemble.loft_fn(_torus_f(1), np.array([0.0, 2.0 * np.pi]), loop=True)
 
 
 def test_needs_at_least_two_fractions():
     with pytest.raises(ValueError, match="at least 2 fractions"):
-        QuadMesh.loft_curve(_torus_f(1), np.array([0.0]))
+        quadmesh.assemble.loft_fn(_torus_f(1), np.array([0.0]))
 
 
 # -- order 1 and the open sweep are the plain loft ---------------------------
@@ -131,8 +131,8 @@ def test_needs_at_least_two_fractions():
 def test_order_one_equals_a_plain_loft_of_the_same_profiles(loop):
     f = _torus_f(1)
     fr = _ring_fractions()
-    got = QuadMesh.loft_curve(f, fr, loop=loop, order=1)
-    want = QuadMesh.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
+    got = quadmesh.assemble.loft_fn(f, fr, loop=loop, order=1)
+    want = quadmesh.assemble.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.quads, want.quads)
     assert np.array_equal(got.quad, want.quad)
@@ -142,12 +142,12 @@ def test_order_one_equals_a_plain_loft_of_the_same_profiles(loop):
 def test_open_sweep_has_the_expected_shape_and_caps():
     f = _torus_f(2)
     fr = np.linspace(0.0, np.pi / 2, 4)
-    sec = QuadMesh.loft_curve(f, fr, order=2,
-                              first_tag="start", last_tag="end")
+    sec = quadmesh.assemble.loft_fn(f, fr, order=2,
+                           first_tag="start", last_tag="end")
     assert sec.n_points == NU * 4
     assert sec.n_quads == NU * 3
     assert _tube_deviation(sec) < 1e-13
-    assert set(sec.boundary_group_tags) == {"start", "end"}
+    assert set(sec.edge_group_tags) == {"start", "end"}
 
 
 # -- grading -----------------------------------------------------------------
@@ -158,7 +158,7 @@ def test_grading_is_honored_per_layer():
     order = 3
     f = _torus_f(order)
     fr = np.array([0.0, 0.3, 2.4, 2.0 * np.pi])
-    sec = QuadMesh.loft_curve(f, fr, order=order)
+    sec = quadmesh.assemble.loft_fn(f, fr, order=order)
     assert _tube_deviation(sec) < 1e-13
     # the corner levels sit exactly at the requested parameters
     theta = np.arctan2(sec.points[:, 1], sec.points[:, 0])
@@ -170,12 +170,12 @@ def test_grading_is_honored_per_layer():
 # -- tags --------------------------------------------------------------------
 
 def test_per_layer_element_tags_override_the_profile_line_tags():
-    base = LineMesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
+    base = linemesh.shape.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            element_tags=["wall"] * NU)
-    f = lambda t: base.rotate(t, axis=(0, 0, 1))                   # noqa: E731
+    f = lambda t: linemesh.morph.rotate(base, t, axis=(0, 0, 1))                   # noqa: E731
     layers = ["", "hot", ""]
-    sec = QuadMesh.loft_curve(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
-    tags = sec.element_tags.reshape(3, NU)      # quad (layer i, line l) = i*NU + l
+    sec = quadmesh.assemble.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
+    tags = sec.element_tags.dense(sec.n_quads).reshape(3, NU)      # quad (layer i, line l) = i*NU + l
     assert list(np.unique(tags[0])) == ["wall"]
     assert list(np.unique(tags[1])) == ["hot"]  # non-empty layer tag wins
     assert list(np.unique(tags[2])) == ["wall"]
@@ -183,9 +183,9 @@ def test_per_layer_element_tags_override_the_profile_line_tags():
 
 def test_loft_rejects_a_mis_sized_element_tags():
     base = _tube_ring(1)
-    slices = [base.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    slices = [linemesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="per layer"):
-        QuadMesh.loft(slices, element_tags=["a", "b", "c"])   # 3 tags, 2 layers
+        quadmesh.assemble.loft(slices, element_tags=["a", "b", "c"])   # 3 tags, 2 layers
 
 
 # -- validation of what f returns --------------------------------------------
@@ -193,36 +193,36 @@ def test_loft_rejects_a_mis_sized_element_tags():
 def test_rejects_a_profile_of_the_wrong_order():
     base = _tube_ring(1)
     with pytest.raises(ValueError, match="order-1 profile"):
-        QuadMesh.loft_curve(lambda t: base.rotate(t, axis=(0, 0, 1)),
-                            np.linspace(0.0, 1.0, 3), order=2)
+        quadmesh.assemble.loft_fn(lambda t: linemesh.morph.rotate(base, t, axis=(0, 0, 1)),
+                         np.linspace(0.0, 1.0, 3), order=2)
 
 
 def test_rejects_profiles_that_are_not_index_paired():
-    a = LineMesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0))
-    b = LineMesh.circle(RT, NU + 1, center=(R, 0.0, 0.0), normal=(0, 1, 0))
+    a = linemesh.shape.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0))
+    b = linemesh.shape.circle(RT, NU + 1, center=(R, 0.0, 0.0), normal=(0, 1, 0))
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
     with pytest.raises(ValueError, match="index-paired and conformal"):
-        QuadMesh.loft_curve(f, np.linspace(0.0, 1.0, 3))
+        quadmesh.assemble.loft_fn(f, np.linspace(0.0, 1.0, 3))
 
 
 # -- sweep_nodes on loft itself ----------------------------------------------
 
 def test_sweep_nodes_must_be_sized_per_layer():
     base = _tube_ring(3)
-    slices = [base.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
-    mid = [base.translate((0.0, 0.0, z)) for z in (0.3, 0.7)]
+    slices = [linemesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    mid = [linemesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.3, 0.7)]
     with pytest.raises(ValueError, match="one entry per layer"):
-        QuadMesh.loft(slices, sweep_nodes=[mid])
+        quadmesh.assemble.loft(slices, sweep_nodes=[mid])
     with pytest.raises(ValueError, match="order-1"):
-        QuadMesh.loft(slices, sweep_nodes=[mid[:1], mid[:1]])
+        quadmesh.assemble.loft(slices, sweep_nodes=[mid[:1], mid[:1]])
 
 
 def test_sweep_nodes_at_order_one_is_ignored_not_an_error():
     """Order 1 has no interior level, so an empty stack is simply a no-op."""
     base = _tube_ring(1)
-    slices = [base.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
-    got = QuadMesh.loft(slices, sweep_nodes=[[], []])
-    want = QuadMesh.loft(slices)
+    slices = [linemesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    got = quadmesh.assemble.loft(slices, sweep_nodes=[[], []])
+    want = quadmesh.assemble.loft(slices)
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.quads, want.quads)
 
@@ -235,11 +235,11 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft():
     order = 3
     base = _tube_ring(order)
     zs = [0.0, 1.0, 2.0]
-    slices = [base.translate((0.0, 0.0, z)) for z in zs]
+    slices = [linemesh.morph.translate(base, (0.0, 0.0, z)) for z in zs]
     g = gll_nodes(order)[1:order]
-    sweep = [[base.translate((0.0, 0.0, zs[i] + t * (zs[i + 1] - zs[i])))
+    sweep = [[linemesh.morph.translate(base, (0.0, 0.0, zs[i] + t * (zs[i + 1] - zs[i])))
               for t in g] for i in range(2)]
-    got = QuadMesh.loft(slices, sweep_nodes=sweep)
-    want = QuadMesh.loft(slices)
+    got = quadmesh.assemble.loft(slices, sweep_nodes=sweep)
+    want = quadmesh.assemble.loft(slices)
     assert np.allclose(got.interior, want.interior, atol=1e-14)
     assert np.allclose(got.lines.interior, want.lines.interior, atol=1e-14)

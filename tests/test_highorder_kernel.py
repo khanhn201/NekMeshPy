@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from conftest import curved
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import LineMesh, hexmesh, linemesh, quadmesh
 from nekmeshpy.model.fields import (
     gll_nodes,
     gll_weights,
@@ -113,7 +113,7 @@ def test_lagrange_derivative_differentiates_a_polynomial_exactly():
 def test_scaled_jacobian_ho_quad_reduces_at_order1():
     from nekmeshpy.quadmesh import quality as qq
 
-    box = QuadMesh.box(1.0, (2, 2, 2))                    # order-1 closed surface
+    box = quadmesh.shape.box(1.0, (2, 2, 2))                    # order-1 closed surface
     corner = qq.scaled_jacobian(box.points, box.quads)
     ho = scaled_jacobian_ho(curved(box), box.order, dim=2)
     assert np.allclose(corner, ho, atol=1e-12)
@@ -123,10 +123,10 @@ def test_scaled_jacobian_ho_hex_reduces_at_order1():
     from nekmeshpy.hexmesh import quality as hq
     from nekmeshpy.model.fields import uniform_spacing
 
-    loop = LineMesh.circle(1.0, 24)
-    qm = QuadMesh.ogrid(loop, n_side=6, radial=uniform_spacing(4),
+    loop = linemesh.shape.circle(1.0, 24)
+    qm = quadmesh.shape.ogrid(loop, n_side=6, radial=uniform_spacing(4),
                         smoothing_method="bilinear")
-    blk = HexMesh.extrude(qm, axis=(0, 0, 1), length=5.0, layers=uniform_spacing(6))
+    blk = hexmesh.lift.extrude(qm, axis=(0, 0, 1), length=5.0, layers=uniform_spacing(6))
     corner = hq.scaled_jacobian(blk.points, blk.hexes)
     ho = scaled_jacobian_ho(curved(blk), blk.order, dim=3)
     assert np.allclose(corner, ho, atol=1e-12)
@@ -218,12 +218,12 @@ def test_blend_ho_endpoints_and_midpoint():
 def test_default_order_is_one_and_brep_is_empty():
     # order 1: every entity table of the B-rep is empty and the conformal walk is
     # just the corners, i.e. points[conn] in connectivity order.
-    lm = LineMesh.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
+    lm = linemesh.assemble.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
     assert lm.order == 1 and lm.interior.shape == (2, 0, 3)
     assert curved(lm).shape == (2, 2, 3)
     assert np.allclose(curved(lm), lm.points[lm.lines])
 
-    qm = QuadMesh.from_grid(_unit_grid())
+    qm = quadmesh.lift.from_grid(_unit_grid())
     assert qm.order == 1
     assert qm.edge_nodes.shape == (qm.edges.shape[0], 0, 3)
     assert qm.interior.shape == (qm.n_quads, 0, 3)
@@ -231,7 +231,7 @@ def test_default_order_is_one_and_brep_is_empty():
     assert cb.shape == (qm.n_quads, 4, 3)
     assert np.allclose(cb[:, corner_indices(1, 2), :], qm.points[qm.quads])
 
-    hm = HexMesh.from_grid(_unit_hex_grid())
+    hm = hexmesh.lift.from_grid(_unit_hex_grid())
     assert hm.order == 1
     assert hm.edge_nodes.shape == (hm.edges.shape[0], 0, 3)
     assert hm.face_nodes.shape == (hm.faces.shape[0], 0, 3)
@@ -242,10 +242,10 @@ def test_default_order_is_one_and_brep_is_empty():
 
 
 def test_factory_meshes_default_to_order_one():
-    circ = LineMesh.circle(1.0, 8)
+    circ = linemesh.shape.circle(1.0, 8)
     assert circ.order == 1 and circ.interior.shape == (8, 0, 3)
     assert np.allclose(curved(circ), circ.points[circ.lines])
-    og = QuadMesh.ogrid(circ, 2, np.array([0.0, 0.5, 1.0]))
+    og = quadmesh.shape.ogrid(circ, 2, np.array([0.0, 0.5, 1.0]))
     assert og.order == 1
     assert og.edge_nodes.shape == (og.edges.shape[0], 0, 3)
     assert og.interior.shape == (og.n_quads, 0, 3)

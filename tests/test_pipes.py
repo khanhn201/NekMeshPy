@@ -5,17 +5,17 @@ import pytest
 from conftest import run_example
 from scipy import integrate
 
-from nekmeshpy import topology
+from nekmeshpy import hexmesh, topology
 from nekmeshpy.hexmesh import quality
 from nekmeshpy.model import conform, fields, interp
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(*mesh.weld()[:2])
+    return quality.scaled_jacobian(*hexmesh.query.weld(mesh)[:2])
 
 
 def _tag_count(mesh, name):
-    return int(np.sum(mesh.boundary_tags == name))
+    return mesh.face_tags.count(name)
 
 
 def test_circular_pipe(tmp_path):
@@ -26,31 +26,31 @@ def test_circular_pipe(tmp_path):
             and _tag_count(mesh, "inlet") == _tag_count(mesh, "outlet"))
     # O-grid: no collapsed centre cell, all positive Jacobian
     assert float(np.min(_scaled_jac(mesh))) > 0.5
-    assert mesh.is_watertight() and mesh.is_conforming()
-    assert set(mesh.boundary_group_tags) >= {"wall", "inlet", "outlet"}
+    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
+    assert set(mesh.face_group_tags) >= {"wall", "inlet", "outlet"}
 
 
 def test_rectangular_pipe(tmp_path):
     mesh = run_example("rectangular_pipe.py", tmp_path)["mesh"]
     # a structured axis-aligned duct is exact -> scaled Jacobian 1 everywhere
     assert float(np.min(_scaled_jac(mesh))) == pytest.approx(1.0, abs=1e-9)
-    assert mesh.is_watertight() and mesh.is_conforming()
+    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
     assert _tag_count(mesh, "inlet") == _tag_count(mesh, "outlet")  # caps match
-    assert set(mesh.boundary_group_tags) >= {"wall", "inlet", "outlet"}
+    assert set(mesh.face_group_tags) >= {"wall", "inlet", "outlet"}
 
 
 def test_circular_pipe_tjunction(tmp_path):
     mesh = run_example("circular_pipe_tjunction.py", tmp_path)["mesh"]
     # three legs welded into one conformal, watertight block at the junction
-    assert mesh.is_watertight() and mesh.is_conforming()
-    assert topology.hex_report(*mesh.weld()[:2]).n_components == 1
+    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
+    assert topology.hex_report(*hexmesh.query.weld(mesh)[:2]).n_components == 1
     # wall + three circular openings, each opening the same face count
     assert _tag_count(mesh, "wall") > 0
     for name in ("outlet", "branch"):
         assert _tag_count(mesh, name) == _tag_count(mesh, "inlet")
     # analytic O-grid junction stays well away from degenerate
     assert float(np.min(_scaled_jac(mesh))) > 0.3
-    assert set(mesh.boundary_group_tags) >= {"wall", "inlet", "outlet", "branch"}
+    assert set(mesh.face_group_tags) >= {"wall", "inlet", "outlet", "branch"}
 
 
 def _wall_nodes(mesh):
@@ -63,7 +63,7 @@ def _wall_nodes(mesh):
         mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
         mesh.quads.interior, mesh.interior, mesh.order)
     ids = [conn[e][interp.hex_face_indices(s, mesh.order)]
-           for (e, s), tag in zip(mesh.boundaries, mesh.boundary_tags)
+           for e, s, tag in mesh.face_tags
            if tag == "wall"]
     return nodes[np.unique(np.concatenate(ids))]
 
@@ -95,19 +95,19 @@ def test_quadrant_pipe_tjunction(tmp_path):
     mesh = ns["mesh"]
     # the whole point of the reference topology: one quadrant of the main pipe *is*
     # a quadrant of the branch, so the junction welds into a single closed block.
-    rep = topology.hex_report(*mesh.weld()[:2])
+    rep = topology.hex_report(*hexmesh.query.weld(mesh)[:2])
     assert rep.watertight and rep.conformal
     assert rep.n_components == 1
     assert rep.n_open_edges == 0 and rep.n_hanging_points == 0
     assert _tag_count(mesh, "inlet") == _tag_count(mesh, "outlet")
     assert _tag_count(mesh, "branch") == _tag_count(mesh, "inlet")
     assert _tag_count(mesh, "wall") > 0
-    assert set(mesh.boundary_group_tags) == {"wall", "inlet", "outlet", "branch"}
+    assert set(mesh.face_group_tags) == {"wall", "inlet", "outlet", "branch"}
     assert float(np.min(_scaled_jac(mesh))) > 0.2
 
     # every wall node -- corner and high-order alike -- is on one of the two
     # cylinders.  Nothing in this mesh is straight-subdivided: the wall curves are
-    # meshed from their parametrizations, the leg transition is a loft_curve rather
+    # meshed from their parametrizations, the leg transition is a loft_fn rather
     # than a loft (which is straight along the sweep), and the crotch caps are
     # evaluated at every node rather than blended from corners.
     assert mesh.order > 1, "the point of this assertion is the high-order nodes"
@@ -117,7 +117,7 @@ def test_quadrant_pipe_tjunction(tmp_path):
     assert np.all(on_main | on_branch)
     assert on_main.any() and on_branch.any()
     # and the order-N geometry is not merely stored, it is sound
-    assert float(np.min(mesh.scaled_jacobian(high_order=True))) > 0.2
+    assert float(np.min(hexmesh.query.scaled_jacobian(mesh, high_order=True))) > 0.2
 
     # The mesh fills exactly the union of the two cylinders.  This is the check that
     # separates high-order *geometry* from high-order storage: straight-subdivided

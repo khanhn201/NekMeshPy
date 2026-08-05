@@ -1,32 +1,22 @@
-"""Open :class:`~nekmeshpy.LineMesh` factories: curves with free ends that do not
-close on themselves (``line`` / ``arc``), plus the ``arclength_fractions`` /
-``sweep_fractions`` sampling helpers.
+"""Shape factories for the ``LineMesh`` rung -- the ones owning a *shape model*
+rather than being generic over any input.
 
-The general parametrized curve is **not** here: it authors its own connectivity and
-takes the same ``loop`` flag as the sweep primitive, so it lives beside it as
-:func:`~nekmeshpy.linemesh._assemble.loft_curve`.
-
-These are plain free functions returning a ``LineMesh``; ``linemesh/__init__.py``
-binds each entry of ``FACTORIES`` onto the class, so callers use ``LineMesh.line(...)``
-while ``linemesh.py`` stays a pure container.  Internal toolkit code calls the free
-functions directly.
+Open and closed shapes are merged into one namespace here: the split was a
+storage distinction, not a caller-facing one.  Each factory meshes its input
+**exactly** -- no factory resamples what it is given -- which is why the
+samplings a caller has to derive for one live here beside it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
-from ._assemble import _eval_curve, loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from .linemesh import LineMesh
+from .assemble import _eval_curve, loft
+from .linemesh import LineMesh
 
 
 def line(start: Point, end: Point, fractions: float | FloatArray, *,
@@ -42,7 +32,7 @@ def line(start: Point, end: Point, fractions: float | FloatArray, *,
     each line element carries ``order+1`` GLL nodes placed on the straight
     segment -- the two endpoints are the corners in ``points``, and the
     ``order-1`` nodes strictly between them are the straight GLL blend
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` places by default
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` places by default
     (read by high-order ``vtu`` export)."""
     frac = np.atleast_1d(np.asarray(fractions, dtype=float))
     s: Point = np.asarray(start, dtype=float).ravel()
@@ -69,11 +59,11 @@ def arc(radius: float, n: int, *,
     construction, e.g. to name the whole arc ``wall`` for a section factory.
 
     This is the open sibling of
-    :meth:`LineMesh.circle <nekmeshpy.linemesh.LineMesh.circle>` -- the analytic
-    curve to hand to :meth:`QuadMesh.structured <nekmeshpy.quadmesh.QuadMesh.structured>` (or to
+    :func:`linemesh.shape.circle <nekmeshpy.linemesh.shape.circle>` -- the analytic
+    curve to hand to :func:`QuadMesh.structured <nekmeshpy.quadmesh.shape.structured>` (or to
     weld into a composite edge with
-    :meth:`LineMesh.merge <nekmeshpy.linemesh.LineMesh.merge>`) instead of sampling
-    points and calling :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`,
+    :func:`linemesh.assemble.merge <nekmeshpy.linemesh.assemble.merge>`) instead of sampling
+    points and calling :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`,
     which can only subdivide straight between the samples.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1`` each
@@ -128,11 +118,11 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     """The ``(n+1,)`` **parameter values** spanning ``t_range`` -- from ``t_range[0]``
     to ``t_range[1]`` -- at which ``f`` must be evaluated for the resulting ``n+1``
     points to be evenly spaced by **arc length**: hand the result straight to
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>` as its
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` as its
     ``fractions``, with no further scaling
-    (``loft_curve(f, arclength_fractions(f, n, t_range=...), order=N)``).
+    (``loft_fn(f, arclength_fractions(f, n, t_range=...), order=N)``).
 
-    ``t_range`` is the parameter interval to invert over -- unlike ``loft_curve``, this
+    ``t_range`` is the parameter interval to invert over -- unlike ``loft_fn``, this
     helper genuinely needs a domain, because the chord table is built by sampling it
     densely.  A descending range needs no special handling: the returned values simply
     run from ``t_range[0]`` down to ``t_range[1]``, which meshes the curve backwards.
@@ -140,7 +130,7 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     The inversion goes through a cumulative **chord**-length table of ``samples`` dense
     evaluations of ``f``, so only *where along* the curve the nodes end up inherits that
     table's discretization error.  Every node of the resulting mesh still lies on the
-    curve to machine precision, because ``loft_curve`` places it by evaluating ``f`` and
+    curve to machine precision, because ``loft_fn`` places it by evaluating ``f`` and
     never by interpolating this table -- raise ``samples`` for a more even spacing, not
     for a more accurate curve."""
     ni = int(n)
@@ -178,11 +168,11 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     contains every ``break / total_length``, and closes with ``1.0``.
 
     Hand it straight to the ``fractions`` of
-    :meth:`HexMesh.sweep <nekmeshpy.hexmesh.HexMesh.sweep>` /
-    :meth:`QuadMesh.sweep <nekmeshpy.quadmesh.QuadMesh.sweep>` (or of
-    :meth:`LineMesh.loft_curve <nekmeshpy.linemesh.LineMesh.loft_curve>`) whose path is
+    :func:`HexMesh.sweep <nekmeshpy.hexmesh.lift.sweep>` /
+    :func:`QuadMesh.sweep <nekmeshpy.quadmesh.lift.sweep>` (or of
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`) whose path is
     parametrized by normalized arc length.  Like
-    :func:`arclength_fractions` it is a ``HELPERS`` entry, not a factory: it answers a
+    :func:`arclength_fractions <nekmeshpy.linemesh.shape.arclength_fractions>` it is a ``HELPERS`` entry, not a factory: it answers a
     question about a sweep's input contract and returns a plain array, since the sweep
     itself meshes exactly at the stations given."""
     L = float(total_length)
@@ -211,16 +201,106 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     return out
 
 
-#: Open-curve factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., LineMesh]] = {
-    "line": line,
-    "arc": arc,
-}
+def circle(radius: float, n: int, *,
+           center: Point = (0.0, 0.0, 0.0),
+           normal: Vec3 = (0.0, 0.0, 1.0),
+           start_theta: float = 0.0,
+           element_tags: StrArray | Sequence[str] | None = None,
+           order: int = 1) -> LineMesh:
+    """A closed loop of ``n`` points evenly spaced on a circle of ``radius``
+    about ``center`` in the plane with the given ``normal`` (default ``+z``).
+    Point ``k`` sits at angle ``2*pi*k/n + start_theta`` from the in-plane
+    ``e1`` axis, so ``start_theta`` rotates the whole loop -- e.g. to align its
+    index 0 with a :func:`rectangle <nekmeshpy.linemesh.shape.rectangle>` far-field box's lower-left corner before an
+    index-paired :func:`QuadMesh.annulus <nekmeshpy.quadmesh.lift.annulus>`.
+    ``element_tags`` tags the loop's line elements at construction.
 
-#: Open-curve helpers bound onto ``LineMesh`` as ``staticmethod``s.  These answer a
-#: question *about* a factory's input contract and return plain arrays rather than a
-#: mesh, which is what keeps them out of ``FACTORIES``.
-HELPERS: dict[str, Callable[..., FloatArray]] = {
-    "arclength_fractions": arclength_fractions,
-    "sweep_fractions": sweep_fractions,
-}
+    ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
+    each arc element carries ``order+1`` GLL nodes placed on the **true circle**
+    (not the chord) -- the two endpoints are the corners in ``points`` and the
+    ``order-1`` nodes strictly between them are built here, still on the exact
+    circle, as the element's private ``interior``, so a high-order ``vtu`` export
+    renders the exact arc.
+
+    The open sibling is :func:`linemesh.shape.arc <nekmeshpy.linemesh.shape.arc>`; the
+    two share the node
+    placement (``_plane._arc_points`` / ``_arc_interior``) but not the angle sampling:
+    a full turn's step is exactly ``2*pi/n`` here, whereas ``arc`` must form
+    ``(end_theta - start_theta)/n``, so ``circle`` keeps its own ``linspace`` rather
+    than delegating (see ``arc``'s docstring)."""
+    th = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) + float(start_theta)
+    c: Point = np.asarray(center, dtype=float).ravel()
+    e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
+    pts: PointArray = _arc_points(radius, c, e1, e2, th)
+    if order == 1:
+        return loft(pts, loop=True, element_tags=element_tags)
+    # element l spans angle th[l] .. th[l] + dth; place the interior GLL nodes on
+    # the arc (the two endpoint nodes are already the loop's corner points), so the
+    # explicit ``interior`` overrides ``loft``'s default straight chord blend.
+    interior: PointArray = _arc_interior(
+        radius, c, e1, e2, th, 2.0 * np.pi / n, order)             # (n, order-1, 3)
+    return loft(pts, loop=True, interior=interior,
+                         element_tags=element_tags, order=order)
+
+
+def rectangle(width: float, height: float, n: int, *,
+              center: Point = (0.0, 0.0, 0.0),
+              normal: Vec3 = (0.0, 0.0, 1.0),
+              side_tags: Mapping[str, str] | None = None,
+              order: int = 1) -> LineMesh:
+    """A closed rectangle loop of the given ``width`` x ``height`` about
+    ``center`` in the plane with the given ``normal`` (default ``+z``),
+    discretized into ``n`` line elements (``n`` must be a positive multiple of
+    4): ``n // 4`` evenly spaced per side, running CCW from the lower-left corner
+    (bottom / right / top / left), corners always landing on a point.
+
+    With ``n`` points it feeds
+    :func:`QuadMesh.annulus <nekmeshpy.quadmesh.lift.annulus>` directly as
+    the outer far-field loop against a ``circle(radius, n)`` body -- rotate the
+    circle with ``start_theta`` so its index 0 meets the lower-left corner
+    (``atan2(-height, -width)``) and the two loops pair index-for-index (the
+    radial spokes are not straight, but the mesh conforms).
+
+    ``side_tags`` (keyed ``bottom`` / ``right`` / ``top`` / ``left``) names each
+    side's line elements; an absent key leaves that side untagged and
+    ``side_tags=None`` leaves the whole loop untagged.  The keys -- rather than a
+    positional 4-sequence -- are what make this spelling identical to its one-rung-up
+    twin :func:`QuadMesh.rectangle <nekmeshpy.quadmesh.shape.rectangle>`, which
+    takes the same keyword with the same four names; an unrecognized key is a loud
+    ``ValueError`` because a silent typo would otherwise just lose a wall.
+
+    ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
+    each element carries ``order+1`` GLL nodes on its straight side -- the two
+    endpoints are the corners in ``points`` and the ``order-1`` nodes strictly
+    between them are the straight GLL blend
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` places by default
+    (read by high-order ``vtu`` export)."""
+    ni = int(n)
+    if ni < 4 or ni % 4 != 0:
+        raise ValueError("rectangle n must be a positive multiple of 4, "
+                         "got %d" % ni)
+    m = ni // 4
+    c: Point = np.asarray(center, dtype=float).ravel()
+    e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
+    hw, hh = width / 2.0, height / 2.0
+    bl = c - hw * e1 - hh * e2
+    br = c + hw * e1 - hh * e2
+    tr = c + hw * e1 + hh * e2
+    tl = c - hw * e1 + hh * e2
+    f = np.linspace(0.0, 1.0, m, endpoint=False)[:, None]  # corner..next, open
+
+    def _side(p: Point, q: Point) -> PointArray:
+        return p + f * (q - p)
+    pts = np.concatenate([_side(bl, br), _side(br, tr),
+                          _side(tr, tl), _side(tl, bl)])
+    tags: list[str] | None = None
+    if side_tags is not None:
+        sides = ("bottom", "right", "top", "left")   # the loop's CCW traversal order
+        for key in side_tags:
+            if key not in sides:
+                raise ValueError(
+                    "rectangle side_tags key must be one of "
+                    "bottom/right/top/left, got %r" % key)
+        tags = [t for side in sides for t in [side_tags.get(side, "")] * m]
+    # every side is straight, so ``loft``'s default straight GLL interior is exact
+    return loft(pts, loop=True, element_tags=tags, order=order)

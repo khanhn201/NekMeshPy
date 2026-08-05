@@ -23,3 +23,25 @@ per-quad quality metrics.
 .. automodule:: nekmeshpy.quadmesh.quality
    :members:
 ```
+
+## Operations
+
+Every operation is a free function in one of these namespaces --
+`quadmesh.shape.circle(...)`, not `QuadMesh.circle(...)`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.quadmesh.assemble
+   :members:
+
+.. automodule:: nekmeshpy.quadmesh.lift
+   :members:
+
+.. automodule:: nekmeshpy.quadmesh.shape
+   :members:
+
+.. automodule:: nekmeshpy.quadmesh.morph
+   :members:
+
+.. automodule:: nekmeshpy.quadmesh.query
+   :members:
+```

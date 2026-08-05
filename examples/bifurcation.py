@@ -16,12 +16,12 @@ import os
 import numpy as np
 
 from nekmeshpy import (
-    HexMesh,
-    LineMesh,
     PhysicalGroups,
-    QuadMesh,
     TriMesh,
     export,
+    hexmesh,
+    linemesh,
+    quadmesh,
     smoothing,
     trimesh,
     viz,
@@ -42,7 +42,7 @@ RADIAL = np.array([0.0, 0.4, 0.7, 0.9, 1.0])   # O-ring layer positions (first 0
 PROJECT_TO_STL = True
 # polynomial order.  The wall is genuinely curved at ORDER > 1: each interior
 # station's scanned ring is refit as a truncated Fourier series (``fourier_ring``
-# below) and meshed with ``LineMesh.loft_curve``, so the wall's high-order nodes sit on
+# below) and meshed with ``LineMesh.loft_fn``, so the wall's high-order nodes sit on
 # that analytic loop rather than on chords between the scanned samples.  The spine
 # stays linear (``LineMesh.loft`` straight-subdivides it), which is all a flat
 # half-disc seam needs.
@@ -258,9 +258,9 @@ def _arc_curve(V, arcverts, iA1, n, keep=FOURIER_KEEP):
 
 def _arc_mesh(p, n, element_tag):
     """Mesh an ``_arc_curve`` into ``n`` high-order elements, evenly spaced by arc
-    length.  ``LineMesh.loft_curve`` evaluates ``p`` at every node -- corners *and* the
+    length.  ``LineMesh.loft_fn`` evaluates ``p`` at every node -- corners *and* the
     private GLL interiors -- so no node lands on a chord."""
-    return LineMesh.loft_curve(p, LineMesh.arclength_fractions(p, n),
+    return linemesh.assemble.loft_fn(p, linemesh.shape.arclength_fractions(p, n),
                           order=ORDER, element_tags=[element_tag] * n)
 
 
@@ -271,7 +271,7 @@ def _ring(p, q):
 
     ``reverse`` carries ``q``'s high-order nodes with it; re-lofting its points
     would straight-subdivide them and lose the curve at ``ORDER > 1``."""
-    return LineMesh.merge([p, q.reverse()])
+    return linemesh.assemble.merge([p, linemesh.morph.reverse(q)])
 
 
 def seam_rings(V, faces, gloops, n_half):
@@ -308,7 +308,7 @@ def seam_rings(V, faces, gloops, n_half):
     bcP = _arc_mesh(_arc_curve(V, arcBC, iA1, n_half), n_half, "wall")
 
     rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
-    spine = LineMesh.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
+    spine = linemesh.assemble.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
     return rings, A1, A2, spine
 
 
@@ -321,7 +321,7 @@ def fourier_ring(P, keep=FOURIER_KEEP):
     uniform parameter) and only the lowest ``keep`` fraction of the modes is retained;
     the rest -- facet-scale noise from the STL projection, which a high-order wall would
     otherwise resolve faithfully -- is dropped.  The result is a genuine closed-form
-    curve, so ``LineMesh.loft_curve`` can place every GLL node *on* it instead of on the
+    curve, so ``LineMesh.loft_fn`` can place every GLL node *on* it instead of on the
     chords between the samples (see the straight-GLL-subdivision trap in CLAUDE.md).
     """
     P = np.asarray(P, dtype=float)
@@ -341,10 +341,10 @@ def fourier_ring(P, keep=FOURIER_KEEP):
 def fourier_wall(P, order, element_tag):
     """Closed high-order wall ``LineMesh`` through ``fourier_ring(P)``, sampled at the
     same ``M`` parameters as ``P`` so index 0 / ``M//2`` still land on the spine rails.
-    ``LineMesh.loft_curve`` only ever makes an open chain, so weld the two ends into a loop
+    ``LineMesh.loft_fn`` only ever makes an open chain, so weld the two ends into a loop
     the way the toolkit expects (``LineMesh.merge``)."""
     M = np.asarray(P).shape[0]
-    return LineMesh.merge([LineMesh.loft_curve(
+    return linemesh.assemble.merge([linemesh.assemble.loft_fn(
         fourier_ring(P), np.linspace(0.0, 2.0 * np.pi, M + 1),
         order=order, element_tags=[element_tag] * M)])
 
@@ -410,13 +410,13 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # curve at the wrong count (there is no analytic form to evaluate: the
         # deviation comes off the STL, so the chord is the honest interpolant).
         spn = trimesh.ops.resample_polyline(
-            spn, QuadMesh.spine_fractions(nh // 4, radial, center_scale))
+            spn, quadmesh.shape.spine_fractions(nh // 4, radial, center_scale))
         # reposition interior stations; leave opening cap (k=0) and pinned seam
         # (k=nr-1) as raw algebraic fill.  Wall tagged on the loop (see
         # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
-        slices.append(QuadMesh.spined_ogrid(
-            wall, radial, spine=LineMesh.loft(spn, order=ORDER),
+        slices.append(quadmesh.shape.spined_ogrid(
+            wall, radial, spine=linemesh.assemble.loft(spn, order=ORDER),
             center_scale=center_scale, smoothing_method=m))
     return slices
 
@@ -459,18 +459,18 @@ for leg in range(3):
     # opening cap = leg outlet; seam end is interior.  With a flux plane, split
     # the leg there (a cap of the downstream segment); merge re-joins them.
     if flux_name and 0 < off < len(slices) - 1:
-        blocks.append(HexMesh.loft(slices[:off + 1], first_tag=outlet_name[leg]))
-        blocks.append(HexMesh.loft(slices[off:], first_tag=flux_name))
+        blocks.append(hexmesh.assemble.loft(slices[:off + 1], first_tag=outlet_name[leg]))
+        blocks.append(hexmesh.assemble.loft(slices[off:], first_tag=flux_name))
     else:
-        blocks.append(HexMesh.loft(slices, first_tag=outlet_name[leg]))
+        blocks.append(hexmesh.assemble.loft(slices, first_tag=outlet_name[leg]))
 
-mesh = HexMesh.merge(blocks)
+mesh = hexmesh.assemble.merge(blocks)
 
 if SMOOTH_ITERS > 0:
     smoothing.smooth(mesh, surf, smooth_iters=SMOOTH_ITERS, smooth_lambda=SMOOTH_LAMBDA,
                      wall="wall", project_to_stl=PROJECT_TO_STL)
 
-print(mesh.report())
+print(hexmesh.query.report(mesh))
 if EXPORT_VTK:
     export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 if EXPORT_RE2:

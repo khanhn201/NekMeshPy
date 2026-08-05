@@ -1,35 +1,29 @@
-"""Open-region :class:`~nekmeshpy.HexMesh` block factories: fills that take the
-*boundary* of a region and mesh the volume it encloses.
+"""Shape factories for the ``HexMesh`` rung -- the ones owning a *shape model*
+rather than being generic over any input.
 
-:func:`tetra` is the only one today -- the hex-rung sibling of ``quadmesh._open``'s
-region fills, and separate from ``_lift`` for the same reason they are: it owns a
-*shape* model (a curvilinear tetrahedron) rather than being generic over any input.
-Like the quad-rung factories these are plain free functions returning a ``HexMesh``;
-``hexmesh/__init__.py`` binds each ``FACTORIES`` entry onto the class, so callers write
-``HexMesh.tetra(...)``.
+Open and closed shapes are merged into one namespace here: the split was a
+storage distinction, not a caller-facing one.  Each factory meshes its input
+**exactly** -- no factory resamples what it is given -- which is why the
+samplings a caller has to derive for one live here beside it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._typing import IntArray, Point, PointArray
 from ..linemesh import LineMesh
-from ..linemesh._assemble import loft as line_loft
+from ..linemesh.assemble import loft as line_loft
 from ..model import conform
 from ..model.interp import coons_grid
+from ..model.tags import PointTags
 from ..quadmesh import QuadMesh
-from ..quadmesh._assemble import loft as quad_loft
-from ._assemble import loft as hex_loft
-from ._assemble import merge
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from .hexmesh import HexMesh
+from ..quadmesh.assemble import loft as quad_loft
+from .assemble import loft as hex_loft
+from .assemble import merge
+from .hexmesh import HexMesh
 
 
 def _lin(n: int) -> PointArray:
@@ -254,7 +248,7 @@ def _face_tag(qm: QuadMesh, who: str) -> str:
         raise ValueError(
             "%s: a face must carry one element tag or none, got %s -- a tetrahedron "
             "side is a single boundary patch" % (who, list(names)))
-    if names and not np.all(qm.element_tags == names[0]):
+    if names and not qm.element_tags.is_uniform(qm.n_quads):
         raise ValueError(
             "%s: face tagged %r has untagged quads -- tag the whole face or none of it"
             % (who, names[0]))
@@ -279,14 +273,13 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
-    bnd = np.array([[0, 1]], dtype=np.int64) if ti else None
+    bnd = PointTags.from_pairs([[0, 1]], [ti]) if ti else None
 
     def profile(j: int, k: int) -> LineMesh:
         col: PointArray = lat[:, j, k, :]
         inner = (None if o == 1 else
                  np.stack([col[i * o + 1:i * o + o] for i in range(nl)], axis=0))
-        return line_loft(col[::o], interior=inner, order=o, boundaries=bnd,
-                         boundary_tags=[ti] if ti else None)
+        return line_loft(col[::o], interior=inner, order=o, point_tags=bnd)
 
     def section(k: int) -> QuadMesh:
         return quad_loft([profile(j * o, k) for j in range(nm + 1)],
@@ -421,7 +414,3 @@ def tetra(faces: Sequence[QuadMesh], *,
         # the two it is handed.
         blocks.append(_block(_coons3(f), order, (tb, tc, ta)))
     return merge(blocks)
-
-
-#: Open-region block factories bound onto ``HexMesh`` by ``hexmesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., HexMesh]] = {"tetra": tetra}

@@ -79,15 +79,15 @@ Exact at any ``ORDER``, which took some care: a junction like this is where the
 straight-subdivision traps all bite at once.
 
 * Every wall curve is carried as its **surface parametrization** (:class:`Wall`), not
-  as sampled points, and meshed with ``LineMesh.loft_curve`` -- so the footprint, the
+  as sampled points, and meshed with ``LineMesh.loft_fn`` -- so the footprint, the
   side transitions and the bypass are all evaluated on the true curve at every node.
   Sampling them into arrays and calling ``LineMesh.loft`` chords the wall from
   ``order > 1`` on.
-* A leg's transition is a ``HexMesh.loft_curve`` over the blend parameter, not a
+* A leg's transition is a ``HexMesh.loft_fn`` over the blend parameter, not a
   ``loft`` of a section stack.  ``loft`` is straight **along the sweep**, so its wall
   nodes would be chords between stations at different ``phi`` -- measured here at
   order 3, that alone put them 7.2e-4 off the cylinder.
-* The cap blocks are ``evaluated_block``s -- nested ``loft_curve`` over an explicit
+* The cap blocks are ``evaluated_block``s -- nested ``loft_fn`` over an explicit
   map on the unit cube -- rather than ``HexMesh.from_grid``, which takes corners and
   blends straight.  A ``from_grid`` cap is fine at order 1 and at ``order > 1`` both
   leaves the wall and disagrees with ``quadrant_ogrid``'s bowed ring bands along the
@@ -103,7 +103,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model.interp import coons_grid_fn as coons_fn
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -145,7 +145,7 @@ ORIGIN = np.zeros(3)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
-FR = QuadMesh.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+FR = quadmesh.shape.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
 
 #: Branch polar angles of the four footprint corners, measured from ``+z`` (the main
 #: axis) and **descending**, which is the winding whose normal points along the
@@ -213,7 +213,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return LineMesh.loft_curve(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return linemesh.assemble.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -250,7 +250,7 @@ def blend_wall(w0, w1, lam):
 
 
 def reverse_wall(w):
-    """The same curve traversed the other way: ``loft_curve`` takes a descending
+    """The same curve traversed the other way: ``loft_fn`` takes a descending
     parameter sequence for exactly this."""
     return Wall(w.g, w.fr[::-1])
 
@@ -265,7 +265,7 @@ def shift_wall(w, turns):
 def seam(target, center=ORIGIN):
     """One of the radii ``O -> wall corner``, sampled where ``quadrant_ogrid`` wants
     its ``n+1 + Nradial`` seam points."""
-    return LineMesh.line(center, target, FR, order=ORDER)
+    return linemesh.shape.line(center, target, FR, order=ORDER)
 
 
 # -- sections -----------------------------------------------------------------
@@ -273,7 +273,7 @@ def quadrant(arc, seam1, seam2, wall_tag=""):
     """One quadrant face.  Every quadrant in the mesh -- disc sections and crotch
     caps alike -- comes from here, so a cap shares its points with the leg or branch
     on the other side of it."""
-    return QuadMesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+    return quadmesh.shape.quadrant_ogrid(arc, seam1, seam2, RADIAL,
                                    center_scale=CENTER_SCALE, wall_tag=wall_tag)
 
 
@@ -285,7 +285,7 @@ def disc(pieces):
     hexes come out inverted -- so ``pieces`` must run around the disc the right way.
     Handing each shared radius in as the same ``LineMesh`` object is what makes
     neighbours weld bit-exactly instead of to a tolerance."""
-    return QuadMesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
+    return quadmesh.assemble.merge([quadrant(arc, s1, s2, wall_tag="wall")
                            for arc, s1, s2 in pieces])
 
 
@@ -309,11 +309,11 @@ SWP, SWM = seam(WP), seam(WM)                        # the two bypass edge radii
 #: The parameter values of each footprint quadrant's nodes, even in arc length.  The
 #: opening circle is sampled at the *same* values, which is what keeps the blended
 #: branch wall exactly cylindrical.
-FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
+FQ_FR = [linemesh.shape.arclength_fractions(footprint, 2 * N_QUAD,
                                       t_range=(TQ[q], TQ[q + 1])) for q in range(4)]
 #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
 #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-FQ = [LineMesh.loft_curve(footprint, fr, order=ORDER) for fr in FQ_FR]
+FQ = [linemesh.assemble.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
 #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
 UP = [cyl_params(p) for p in P]
@@ -337,14 +337,14 @@ SIDE_RP, SIDE_RM = wall_mesh(W_R[1]), wall_mesh(W_R[3])
 SIDE_LM, SIDE_LP = wall_mesh(W_L[1]), wall_mesh(W_L[3])
 BYPASS = wall_mesh(W_R[2])        # the shared leg-to-leg face, wound for +z
 
-COMPOSITE_R = disc([(FQ[0].reverse(), SP[1], SP[0]),      # P4 -> P1
+COMPOSITE_R = disc([(linemesh.morph.reverse(FQ[0]), SP[1], SP[0]),      # P4 -> P1
                     (SIDE_RP, SP[0], SWP),
                     (BYPASS, SWP, SWM),
                     (SIDE_RM, SWM, SP[1])])
 
-COMPOSITE_L = disc([(FQ[2].reverse(), SP[3], SP[2]),      # P2 -> P3
+COMPOSITE_L = disc([(linemesh.morph.reverse(FQ[2]), SP[3], SP[2]),      # P2 -> P3
                     (SIDE_LM, SP[2], SWM),
-                    (BYPASS.reverse(), SWM, SWP),
+                    (linemesh.morph.reverse(BYPASS), SWM, SWP),
                     (SIDE_LP, SWP, SP[3])])
 
 
@@ -359,12 +359,12 @@ def arc_mids(walls):
 def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node.
 
-    Spelt as a nested ``loft_curve`` rather than ``QuadMesh.from_grid`` because
+    Spelt as a nested ``loft_fn`` rather than ``QuadMesh.from_grid`` because
     ``from_grid`` blends straight from corners: at ``order > 1`` its interior nodes
     would leave the wall."""
     fr = np.linspace(0.0, 1.0, N + 1)
-    return QuadMesh.loft_curve(
-        lambda y: LineMesh.loft_curve(
+    return quadmesh.assemble.loft_fn(
+        lambda y: linemesh.assemble.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -400,7 +400,7 @@ def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None, tip_bias=CAP_TIP_BIAS
     def spoke(mid):
         return lambda s: mid + np.asarray(s, dtype=float)[:, None] * (wc - mid)
 
-    return QuadMesh.merge([
+    return quadmesh.assemble.merge([
         wall_patch(coons_fn(half(w_ab, 0, N), spoke(u_ca),
                             half(w_ca, 2 * N, N), spoke(u_ab)), tag),
         wall_patch(coons_fn(half(w_ab, 2 * N, N), spoke(u_bc),
@@ -432,7 +432,7 @@ def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
     u_ab, u_bc, u_ca = mids
     wc_param = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
     wc = cyl_pts(wc_param[None, :])[0]
-    return HexMesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
+    return hexmesh.shape.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
                           quadrant(m_ca, sc, sa),
                           wall_triangle(w_ab, w_bc, w_ca, mids=mids,
                                        tip_bias=tip_bias)],
@@ -455,28 +455,28 @@ def leg(composite, walls, sign, end_tag):
     w_plain = plain_walls(walls, z, sign)
 
     def station(s):
-        return QuadMesh.quadrant_disc(
+        return quadmesh.shape.quadrant_disc(
             [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
             np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
     plain = station(1.0)
-    return [HexMesh.loft_curve(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                               order=ORDER),
-            HexMesh.extrude(plain, L_MAIN - Z_NEAR, N_LEG,
+    return [hexmesh.assemble.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+                            order=ORDER),
+            hexmesh.lift.extrude(plain, L_MAIN - Z_NEAR, N_LEG,
                             axis=(0.0, 0.0, float(sign)), last_tag=end_tag)]
 
 
 def branch():
     """The branch stub: the footprint disc morphed to the circular opening."""
-    open_arcs = [LineMesh.loft_curve(opening, fr, order=ORDER) for fr in FQ_FR]
+    open_arcs = [linemesh.assemble.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
-    walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
+    walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
     c_open = np.array([H_BRANCH, 0.0, 0.0])
-    sections = [QuadMesh.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+    sections = [quadmesh.shape.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
-    return HexMesh.loft(sections, last_tag="branch")
+    return hexmesh.assemble.loft(sections, last_tag="branch")
 
 
 blocks = [*leg(COMPOSITE_R, W_R, 1, "outlet"),
@@ -485,17 +485,17 @@ blocks = [*leg(COMPOSITE_R, W_R, 1, "outlet"),
           # A crotch's three arcs must share one branch of phi, so the two that are
           # authored a full turn away in a leg's unwrapped list are shifted back.
           cap(SP[0], SP[3], SWP,                        # +y crotch: P1, P2, W+
-              (FQ[3].reverse(), foot_wall(FQ_FR[3][::-1])),
-              (SIDE_LP.reverse(), shift_wall(reverse_wall(W_L[3]), 1)),
-              (SIDE_RP.reverse(), reverse_wall(W_R[1]))),
+              (linemesh.morph.reverse(FQ[3]), foot_wall(FQ_FR[3][::-1])),
+              (linemesh.morph.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
+              (linemesh.morph.reverse(SIDE_RP), reverse_wall(W_R[1]))),
           cap(SP[2], SP[1], SWM,                        # -y crotch: P3, P4, W-
-              (FQ[1].reverse(), foot_wall(FQ_FR[1][::-1])),
-              (SIDE_RM.reverse(), shift_wall(reverse_wall(W_R[3]), -1)),
-              (SIDE_LM.reverse(), reverse_wall(W_L[1])))]
-mesh = HexMesh.merge(blocks)
+              (linemesh.morph.reverse(FQ[1]), foot_wall(FQ_FR[1][::-1])),
+              (linemesh.morph.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
+              (linemesh.morph.reverse(SIDE_LM), reverse_wall(W_L[1])))]
+mesh = hexmesh.assemble.merge(blocks)
 
-print(mesh.report())
-print(mesh.topology_report())
+print(hexmesh.query.report(mesh))
+print(hexmesh.query.topology_report(mesh))
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
