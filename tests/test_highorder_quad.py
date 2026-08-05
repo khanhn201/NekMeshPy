@@ -22,7 +22,7 @@ from nekmeshpy.model.interp import corner_indices, quad_edge_indices
 @pytest.mark.parametrize("order", [2, 3, 5])
 def test_sphere_nodes_lie_on_the_true_sphere(order):
     r = 3.0
-    s = quadmesh.shape.sphere(r, 3, order=order)
+    s = quadmesh.sphere(r, 3, order=order)
     assert s.order == order
     cb = curved(s)                                       # B-rep -> per-quad block
     assert cb.shape == (s.n_quads, (order + 1) ** 2, 3)
@@ -40,7 +40,7 @@ def test_sphere_nodes_lie_on_the_true_sphere(order):
 
 @pytest.mark.parametrize("order", [2, 4])
 def test_box_nodes_on_flat_faces(order):
-    b = quadmesh.shape.box(1.0, 2, order=order)
+    b = quadmesh.box(1.0, 2, order=order)
     assert b.order == order
     cb = curved(b)
     assert cb.shape == (b.n_quads, (order + 1) ** 2, 3)
@@ -56,10 +56,10 @@ def test_box_nodes_on_flat_faces(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_ogrid_wall_nodes_on_the_circle(order):
     r = 2.0
-    loop = linemesh.shape.circle(r, 16, order=order)          # 16 pts = 4 per side
+    loop = linemesh.circle(r, 16, order=order)          # 16 pts = 4 per side
     # no smoothing: the wall overlay stamps the true arc regardless (a repositioning
     # smoother is rejected at order > 1 -- see test_high_order_smoothing_rejected).
-    qm = quadmesh.shape.ogrid(loop, 4, [0.0, 0.5, 1.0])
+    qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
     assert qm.order == order
     cb = curved(qm)
     # the outermost ring of quads carries wall nodes on side 1; every node there
@@ -83,14 +83,14 @@ def test_structured_stamps_its_edges_high_order_nodes(order):
     # not be replaced by the transfinite blend's straight subdivision (which would
     # miss the arc by the chord sagitta, ~2e-2 here).
     r, n = 1.0, 8
-    bottom = linemesh.shape.arc(r, n, start_theta=np.pi, end_theta=0.0, order=order)
-    right = linemesh.shape.line((r, 0.0, 0.0), (r, 2.0, 0.0), uniform_spacing(3),
+    bottom = linemesh.arc(r, n, start_theta=np.pi, end_theta=0.0, order=order)
+    right = linemesh.line((r, 0.0, 0.0), (r, 2.0, 0.0), uniform_spacing(3),
                           order=order)
-    top = linemesh.shape.line((r, 2.0, 0.0), (-r, 2.0, 0.0), uniform_spacing(n),
+    top = linemesh.line((r, 2.0, 0.0), (-r, 2.0, 0.0), uniform_spacing(n),
                         order=order)
-    left = linemesh.shape.line((-r, 2.0, 0.0), (-r, 0.0, 0.0), uniform_spacing(3),
+    left = linemesh.line((-r, 2.0, 0.0), (-r, 0.0, 0.0), uniform_spacing(3),
                          order=order)
-    qm = quadmesh.shape.structured([bottom, right, top, left])
+    qm = quadmesh.structured([bottom, right, top, left])
     assert qm.order == order
     cb = curved(qm)
     idx = quad_edge_indices(1, order)                  # the bottom side's nodes
@@ -130,8 +130,8 @@ def test_ogrid_interior_edges_are_curved(order):
     # too.  A straight-subdivided interior (the old behaviour) leaves every non-wall
     # edge dead on its chord at ~1e-17.
     r = 2.0
-    loop = linemesh.shape.circle(r, 16, order=order)
-    qm = quadmesh.shape.ogrid(loop, 4, [0.0, 0.5, 1.0])        # one interior ring at t=0.5
+    loop = linemesh.circle(r, 16, order=order)
+    qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])        # one interior ring at t=0.5
     dev = _edge_chord_deviation(qm)
     wall = _on_radius(qm, r)
     assert dev[wall].max() > 1e-2                        # the wall itself is curved
@@ -145,8 +145,8 @@ def test_half_ogrid_interior_edges_are_curved(order):
     # half_ogrid had no order>1 coverage at all.  Reached through spined_ogrid (the
     # bifurcation path), which runs two half_ogrids and merges them.
     r = 1.5
-    loop = linemesh.shape.circle(r, 32, order=order)
-    qm = quadmesh.shape.spined_ogrid(loop, [0.0, 0.4, 1.0])
+    loop = linemesh.circle(r, 32, order=order)
+    qm = quadmesh.spined_ogrid(loop, [0.0, 0.4, 1.0])
     assert qm.order == order
     dev = _edge_chord_deviation(qm)
     wall = _on_radius(qm, r)
@@ -167,12 +167,12 @@ def test_structured_interior_matches_the_analytic_coons_blend(order):
     # collapses to a radial lerp of the arcs -- every node in a block column shares
     # the bottom arc's angle, and every node in a block row shares one radius.
     r_in, r_out, n, nr = 1.0, 2.0, 6, 3
-    inner = linemesh.shape.arc(r_in, n, start_theta=0.0, end_theta=np.pi / 2, order=order)
-    outer = linemesh.shape.arc(r_out, n, start_theta=np.pi / 2, end_theta=0.0, order=order)
+    inner = linemesh.arc(r_in, n, start_theta=0.0, end_theta=np.pi / 2, order=order)
+    outer = linemesh.arc(r_out, n, start_theta=np.pi / 2, end_theta=0.0, order=order)
     ip, op = inner.points, outer.points
-    right = linemesh.shape.line(ip[-1], op[0], uniform_spacing(nr + 1), order=order)
-    left = linemesh.shape.line(op[-1], ip[0], uniform_spacing(nr + 1), order=order)
-    qm = quadmesh.shape.structured([inner, right, outer, left])
+    right = linemesh.line(ip[-1], op[0], uniform_spacing(nr + 1), order=order)
+    left = linemesh.line(op[-1], ip[0], uniform_spacing(nr + 1), order=order)
+    qm = quadmesh.structured([inner, right, outer, left])
     assert qm.order == order
     row = order + 1
     blk = curved(qm).reshape(-1, row, row, 3)            # (Q, j, i, 3), i fastest
@@ -189,18 +189,18 @@ def test_structured_interior_matches_the_analytic_coons_blend(order):
 def test_structured_rejects_a_non_chain_edge():
     # the overlay maps line k onto the k-th interval of the side, so an edge whose
     # lines are not the consecutive chain would be stamped in the wrong place
-    edges = [linemesh.shape.line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), uniform_spacing(3),
+    edges = [linemesh.line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), uniform_spacing(3),
                            order=2),
-             linemesh.shape.line((1.0, 0.0, 0.0), (1.0, 1.0, 0.0), uniform_spacing(2),
+             linemesh.line((1.0, 0.0, 0.0), (1.0, 1.0, 0.0), uniform_spacing(2),
                            order=2),
-             linemesh.shape.line((1.0, 1.0, 0.0), (0.0, 1.0, 0.0), uniform_spacing(3),
+             linemesh.line((1.0, 1.0, 0.0), (0.0, 1.0, 0.0), uniform_spacing(3),
                            order=2),
-             linemesh.shape.line((0.0, 1.0, 0.0), (0.0, 0.0, 0.0), uniform_spacing(2),
+             linemesh.line((0.0, 1.0, 0.0), (0.0, 0.0, 0.0), uniform_spacing(2),
                            order=2)]
     scrambled = LineMesh(edges[0].points, [[0, 2], [2, 1], [1, 3]], order=2,
                          interior=np.zeros((3, 1, 3)))
     with pytest.raises(ValueError, match="consecutive chain"):
-        quadmesh.shape.structured([scrambled, edges[1], edges[2], edges[3]])
+        quadmesh.structured([scrambled, edges[1], edges[2], edges[3]])
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -210,9 +210,9 @@ def test_annulus_interior_rings_are_high_order_curved(order):
     # straight subdivision -- so interior nodes sit off the straight chord.
     r_in, r_out = 1.0, 3.0
     L = 16
-    inner = linemesh.shape.circle(r_in, L, order=order)
-    outer = linemesh.shape.circle(r_out, L, order=order)
-    qm = quadmesh.lift.annulus(inner, outer, radial=[0.0, 0.5, 1.0])   # 2 layers
+    inner = linemesh.circle(r_in, L, order=order)
+    outer = linemesh.circle(r_out, L, order=order)
+    qm = quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])   # 2 layers
     idx = quad_edge_indices(1, order)            # side-1 (tangential) node indices
     # first quad of layer 1: its side-1 (bottom) edge is the middle ring (t=0.5),
     # the average of the inner and outer arcs -> still curved.
@@ -226,9 +226,9 @@ def test_annulus_interior_rings_are_high_order_curved(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_annulus_wall_nodes_on_both_rings(order):
     r_in, r_out = 1.0, 3.0
-    inner = linemesh.shape.circle(r_in, 16, order=order)
-    outer = linemesh.shape.circle(r_out, 16, order=order)
-    qm = quadmesh.lift.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
+    inner = linemesh.circle(r_in, 16, order=order)
+    outer = linemesh.circle(r_out, 16, order=order)
+    qm = quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
     assert qm.order == order
     cb = curved(qm)
     corner = qm.points[qm.quads]
@@ -249,29 +249,29 @@ def test_annulus_wall_nodes_on_both_rings(order):
 def test_high_order_smoothing_rejected(method):
     # a repositioning smoother moves only corner nodes, so it cannot smooth an
     # order-N section; the factory must raise rather than silently degrade.
-    loop = linemesh.shape.circle(2.0, 16, order=3)
+    loop = linemesh.circle(2.0, 16, order=3)
     with pytest.raises(NotImplementedError, match="order-3"):
-        quadmesh.shape.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
-    inner = linemesh.shape.circle(1.0, 16, order=3)
-    outer = linemesh.shape.circle(3.0, 16, order=3)
+        quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
+    inner = linemesh.circle(1.0, 16, order=3)
+    outer = linemesh.circle(3.0, 16, order=3)
     with pytest.raises(NotImplementedError, match="order-3"):
-        quadmesh.lift.annulus(inner, outer, radial=[0.0, 0.5, 1.0],
+        quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0],
                          smoothing_method=method)
 
 
 def test_high_order_noop_smoothing_allowed():
     # the no-op strategies (bilinear/tfi/none) leave every node in place, so they
     # stay allowed at any order (e.g. circular_pipe.py runs order 2 + "bilinear").
-    loop = linemesh.shape.circle(2.0, 16, order=3)
+    loop = linemesh.circle(2.0, 16, order=3)
     for method in ("bilinear", "tfi", "none"):
-        qm = quadmesh.shape.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
+        qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
         assert qm.order == 3
 
 
 # -- structured / rectangle straight-sided elevation --------------------
 @pytest.mark.parametrize("order", [2, 3])
 def test_rectangle_nodes_corner_consistent(order):
-    qm = quadmesh.shape.rectangle([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0]],
+    qm = quadmesh.rectangle([[0, 0, 0], [4, 0, 0], [4, 2, 0], [0, 2, 0]],
                             3, 2, order=order)
     assert qm.order == order
     corners = corner_indices(order, 2)
@@ -287,16 +287,16 @@ def test_from_grid_order_n_corner_consistent():
     y = np.linspace(0, 1, 3)
     X, Y = np.meshgrid(x, y, indexing="ij")
     grid = np.stack([X, Y, np.zeros_like(X)], axis=-1)
-    qm = quadmesh.lift.from_grid(grid, order=3)
+    qm = quadmesh.from_grid(grid, order=3)
     assert qm.order == 3
     corners = corner_indices(3, 2)
     assert np.allclose(curved(qm)[:, corners, :], qm.points[qm.quads])
 
 
 def test_blend_morphs_quad_curved_blocks():
-    a = quadmesh.shape.sphere(1.0, 2, order=3)
-    b = quadmesh.shape.sphere(3.0, 2, order=3)
-    lo, mid, hi = quadmesh.morph.blend(a, b, [0.0, 0.5, 1.0])
+    a = quadmesh.sphere(1.0, 2, order=3)
+    b = quadmesh.sphere(3.0, 2, order=3)
+    lo, mid, hi = quadmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)
     assert np.allclose(curved(lo), ca)
@@ -308,27 +308,27 @@ def test_blend_morphs_quad_curved_blocks():
 
 
 def test_blend_rejects_mismatched_order():
-    a = quadmesh.shape.sphere(1.0, 2, order=3)
-    b = quadmesh.shape.sphere(1.0, 2, order=2)
+    a = quadmesh.sphere(1.0, 2, order=3)
+    b = quadmesh.sphere(1.0, 2, order=2)
     with pytest.raises(ValueError, match="same order"):
-        quadmesh.morph.blend(a, b, [0.5])
+        quadmesh.blend(a, b, [0.5])
 
 
 def test_merge_concatenates_curved_blocks():
-    a = quadmesh.shape.box(1.0, 1, order=2)
+    a = quadmesh.box(1.0, 1, order=2)
     # merging box with itself is degenerate; instead merge the six face patches
     # implicitly via box already; here check merge rejects mixed order
-    b = quadmesh.shape.box(1.0, 1, order=3)
+    b = quadmesh.box(1.0, 1, order=3)
     with pytest.raises(ValueError, match="same order"):
-        quadmesh.assemble.merge([a, b])
+        quadmesh.merge([a, b])
 
 
 # -- N=1 no-op ----------------------------------------------------------
 def test_order1_factories_are_linear_no_op():
-    for qm in (quadmesh.shape.sphere(1.0, 2),
-               quadmesh.shape.box(1.0, 2),
-               quadmesh.lift.annulus(linemesh.shape.circle(1.0, 12),
-                                linemesh.shape.circle(2.0, 12),
+    for qm in (quadmesh.sphere(1.0, 2),
+               quadmesh.box(1.0, 2),
+               quadmesh.annulus(linemesh.circle(1.0, 12),
+                                linemesh.circle(2.0, 12),
                                 radial=[0.0, 1.0])):
         # order 1: every high-order table is empty, the walk is just the corners
         assert qm.order == 1
@@ -340,27 +340,27 @@ def test_order1_factories_are_linear_no_op():
 
 
 def test_order1_sphere_points_match_high_order_corners():
-    lin = quadmesh.shape.sphere(1.7, 3)
-    ho = quadmesh.shape.sphere(1.7, 3, order=4)
+    lin = quadmesh.sphere(1.7, 3)
+    ho = quadmesh.sphere(1.7, 3, order=4)
     assert np.allclose(lin.points, ho.points)            # corner points identical
     assert np.array_equal(lin.quads, ho.quads)
 
 
 # -- order-N quality metric (opt-in) ------------------------------------
 def test_high_order_quality_matches_corner_at_order1():
-    qm = quadmesh.shape.sphere(1.7, 3)
-    assert np.allclose(quadmesh.query.scaled_jacobian(qm, high_order=True),
-                       quadmesh.query.scaled_jacobian(qm), atol=1e-12)
+    qm = quadmesh.sphere(1.7, 3)
+    assert np.allclose(quadmesh.scaled_jacobian(qm, high_order=True),
+                       quadmesh.scaled_jacobian(qm), atol=1e-12)
 
 
 @pytest.mark.parametrize("order", [2, 3])
 def test_high_order_quality_non_degenerate_on_curved_sphere(order):
-    qm = quadmesh.shape.sphere(1.7, 3, order=order)
-    sj = quadmesh.query.scaled_jacobian(qm, high_order=True)
+    qm = quadmesh.sphere(1.7, 3, order=order)
+    sj = quadmesh.scaled_jacobian(qm, high_order=True)
     assert sj.shape == (qm.n_quads,)
     assert np.all(np.isfinite(sj))
     assert float(sj.min()) > 0.0                         # no folded surface nodes
-    assert quadmesh.query.quality_summary(qm, high_order=True).n_elements == qm.n_quads
+    assert quadmesh.quality_summary(qm, high_order=True).n_elements == qm.n_quads
 
 
 # -- VTK Lagrange quad node ordering ------------------------------------
@@ -388,14 +388,14 @@ def _vtu_num_points(path):
 
 def test_vtu_order1_is_plain_quad(tmp_path):
     p = str(tmp_path / "lin.vtu")
-    export.quad_to_vtu(quadmesh.shape.box(1.0, 1), p)
+    export.quad_to_vtu(quadmesh.box(1.0, 1), p)
     assert _vtu_cell_types(p) == {"9"}                   # VTK_QUAD
     assert _vtu_num_points(p) == 24                      # 6 faces x 4 nodes
 
 
 def test_vtu_high_order_is_lagrange_quad(tmp_path):
     p = str(tmp_path / "ho.vtu")
-    export.quad_to_vtu(quadmesh.shape.box(1.0, 1, order=3), p)
+    export.quad_to_vtu(quadmesh.box(1.0, 1, order=3), p)
     assert _vtu_cell_types(p) == {"70"}                  # VTK_LAGRANGE_QUADRILATERAL
     # conformal (welded) numbering: shared corners and shared edge-interior nodes
     # are written once.  A closed cube surface at order 3 has 8 corners
@@ -406,7 +406,7 @@ def test_vtu_high_order_is_lagrange_quad(tmp_path):
 def test_vtu_meshio_roundtrip(tmp_path):
     meshio = pytest.importorskip("meshio")
     p = str(tmp_path / "ho.vtu")
-    export.quad_to_vtu(quadmesh.shape.sphere(1.0, 2, order=3), p)
+    export.quad_to_vtu(quadmesh.sphere(1.0, 2, order=3), p)
     mm = meshio.read(p)
     assert {c.type for c in mm.cells} == {"VTK_LAGRANGE_QUADRILATERAL"}
 
@@ -451,7 +451,7 @@ def test_vtu_quad_nodes_land_on_the_bilinear_lattice(tmp_path):
         p = str(tmp_path / ("aff%d.vtu" % order))
         corners = np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0],
                             [3.0, 2.0, 0.0], [0.0, 2.0, 0.0]])
-        export.quad_to_vtu(quadmesh.shape.rectangle(corners, 2, 2, order=order), p)
+        export.quad_to_vtu(quadmesh.rectangle(corners, 2, 2, order=order), p)
         mm = meshio.read(p)
         conn = np.vstack([c.data for c in mm.cells])
         pts = np.asarray(mm.points, dtype=float)

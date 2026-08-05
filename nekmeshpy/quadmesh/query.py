@@ -67,3 +67,11 @@ def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> QualitySumma
     if high_order:
         return quality.summary_ho(mesh, mesh.order)
     return quality.summary(mesh.points, mesh.quads)
+
+__all__ = [
+    "boundary_edges",
+    "boundary_elements",
+    "boundary_points",
+    "quality_summary",
+    "scaled_jacobian",
+]

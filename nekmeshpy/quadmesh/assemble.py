@@ -550,3 +550,9 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
     lm = LineMesh(points, edges, order=order, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior, bnd, etags, order=order)
+
+__all__ = [
+    "loft",
+    "loft_fn",
+    "merge",
+]

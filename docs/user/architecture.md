@@ -15,7 +15,7 @@ NekMeshPy is split into **two layers**:
 example scripts (examples/):  bifurcation.py   circular_pipe.py / rectangular_pipe.py   flow_past_*.py
                                      │ compose the toolkit primitives below │
                                      ▼                                      ▼
-TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.lift.extrude/sweep/loft/annulus/merge/from_grid──▶ HexMesh
+TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft/annulus/merge/from_grid──▶ HexMesh
 (surface;    (points + connectivity)                                          (points + hexes;
  trimesh.ops:                                                                 weld, topology)
  cotan Laplacian,                                                                 │
@@ -63,7 +63,7 @@ that acts on it (smoothing / quality / surface ops):
 | `model/fields.py` | sizing `Field`s + 1-D graded distributions + `gll_nodes` / `lagrange_derivative_matrix` / `validate_layers` / `reject_loop_caps` |
 | `model/interp.py` | order-N numeric kernel over GLL reference nodes: `tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`, the edge/face slot tables, `scaled_jacobian_ho` |
 | `model/affine.py` | the affine maps behind the rung-preserving `translate` / `rotate` / `scale`: `translation` / `rotation` / `scaling` build a `(matrix, offset)` pair, `apply` maps any coordinate table whose trailing axis is the 3 components. Imports **no container** |
-| `model/frames.py` | the moving-frame machinery behind `quadmesh.lift.sweep` / `hexmesh.lift.sweep`: `tangents` (finite-difference; pass an analytic derivative when the end stations matter), the frame generators `fixed_up` / `parallel_transport` (RMF by double reflection) / `frenet`, `plane_frame` (a profile's own authored frame from an SVD best-fit plane), and `sweep_placements`, which composes them into one `(matrix, offset)` per station and pins the frame field's free roll so station 0 lands the section as authored. Imports **no container** |
+| `model/frames.py` | the moving-frame machinery behind `quadmesh.sweep` / `hexmesh.sweep`: `tangents` (finite-difference; pass an analytic derivative when the end stations matter), the frame generators `fixed_up` / `parallel_transport` (RMF by double reflection) / `frenet`, `plane_frame` (a profile's own authored frame from an SVD best-fit plane), and `sweep_placements`, which composes them into one `(matrix, offset)` per station and pins the frame field's free roll so station 0 lands the section as authored. Imports **no container** |
 | `model/conform.py` | the topology / orientation / reconciliation engine behind the B-rep: `unique_edges`, `unique_faces` / `canonical_faces` / `hex_corners_from_faces`, `entity_tol`, the `scatter_*`/`gather_*` pair, the `conformal_*` walks, D4 helpers. Imports **no container** — everything crosses as plain arrays |
 
 **`io/`** — export and visualization: `io/export.py`

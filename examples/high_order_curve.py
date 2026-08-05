@@ -28,7 +28,7 @@ ORDER = 2                    # polynomial order: ORDER+1 GLL nodes per element
 OUT_NAME = "high_order_curve"
 
 # -- build the high-order loop -----------------------------------------------
-mesh = linemesh.shape.circle(RADIUS, N_ELEM, order=ORDER)
+mesh = linemesh.circle(RADIUS, N_ELEM, order=ORDER)
 
 # every curved node sits on the true circle, to machine precision.  A LineMesh's
 # high-order state is just its corner ``points`` plus each line's private

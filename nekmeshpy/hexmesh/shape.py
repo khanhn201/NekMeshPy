@@ -414,3 +414,7 @@ def tetra(faces: Sequence[QuadMesh], *,
         # the two it is handed.
         blocks.append(_block(_coons3(f), order, (tb, tc, ta)))
     return merge(blocks)
+
+__all__ = [
+    "tetra",
+]

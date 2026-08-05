@@ -14,7 +14,7 @@ from a parametrization instead of handed in -- and so takes the same ``loop`` fl
 Being open or closed is therefore not a property of the function: the same ``f`` meshes
 either way.
 
-Reached as ``linemesh.assemble.loft(...)`` through the package namespace.  Nothing is
+Reached as ``linemesh.loft(...)`` through the package namespace.  Nothing is
 bound onto the container, so ``linemesh.py`` imports no sibling and every sibling
 imports the container plainly -- there is no cycle here to guard against.
 """
@@ -408,3 +408,9 @@ def merge(meshes: Sequence[LineMesh], *,
         interior = np.concatenate([m.interior for m in meshes], axis=0)
 
     return LineMesh(points, lines, interior, bnd, etags, order=order)
+
+__all__ = [
+    "loft",
+    "loft_fn",
+    "merge",
+]

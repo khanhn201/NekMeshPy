@@ -70,24 +70,24 @@ def ellipse(th):
 interior = (None if ORDER == 1 else
             ellipse(theta[:, None]
                     + gll_nodes(ORDER)[1:ORDER][None, :] * (2.0 * np.pi / N_THETA)))
-inner = linemesh.assemble.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
+inner = linemesh.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
                       order=ORDER, interior=interior, loop=True)
 
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named by the direction they face -- bottom / outlet / top / inlet
-outer = linemesh.shape.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
+outer = linemesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
-section = quadmesh.lift.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
+section = quadmesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)
 
 # -- sweep along the span, naming the end caps front/back --------------------
-mesh = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
-print(hexmesh.query.report(mesh))
+print(hexmesh.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

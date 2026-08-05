@@ -35,13 +35,13 @@ operations on a finished mesh are free functions taking the mesh first.
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 # Tag the wall on the boundary loop; the tag rides up line -> quad -> hex.
-boundary = linemesh.shape.circle(radius=1.0, n=24, element_tags=["wall"] * 24)
+boundary = linemesh.circle(radius=1.0, n=24, element_tags=["wall"] * 24)
 
 # Fill the loop with an O-grid section, then sweep it into a hex block.
 # radial / layers count *cells*: an int is n uniform layers; pass an explicit
 # array of normalized positions (geometric_spacing(n, r), ...) to grade them.
-section = quadmesh.shape.ogrid(boundary, n_side=6, radial=4)
-block   = hexmesh.lift.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
+section = quadmesh.ogrid(boundary, n_side=6, radial=4)
+block   = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
                           first_tag="inlet", last_tag="outlet")
 
 # Boundaries are named at build time; map each name -> Nek BC code at export.
@@ -77,10 +77,10 @@ for a guided tour of each.
 
 ### Sweeping with `loft`
 
-`loft` is one primitive at three dimensions — `linemesh.assemble.loft` (each profile a single
-point, the rungs *are* the lines), `quadmesh.assemble.loft` (profiles are `LineMesh`es) and
-`hexmesh.assemble.loft` (profiles are `QuadMesh`es) — with `extrude` the straight special case
-at each rung, and `linemesh.assemble.loft` itself the only thing that authors 1-D
+`loft` is one primitive at three dimensions — `linemesh.loft` (each profile a single
+point, the rungs *are* the lines), `quadmesh.loft` (profiles are `LineMesh`es) and
+`hexmesh.loft` (profiles are `QuadMesh`es) — with `extrude` the straight special case
+at each rung, and `linemesh.loft` itself the only thing that authors 1-D
 connectivity (`loop=False` chain / `loop=True` ring).
 
 Pass `loop=True` for a **periodic** sweep: the last profile joins back to the first,
@@ -92,18 +92,18 @@ rows are emitted.
 
 ```python
 sections = [...]                                   # rings revolved about an axis
-torus    = quadmesh.assemble.loft(sections, loop=True)      # closed surface, zero free edges
+torus    = quadmesh.loft(sections, loop=True)      # closed surface, zero free edges
 ```
 
 ### Bending along a path with `sweep`
 
 `loft` asks you to position every profile. When each station is the **same section**
 carried along a curve — a pipe through a 90° elbow, a U-turn, a coil —
-`quadmesh.lift.sweep` / `hexmesh.lift.sweep` do the placing, from a moving frame:
+`quadmesh.sweep` / `hexmesh.sweep` do the placing, from a moving frame:
 
 ```python
-disc = quadmesh.shape.ogrid(linemesh.shape.circle(0.1, 20, order=2), n_side=5, radial=3)
-bend = hexmesh.lift.sweep(disc, path, np.linspace(0.0, 1.0, 21),   # path: (K,) -> (K,3)
+disc = quadmesh.ogrid(linemesh.circle(0.1, 20, order=2), n_side=5, radial=3)
+bend = hexmesh.sweep(disc, path, np.linspace(0.0, 1.0, 21),   # path: (K,) -> (K,3)
                      origin=(0, 0, 0),          # the section's reference point
                      tangent=dpath, orientation="fixed", up=(0, 1, 0))
 ```
@@ -125,24 +125,24 @@ closes the sweep on the *identical* first placement, so a solid torus welds exac
 
 A path assembled from pieces (straights and arcs) has curvature that **jumps** at each
 junction, and an element straddling one is fitted across two different geometries —
-a visible kink in the wall. `linemesh.shape.sweep_fractions(breaks, total_length, target)`
+a visible kink in the wall. `linemesh.sweep_fractions(breaks, total_length, target)`
 returns the stations that avoid it: each interval between consecutive junctions is
 subdivided on its own at roughly `target`, so every junction reappears in the output
 bit-for-bit instead of being approached by a global `linspace`. Like
-`linemesh.shape.arclength_fractions` and `quadmesh.shape.spine_fractions` it is a helper, not a
+`linemesh.arclength_fractions` and `quadmesh.spine_fractions` it is a helper, not a
 factory — it returns a plain array of `fractions`, because the sweep meshes exactly at
 the stations it is given. See `examples/serpentine_pipe.py`.
 
 ### High-order (order-N) elements
 
 The order is declared **once, at the bottom of the ladder**. A factory that builds its
-points from nothing takes an optional `order=N` (default `1`) — `linemesh.shape.circle` /
-`arc` / `line` / `rectangle` / `loft`, `quadmesh.shape.box` / `sphere` / `rectangle` /
-`from_grid`, `hexmesh.lift.from_grid`; everything that takes a *mesh* in (`ogrid`,
+points from nothing takes an optional `order=N` (default `1`) — `linemesh.circle` /
+`arc` / `line` / `rectangle` / `loft`, `quadmesh.box` / `sphere` / `rectangle` /
+`from_grid`, `hexmesh.from_grid`; everything that takes a *mesh* in (`ogrid`,
 `structured`, `annulus`, `extrude`, `sweep`, `blend`, `loft`, `merge`) has no `order=`
 at all and inherits it from its inputs, rejecting a mismatch loudly. So `order=` is set
-on the boundary loop and rides all the way up. (`quadmesh.assemble.loft_fn` /
-`hexmesh.assemble.loft_fn` keep an `order: int | None = None` because they *evaluate*
+on the boundary loop and rides all the way up. (`quadmesh.loft_fn` /
+`hexmesh.loft_fn` keep an `order: int | None = None` because they *evaluate*
 profiles rather than receive them; `None` means the profiles' own.) At order `N` each
 element carries `(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction (line
 `N+1`, quad `(N+1)²`, hex `(N+1)³`). `.re2` export stays linear (corners only — Nek's
@@ -168,29 +168,29 @@ element, resolved by corner ids rather than a coordinate search
 the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.
 
 **Curved geometry is not automatic.** Factories that own an analytic shape place the
-extra nodes on it — `linemesh.shape.circle` / `linemesh.shape.arc` on the exact arc,
-`linemesh.assemble.loft_fn` on any analytic parametrization you hand it (it calls your callable on
+extra nodes on it — `linemesh.circle` / `linemesh.arc` on the exact arc,
+`linemesh.loft_fn` on any analytic parametrization you hand it (it calls your callable on
 the whole node lattice, corners *and* interiors),
-`quadmesh.assemble.loft_fn` / `hexmesh.assemble.loft_fn` doing the same one and two rungs up along the
+`quadmesh.loft_fn` / `hexmesh.loft_fn` doing the same one and two rungs up along the
 *sweep* (your callable returns a `LineMesh` profile / `QuadMesh` section and is called at
 every node level, not just the corner levels),
-`quadmesh.lift.sweep` / `hexmesh.lift.sweep` carrying **one** profile along a curved path by a moving
+`quadmesh.sweep` / `hexmesh.sweep` carrying **one** profile along a curved path by a moving
 frame (a bent pipe from one O-grid disc),
-`quadmesh.shape.sphere` / `quadmesh.shape.hemisphere` projecting every node onto the exact sphere —
+`quadmesh.sphere` / `quadmesh.hemisphere` projecting every node onto the exact sphere —
 the region fills (`ogrid` / `half_ogrid` / `quadrant_ogrid` / `structured`) carry their input walls'
 curvature into the interior as well as onto the wall, and the combinators (`extrude` /
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array
-(`linemesh.assemble.loft`, `from_grid`) has only those points to go on and
+(`linemesh.loft`, `from_grid`) has only those points to go on and
 straight-subdivides between them: high order in storage, linear in geometry — so pass
-`linemesh.assemble.loft_fn` a closed form rather than sampling it into an array. A plain
-`quadmesh.assemble.loft` is the same trap along its *sweep* direction — exact profiles still give a
+`linemesh.loft_fn` a closed form rather than sampling it into an array. A plain
+`quadmesh.loft` is the same trap along its *sweep* direction — exact profiles still give a
 surface that is straight between them — so reach for `loft_fn` or `sweep` (or hand
 `loft` the intermediate profiles as `sweep_nodes=`) when the sweep path is curved. Order-N
 smoothing is not implemented — a repositioning smoother raises `NotImplementedError`
 above order 1 rather than degrading silently.
 
 ```python
-loop  = linemesh.shape.circle(radius=2.0, n=8, order=5)   # 6 GLL nodes / arc, on the circle
+loop  = linemesh.circle(radius=2.0, n=8, order=5)   # 6 GLL nodes / arc, on the circle
 export.line_to_vtu(loop, "arc.vtu")                 # VTK_LAGRANGE_CURVE (XML)
 ```
 

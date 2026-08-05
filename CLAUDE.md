@@ -10,6 +10,7 @@ pip install -e ".[all,dev]"                  # numpy, scipy, matplotlib, meshio,
 ruff check nekmeshpy tests examples
 mypy                                         # config pins files=["nekmeshpy"]; do NOT pass paths
 python -m pytest                             # conftest pins the Agg backend for headless viz tests
+python -m pytest -m slow                     # the 2 big chimera examples, deselected by default
 sphinx-build -b html -n -W --keep-going docs docs/_build/html
 
 pytest tests/test_pipes.py::test_quadrant_pipe_tjunction   # single test
@@ -18,11 +19,21 @@ pytest -k re2                                              # by keyword
 PYTHONPATH=. python examples/bifurcation.py  # run a mesher; writes .re2/.vtu into cwd
 ```
 
-**Four CI checks gate a PR** — ruff + mypy (py3.12), pytest (py3.9–3.12), and the docs
-build. After pushing, poll `gh pr checks <n>` until it settles; a local pass is not the
-gate. The docs build runs `-n -W` (nitpicky, warnings-as-errors), so one unresolved
+**Five CI checks gate a PR** — ruff + mypy (py3.12), pytest (py3.9–3.12), and the docs
+build, plus a `Slow examples` job. After pushing, poll `gh pr checks <n>` until it
+settles; a local pass is not the gate.
+
+`tests/test_examples.py` runs **every** script in `examples/` and asserts it leaves a
+valid `mesh` — non-empty, watertight, conforming, no inverted element. It *discovers*
+the scripts rather than listing them, so a new example is covered the moment it lands;
+this exists because five examples had no coverage at all and a refactor left four of
+them broken with CI green. The two large chimera meshers carry `@pytest.mark.slow`
+and are deselected by `addopts`, so a bare `pytest` shows them as *deselected*, not
+passed — the `Slow examples` job is what actually runs them. `KNOWN_INVERTED` records any example that ships an
+inverted element as a **strict** xfail, so fixing one fails the suite until its entry
+is removed; it is currently empty and worth keeping that way. The docs build runs `-n -W` (nitpicky, warnings-as-errors), so one unresolved
 autodoc reference fails it. Every `:func:`/`:class:`/`:data:` role needs a fully
-qualified explicit target — ``:func:`quadmesh.morph.blend
+qualified explicit target — ``:func:`quadmesh.blend
 <nekmeshpy.quadmesh.morph.blend>` `` — because the operations are module-level
 functions now, so a bare ``:func:`blend` `` has no enclosing class to resolve against.
 Note the target names the **namespace** module (`quadmesh.morph`), not the private
@@ -70,9 +81,17 @@ views only — and imports **no** sibling. Operations live in sibling modules an
 reached through per-rung namespaces, never bound onto the class:
 
 ```python
-quadmesh.shape.ogrid(boundary, n_side, radial)    # not QuadMesh.ogrid(...)
-hexmesh.query.is_watertight(mesh)                 # not mesh.is_watertight()
+quadmesh.ogrid(boundary, n_side, radial)    # not QuadMesh.ogrid(...)
+hexmesh.is_watertight(mesh)                 # not mesh.is_watertight()
 ```
+
+Each rung re-exports its own operations, so the namespace module is optional at the
+call site: `quadmesh.ogrid(...)` and `quadmesh.shape.ogrid(...)` are the same function.
+Prefer the short form — the *rung* is the part that carries meaning. Names are unique
+within a rung, so flattening is unambiguous; across rungs they collide by design (each
+rung has its own `loft` and `merge`), which is why there is no flat namespace above
+this one. Keep both `__all__`s in sync when adding an operation: the namespace module's
+and the package's.
 
 That one-way import — container ← sibling, never back — is what makes each package a
 strict DAG, so every sibling does a plain `from .quadmesh import QuadMesh` and there
@@ -118,7 +137,7 @@ exposes the rest as `trimesh.ops.*`.
 Public API is re-exported from `nekmeshpy/__init__.py`; keep `__all__` in sync.
 
 `mypy` pins `files=["nekmeshpy"]`, so it only checks toolkit code — tests and examples
-are unchecked, which is why a wrong-rung call there (`quadmesh.morph.translate(hexmesh_obj, v)`)
+are unchecked, which is why a wrong-rung call there (`quadmesh.translate(hexmesh_obj, v)`)
 surfaces as a pytest `AttributeError` rather than a type error. Internal toolkit code
 imports the free functions directly from the private sibling
 (`from ..linemesh.shape import line`) — same modules the public namespaces name.
@@ -178,9 +197,9 @@ Order is declared **once, at the bottom of the ladder**, and rides up: factories
 build points from nothing take `order=N`; everything taking a *mesh* in inherits it and
 rejects a mismatch loudly.
 
-Anything built from an explicit point array (`linemesh.assemble.loft`, `from_grid`) has only
+Anything built from an explicit point array (`linemesh.loft`, `from_grid`) has only
 those points to go on and **straight-subdivides** between them — high order in storage,
-linear in geometry. A plain `quadmesh.assemble.loft`/`hexmesh.assemble.loft` is the same trap along its
+linear in geometry. A plain `quadmesh.loft`/`hexmesh.loft` is the same trap along its
 *sweep* direction: exact profiles still give a surface that is straight between them (a
 torus lofted from exact circles lands 62–83% of the tube radius off).
 
@@ -208,7 +227,7 @@ Order-N smoothing is not implemented: a repositioning smoother raises
   evaluates it), the second is the first's name plus `_fn`: `loft` / `loft_fn` at all
   three rungs, `coons_grid` / `coons_grid_fn`. An operation that only ever takes a
   callable is *not* a variant of anything and keeps its plain name
-  (`linemesh.shape.arclength_fractions`, `sweep`'s `path=`).
+  (`linemesh.arclength_fractions`, `sweep`'s `path=`).
 - **Typing is enforced** (`disallow_untyped_defs`, `check_untyped_defs`,
   `disallow_any_generics`). Use the dtype-parametrized aliases in `_typing.py` —
   `FloatArray` / `IntArray` / `BoolArray` / `StrArray`; a bare `np.ndarray` is an error.

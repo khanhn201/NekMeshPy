@@ -10,8 +10,11 @@ from __future__ import annotations
 from typing import Any, NamedTuple, Union
 
 import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.csgraph import connected_components
 
 from .._typing import IntArray, PointArray
+from . import conform
 
 # Nek face -> the 4 corner point positions (0-based), cyclic order.
 _FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
@@ -52,22 +55,17 @@ class TopologyReport(NamedTuple):
 
 # -- shared helpers -----------------------------------------------------
 def _count_components(n: int, edges: IntArray) -> int:
-    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges."""
-    parent: IntArray = np.arange(n, dtype=np.int64)
+    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges.
 
-    def find(x: int) -> int:
-        root = x
-        while parent[root] != root:
-            root = int(parent[root])
-        while parent[x] != root:
-            parent[x], x = root, int(parent[x])
-        return root
-
-    for a, b in np.asarray(edges, dtype=np.int64).reshape(-1, 2):
-        ra, rb = find(int(a)), find(int(b))
-        if ra != rb:
-            parent[ra] = rb
-    return int(np.unique([find(i) for i in range(n)]).size) if n else 0
+    SciPy's union-find rather than a hand-rolled one: the Python version walked the
+    parent array one element at a time and cost ~18 s on a 490k-hex build (17.4M calls
+    to its inner ``find``), against ~0.1 s here for the same answer."""
+    if n == 0:
+        return 0
+    e = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
+    graph = sp.coo_matrix(
+        (np.ones(e.shape[0], dtype=np.int8), (e[:, 0], e[:, 1])), shape=(n, n))
+    return int(connected_components(graph, directed=False, return_labels=False))
 
 
 def _adjacency_edges(inverse: IntArray, counts: IntArray,
@@ -79,9 +77,14 @@ def _adjacency_edges(inverse: IntArray, counts: IntArray,
     owner_s = owner[order]
     if inv_s.size == 0:
         return np.zeros((0, 2), dtype=np.int64)
-    groups = np.split(owner_s, np.flatnonzero(np.diff(inv_s)) + 1)
-    pairs = [g for g in groups if g.size == 2]
-    return np.array(pairs, dtype=np.int64) if pairs else np.zeros((0, 2), np.int64)
+    # group boundaries, then take the runs of length two without materializing a
+    # Python list of ~2M single-facet subarrays (``np.split`` was 5 s of the build)
+    starts = np.concatenate(([0], np.flatnonzero(np.diff(inv_s)) + 1))
+    sizes = np.diff(np.concatenate((starts, [inv_s.size])))
+    two = starts[sizes == 2]
+    if two.size == 0:
+        return np.zeros((0, 2), dtype=np.int64)
+    return np.stack([owner_s[two], owner_s[two + 1]], axis=1).astype(np.int64)
 
 
 def _count_hanging_points(points: PointArray, edges: IntArray,
@@ -99,24 +102,36 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
     tol = rtol * (scale if scale > 0 else 1.0)
     Xc = X[cand]
     tree = cKDTree(Xc)
-    hanging: set[int] = set()
-    for i, j in E:
-        i, j = int(i), int(j)
-        a, b = X[i], X[j]
-        d = b - a
-        L2 = float(d @ d)
-        if L2 <= tol * tol:
-            continue
-        for c in tree.query_ball_point(0.5 * (a + b), 0.5 * float(np.sqrt(L2)) + tol):
-            k = int(cand[c])
-            if k == i or k == j:
-                continue
-            t = float((Xc[c] - a) @ d) / L2
-            if t <= 1e-9 or t >= 1.0 - 1e-9:
-                continue
-            if float(np.linalg.norm(Xc[c] - (a + t * d))) <= tol:
-                hanging.add(k)
-    return len(hanging)
+    # One batched ball query and one vectorized projection, rather than a Python loop
+    # per edge: the loop was ~12 s of a 490k-hex build, almost all of it in its own
+    # body rather than in the tree.
+    A, B = X[E[:, 0]], X[E[:, 1]]
+    D = B - A
+    L2 = np.einsum("ij,ij->i", D, D)
+    idx = np.flatnonzero(L2 > tol * tol)              # skip degenerate edges
+    if idx.size == 0:
+        return 0
+    hits = tree.query_ball_point(0.5 * (A[idx] + B[idx]),
+                                 0.5 * np.sqrt(L2[idx]) + tol, workers=-1)
+    counts: IntArray = np.fromiter((len(h) for h in hits), dtype=np.int64,
+                                   count=len(hits))
+    if not counts.any():
+        return 0
+    ci = np.concatenate([np.asarray(h, dtype=np.int64) for h in hits if h])
+    ei: IntArray = np.repeat(idx, counts)              # the edge each hit belongs to
+    k = cand[ci]
+    keep = (k != E[ei, 0]) & (k != E[ei, 1])           # an endpoint is not hanging
+    ci, ei, k = ci[keep], ei[keep], k[keep]
+    if ci.size == 0:
+        return 0
+    t = np.einsum("ij,ij->i", Xc[ci] - A[ei], D[ei]) / L2[ei]
+    keep = (t > 1e-9) & (t < 1.0 - 1e-9)               # strictly interior
+    ci, ei, k, t = ci[keep], ei[keep], k[keep], t[keep]
+    if ci.size == 0:
+        return 0
+    perp = Xc[ci] - (A[ei] + t[:, None] * D[ei])
+    on_edge = np.sqrt(np.einsum("ij,ij->i", perp, perp)) <= tol
+    return int(np.unique(k[on_edge]).size)
 
 
 # -- hex (volume) meshes ------------------------------------------------
@@ -132,9 +147,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
     N = HC.shape[0]
     faces = HC[:, _FACE_POINTS].reshape(N * 6, 4)          # cyclic-order faces
     keys = np.sort(faces, axis=1)                         # orientation-free key
-    _, inverse, counts = np.unique(keys, axis=0, return_inverse=True,
-                                   return_counts=True)
-    inverse = inverse.ravel()
+    _, inverse, counts = conform.unique_rows(keys, return_counts=True)
 
     n_boundary = int(np.sum(counts == 1))
     n_internal = int(np.sum(counts == 2))
@@ -147,7 +160,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
                          bfaces[:, [2, 3]], bfaces[:, [3, 0]]], axis=0)
     be = np.sort(be, axis=1)
     if be.size:
-        ube, bec = np.unique(be, axis=0, return_counts=True)
+        ube, _, bec = conform.unique_rows(be, return_counts=True)
     else:
         ube, bec = be.reshape(0, 2), np.zeros(0, np.int64)
     n_open_edges = int(np.sum(bec != 2))

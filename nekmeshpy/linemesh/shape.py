@@ -304,3 +304,12 @@ def rectangle(width: float, height: float, n: int, *,
         tags = [t for side in sides for t in [side_tags.get(side, "")] * m]
     # every side is straight, so ``loft``'s default straight GLL interior is exact
     return loft(pts, loop=True, element_tags=tags, order=order)
+
+__all__ = [
+    "arc",
+    "arclength_fractions",
+    "circle",
+    "line",
+    "rectangle",
+    "sweep_fractions",
+]

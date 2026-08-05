@@ -69,10 +69,10 @@ for i, u in enumerate(us):
         for k, w in enumerate(ws):
             P[i, j, k] = trilinear(CORNERS, u, v, w)
 
-mesh = hexmesh.lift.from_grid(P, side_tags={s: s for s in SIDES}, order=ORDER)
+mesh = hexmesh.from_grid(P, side_tags={s: s for s in SIDES}, order=ORDER)
 
 # -- report + export ---------------------------------------------------------
-stats = hexmesh.query.quality_summary(mesh)
+stats = hexmesh.quality_summary(mesh)
 print("block: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 

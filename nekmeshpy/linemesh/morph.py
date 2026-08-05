@@ -157,3 +157,12 @@ def scale(mesh: LineMesh, factor: float | Vec3 | Sequence[float],
     """A new curve scaled about ``center`` by ``factor`` -- a scalar (uniform) or a
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
+
+__all__ = [
+    "blend",
+    "reverse",
+    "rotate",
+    "scale",
+    "transform",
+    "translate",
+]

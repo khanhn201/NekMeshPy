@@ -28,14 +28,14 @@ from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 # 1. Boundary: a closed circular loop, tagged "wall" at the lowest level.
 n = 4 * 6                                   # 4 * n_side points around the ring
-boundary = linemesh.shape.circle(radius=0.5, n=n, element_tags=["wall"] * n)
+boundary = linemesh.circle(radius=0.5, n=n, element_tags=["wall"] * n)
 
 # 2. Section: fill the loop with an O-grid, 4 radial layers.
-section = quadmesh.shape.ogrid(boundary, n_side=6, radial=4,
+section = quadmesh.ogrid(boundary, n_side=6, radial=4,
                          smoothing_method="bilinear")
 
 # 3. Volume: sweep 40 layers along +z; name the two end caps.
-mesh = hexmesh.lift.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
+mesh = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
                        first_tag="inlet", last_tag="outlet")
 ```
 

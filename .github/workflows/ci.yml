@@ -41,3 +41,22 @@ jobs:
           pip install -e ".[all]"
       - name: Pytest
         run: pytest
+
+  slow-examples:
+    # The large chimera meshers (19 s / 57 s / 138 s) are deselected from the default
+    # run by `addopts`, so they get one job of their own rather than 4x in the matrix.
+    # They are not optional: every example is a mesher, and four of them once shipped
+    # broken for want of any test at all.
+    name: Slow examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+      - name: Pytest (slow)
+        run: pytest -m slow

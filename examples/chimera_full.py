@@ -1,13 +1,13 @@
-r"""Full chimera manifold: two chimera_chain ports fed by a serpentine coil.
+r"""Full chimera manifold: two chimera ports fed by a serpentine coil.
 
 The whole assembly, inlet to outlet:
 
-    riser -> T1 -> (main leg) elbow up into chimera_chain's own opening
+    riser -> T1 -> (main leg) elbow up into chimera's own opening
                 \-- (branch, -y) --> T2 --> bridge inward, bend to +z
                                               --> the serpentine coil
 
 Two of those, mirrored about the coil's midspan: the T1 on the **negative-x**
-side feeds chimera_chain's *outlet*, the one on the **positive-x** side its
+side feeds chimera's *outlet*, the one on the **positive-x** side its
 *inlet*.
 
 Each T1 branch does not carry one T2 but a **chain of ``N_T2``**, each hanging
@@ -24,7 +24,7 @@ above the first coil in y.
 
 Produces ``chimera_full.re2`` and ``chimera_full.vtu``.
 
-``FAST`` (default ``True``) swaps the real ``chimera_chain.py`` build -- 350k
+``FAST`` (default ``True``) swaps the real ``chimera.py`` build -- 350k
 elements, a couple of minutes -- for two short capped stubs carrying its exact
 inlet/outlet disc pattern, so the manifold's own geometry can be checked in
 seconds.  Set it ``False`` for the whole thing.
@@ -75,7 +75,7 @@ def _find_roll(sec_a, sec_b, axis):
     ca, cb = sec_a.points.mean(axis=0), sec_b.points.mean(axis=0)
     best_k, best_d = None, np.inf
     for k in range(4):
-        cand = sec_a.rotate(k * np.pi / 2.0, axis=axis, center=ca)
+        cand = quadmesh.rotate(sec_a, k * np.pi / 2.0, axis=axis, center=ca)
         d = np.linalg.norm((cand.points - ca) - (sec_b.points - cb), axis=1).max()
         if d < best_d:
             best_k, best_d = k, d
@@ -165,7 +165,7 @@ def pattern_adapter(sec_a, sec_b, axis, n_layers=2, name=""):
     pattern shows up later."""
     ca, cb = sec_a.points.mean(axis=0), sec_b.points.mean(axis=0)
     best_k = _find_roll(sec_a, sec_b, axis)
-    cand = sec_a.rotate(best_k * np.pi / 2.0, axis=axis, center=ca)
+    cand = quadmesh.rotate(sec_a, best_k * np.pi / 2.0, axis=axis, center=ca)
     # sigma: sec_a's own near-4-fold self-map under the discovered roll (which
     # of sec_a's *own* corners does corner i land closest to, rotated) --
     # entirely about sec_a's own geometry, nothing to do with sec_b yet.
@@ -182,10 +182,10 @@ def pattern_adapter(sec_a, sec_b, axis, n_layers=2, name=""):
             print("  worst[%d] d=%.4f a=%s b=%s" % (
                 i, d_per[i], np.round(sec_a.points[i] - ca, 3),
                 np.round(sec_b_aligned.points[i] - cb, 3)))
-    result = hexmesh.assemble.loft(quadmesh.morph.blend(sec_a, sec_b_aligned,
+    result = hexmesh.loft(quadmesh.blend(sec_a, sec_b_aligned,
                                          np.linspace(0.0, 1.0, n_layers + 1)))
     if name:
-        sj = result.scaled_jacobian()
+        sj = hexmesh.scaled_jacobian(result)
         worst_hex = int(np.argmin(sj))
         print("  adapter min sj=%.4e at hex %d / %d" % (sj.min(), worst_hex, result.n_hexes))
         hc = result.hexes[worst_hex]
@@ -200,8 +200,8 @@ RADIAL = np.array([0.0, 0.4, 0.8, 1.0])
 CENTER_SCALE = 0.5
 n_slices = 3
 
-R_MAIN = 1.2     # == chimera_chain's R_MAIN
-R_BR = 0.5       # == chimera_chain's R_BRANCH
+R_MAIN = 1.2     # == chimera's R_MAIN
+R_BR = 0.5       # == chimera's R_BRANCH
 
 L1 = 2.5 * R_MAIN     # T1 main half-length
 H1 = 2.5 * R_MAIN     # T1 branch length
@@ -219,7 +219,7 @@ def normal_of(qm):
     return vt[-1]
 
 
-# chimera_chain's own port cross-section: the same quadrant_disc recipe its
+# chimera's own port cross-section: the same quadrant_disc recipe its
 # junctions are built from, so it reproduces a port's pattern exactly.
 _chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
                CENTER_SCALE=0.7, PHI_W=np.deg2rad(100.0), N_TRANS=2, N_BRANCH=2)
@@ -228,7 +228,7 @@ _chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
 def fake_chi_disc(center):
     tj = build_tjunction(1.2, 0.5, 3.0, **_chi_kw)
     d = tj.disc_plus  # normal +z, matches chimera's actual inlet/outlet convention
-    return d.translate(np.asarray(center) - np.array([0.0, 0.0, 1.2]))
+    return quadmesh.translate(d, np.asarray(center) - np.array([0.0, 0.0, 1.2]))
 
 
 def port_disc(hexmesh, tag, template):
@@ -238,7 +238,7 @@ def port_disc(hexmesh, tag, template):
     ``hexmesh``, paired to the template by nearest corner.
 
     Needed because a recipe that reproduces one port exactly need not
-    reproduce the other: chimera_chain builds its *inlet* as a straight
+    reproduce the other: chimera builds its *inlet* as a straight
     ``end_stub`` (which ``fake_chi_disc`` matches to 1e-15) but its *outlet*
     through ``outlet_return()``'s bend, whose end disc lands ~3.4e-3 away.
     At order 1 that difference just welds; at order > 1 ``HexMesh.merge``
@@ -255,11 +255,17 @@ def port_disc(hexmesh, tag, template):
     assert len(set(g.tolist())) == g.size, (
         "port_disc[%s]: template does not pair one-for-one with the port" % tag)
 
+    # Only the port's own entities can match, so narrow to those before building any
+    # Python lookup: the mesh has millions of edges and faces and the template a few
+    # hundred, and indexing numpy scalars one at a time over the whole mesh was ~8 s.
     he, hn = hexmesh.edges, hexmesh.edge_nodes
+    on_port = np.zeros(hexmesh.points.shape[0], dtype=bool)
+    on_port[gids] = True
+    ekeep = np.flatnonzero(on_port[he[:, 0]] & on_port[he[:, 1]])
     ekey = {}
-    for e in range(he.shape[0]):
-        ekey[(int(he[e, 0]), int(he[e, 1]))] = (e, False)
-        ekey[(int(he[e, 1]), int(he[e, 0]))] = (e, True)
+    for e, (a, b) in zip(ekeep.tolist(), he[ekeep].tolist()):
+        ekey[(a, b)] = (e, False)
+        ekey[(b, a)] = (e, True)
     tl = template.lines
     new_ei = np.empty_like(tl.interior)
     for e in range(tl.lines.shape[0]):
@@ -271,7 +277,8 @@ def port_disc(hexmesh, tag, template):
                          tl.element_tags, order=tl.order)
 
     hf, hfn = hexmesh.faces, hexmesh.face_nodes
-    fkey = {frozenset(int(x) for x in hf[i]): i for i in range(hf.shape[0])}
+    fkeep = np.flatnonzero(on_port[hf].all(axis=1))
+    fkey = {frozenset(r): i for i, r in zip(fkeep.tolist(), hf[fkeep].tolist())}
     new_qi = np.empty_like(template.interior)
     for q in range(template.quads.shape[0]):
         new_qi[q] = hfn[fkey[frozenset(int(g[c]) for c in template.quads[q])]]
@@ -283,7 +290,7 @@ def port_disc(hexmesh, tag, template):
                     order=template.order)
 
 
-# chimera_chain's REAL inlet/outlet disc centres (probed: both at z = -17.5,
+# chimera's REAL inlet/outlet disc centres (probed: both at z = -17.5,
 # facing -z -- the chain body extends up to z = +160). Our whole manifold
 # therefore sits BELOW that plane and every pipe that meets chimera arrives
 # heading +z, face to face with chimera's own -z-facing openings.
@@ -295,9 +302,9 @@ CHI_OUT = np.array([-15.0, 6.6, -17.5])
 chi_mesh = None
 if not FAST:
     import runpy as _runpy
-    print("building real chimera_chain (slow)...")
+    print("building real chimera (slow)...")
     _chi_ns = _runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                           "chimera_chain.py"))
+                                           "chimera.py"))
     chi_mesh = _chi_ns["mesh"]
 
 if chi_mesh is None:
@@ -329,8 +336,8 @@ def build_t1(mirror=False):
                          PHI_W=T1_PHI_W, N_TRANS=n_slices, N_BRANCH=n_slices,
                          Z_NEAR=L1)
     ang, axis = ROT_T1, AXIS_T1
-    core, da, db, dbr = (tj.core.rotate(ang, axis=axis), tj.disc_minus.rotate(ang, axis=axis),
-                        tj.disc_plus.rotate(ang, axis=axis), tj.disc_branch.rotate(ang, axis=axis))
+    core, da, db, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
+                        quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
     if mirror:
         # T1_out's main pipe "comes in from the opposite side": an extra 180
         # about the branch's own axis (world y) swaps disc_a/disc_b's world
@@ -338,8 +345,8 @@ def build_t1(mirror=False):
         # itself untouched (a rotation, not a mirror -- element quality is
         # unaffected, unlike HexMesh.transform's own reflection warning).
         yax = (0.0, 1.0, 0.0)
-        core, da, db, dbr = (core.rotate(np.pi, axis=yax), da.rotate(np.pi, axis=yax),
-                            db.rotate(np.pi, axis=yax), dbr.rotate(np.pi, axis=yax))
+        core, da, db, dbr = (hexmesh.rotate(core, np.pi, axis=yax), quadmesh.rotate(da, np.pi, axis=yax),
+                            quadmesh.rotate(db, np.pi, axis=yax), quadmesh.rotate(dbr, np.pi, axis=yax))
     return tj._replace(core=core, disc_minus=da, disc_plus=db, disc_branch=dbr)
 
 
@@ -378,8 +385,8 @@ def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, las
         xz = path.tangent(s)
         return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
 
-    fr = linemesh.shape.sweep_fractions(path.break_fractions * total, total, total / n_layers)
-    return hexmesh.lift.sweep(section, centerline, fr, tangent=tangent, orientation="fixed",
+    fr = linemesh.sweep_fractions(path.break_fractions * total, total, total / n_layers)
+    return hexmesh.sweep(section, centerline, fr, tangent=tangent, orientation="fixed",
                          up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag)
 
 
@@ -427,10 +434,10 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
                                               vertical_run=VERTICAL_DROP - ADAPT)
     t1_center = np.array([x0 - b_sign * L1, side_center[1], z0])
     assert abs(t1_center[0] - t1_x) < 1e-9
-    core = t1.core.translate(t1_center)
-    da = t1.disc_minus.translate(t1_center)
-    db = t1.disc_plus.translate(t1_center)
-    dbr = t1.disc_branch.translate(t1_center)
+    core = hexmesh.translate(t1.core, t1_center)
+    da = quadmesh.translate(t1.disc_minus, t1_center)
+    db = quadmesh.translate(t1.disc_plus, t1_center)
+    dbr = quadmesh.translate(t1.disc_branch, t1_center)
     db_c = db.points.mean(axis=0)
 
     def _end_section(disc):
@@ -454,7 +461,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
         m, o = frames.sweep_placements(disc.points, P3, orientation="fixed",
                                        up=(0.0, 1.0, 0.0), origin=db_c,
                                        path_tangents=T3)[1]
-        return disc.transform(m, o)
+        return quadmesh.transform(disc, m, o)
 
     conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
     end_sec = _end_section(db)
@@ -485,12 +492,12 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # specific residual, rather than loosening the tolerance for the whole
     # assembly (which welded an unrelated, closer-together pair by mistake
     # the one time this was tried globally).
-    conn_chi = hexmesh.assemble.merge([conn_chi, adapter], tol=0.05)
+    conn_chi = hexmesh.merge([conn_chi, adapter], tol=0.05)
     return core, [conn_chi], riser, dbr, t1_center
 
 
 # T1 on the negative-x side (the assembly's own "inlet" riser) connects to
-# chimera_chain's OUTLET; T1 on the positive-x side ("outlet" riser) to its
+# chimera's OUTLET; T1 on the positive-x side ("outlet" riser) to its
 # INLET.  Which physical port a side reaches is carried entirely by the
 # (chi_target, chi_disc) pair -- place_t1 itself is agnostic.
 X_MID = 0.5 * (CHI_IN[0] + CHI_OUT[0])
@@ -505,13 +512,17 @@ print("t1c_out", t1c_out, "| y-pipe separation:", t1c_out[0] - t1c_in[0])
 
 for _nm, _m in [("core_in", core_in), ("conn_chi_in", conn_chi_in[0]), ("riser_in", riser_in),
                ("core_out", core_out), ("conn_chi_out", conn_chi_out[0]), ("riser_out", riser_out)]:
-    print("  %s min_sj=%.4e" % (_nm, _m.scaled_jacobian().min()))
+    print("  %s min_sj=%.4e" % (_nm, hexmesh.scaled_jacobian(_m).min()))
 
 pieces += [core_in, *conn_chi_in, riser_in, core_out, *conn_chi_out, riser_out]
 
-mesh1 = hexmesh.assemble.merge(pieces, tol=0.005)
-print("stage1:", mesh1.n_hexes, "hexes, watertight", hexmesh.query.is_watertight(mesh1),
-     "conforming", hexmesh.query.is_conforming(mesh1), "min sj", mesh1.scaled_jacobian().min())
+mesh1 = hexmesh.merge(pieces, tol=0.005)
+# one report, read twice: is_watertight and is_conforming each recompute the
+# whole thing, which is seconds apiece at this size.
+_rep1 = hexmesh.topology_report(mesh1)
+print("stage1:", mesh1.n_hexes, "hexes, watertight",
+      _rep1.watertight and _rep1.n_components == 1,
+      "conforming", _rep1.conformal, "min sj", hexmesh.scaled_jacobian(mesh1).min())
 
 # -----------------------------------------------------------------------------
 # T2: branches off T1's -y branch.  Unequal radius (main = R_MAIN, matching
@@ -548,8 +559,8 @@ def build_t2(mirror=False):
                          PHI_W=np.deg2rad(100.0), N_TRANS=n_slices,
                          N_BRANCH=N2_BRANCH)
     ang, axis = ROT_T2, AXIS_T2
-    core, dm, dp, dbr = (tj.core.rotate(ang, axis=axis), tj.disc_minus.rotate(ang, axis=axis),
-                        tj.disc_plus.rotate(ang, axis=axis), tj.disc_branch.rotate(ang, axis=axis))
+    core, dm, dp, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
+                        quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
     if mirror:
         # T2's branch always comes out world +x (unaffected by ROT_T2, which
         # only turns the main axis z -> y) -- so without this, T2_out's
@@ -559,8 +570,8 @@ def build_t2(mirror=False):
         # 180 about the main axis (world y) flips branch x -> -x while
         # leaving the y-axis main legs on the rotation axis, invariant.
         yax = (0.0, 1.0, 0.0)
-        core, dm, dp, dbr = (core.rotate(np.pi, axis=yax), dm.rotate(np.pi, axis=yax),
-                            dp.rotate(np.pi, axis=yax), dbr.rotate(np.pi, axis=yax))
+        core, dm, dp, dbr = (hexmesh.rotate(core, np.pi, axis=yax), quadmesh.rotate(dm, np.pi, axis=yax),
+                            quadmesh.rotate(dp, np.pi, axis=yax), quadmesh.rotate(dbr, np.pi, axis=yax))
     return tj._replace(core=core, disc_minus=dm, disc_plus=dp, disc_branch=dbr)
 
 
@@ -569,7 +580,7 @@ def build_t2(mirror=False):
 # in a single fixed-y plane), so T2_SHARED_Y = min(chi target y) - H1 -
 # RUN_T1_T2 -- meaning chimera sits exactly (H1 + RUN_T1_T2) above serp's own
 # y, for *any* absolute chimera y. Fixed at 10.0 - H1 so that gap is exactly
-# the user's requested 10, without having to move chimera_chain itself.
+# the user's requested 10, without having to move chimera itself.
 RUN_T1_T2 = 10.0 - H1
 
 
@@ -602,7 +613,7 @@ def _stub_sections(disc, c, n_dir, dist, n_sec):
 
     placements = frames.sweep_placements(disc.points, path(s_all), orientation="fixed",
                                          up=up, origin=c, path_tangents=tang(s_all))
-    return [disc.transform(m, o) for m, o in placements]
+    return [quadmesh.transform(disc, m, o) for m, o in placements]
 
 
 def weld_bridge(a, b, n=4, stub_frac=0.3, stub_max=1.5, n_blend=6):
@@ -659,8 +670,8 @@ def weld_bridge(a, b, n=4, stub_frac=0.3, stub_max=1.5, n_blend=6):
         "two disc patterns are too dissimilar to pair one-for-one")
     b_secs = [_reindex_geometry(a_end, s, sigma) for s in b_secs_raw]
 
-    blend_secs = quadmesh.morph.blend(a_end, b_secs[0], np.linspace(0.0, 1.0, n_blend + 1))
-    return hexmesh.assemble.loft(a_secs[:-1] + blend_secs + b_secs[1:])
+    blend_secs = quadmesh.blend(a_end, b_secs[0], np.linspace(0.0, 1.0, n_blend + 1))
+    return hexmesh.loft(a_secs[:-1] + blend_secs + b_secs[1:])
 
 
 def place_t2(source_disc, t2_y, mirror=False):
@@ -681,10 +692,10 @@ def place_t2(source_disc, t2_y, mirror=False):
     run = br_pos[1] - t2_y - L2
     assert run > 0.1, "t2_y too close to source disc y=%.2f (side)" % br_pos[1]
     t2_center = np.array([br_pos[0], t2_y, br_pos[2]])
-    core = t2.core.translate(t2_center)
-    da = t2.disc_minus.translate(t2_center)   # -y, on to the next T2 (or capped)
-    db = t2.disc_plus.translate(t2_center)    # +y, faces back upstream
-    dbr = t2.disc_branch.translate(t2_center)  # +/-x (mirror), out to a serpentine
+    core = hexmesh.translate(t2.core, t2_center)
+    da = quadmesh.translate(t2.disc_minus, t2_center)   # -y, on to the next T2 (or capped)
+    db = quadmesh.translate(t2.disc_plus, t2_center)    # +y, faces back upstream
+    dbr = quadmesh.translate(t2.disc_branch, t2_center)  # +/-x (mirror), out to a serpentine
     conn = weld_bridge(source_disc, db)
     return core, conn, da, dbr, t2_center
 
@@ -710,7 +721,7 @@ def t2_chain(source_disc, mirror):
                                             mirror=mirror)
         levels.append({"core": core, "conn": conn, "da": da, "dbr": dbr, "ctr": ctr})
         src = da
-    levels[-1]["dead"] = hexmesh.lift.extrude(levels[-1]["da"], 1.5 * R_BR, 2,
+    levels[-1]["dead"] = hexmesh.extrude(levels[-1]["da"], 1.5 * R_BR, 2,
                                          axis=(0.0, -1.0, 0.0), last_tag="wall")
     return levels
 
@@ -721,10 +732,11 @@ chain_out = t2_chain(br_out, mirror=True)
 pieces2 = pieces + [p for lv in (*chain_in, *chain_out)
                     for p in (lv["core"], lv["conn"], *( [lv["dead"]]
                                                          if "dead" in lv else []))]
-mesh2 = hexmesh.assemble.merge(pieces2, tol=0.005)
+mesh2 = hexmesh.merge(pieces2, tol=0.005)
+_rep2 = hexmesh.topology_report(mesh2)
 print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
-      hexmesh.query.is_watertight(mesh2), "conforming", hexmesh.query.is_conforming(mesh2),
-      "min sj", mesh2.scaled_jacobian().min())
+      _rep2.watertight and _rep2.n_components == 1, "conforming", _rep2.conformal,
+      "min sj", hexmesh.scaled_jacobian(mesh2).min())
 
 # -----------------------------------------------------------------------------
 # T2 branch -> serpentine.  The coil's own shape (COIL_MOVES below) is FIXED --
@@ -823,7 +835,7 @@ def _end_section(section, moves, heading, y_fixed):
     T3 = np.stack([T[:, 0], np.zeros(2), T[:, 1]], axis=1)
     m, o = frames.sweep_placements(section.points, P3, orientation="fixed",
                                    up=(0.0, 1.0, 0.0), origin=c, path_tangents=T3)[1]
-    return section.transform(m, o)
+    return quadmesh.transform(section, m, o)
 
 
 TOTAL_COIL = _coil_local.total_length
@@ -879,7 +891,7 @@ def build_coil(dbr_i, dbr_o):
     inflow_moves = moves_in + COIL_MOVES
     path = turtle_path(inflow_moves, start=(ci[0], ci[2]), heading=0.0)
     total = path.total_length
-    fr = linemesh.shape.sweep_fractions(path.break_fractions * total, total, COIL_TARGET_LEN)
+    fr = linemesh.sweep_fractions(path.break_fractions * total, total, COIL_TARGET_LEN)
 
     def centerline(s):
         xz = path.centerline(s)
@@ -889,9 +901,9 @@ def build_coil(dbr_i, dbr_o):
         xz = path.tangent(s)
         return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
 
-    inflow = hexmesh.lift.sweep(dbr_i, centerline, fr, tangent=tangent,
+    inflow = hexmesh.sweep(dbr_i, centerline, fr, tangent=tangent,
                            orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci)
-    assert hexmesh.query.is_conforming(inflow), "coil sweep produced a non-conforming mesh"
+    assert hexmesh.is_conforming(inflow), "coil sweep produced a non-conforming mesh"
     conn_o = build_bend_mesh(dbr_o, co, moves_out, np.pi, co[1], n_slices)
 
     # conn_o's own end (dbr_o's pattern, through its own bend) and the coil's
@@ -907,20 +919,22 @@ coils = [p for lv_i, lv_o in zip(chain_in, chain_out)
          for p in build_coil(lv_i["dbr"], lv_o["dbr"])]
 
 pieces3 = pieces2 + coils
-mesh3 = hexmesh.assemble.merge(pieces3, tol=0.005)
-print("stage3:", mesh3.n_hexes, "watertight", hexmesh.query.is_watertight(mesh3),
-     "conforming", hexmesh.query.is_conforming(mesh3), "min sj", mesh3.scaled_jacobian().min())
+mesh3 = hexmesh.merge(pieces3, tol=0.005)
+_rep3 = hexmesh.topology_report(mesh3)
+print("stage3:", mesh3.n_hexes, "watertight",
+      _rep3.watertight and _rep3.n_components == 1,
+      "conforming", _rep3.conformal, "min sj", hexmesh.scaled_jacobian(mesh3).min())
 # -- registration check: does the connector's rising end actually land point-
 # for-point on chimera's own disc pattern (mod the quadrant disc's 90-degree
 # symmetry)?  The fake stand-in discs use the identical pattern/params as the
-# real chimera_chain, so this check is valid in FAST mode too. conn_chi_in
+# real chimera, so this check is valid in FAST mode too. conn_chi_in
 # targets CHI_OUT and conn_chi_out targets CHI_IN (the swap above), so the
 # discs paired here follow the same swap, not the "in"/"out" name.
 for nm, conn, disc in (("in", conn_chi_in[-1], chi_out_disc),
                        ("out", conn_chi_out[-1], chi_in_disc)):
     d, _ = cKDTree(conn.points).query(disc.points)
     print("chimera %s registration: max dist %.3e" % (nm, d.max()))
-    print("chimera %s adapter min sj: %.4e" % (nm, conn.scaled_jacobian().min()))
+    print("chimera %s adapter min sj: %.4e" % (nm, hexmesh.scaled_jacobian(conn).min()))
 
 manifold = pieces3
 
@@ -930,15 +944,17 @@ if chi_mesh is not None:
     # riser tops); a stale tagged interior face would export as a bogus BC.
     chi_mesh.face_tags = chi_mesh.face_tags.select(
         chi_mesh.face_tags.mask_for("wall"))
-    mesh_out = hexmesh.assemble.merge([*manifold, chi_mesh], tol=0.005)
+    mesh_out = hexmesh.merge([*manifold, chi_mesh], tol=0.005)
 else:
-    chi_in_cap = hexmesh.lift.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
-    chi_out_cap = hexmesh.lift.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
-    mesh_out = hexmesh.assemble.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
+    chi_in_cap = hexmesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
+    chi_out_cap = hexmesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
+    mesh_out = hexmesh.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
 
-print("mesh_out:", mesh_out.n_hexes, "hexes, watertight", hexmesh.query.is_watertight(mesh_out),
-      "conforming", hexmesh.query.is_conforming(mesh_out))
-print(hexmesh.query.topology_report(mesh_out))
+_rep_out = hexmesh.topology_report(mesh_out)
+print("mesh_out:", mesh_out.n_hexes, "hexes, watertight",
+      _rep_out.watertight and _rep_out.n_components == 1,
+      "conforming", _rep_out.conformal)
+print(_rep_out)
 
 mesh = mesh_out
 OUT_NAME = "chimera_full"
@@ -948,7 +964,7 @@ export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 export.to_fld(mesh, OUT_NAME + ".f00000")
 print("groups:", ", ".join(mesh.face_group_tags))
 
-stats = mesh.quality_summary()
+stats = hexmesh.quality_summary(mesh)
 assert stats.min > 0.0, "inverted element: min scaled Jacobian %g" % stats.min
 print("%d hex elements, %d points, order %d"
       % (mesh.n_hexes, mesh.n_points, mesh.order))

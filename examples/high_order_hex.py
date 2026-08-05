@@ -37,14 +37,14 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
 
 # -- two closed order-N quad surfaces, paired by index -----------------------
-cube = quadmesh.shape.box(S, N_FACE, order=ORDER, patch_tags={
+cube = quadmesh.box(S, N_FACE, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})
-sphere = quadmesh.shape.sphere(R, N_FACE, order=ORDER)
+sphere = quadmesh.sphere(R, N_FACE, order=ORDER)
 
 # -- fill the shell sphere -> cube -------------------------------------------
-mesh = hexmesh.lift.annulus(sphere, cube, radial=np.linspace(0.0, 1.0, N_RADIAL + 1))
+mesh = hexmesh.annulus(sphere, cube, radial=np.linspace(0.0, 1.0, N_RADIAL + 1))
 
 # inner-wall nodes sit on the true sphere, to machine precision.  The wall is a
 # set of *shared faces* in the hex B-rep, so read it straight off the entities:

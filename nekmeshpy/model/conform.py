@@ -210,6 +210,53 @@ def _orient_tables() -> tuple[IntArray, IntArray, IntArray]:
 _FACE_NB, _FACE_CODE_TAB, _FACE_CORNER_UV = _orient_tables()
 
 
+def unique_rows(rows: IntArray, *, return_counts: bool = False
+                ) -> tuple[IntArray, IntArray, IntArray]:
+    """``np.unique(rows, axis=0, return_inverse=True[, return_counts])``, but fast.
+
+    Returns ``(uniq, inverse[, counts])`` -- ``counts`` is an empty array unless
+    ``return_counts``.  Identical output to ``np.unique(axis=0)``, including the
+    lexicographic row order, not merely an equivalent labelling.
+
+    ``np.unique(axis=0)`` views each row as a void scalar and argsorts *that*, which is
+    far slower than sorting integers.  Two columns pack losslessly into one int64 as
+    ``a*n + b``; because that is a positional numeral system, ascending key order **is**
+    lexicographic row order.  Wider rows will not pack, so those go through ``lexsort``
+    -- whose last key is the primary one, hence the reversed column list.  This was 52 s
+    of `argsort` on a 490k-hex build.
+    """
+    a = np.ascontiguousarray(rows, dtype=np.int64)
+    if a.ndim != 2:
+        raise ValueError("unique_rows expects (M,k) rows, got %s" % (a.shape,))
+    m, k = a.shape
+    if m == 0:
+        return (a.reshape(0, k), np.zeros(0, np.int64), np.zeros(0, np.int64))
+    n = int(a.max()) + 1 if a.size else 1
+    if k == 2 and n * n <= (1 << 62):
+        key = a[:, 0] * n + a[:, 1]
+        if return_counts:                    # split for the typed np.unique overloads
+            ukey, inv2, cnt = np.unique(key, return_inverse=True, return_counts=True)
+        else:
+            ukey, inv2 = np.unique(key, return_inverse=True)
+            cnt = np.zeros(0, dtype=np.int64)
+        uniq = np.stack([ukey // n, ukey % n], axis=1)
+        return (uniq.astype(np.int64), inv2.ravel().astype(np.int64),
+                cnt.astype(np.int64))
+    order = np.lexsort(tuple(a[:, c] for c in range(k - 1, -1, -1)))
+    srt = a[order]
+    first: BoolArray = np.empty(m, dtype=bool)
+    first[0] = True
+    np.any(srt[1:] != srt[:-1], axis=1, out=first[1:])
+    uniq = srt[first]
+    inv: IntArray = np.empty(m, dtype=np.int64)
+    inv[order] = np.cumsum(first) - 1
+    if not return_counts:
+        return uniq, inv, np.zeros(0, np.int64)
+    starts = np.flatnonzero(first)
+    counts = np.diff(np.concatenate((starts, [m]))).astype(np.int64)
+    return uniq, inv, counts
+
+
 def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code.
 
@@ -229,7 +276,11 @@ def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     e = hexes.shape[0]
     ids = hexes[:, _LOCAL_FACES]                            # (E,6,4)
     key = np.sort(ids, axis=2).reshape(e * 6, 4)
-    uniq, inv = np.unique(key, axis=0, return_inverse=True)
+    # Same argument as ``unique_edges``, but four ids will not pack into an int64, so
+    # this sorts the columns directly instead: ``lexsort`` takes its last key as the
+    # primary one, so listing them reversed reproduces ``np.unique(axis=0)``'s
+    # lexicographic row order exactly.
+    uniq, inv, _ = unique_rows(key)
     elem_faces = inv.reshape(e, 6).astype(np.int64)
     # origin = slot of the minimum id; column = which of its two edge-neighbours
     # (ascending slot order) carries the larger id.
@@ -328,8 +379,13 @@ def unique_edges(conn: IntArray, dim: int) -> tuple[IntArray, IntArray, BoolArra
     b = conn[:, le[:, 1]]
     lo = np.minimum(a, b)
     hi = np.maximum(a, b)
-    pairs = np.stack([lo.ravel(), hi.ravel()], axis=1)      # (E*ne,2) canonical
-    uniq, inv = np.unique(pairs, axis=0, return_inverse=True)
+    lo_f, hi_f = lo.ravel(), hi.ravel()
+    # ``np.unique(axis=0)`` views each row as a void scalar and argsorts that, which is
+    # far slower than sorting an integer.  Two ids pack into one int64 as ``lo*n + hi``
+    # -- a positional numeral system, so ascending key order *is* lexicographic row
+    # order and the result is identical, not merely equivalent.  ``n*n`` is the only
+    # thing that can overflow, so fall back when it would.
+    uniq, inv, _ = unique_rows(np.stack([lo_f, hi_f], axis=1))
     elem_edges = inv.reshape(e, ne).astype(np.int64)
     edge_flip: BoolArray = (a > b)
     return uniq.astype(np.int64), elem_edges, edge_flip

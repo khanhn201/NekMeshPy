@@ -518,3 +518,9 @@ def merge(
     faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
                    bnd, etags, order=order)
+
+__all__ = [
+    "loft",
+    "loft_fn",
+    "merge",
+]
