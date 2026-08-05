@@ -45,9 +45,10 @@ unambiguous; across rungs they deliberately collide (each rung has its own ``lof
 ``merge``), which is why there is no flat namespace above this one.
 """
 
-from . import assemble, lift, morph, query, shape
+from . import assemble, lift, lower, morph, query, shape
 from .assemble import loft, loft_fn, merge
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
+from .lower import boundary_mesh
 from .morph import (
     blend,
     place_on_path,
@@ -91,6 +92,7 @@ __all__ = [
     "blend",
     "boundary_edges",
     "boundary_elements",
+    "boundary_mesh",
     "boundary_points",
     "box",
     "extrude",
@@ -101,6 +103,7 @@ __all__ = [
     "lift",
     "loft",
     "loft_fn",
+    "lower",
     "merge",
     "morph",
     "ogrid",

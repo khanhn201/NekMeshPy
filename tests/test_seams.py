@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import uniform_spacing
 
 RADIAL = np.array([0.0, 0.5, 1.0])
 

@@ -39,6 +39,9 @@ Every operation is a free function in one of these namespaces --
 .. automodule:: nekmeshpy.hexmesh.shape
    :members:
 
+.. automodule:: nekmeshpy.hexmesh.lower
+   :members:
+
 .. automodule:: nekmeshpy.hexmesh.morph
    :members:
 

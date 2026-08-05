@@ -32,7 +32,7 @@ from .._typing import (
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
-from ..model import affine, frames
+from ..model import affine, conform, frames
 from ..model.paths import SpacePath
 from .quadmesh import QuadMesh
 
@@ -131,32 +131,6 @@ def scale(mesh: QuadMesh, factor: float | Vec3 | Sequence[float],
     return _affine(mesh, *affine.scaling(factor, center))
 
 
-def _pair_by_sorted_rows(target_rows: IntArray, mapped_rows: IntArray,
-                         what: str) -> IntArray:
-    """``idx`` such that ``target_rows[idx[i]]`` is the row holding the same *set* of
-    ids as ``mapped_rows[i]``.
-
-    Both sides are lexsorted on their sorted-id rows and paired positionally: if the
-    two describe the same connectivity they sort into the same sequence, and if they
-    do not the equality check below says so.  Positional pairing rather than a packed
-    ``searchsorted`` key so nothing bounds the point count."""
-    a = np.sort(target_rows, axis=1)
-    b = np.sort(mapped_rows, axis=1)
-    if a.shape != b.shape:
-        raise ValueError("reindex: structure and target disagree on the %s count "
-                         "(%d vs %d)" % (what, b.shape[0], a.shape[0]))
-    k = a.shape[1]
-    ia = np.lexsort(tuple(a[:, c] for c in range(k - 1, -1, -1)))
-    ib = np.lexsort(tuple(b[:, c] for c in range(k - 1, -1, -1)))
-    if not np.array_equal(a[ia], b[ib]):
-        raise ValueError(
-            "reindex: a relabelled %s has no counterpart in target -- structure and "
-            "target do not describe the same connectivity under sigma" % what)
-    idx: IntArray = np.empty(a.shape[0], dtype=np.int64)
-    idx[ib] = ia
-    return idx
-
-
 def reindex(structure: QuadMesh, target: QuadMesh,
             sigma: IntArray | Sequence[int]) -> QuadMesh:
     """``target``'s own geometry, reached through ``structure``'s own index labels:
@@ -207,7 +181,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     # which needs no packed key -- and so has no bound on the point count.
     te: IntArray = np.asarray(target.lines.lines, dtype=np.int64)
     se: IntArray = s[np.asarray(structure.lines.lines, dtype=np.int64)]
-    tidx = _pair_by_sorted_rows(te, se, "edge")
+    tidx = conform.locate_rows(te, se, who="reindex", what="edge")
     rev = te[tidx, 0] != se[:, 0]
     new_ei: PointArray = np.asarray(target.lines.interior, dtype=float)[tidx].copy()
     new_ei[rev] = new_ei[rev][:, ::-1]
@@ -217,8 +191,9 @@ def reindex(structure: QuadMesh, target: QuadMesh,
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.
-    qidx = _pair_by_sorted_rows(np.asarray(target.quads, dtype=np.int64),
-                                s[np.asarray(structure.quads, dtype=np.int64)], "quad")
+    qidx = conform.locate_rows(np.asarray(target.quads, dtype=np.int64),
+                                s[np.asarray(structure.quads, dtype=np.int64)],
+                                who="reindex", what="quad")
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
     return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,

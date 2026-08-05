@@ -391,6 +391,39 @@ def unique_edges(conn: IntArray, dim: int) -> tuple[IntArray, IntArray, BoolArra
     return uniq.astype(np.int64), elem_edges, edge_flip
 
 
+def locate_rows(haystack: IntArray, needles: IntArray, *,
+                who: str, what: str) -> IntArray:
+    """``idx`` such that ``haystack[idx[i]]`` holds the same *set* of ids as
+    ``needles[i]`` -- the id-set lookup behind reading one mesh's entities out of
+    another's tables, for edges (2 columns), quads (4) or any width.
+
+    ``needles`` may be a strict subset of ``haystack`` (a port's few hundred faces among
+    a block's millions) or a permutation of it (relabelling one section onto another's
+    numbering); both are the same lookup.  A needle with no counterpart is a
+    ``ValueError`` naming ``who``, never a silently wrong index.
+
+    Both sides are deduplicated **together** through :func:`unique_rows`, which pairs
+    them by construction and costs one lexsort of the union -- rather than packing each
+    row into an int64 key, which would overflow above ~55000 points for a 4-column
+    row."""
+    a: IntArray = np.sort(np.asarray(haystack, dtype=np.int64), axis=1)
+    b: IntArray = np.sort(np.asarray(needles, dtype=np.int64), axis=1)
+    if a.shape[1] != b.shape[1]:
+        raise ValueError("%s: %s rows are %d wide on one side and %d on the other"
+                         % (who, what, a.shape[1], b.shape[1]))
+    h = a.shape[0]
+    uniq, inv, _ = unique_rows(np.concatenate([a, b], axis=0))
+    pos: IntArray = np.full(uniq.shape[0], -1, dtype=np.int64)
+    pos[inv[:h]] = np.arange(h, dtype=np.int64)
+    idx: IntArray = pos[inv[h:]]
+    missing = int(np.count_nonzero(idx < 0))
+    if missing:
+        raise ValueError(
+            "%s: %d of %d %s rows have no counterpart in the target -- the two do not "
+            "describe the same connectivity" % (who, missing, idx.size, what))
+    return idx
+
+
 # -- array engine: tolerance / scatter / gather / conformal walk ---------
 def entity_tol(points: PointArray) -> float:
     """Scale-relative coincidence tolerance for entity sharing: ``1e-9`` of the point

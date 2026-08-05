@@ -64,7 +64,7 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import LineMesh, QuadMesh, export, hexmesh, quadmesh
+from nekmeshpy import export, hexmesh, quadmesh
 from nekmeshpy.model import paths
 from nekmeshpy.model.paths import turtle_path
 
@@ -103,65 +103,6 @@ def fake_chi_disc(center):
     return quadmesh.translate(d, np.asarray(center) - np.array([0.0, 0.0, 1.2]))
 
 
-def port_disc(hexmesh, tag, template):
-    """``template``'s B-rep *structure* carrying ``hexmesh``'s **own**
-    coordinates over its ``tag`` boundary-face group -- corners, shared
-    edge-interior nodes and per-quad interior nodes all read straight out of
-    ``hexmesh``, paired to the template by nearest corner.
-
-    Needed because a recipe that reproduces one port exactly need not
-    reproduce the other: chimera builds its *inlet* as a straight
-    ``end_stub`` (which ``fake_chi_disc`` matches to 1e-15) but its *outlet*
-    through ``outlet_return()``'s bend, whose end disc lands ~3.4e-3 away.
-    At order 1 that difference just welds; at order > 1 ``HexMesh.merge``
-    checks shared high-order edge nodes against ``conform.entity_tol``
-    (~2e-7 at this model's extent) and the outlet seam fails on 24 edges by
-    ~1e-3.  Reading the target off the real mesh removes the guess entirely
-    -- measured residual 0.0 at *both* ports."""
-    rows = hexmesh.face_tags.select(hexmesh.face_tags.mask_for(tag))
-    poly = hexmesh.hexes[rows.elements[:, None],
-                         hexmesh.FACE_POINTS[rows.sides - 1, :]]
-    gids = np.unique(poly)
-    dist, loc = cKDTree(hexmesh.points[gids]).query(template.points)
-    g = gids[loc]                              # template point i -> hexmesh point id
-    assert len(set(g.tolist())) == g.size, (
-        "port_disc[%s]: template does not pair one-for-one with the port" % tag)
-
-    # Only the port's own entities can match, so narrow to those before building any
-    # Python lookup: the mesh has millions of edges and faces and the template a few
-    # hundred, and indexing numpy scalars one at a time over the whole mesh was ~8 s.
-    he, hn = hexmesh.edges, hexmesh.edge_nodes
-    on_port = np.zeros(hexmesh.points.shape[0], dtype=bool)
-    on_port[gids] = True
-    ekeep = np.flatnonzero(on_port[he[:, 0]] & on_port[he[:, 1]])
-    ekey = {}
-    for e, (a, b) in zip(ekeep.tolist(), he[ekeep].tolist()):
-        ekey[(a, b)] = (e, False)
-        ekey[(b, a)] = (e, True)
-    tl = template.lines
-    new_ei = np.empty_like(tl.interior)
-    for e in range(tl.lines.shape[0]):
-        u, v = int(tl.lines[e, 0]), int(tl.lines[e, 1])
-        idx, rev = ekey[(int(g[u]), int(g[v]))]
-        vals = hn[idx]
-        new_ei[e] = vals[::-1] if rev else vals
-    new_lines = LineMesh(hexmesh.points[g], tl.lines, new_ei, tl.point_tags,
-                         tl.element_tags, order=tl.order)
-
-    hf, hfn = hexmesh.faces, hexmesh.face_nodes
-    fkeep = np.flatnonzero(on_port[hf].all(axis=1))
-    fkey = {frozenset(r): i for i, r in zip(fkeep.tolist(), hf[fkeep].tolist())}
-    new_qi = np.empty_like(template.interior)
-    for q in range(template.quads.shape[0]):
-        new_qi[q] = hfn[fkey[frozenset(int(g[c]) for c in template.quads[q])]]
-
-    print("  port_disc[%s]: template paired to %.3e, now exact on chimera's own nodes"
-          % (tag, dist.max()))
-    return QuadMesh(new_lines, template.quad, template.flip, new_qi,
-                    template.edge_tags, template.element_tags,
-                    order=template.order)
-
-
 # chimera's REAL inlet/outlet disc centres (probed: both at z = -17.5,
 # facing -z -- the chain body extends up to z = +160). Our whole manifold
 # therefore sits BELOW that plane and every pipe that meets chimera arrives
@@ -183,8 +124,21 @@ if chi_mesh is None:
     chi_in_disc = fake_chi_disc(CHI_IN)
     chi_out_disc = fake_chi_disc(CHI_OUT)
 else:
-    chi_in_disc = port_disc(chi_mesh, "inlet", fake_chi_disc(CHI_IN))
-    chi_out_disc = port_disc(chi_mesh, "outlet", fake_chi_disc(CHI_OUT))
+    # template= reuses fake_chi_disc's B-rep *structure* while every coordinate comes
+    # off chimera itself.  A freshly numbered extraction would be exact too, but could
+    # not pair index-for-index with T1's own end section, which hexmesh.adapter needs.
+    #
+    # Reading the target off the real mesh is what removes the guess: a recipe that
+    # reproduces one port exactly need not reproduce the other.  chimera builds its
+    # inlet as a straight end_stub (which fake_chi_disc matches to 1e-15) but its
+    # outlet through outlet_return()'s bend, whose end disc lands ~3.4e-3 away.  At
+    # order 1 that just welds; at order > 1 HexMesh.merge checks shared high-order
+    # edge nodes against conform.entity_tol (~2e-7 at this model's extent) and the
+    # outlet seam failed on 24 edges by ~1e-3.  Measured residual now 0.0 at both.
+    chi_in_disc = hexmesh.boundary_mesh(chi_mesh, "inlet",
+                                        template=fake_chi_disc(CHI_IN))
+    chi_out_disc = hexmesh.boundary_mesh(chi_mesh, "outlet",
+                                         template=fake_chi_disc(CHI_OUT))
 
 # -----------------------------------------------------------------------------
 # T1: same quadrant pattern family as T2 (not eqtee) so the T1-branch <-> T2-
