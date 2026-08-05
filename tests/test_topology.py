@@ -159,7 +159,7 @@ def test_trimesh_boundary_helpers():
 def test_chain_segments_builds_a_closed_loop():
     # Ordering an unordered segment soup into a ring is a *surface* op (it is how a
     # marched isocontour arrives), so it lives in trimesh.ops beside its only caller
-    # and hands the ordered points to LineMesh.loft(..., loop=True).
+    # and hands the ordered points to linemesh.assemble.loft(..., loop=True).
     from nekmeshpy.trimesh.ops import _chain_segments
     # four segments of a unit square, given unordered, chain into a closed loop
     segs = np.array([[0, 0, 0, 1, 0, 0], [1, 1, 0, 0, 1, 0],

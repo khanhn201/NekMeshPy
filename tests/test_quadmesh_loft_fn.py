@@ -17,7 +17,7 @@ what keeps the goldens frozen.
 import numpy as np
 import pytest
 
-from nekmeshpy import LineMesh, QuadMesh
+from nekmeshpy import QuadMesh, linemesh
 from nekmeshpy.model import conform
 
 R, RT, NU, NV = 2.0, 0.6, 8, 6
@@ -25,7 +25,7 @@ R, RT, NU, NV = 2.0, 0.6, 8, 6
 
 def _tube_ring(order):
     """One tube cross-section of the torus, sitting at ``theta = 0``."""
-    return LineMesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
+    return linemesh.shape.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            order=order)
 
 
@@ -170,7 +170,7 @@ def test_grading_is_honored_per_layer():
 # -- tags --------------------------------------------------------------------
 
 def test_per_layer_element_tags_override_the_profile_line_tags():
-    base = LineMesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
+    base = linemesh.shape.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            element_tags=["wall"] * NU)
     f = lambda t: base.rotate(t, axis=(0, 0, 1))                   # noqa: E731
     layers = ["", "hot", ""]
@@ -198,8 +198,8 @@ def test_rejects_a_profile_of_the_wrong_order():
 
 
 def test_rejects_profiles_that_are_not_index_paired():
-    a = LineMesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0))
-    b = LineMesh.circle(RT, NU + 1, center=(R, 0.0, 0.0), normal=(0, 1, 0))
+    a = linemesh.shape.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0))
+    b = linemesh.shape.circle(RT, NU + 1, center=(R, 0.0, 0.0), normal=(0, 1, 0))
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
     with pytest.raises(ValueError, match="index-paired and conformal"):
         QuadMesh.loft_fn(f, np.linspace(0.0, 1.0, 3))

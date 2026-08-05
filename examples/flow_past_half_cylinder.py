@@ -31,7 +31,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -72,26 +72,26 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
 # ~10, so N_BUMP = 24 is the coarsest bump that still clears the 0.2 floor the tests
 # assert.  (That floor is the corner metric; scaled_jacobian(high_order=True) on the
 # same mesh reads 0.181 -- the curved wall genuinely costs quality at the GLL nodes.)
-left_ground = LineMesh.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
+left_ground = linemesh.shape.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
                             np.linspace(0.0, 1.0, N_GROUND + 1),
                             element_tag="wall", order=ORDER)
 # theta pi -> 0 walks the bump left to right over the top, so the three runs chain
 # in order; at ORDER > 1 the interior GLL nodes sit on the exact circle
-bump = LineMesh.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
+bump = linemesh.shape.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
                     start_theta=np.pi, end_theta=0.0,
                     element_tags=["wall"] * N_BUMP, order=ORDER)
-right_ground = LineMesh.line((R, 0.0, 0.0), (W, 0.0, 0.0),
+right_ground = linemesh.shape.line((R, 0.0, 0.0), (W, 0.0, 0.0),
                              np.linspace(0.0, 1.0, N_GROUND + 1),
                              element_tag="wall", order=ORDER)
 # weld the shared ends at x = -R and x = +R into one (-W,0) -> (W,0) chain; the whole
 # edge is tagged "wall" at the line level, so structured names the bottom side from it
-bottom = LineMesh.merge([left_ground, bump, right_ground])
-right = LineMesh.line((W, 0.0, 0.0), (W, H, 0.0),
+bottom = linemesh.assemble.merge([left_ground, bump, right_ground])
+right = linemesh.shape.line((W, 0.0, 0.0), (W, H, 0.0),
                       np.linspace(0.0, 1.0, NY + 1), element_tag="outlet",
                       order=ORDER)
-top = LineMesh.line((W, H, 0.0), (-W, H, 0.0),
+top = linemesh.shape.line((W, H, 0.0), (-W, H, 0.0),
                     np.linspace(0.0, 1.0, NX + 1), element_tag="top", order=ORDER)
-left = LineMesh.line((-W, H, 0.0), (-W, 0.0, 0.0),
+left = linemesh.shape.line((-W, H, 0.0), (-W, 0.0, 0.0),
                      np.linspace(0.0, 1.0, NY + 1), element_tag="inlet",
                      order=ORDER)
 section = QuadMesh.structured([bottom, right, top, left])

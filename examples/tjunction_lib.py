@@ -16,7 +16,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, QuadMesh, linemesh
 from nekmeshpy.model.interp import coons_grid_fn as coons_fn
 
 Wall = namedtuple("Wall", "g fr")
@@ -62,7 +62,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return cyl(u[:, 0], u[:, 1])
 
     def wall_mesh(w):
-        return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=order)
+        return linemesh.assemble.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=order)
 
     def ruled_wall(pa, pb):
         pa, pb = np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)
@@ -94,7 +94,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return Wall(lambda x: w.g(x) + d, w.fr)
 
     def seam(target, fr, center=ORIGIN):
-        return LineMesh.line(center, target, fr, order=order)
+        return linemesh.shape.line(center, target, fr, order=order)
 
     def quadrant(arc, seam1, seam2, wall_tag=""):
         return QuadMesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
@@ -116,9 +116,9 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
     SP = [seam(p, FR) for p in P]
     SWP, SWM = seam(WP, FR), seam(WM, FR)
 
-    FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
+    FQ_FR = [linemesh.shape.arclength_fractions(footprint, 2 * N_QUAD,
                                           t_range=(TQ[q], TQ[q + 1])) for q in range(4)]
-    FQ = [LineMesh.loft_fn(footprint, fr, order=order) for fr in FQ_FR]
+    FQ = [linemesh.assemble.loft_fn(footprint, fr, order=order) for fr in FQ_FR]
 
     UP = [cyl_params(p) for p in P]
     UWP, UWM = np.array([PHI_W, 0.0]), np.array([-PHI_W, 0.0])
@@ -152,7 +152,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
     def wall_patch(fn, tag):
         fr = np.linspace(0.0, 1.0, N + 1)
         return QuadMesh.loft_fn(
-            lambda y: LineMesh.loft_fn(
+            lambda y: linemesh.assemble.loft_fn(
                 lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=order),
             fr, order=order, element_tags=[tag] * N)
 
@@ -210,9 +210,9 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return transition, plain
 
     def branch():
-        open_arcs = [LineMesh.loft_fn(opening, fr, order=order) for fr in FQ_FR]
+        open_arcs = [linemesh.assemble.loft_fn(opening, fr, order=order) for fr in FQ_FR]
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
-        walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
+        walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
         sections = [QuadMesh.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
                                            center_scale=CENTER_SCALE, wall_tag="wall")

@@ -14,17 +14,16 @@ from a parametrization instead of handed in -- and so takes the same ``loop`` fl
 Being open or closed is therefore not a property of the function: the same ``f`` meshes
 either way.
 
-Free functions assigned into the :class:`~nekmeshpy.LineMesh` class body (see
-``linemesh.py``) as ``staticmethod``; internal toolkit code imports them from here
-directly.  These are *pure* factories with no mesh in hand to take ``type()`` of, so
-the two that construct one import the container inside the function body -- the
-container imports this module, so a module-level import would be a cycle.
+Pure factories: they take no mesh, so they are reached through the package namespace
+(``linemesh.assemble.loft(...)``) rather than bound onto the class.  That is what lets
+them import the container normally -- only the modules holding *mesh-first*
+operations (``_morph``, ``_query``) are imported by ``linemesh.py``, and only those
+have to keep the container behind ``TYPE_CHECKING``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -39,9 +38,7 @@ from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ..model.tags import ElementTags, PointTags, TagBuilder
 from ._query import boundary_points
-
-if TYPE_CHECKING:                    # the container imports us, so this cannot be
-    from .linemesh import LineMesh  # a runtime import -- annotations only
+from .linemesh import LineMesh, _as_points
 
 
 def loft(
@@ -85,8 +82,6 @@ def loft(
     (that is how ``circle`` stamps true-arc nodes); when it is omitted each line's
     private interior is built here as the **straight GLL blend** between its two
     endpoints, which is exactly what a straight-sided curve wants."""
-    from .linemesh import LineMesh, _as_points  # deferred: see module docstring
-
     pts = _as_points(points)
     n = pts.shape[0]
     if loop:
@@ -250,7 +245,7 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
     ``len(fractions) - 1`` line elements.  The caller states the domain by choosing the
     values -- for an ``f`` written on ``[0, 1]`` they are exactly the normalized
     fractions the sibling
-    :meth:`LineMesh.line <nekmeshpy.linemesh.LineMesh.line>` takes, and an ``f`` written
+    :func:`linemesh.shape.line <nekmeshpy.linemesh.shape.line>` takes, and an ``f`` written
     on any other interval is sampled in its own units
     (``np.linspace(0.0, np.pi, n + 1)`` for a uniform chain over ``[0, pi]``).  A
     descending sequence runs the curve backwards; nothing here requires ascending order.
@@ -268,8 +263,7 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
     be silently kinked shut.
 
     The values grade the nodes in **parameter** space; for nodes spaced evenly by **arc
-    length** pass :meth:`LineMesh.arclength_fractions
-    <nekmeshpy.linemesh.LineMesh.arclength_fractions>`, whose chord-length table
+    length** pass :func:`linemesh.shape.arclength_fractions <nekmeshpy.linemesh.shape.arclength_fractions>`, whose chord-length table
     perturbs only *where along* the curve the nodes sit -- every node still lies on the
     curve to machine precision, because it is placed by evaluating ``f`` and never by
     interpolating the table.  At ``order > 1`` the grading is honored **per element**:
@@ -277,7 +271,7 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
     ``fractions[i] .. fractions[i+1]`` span.
 
     This is the general sibling of
-    :meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`, which is the special case
+    :func:`linemesh.shape.arc <nekmeshpy.linemesh.shape.arc>`, which is the special case
     ``f = circle`` (kept separate because it can place its nodes without an inversion
     and to the last ulp).  Reach for ``loft_fn`` whenever a curve has a closed form
     that is not a circular arc -- an ellipse, a helix, a cylinder-cylinder intersection
@@ -414,7 +408,5 @@ def merge(meshes: Sequence[LineMesh], *,
     interior: PointArray | None = None
     if meshes:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
-
-    from .linemesh import LineMesh  # deferred: see module docstring
 
     return LineMesh(points, lines, interior, bnd, etags, order=order)

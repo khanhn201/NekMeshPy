@@ -22,7 +22,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 from nekmeshpy.model.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -49,11 +49,11 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "cylinder": "W  ",
 # rotate the circle so its index 0 meets the box's lower-left corner, so the two
 # loops pair index-for-index in annulus (the radial spokes are not straight)
 CORNER = np.arctan2(-HALF_BOX, -HALF_BOX)
-inner = LineMesh.circle(R, N_THETA, start_theta=CORNER,
+inner = linemesh.shape.circle(R, N_THETA, start_theta=CORNER,
                         element_tags=["cylinder"] * N_THETA, order=ORDER)
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named bottom (y=-HB), outlet (x=+HB), top (y=+HB), inlet (x=-HB)
-outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
+outer = linemesh.shape.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),

@@ -27,10 +27,10 @@ import numpy as np
 
 from nekmeshpy import (
     HexMesh,
-    LineMesh,
     QuadMesh,
     TriMesh,
     export,
+    linemesh,
     smoothing,
 )
 
@@ -73,7 +73,7 @@ def arc_main_lower():
     ``e1 = +y``, ``e2 = -z``, so sweeping ``theta`` from ``0`` to ``pi`` walks
     ``+y -> -z -> -y``; at ``ORDER > 1`` every GLL node lands on the exact circle
     (an explicit point array would only be straight-subdivided between samples)."""
-    return LineMesh.arc(R, N_HALF, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+    return linemesh.shape.arc(R, N_HALF, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
                         start_theta=0.0, end_theta=np.pi, order=ORDER)
 
 
@@ -100,8 +100,8 @@ def arc_collar(xside):
         return np.column_stack(
             [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
 
-    return LineMesh.loft_fn(
-        f, LineMesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
+    return linemesh.assemble.loft_fn(
+        f, linemesh.shape.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
         order=ORDER)
 
 
@@ -110,7 +110,7 @@ def join_arcs(p, q):
     (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
     :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
     crossing."""
-    return LineMesh.merge([p, q.reverse()])
+    return linemesh.assemble.merge([p, q.reverse()])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------
@@ -121,7 +121,7 @@ def opening_main(x0):
     in-plane frame ``e1 = +y``, ``e2 = -z``, so point ``k`` lands on
     ``(0, R cos, -R sin)`` -- the required clockwise traversal from ``+y``.
     At ``ORDER > 1`` every GLL node lands on the exact circle."""
-    return LineMesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+    return linemesh.shape.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
                            order=ORDER)
 
 
@@ -131,7 +131,7 @@ def opening_branch(z0):
     ``aRB``. ``normal = +z`` gives ``e1 = +x``, ``e2 = +y``; the ``start_theta =
     pi/2`` phase turns ``(cos, sin)`` into ``(-sin, cos)`` so index 0 is ``+y``.
     At ``ORDER > 1`` every GLL node lands on the exact circle."""
-    return LineMesh.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
+    return linemesh.shape.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
                            start_theta=np.pi / 2, order=ORDER)
 
 
@@ -141,7 +141,7 @@ def leg_slices(open_ring, seam_ring, n_slices):
     disc :meth:`QuadMesh.spined_ogrid`-ed over its natural straight A1..A2 diameter
     (two half-discs welded along it). End stations keep the raw algebraic fill;
     interior ones use ``SMOOTHING_METHOD``."""
-    loops = LineMesh.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_slices))
+    loops = linemesh.morph.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_slices))
     slices = []
     for s, loop in enumerate(loops):
         m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None

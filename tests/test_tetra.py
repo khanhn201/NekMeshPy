@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, QuadMesh, linemesh
 
 V = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
 RADIAL = np.array([0.0, 0.45, 0.8, 1.0])
@@ -165,12 +165,12 @@ def test_quadrant_faces_make_an_octant():
     n = 2
     fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
     e = np.eye(3)
-    seams = [LineMesh.line(np.zeros(3), d, fr) for d in e]
+    seams = [linemesh.shape.line(np.zeros(3), d, fr) for d in e]
 
     def great(a, b):
         """The quarter great-circle from ``a`` to ``b``, stated in the caller's own
         basis so its two ends are the seams' ends."""
-        return LineMesh.loft_fn(
+        return linemesh.assemble.loft_fn(
             lambda t: (np.cos(t)[:, None] * a + np.sin(t)[:, None] * b),
             np.linspace(0.0, np.pi / 2, 2 * n + 1))
 

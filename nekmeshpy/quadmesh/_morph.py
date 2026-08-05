@@ -46,7 +46,7 @@ def blend(a: QuadMesh, b: QuadMesh,
 
     The morph is delegated one rung **down the B-rep ladder**: the shared corners
     and the shared edge-interior nodes are exactly the edge ``LineMesh``, so
-    :meth:`LineMesh.blend <nekmeshpy.linemesh.LineMesh.blend>` produces the blended
+    :func:`linemesh.morph.blend <nekmeshpy.linemesh.morph.blend>` produces the blended
     edge mesh and this method only lerps what a quad owns privately -- its
     per-quad ``interior`` -- while keeping ``a``'s ``quad`` / ``flip`` incidence
     verbatim."""

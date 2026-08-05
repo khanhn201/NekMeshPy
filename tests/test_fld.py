@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, QuadMesh, linemesh
 from nekmeshpy.io import export
 
 LAYERS = np.array([0.0, 0.5, 1.0])
@@ -48,7 +48,7 @@ def readnek(path):
 
 
 def _mesh(order):
-    section = QuadMesh.ogrid(LineMesh.circle(1.0, 8, order=order), 2, LAYERS)
+    section = QuadMesh.ogrid(linemesh.shape.circle(1.0, 8, order=order), 2, LAYERS)
     return HexMesh.extrude(section, length=1.0, layers=LAYERS)
 
 

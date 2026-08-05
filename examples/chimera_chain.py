@@ -62,7 +62,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 from nekmeshpy.model.interp import coons_grid_fn as coons_fn
 from nekmeshpy.model.paths import turtle_path
 
@@ -182,7 +182,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return linemesh.assemble.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -234,7 +234,7 @@ def shift_wall(w, turns):
 def seam(target, center=ORIGIN):
     """One of the radii ``O -> wall corner``, sampled where ``quadrant_ogrid`` wants
     its ``n+1 + Nradial`` seam points."""
-    return LineMesh.line(center, target, FR, order=ORDER)
+    return linemesh.shape.line(center, target, FR, order=ORDER)
 
 
 # -- sections -----------------------------------------------------------------
@@ -270,12 +270,12 @@ SP = [seam(p) for p in P]                            # the four footprint radii
 SWP, SWM = seam(WP), seam(WM)                        # the two bypass edge radii
 
 #: The parameter values of each footprint quadrant's nodes, even in arc length.
-FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
+FQ_FR = [linemesh.shape.arclength_fractions(footprint, 2 * N_QUAD,
                                       t_range=(TQ[q], TQ[q + 1]))
          for q in range(4)]
 #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
 #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-FQ = [LineMesh.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
+FQ = [linemesh.assemble.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
 #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
 UP = [cyl_params(p) for p in P]
@@ -319,7 +319,7 @@ def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node."""
     fr = np.linspace(0.0, 1.0, N + 1)
     return QuadMesh.loft_fn(
-        lambda y: LineMesh.loft_fn(
+        lambda y: linemesh.assemble.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -463,7 +463,7 @@ def to_b(m):
 #: The branch's round opening disc, axis ``x``, centred at ``(H_BRANCH, 0, 0)`` --
 #: shared by ``branch()`` (as its far cross-section) and every junction's hairpin
 #: bend (as the disc the straight arm carries out to the bend).
-OPEN_ARCS = [LineMesh.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
+OPEN_ARCS = [linemesh.assemble.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
 C_OPEN = np.array([H_BRANCH, 0.0, 0.0])
 OPENING_DISC = QuadMesh.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
                                       center_scale=CENTER_SCALE, wall_tag="wall")
@@ -474,7 +474,7 @@ def branch():
     short straight arm out to where this junction's hairpin bend begins. Neither end
     is tagged -- both become interior faces once the bend welds onto the far one."""
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
-    walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
+    walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
     sections = [QuadMesh.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]

@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import ElementTags, HexMesh, LineMesh, QuadMesh
+from nekmeshpy import ElementTags, HexMesh, QuadMesh, linemesh
 
 R, RT, NS, NV = 2.0, 0.6, 2, 6
 RADIAL = np.array([0.5, 1.0])
@@ -32,7 +32,7 @@ def _tube_disc(order, *, flipped=False, wall_tag=""):
     ``z`` sweeps the torus.  ``flipped`` reverses the boundary loop, which reverses
     the section winding and drives ``loft`` down its left-handed branch.
     """
-    ring = LineMesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0),
+    ring = linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            order=order,
                            element_tags=["wall"] * (4 * NS) if wall_tag else None)
     if flipped:
@@ -43,7 +43,7 @@ def _tube_disc(order, *, flipped=False, wall_tag=""):
 def _flat_disc(order, *, flipped=False):
     """The same O-grid disc, but in the ``z = 0`` plane -- the section for the
     straight ``translate``-along-``z`` stacks the ``loft`` argument tests use."""
-    ring = LineMesh.circle(RT, 4 * NS, order=order)
+    ring = linemesh.shape.circle(RT, 4 * NS, order=order)
     if flipped:
         ring = ring.reverse()
     return QuadMesh.ogrid(ring, NS, RADIAL)
@@ -210,7 +210,7 @@ def test_grading_is_honored_per_layer():
 
 def test_per_layer_element_tags_override_the_section_quad_tags():
     base = QuadMesh.ogrid(
-        LineMesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+        linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     tagged = QuadMesh(base.lines, base.quad, base.flip, base.interior,
                       base.edge_tags,
@@ -257,10 +257,10 @@ def test_rejects_a_section_of_the_wrong_order():
 
 def test_rejects_sections_that_are_not_index_paired():
     a = QuadMesh.ogrid(
-        LineMesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+        linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     b = QuadMesh.ogrid(
-        LineMesh.circle(RT, 4 * (NS + 1), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+        linemesh.shape.circle(RT, 4 * (NS + 1), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS + 1, RADIAL)
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
     with pytest.raises(ValueError, match="index-paired and conformal"):
@@ -281,7 +281,7 @@ def test_sweep_nodes_must_be_sized_per_layer():
 
 def test_sweep_nodes_must_match_the_slices():
     base = _flat_disc(2)
-    other = QuadMesh.ogrid(LineMesh.circle(RT, 4 * (NS + 1), order=2),
+    other = QuadMesh.ogrid(linemesh.shape.circle(RT, 4 * (NS + 1), order=2),
                            NS + 1, RADIAL)
     slices = [base.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="must match the slices"):

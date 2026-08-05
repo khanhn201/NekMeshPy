@@ -41,7 +41,7 @@ import time
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.paths import turtle_path
 
@@ -157,7 +157,7 @@ def tangent(s):
 # junction, so an element that straddled one would be fitted across two different
 # geometries. sweep_fractions subdivides each piece on its own at ~TARGET_LEN, so
 # every junction is reproduced exactly rather than approached by a global linspace.
-FRACTIONS = LineMesh.sweep_fractions(S_BREAKS * TOTAL, TOTAL, TARGET_LEN)
+FRACTIONS = linemesh.shape.sweep_fractions(S_BREAKS * TOTAL, TOTAL, TARGET_LEN)
 
 assert np.all(np.diff(FRACTIONS) > 0.0), "sweep stations must be strictly increasing"
 assert np.isin(S_BREAKS, FRACTIONS).all(), "every junction must carry a sweep station"
@@ -173,7 +173,7 @@ START_TANGENT = tuple(tangent(np.array([0.0]))[0])
 # kwarg -- the order is inherited from the loop, which must carry exactly 4*N_SIDE
 # points so the wall is meshed exactly.
 section = QuadMesh.ogrid(
-    LineMesh.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
+    linemesh.shape.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
                     element_tags=["wall"] * (4 * N_SIDE), order=ORDER),
     N_SIDE, uniform_spacing(N_RADIAL),
     center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)

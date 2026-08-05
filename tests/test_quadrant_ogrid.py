@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, QuadMesh, linemesh
 
 R = 1.0
 RADIAL = np.array([0.0, 0.4, 0.75, 1.0])
@@ -13,7 +13,7 @@ CS = 0.5
 
 def _radius(theta, fr, order=1):
     d = np.array([np.cos(theta), np.sin(theta), 0.0])
-    return LineMesh.line(np.zeros(3), R * d, fr, order=order)
+    return linemesh.shape.line(np.zeros(3), R * d, fr, order=order)
 
 
 def _disc(n, order=1, center_scale=CS, radial=RADIAL, wall_tag="wall"):
@@ -23,7 +23,7 @@ def _disc(n, order=1, center_scale=CS, radial=RADIAL, wall_tag="wall"):
     seams = [_radius(a, fr, order) for a in ang[:4]]
     seams.append(seams[0])
     return [QuadMesh.quadrant_ogrid(
-        LineMesh.arc(R, 2 * n, start_theta=ang[q], end_theta=ang[q + 1], order=order),
+        linemesh.shape.arc(R, 2 * n, start_theta=ang[q], end_theta=ang[q + 1], order=order),
         seams[q], seams[q + 1], radial, center_scale=center_scale, wall_tag=wall_tag)
         for q in range(4)]
 
@@ -85,10 +85,10 @@ def test_a_bowed_seam_is_meshed_exactly(order):
         return np.stack([t, 0.25 * np.sin(np.pi * t), np.zeros_like(t)], axis=1)
 
     fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
-    s1 = LineMesh.loft_fn(bow, fr, order=order)
-    s2 = LineMesh.line(np.zeros(3), np.array([0.0, 1.0, 0.0]), fr, order=order)
+    s1 = linemesh.assemble.loft_fn(bow, fr, order=order)
+    s2 = linemesh.shape.line(np.zeros(3), np.array([0.0, 1.0, 0.0]), fr, order=order)
     # a wall arc joining the two seam ends; its shape is irrelevant to this check
-    arc = LineMesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=order)
+    arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=order)
     q = QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     # every node of the mesh that sits on the bowed seam's line must satisfy the curve
     lm = q.lines
@@ -106,9 +106,9 @@ def test_a_bowed_seam_is_meshed_exactly(order):
 def test_tags_ride_up_from_the_line_level():
     n = 2
     fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
-    arc = LineMesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2,
+    arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2,
                        element_tags=["wall"] * (2 * n))
-    s1 = LineMesh.line(np.zeros(3), np.array([R, 0.0, 0.0]), fr, element_tag="sym")
+    s1 = linemesh.shape.line(np.zeros(3), np.array([R, 0.0, 0.0]), fr, element_tag="sym")
     s2 = _radius(np.pi / 2, fr)
     q = QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     assert q.edge_group_tags == ["sym", "wall"]
@@ -139,9 +139,9 @@ def test_seam_fraction_helper_places_the_core_corner_on_the_square():
 def test_input_contract_is_loud():
     n = 3
     fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
-    arc = LineMesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2)
+    arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2)
     s1, s2 = _radius(0.0, fr), _radius(np.pi / 2, fr)
-    even = LineMesh.arc(R, 2 * n + 1, start_theta=0.0, end_theta=np.pi / 2)
+    even = linemesh.shape.arc(R, 2 * n + 1, start_theta=0.0, end_theta=np.pi / 2)
     with pytest.raises(ValueError, match="2\\*n\\+1 points"):
         QuadMesh.quadrant_ogrid(even, s1, s2, RADIAL)
     short = _radius(0.0, np.linspace(0.0, 1.0, n + NR))
@@ -151,10 +151,10 @@ def test_input_contract_is_loud():
         QuadMesh.quadrant_ogrid(arc, s2, s1, RADIAL)
     with pytest.raises(ValueError, match="same center point O"):
         QuadMesh.quadrant_ogrid(
-            arc, LineMesh.line(np.array([0.1, 0.0, 0.0]), arc.points[0], fr), s2, RADIAL)
+            arc, linemesh.shape.line(np.array([0.1, 0.0, 0.0]), arc.points[0], fr), s2, RADIAL)
     with pytest.raises(ValueError, match="share an order"):
         QuadMesh.quadrant_ogrid(
-            LineMesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=2),
+            linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=2),
             s1, s2, RADIAL)
     with pytest.raises(ValueError, match="seam1/seam2"):
         QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, side_tags={"bottom": "x"})
@@ -178,7 +178,7 @@ def test_quadrant_core_is_the_factory_s_own_core(n):
     a quadrant face without reproducing the formula."""
     fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
     s1, s2 = _radius(0.0, fr), _radius(np.pi / 2, fr)
-    arc = LineMesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2)
+    arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2)
     core = QuadMesh.quadrant_core(arc, s1, s2, center_scale=CS)
     assert core.shape == (n + 1, n + 1, 3)
     q = QuadMesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
@@ -193,10 +193,10 @@ def test_quadrant_core_is_the_factory_s_own_core(n):
 def test_quadrant_core_rejects_bad_shapes():
     fr = QuadMesh.quadrant_seam_fractions(2, RADIAL, CS)
     s1, s2 = _radius(0.0, fr), _radius(np.pi / 2, fr)
-    even = LineMesh.arc(R, 3, start_theta=0.0, end_theta=np.pi / 2)
+    even = linemesh.shape.arc(R, 3, start_theta=0.0, end_theta=np.pi / 2)
     with pytest.raises(ValueError, match="2\\*n\\+1 points"):
         QuadMesh.quadrant_core(even, s1, s2)
-    arc = LineMesh.arc(R, 4, start_theta=0.0, end_theta=np.pi / 2)
+    arc = linemesh.shape.arc(R, 4, start_theta=0.0, end_theta=np.pi / 2)
     with pytest.raises(ValueError, match="center_scale"):
         QuadMesh.quadrant_core(arc, s1, s2, center_scale=1.0)
     with pytest.raises(ValueError, match="at least 3 points"):

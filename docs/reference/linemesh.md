@@ -7,3 +7,19 @@ branching `(L,2)` line connectivity, open or closed.
 .. automodule:: nekmeshpy.linemesh
    :members:
 ```
+
+## Factories
+
+The operations that take no mesh are reached through these namespaces rather than
+bound onto the class -- `linemesh.shape.circle(r, n)`, not `LineMesh.circle(r, n)`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.linemesh.assemble
+   :members:
+
+.. automodule:: nekmeshpy.linemesh.shape
+   :members:
+
+.. automodule:: nekmeshpy.linemesh.morph
+   :members: blend
+```

@@ -10,7 +10,7 @@ Produces ``circular_pipe.re2`` and ``circular_pipe.vtu``.
 
 import logging
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 from nekmeshpy.model.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -38,7 +38,7 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 # -- build the O-grid cross-section, then extrude it along the axis -----------
 # interior filled + repositioned (wall fixed); extrude copies it along the axis
 section = QuadMesh.ogrid(
-    LineMesh.circle(RADIUS, 4 * N_SIDE, element_tags=["wall"] * (4 * N_SIDE),
+    linemesh.shape.circle(RADIUS, 4 * N_SIDE, element_tags=["wall"] * (4 * N_SIDE),
                     order=ORDER), N_SIDE,
     geometric_spacing(N_RADIAL, RADIAL_GRADING),
     center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)

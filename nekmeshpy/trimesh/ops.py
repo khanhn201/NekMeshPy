@@ -137,7 +137,7 @@ def _chain_segments(segs: FloatArray) -> LineMesh | None:
     Marching a scalar field over triangles emits its level set as an unordered soup
     of segments, so this ordering walk is a *surface* operation, not a ``LineMesh``
     constructor: it lives beside its only caller and hands the ordered points to
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` with ``loop=True``, which
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` with ``loop=True``, which
     is what authors the wrapping ``lines``."""
     if segs is None or len(segs) == 0:
         return None

@@ -1,4 +1,4 @@
-"""Open :class:`~nekmeshpy.LineMesh` factories: curves with free ends that do not
+"""Open :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` factories: curves with free ends that do not
 close on themselves (``line`` / ``arc``), plus the ``arclength_fractions`` /
 ``sweep_fractions`` sampling helpers.
 
@@ -7,26 +7,20 @@ takes the same ``loop`` flag as the sweep primitive, so it lives beside it as
 :func:`~nekmeshpy.linemesh._assemble.loft_fn`.
 
 These are plain free functions returning a ``LineMesh``; ``linemesh/__init__.py``
-binds each entry of ``FACTORIES`` onto the class, so callers use ``LineMesh.line(...)``
-while ``linemesh.py`` stays a pure container.  Internal toolkit code calls the free
-functions directly.
+Reached as ``linemesh.shape.line(...)`` through the ``shape`` facade, which merges
+this module with ``_closed``.  Internal toolkit code calls the free functions directly.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
 from ._assemble import _eval_curve, loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from .linemesh import LineMesh
+from .linemesh import LineMesh
 
 
 def line(start: Point, end: Point, fractions: float | FloatArray, *,
@@ -42,7 +36,7 @@ def line(start: Point, end: Point, fractions: float | FloatArray, *,
     each line element carries ``order+1`` GLL nodes placed on the straight
     segment -- the two endpoints are the corners in ``points``, and the
     ``order-1`` nodes strictly between them are the straight GLL blend
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` places by default
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` places by default
     (read by high-order ``vtu`` export)."""
     frac = np.atleast_1d(np.asarray(fractions, dtype=float))
     s: Point = np.asarray(start, dtype=float).ravel()
@@ -69,11 +63,11 @@ def arc(radius: float, n: int, *,
     construction, e.g. to name the whole arc ``wall`` for a section factory.
 
     This is the open sibling of
-    :meth:`LineMesh.circle <nekmeshpy.linemesh.LineMesh.circle>` -- the analytic
+    :func:`linemesh.shape.circle <nekmeshpy.linemesh.shape.circle>` -- the analytic
     curve to hand to :meth:`QuadMesh.structured <nekmeshpy.quadmesh.QuadMesh.structured>` (or to
     weld into a composite edge with
-    :meth:`LineMesh.merge <nekmeshpy.linemesh.LineMesh.merge>`) instead of sampling
-    points and calling :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`,
+    :func:`linemesh.assemble.merge <nekmeshpy.linemesh.assemble.merge>`) instead of sampling
+    points and calling :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`,
     which can only subdivide straight between the samples.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1`` each
@@ -128,7 +122,7 @@ def arclength_fractions(f: Callable[[FloatArray], PointArray], n: int, *,
     """The ``(n+1,)`` **parameter values** spanning ``t_range`` -- from ``t_range[0]``
     to ``t_range[1]`` -- at which ``f`` must be evaluated for the resulting ``n+1``
     points to be evenly spaced by **arc length**: hand the result straight to
-    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>` as its
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` as its
     ``fractions``, with no further scaling
     (``loft_fn(f, arclength_fractions(f, n, t_range=...), order=N)``).
 
@@ -180,7 +174,7 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     Hand it straight to the ``fractions`` of
     :meth:`HexMesh.sweep <nekmeshpy.hexmesh.HexMesh.sweep>` /
     :meth:`QuadMesh.sweep <nekmeshpy.quadmesh.QuadMesh.sweep>` (or of
-    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`) whose path is
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`) whose path is
     parametrized by normalized arc length.  Like
     :func:`arclength_fractions` it is a ``HELPERS`` entry, not a factory: it answers a
     question about a sweep's input contract and returns a plain array, since the sweep

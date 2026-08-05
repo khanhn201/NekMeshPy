@@ -89,7 +89,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 from nekmeshpy.model.interp import coons_grid_fn as coons_fn
 from nekmeshpy.model.paths import turtle_path
 
@@ -222,7 +222,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return LineMesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return linemesh.assemble.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -274,7 +274,7 @@ def shift_wall(w, turns):
 def seam(target, center=ORIGIN):
     """One of the radii ``O -> wall corner``, sampled where ``quadrant_ogrid`` wants
     its ``n+1 + Nradial`` seam points."""
-    return LineMesh.line(center, target, FR, order=ORDER)
+    return linemesh.shape.line(center, target, FR, order=ORDER)
 
 
 # -- sections -----------------------------------------------------------------
@@ -309,12 +309,12 @@ if TOPOLOGY == "quadrant":
     WP, WM = cyl(PHI_W, 0.0), cyl(-PHI_W, 0.0)          # the two bypass edge corners
 
     #: The parameter values of each footprint quadrant's nodes, even in arc length.
-    FQ_FR = [LineMesh.arclength_fractions(footprint, 2 * N_QUAD,
+    FQ_FR = [linemesh.shape.arclength_fractions(footprint, 2 * N_QUAD,
                                           t_range=(TQ[q], TQ[q + 1]))
              for q in range(4)]
     #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
     #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-    FQ = [LineMesh.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
+    FQ = [linemesh.assemble.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
     #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
     UP = [cyl_params(p) for p in P]
@@ -367,13 +367,13 @@ else:
     def half_arc(t0, t1):
         """One ``A1 -> A2`` footprint half, arc-length-even, ``N_HALF + 1`` points
         -- the collar arc shared between the branch and one main leg."""
-        fr = LineMesh.arclength_fractions(footprint, N_HALF, t_range=(t0, t1))
-        return LineMesh.loft_fn(footprint, fr, order=ORDER)
+        fr = linemesh.shape.arclength_fractions(footprint, N_HALF, t_range=(t0, t1))
+        return linemesh.assemble.loft_fn(footprint, fr, order=ORDER)
 
     def join_arcs(p, q):
         """Two shared-endpoint ``A1 -> A2`` arcs into one closed ``2*N_HALF``-point
         ring, index 0 at ``A1``, index ``N_HALF`` at ``A2``."""
-        return LineMesh.merge([p, q.reverse()])
+        return linemesh.assemble.merge([p, q.reverse()])
 
     def wall_arc(pa, pb):
         """The straight ``(phi, z)`` segment ``pa -> pb`` on the main cylinder,
@@ -386,7 +386,7 @@ else:
             xi = np.asarray(x, dtype=float)[:, None]
             return cyl_pts((1.0 - xi) * pa + xi * pb)
 
-        return LineMesh.loft_fn(f, np.linspace(0.0, 1.0, N_HALF + 1), order=ORDER)
+        return linemesh.assemble.loft_fn(f, np.linspace(0.0, 1.0, N_HALF + 1), order=ORDER)
 
     #: The branch collar, split at the two saddle points: ``A_PLUS`` via the ``+z``
     #: side (through ``t = OFFSET``), ``A_MINUS`` via the ``-z`` side. Both run
@@ -405,7 +405,7 @@ else:
         -- ``opening`` is a plain circle, so uniform ``t`` is already arc-length
         even -- giving the same point count and winding as ``A_PLUS``/``A_MINUS``
         so ``SEAM_BRANCH`` blends into it index-for-index."""
-        return LineMesh.loft_fn(opening, np.linspace(t0, t1, N_HALF + 1),
+        return linemesh.assemble.loft_fn(opening, np.linspace(t0, t1, N_HALF + 1),
                                 order=ORDER)
 
     OPEN_PLUS = opening_arc(TA1, TA2)
@@ -435,7 +435,7 @@ def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node."""
     fr = np.linspace(0.0, 1.0, N + 1)
     return QuadMesh.loft_fn(
-        lambda y: LineMesh.loft_fn(
+        lambda y: linemesh.assemble.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -519,7 +519,7 @@ def leg(composite, walls, sign, run, end_tag):
 #: from the identical points. Built once, per topology, exactly like the rest of the
 #: junction geometry above; ``bend()`` below only needs it to be *a* valid disc.
 if TOPOLOGY == "quadrant":
-    OPEN_ARCS = [LineMesh.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
+    OPEN_ARCS = [linemesh.assemble.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
     C_OPEN = np.array([H_BRANCH, 0.0, 0.0])
     OPENING_DISC = QuadMesh.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
                                           center_scale=CENTER_SCALE, wall_tag="wall")
@@ -533,7 +533,7 @@ def branch():
     short straight arm out to where this junction's hairpin bend begins. Neither end
     is tagged -- both become interior faces once the bend welds onto the far one."""
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
-    walls = [LineMesh.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
+    walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
     sections = [QuadMesh.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
@@ -546,7 +546,7 @@ def leg_half(seam_ring, sign, run, end_tag, n_slices=N_TRANS):
     disc, :meth:`QuadMesh.spined_ogrid <nekmeshpy.quadmesh.QuadMesh.spined_ogrid>`
     each station, loft the transition, then extrude straight over ``run`` -- the
     same two-piece transition/run split as :func:`leg`."""
-    loops = LineMesh.blend(seam_ring, opening_main(sign * Z_NEAR),
+    loops = linemesh.morph.blend(seam_ring, opening_main(sign * Z_NEAR),
                            np.linspace(0.0, 1.0, n_slices + 1))
     stations = [QuadMesh.spined_ogrid(loop, RADIAL, center_scale=CENTER_SCALE,
                                       wall_tag="wall") for loop in loops]
@@ -561,7 +561,7 @@ def branch_half():
     """The branch stub, half-ogrid version: blend ``SEAM_BRANCH`` into the round
     opening at ``H_BRANCH``, ``spined_ogrid`` each station, loft, then the same
     straight ``ARM_LEN`` extrude as :func:`branch`."""
-    loops = LineMesh.blend(SEAM_BRANCH, OPENING_LOOP,
+    loops = linemesh.morph.blend(SEAM_BRANCH, OPENING_LOOP,
                            np.linspace(0.0, 1.0, N_BRANCH + 1))
     stations = [QuadMesh.spined_ogrid(loop, RADIAL, center_scale=CENTER_SCALE,
                                       wall_tag="wall") for loop in loops]

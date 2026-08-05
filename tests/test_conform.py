@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from conftest import conformal, curved, hex_from_entities, quad_from_entities
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, linemesh
 from nekmeshpy.model import conform
 from nekmeshpy.model.interp import corner_indices
 
@@ -61,7 +61,7 @@ def test_quad_round_trip_through_entity_store(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_ogrid_round_trip(order):
     # order rides on the boundary loop; no repositioning smoother (rejected at N>1)
-    loop = LineMesh.circle(2.0, 16, order=order)
+    loop = linemesh.shape.circle(2.0, 16, order=order)
     qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
     assert qm.order == order
     rebuilt = quad_from_entities(qm.points, qm.quads, edge_nodes=qm.edge_nodes,
@@ -171,7 +171,7 @@ def test_corners_are_single_sourced_so_cannot_disagree():
 # -- line: interior is private (no shared edges) ------------------------
 @pytest.mark.parametrize("order", [2, 3, 5])
 def test_line_conformal_private_interior(order):
-    lm = LineMesh.line([0, 0, 0], [3, 0, 0], [0.0, 0.25, 0.6, 1.0], order=order)
+    lm = linemesh.shape.line([0, 0, 0], [3, 0, 0], [0.0, 0.25, 0.6, 1.0], order=order)
     nodes, conn = conformal(lm)
     assert conn.shape == (lm.lines.shape[0], order + 1)
     block = nodes[conn]
@@ -246,9 +246,9 @@ def test_quadmesh_brep_shares_edge_nodes_across_incident_quads():
 def test_line_merge_propagates_high_order(order):
     """LineMesh.merge welds endpoints but must carry each line's private interior
     through (previously it silently dropped the high-order nodes)."""
-    a = LineMesh.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=order)
-    b = LineMesh.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=order)
-    merged = LineMesh.merge([a, b])
+    a = linemesh.shape.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=order)
+    b = linemesh.shape.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=order)
+    merged = linemesh.assemble.merge([a, b])
     assert merged.order == order
     assert merged.interior.shape == (merged.lines.shape[0], order - 1, 3)
     # the merged interior nodes equal the originals' (welding only touches endpoints)
@@ -259,14 +259,14 @@ def test_line_merge_propagates_high_order(order):
 
 
 def test_line_merge_rejects_mismatched_order():
-    a = LineMesh.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=2)
-    b = LineMesh.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=3)
+    a = linemesh.shape.line([0, 0, 0], [1, 0, 0], [0.0, 0.5, 1.0], order=2)
+    b = linemesh.shape.line([1, 0, 0], [2, 0, 0], [0.0, 0.5, 1.0], order=3)
     with pytest.raises(ValueError, match="same order"):
-        LineMesh.merge([a, b])
+        linemesh.assemble.merge([a, b])
 
 
 def test_order1_line_conformal():
-    lm = LineMesh.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
+    lm = linemesh.assemble.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
     nodes, conn = conformal(lm)
     assert np.allclose(nodes, lm.points)
     assert np.array_equal(conn, lm.lines)

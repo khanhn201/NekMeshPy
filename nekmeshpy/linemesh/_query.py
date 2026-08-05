@@ -3,7 +3,7 @@
 They take the mesh and return plain arrays, never another mesh, so they are bound as
 instance methods rather than ``staticmethod`` factories.
 
-Free functions assigned into the :class:`~nekmeshpy.LineMesh` class body (see
+Free functions assigned into the :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` class body (see
 ``linemesh.py``), which is what makes them methods; internal toolkit code imports them
 from here directly.
 """

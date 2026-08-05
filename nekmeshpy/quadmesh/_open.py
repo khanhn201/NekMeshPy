@@ -150,7 +150,7 @@ def _refined_chain(edge: LineMesh, name: str) -> PointArray:
 
     These are the exact samples of the edge curve at :func:`_refined_params` -- read
     off the edge's B-rep rather than interpolated -- so an analytic edge
-    (:meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`) enters the transfinite
+    (:func:`linemesh.shape.arc <nekmeshpy.linemesh.shape.arc>`) enters the transfinite
     blend on its true geometry.  Each line's private ``interior`` is reversed where the
     line runs against the edge's point order."""
     pts: PointArray = edge.points
@@ -185,8 +185,7 @@ def _blended_ring(pos: PointArray, wall: LineMesh, tau: float,
     lerp the ring's corners get, applied to the private ``interior`` nodes as well, so
     an intermediate ring inherits its share of the wall's curvature instead of being a
     straight chord between blended corners.  This is what
-    :func:`annulus` gets from :meth:`LineMesh.blend
-    <nekmeshpy.linemesh.LineMesh.blend>`; the rings here cannot use ``blend`` directly
+    :func:`annulus` gets from :func:`linemesh.morph.blend <nekmeshpy.linemesh.morph.blend>`; the rings here cannot use ``blend`` directly
     because ``half_ogrid`` snaps its two end points onto exact spine samples, so the
     curve is re-anchored on ``pos`` (the ring's true corner positions) with a linear
     correction that vanishes wherever no snapping happened.  At ``tau == 1`` it
@@ -297,8 +296,8 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
     The order comes from the edges (all four must agree).  At ``order > 1`` each
     edge's own private high-order ``interior`` is **stamped onto the matching side**
     of the boundary quads, exactly as ``ogrid`` / ``half_ogrid`` do, so an analytic
-    edge (:meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`,
-    :meth:`circle <nekmeshpy.linemesh.LineMesh.circle>`) is meshed on its true curve
+    edge (:func:`linemesh.shape.arc <nekmeshpy.linemesh.shape.arc>`,
+    :func:`circle <nekmeshpy.linemesh.shape.circle>`) is meshed on its true curve
     rather than straight-subdivided between its points; the transfinite interior
     stays a straight order-N fill.
     """
@@ -731,8 +730,8 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     ``n+1 + Nradial`` points ascending from ``O``: the ``n+1`` core fan, then the
     ``Nradial`` ring stations.  Derive that sampling with
     :func:`quadrant_seam_fractions` and evaluate your own radius curve there
-    (:meth:`LineMesh.line <nekmeshpy.linemesh.LineMesh.line>` for a straight radius,
-    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>` for a bowed
+    (:func:`linemesh.shape.line <nekmeshpy.linemesh.shape.line>` for a straight radius,
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` for a bowed
     one), at ``arc``'s order -- at ``order > 1`` a seam's own private nodes *are* the
     radius geometry, so the orders must match.
 
@@ -937,7 +936,7 @@ def spine_fractions(n_theta: int, radial: int | FloatArray,
     Neither factory resamples a spine for you -- both mesh it exactly at the points
     given -- so this is how a caller **derives** the sampling to prove: evaluate its
     own spine curve at these fractions (with
-    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>` for an analytic spine,
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` for an analytic spine,
     or ``trimesh.ops.resample_polyline`` for a scanned one) and hand the result in.
     Keeping the formula here rather than in every caller is what stops the two from
     drifting apart."""

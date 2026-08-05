@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from conftest import assert_same_side_tags
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, QuadMesh, linemesh
 from nekmeshpy.model import conform, frames
 from nekmeshpy.model.fields import uniform_spacing
 
@@ -54,7 +54,7 @@ def straight(s):
 
 def disc(order=1, normal=(0, 0, 1), center=(RB, 0.0, 0.0), tag="wall"):
     """An O-grid disc of radius ``RP``, wall-tagged on the loop (the lowest rung)."""
-    ring = LineMesh.circle(RP, NU, center=center, normal=normal, order=order,
+    ring = linemesh.shape.circle(RP, NU, center=center, normal=normal, order=order,
                            element_tags=[tag] * NU)
     return QuadMesh.ogrid(ring, NS, uniform_spacing(NR))
 
@@ -336,7 +336,7 @@ def test_twist_rolls_the_section_about_the_tangent_without_moving_the_axis():
 
 @pytest.mark.parametrize("order", [1, 3])
 def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
-    seg = LineMesh.line((RB - RP, 0, 0), (RB + RP, 0, 0), np.linspace(0.0, 1.0, 5),
+    seg = linemesh.shape.line((RB - RP, 0, 0), (RB + RP, 0, 0), np.linspace(0.0, 1.0, 5),
                         element_tag="fin", order=order)
     rib = QuadMesh.sweep(seg, elbow, np.linspace(0.0, 1.0, 6),
                          origin=(RB, 0.0, 0.0), normal=(0, 0, 1),
@@ -354,7 +354,7 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
 
 
 def test_quad_rung_needs_a_normal_for_a_collinear_profile():
-    seg = LineMesh.line((0, 0, 0), (1, 0, 0), np.linspace(0.0, 1.0, 5))
+    seg = linemesh.shape.line((0, 0, 0), (1, 0, 0), np.linspace(0.0, 1.0, 5))
     with pytest.raises(ValueError, match="collapses onto the normal"):
         QuadMesh.sweep(seg, elbow, np.linspace(0.0, 1.0, 4), normal=(1, 0, 0),
                        origin=(0.0, 0.0, 0.0))

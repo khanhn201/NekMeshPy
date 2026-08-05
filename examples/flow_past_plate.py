@@ -22,7 +22,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, QuadMesh, export, linemesh
 from nekmeshpy.model.fields import geometric_spacing, gll_nodes
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -70,12 +70,12 @@ def ellipse(th):
 interior = (None if ORDER == 1 else
             ellipse(theta[:, None]
                     + gll_nodes(ORDER)[1:ORDER][None, :] * (2.0 * np.pi / N_THETA)))
-inner = LineMesh.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
+inner = linemesh.assemble.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
                       order=ORDER, interior=interior, loop=True)
 
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named by the direction they face -- bottom / outlet / top / inlet
-outer = LineMesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
+outer = linemesh.shape.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
 section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),

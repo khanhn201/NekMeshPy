@@ -10,7 +10,7 @@ them for the consuming factory).  ``reverse`` is the mirror image: it moves no
 coordinate and instead relabels the index space with the bijection ``i -> N-1-i``,
 which is still rung-preserving and still invents no numbering.
 
-Free functions assigned into the :class:`~nekmeshpy.LineMesh` class body (see
+Free functions assigned into the :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` class body (see
 ``linemesh.py``) -- the binary ``blend`` wrapped in ``staticmethod``, the unary
 placements bare, so ``lm.translate(v)`` reads as it should.  Internal toolkit code
 imports them from here directly.  Each builds its result with ``type(mesh)`` rather

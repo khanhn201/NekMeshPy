@@ -5,7 +5,7 @@ boundary tags."""
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, LineMesh, PointTags, QuadMesh
+from nekmeshpy import HexMesh, PointTags, QuadMesh, linemesh
 
 
 def _loop(radius):
@@ -14,9 +14,9 @@ def _loop(radius):
 
 
 def test_linemesh_blend_endpoints_and_midpoint():
-    a = LineMesh.loft(_loop(1.0), loop=True)
-    b = LineMesh.loft(_loop(3.0), loop=True)
-    lo, mid, hi = LineMesh.blend(a, b, [0.0, 0.5, 1.0])
+    a = linemesh.assemble.loft(_loop(1.0), loop=True)
+    b = linemesh.assemble.loft(_loop(3.0), loop=True)
+    lo, mid, hi = linemesh.morph.blend(a, b, [0.0, 0.5, 1.0])
     assert np.allclose(lo.points, a.points)                  # t=0 reproduces a
     assert np.allclose(hi.points, b.points)                  # t=1 reproduces b
     assert np.allclose(mid.points, 0.5 * (a.points + b.points))
@@ -29,23 +29,23 @@ def test_linemesh_blend_endpoints_and_midpoint():
 def test_linemesh_blend_carries_point_tags_not_element_tags():
     pts_a = np.column_stack([np.linspace(0, 1, 5), np.zeros(5), np.zeros(5)])
     pts_b = np.column_stack([np.linspace(0, 1, 5), np.ones(5), np.zeros(5)])
-    a = LineMesh.loft(pts_a, element_tags=["wall"] * 4,
+    a = linemesh.assemble.loft(pts_a, element_tags=["wall"] * 4,
                       point_tags=PointTags.from_pairs([[0, 1]], ["inlet"]))
-    b = LineMesh.loft(pts_b)
-    mid = LineMesh.blend(a, b, [0.5])[0]
+    b = linemesh.assemble.loft(pts_b)
+    mid = linemesh.morph.blend(a, b, [0.5])[0]
     # positional BC markers follow the morph; per-element region tags do not
     assert mid.point_group_tags == ["inlet"]
     assert mid.element_group_tags == []
 
 
 def test_linemesh_blend_rejects_count_and_topology_mismatch():
-    a = LineMesh.loft(_loop(1.0), loop=True)
+    a = linemesh.assemble.loft(_loop(1.0), loop=True)
     with pytest.raises(ValueError, match="equal point counts"):
-        LineMesh.blend(a, LineMesh.loft(_loop(2.0)[:6], loop=True), [0.5])
+        linemesh.morph.blend(a, linemesh.assemble.loft(_loop(2.0)[:6], loop=True), [0.5])
     # an open chain over the same points has different `lines` (7 vs 8, no wrap),
     # which is exactly how open-vs-closed is expressed now
     with pytest.raises(ValueError, match="identical connectivity"):
-        LineMesh.blend(a, LineMesh.loft(_loop(2.0)), [0.5])
+        linemesh.morph.blend(a, linemesh.assemble.loft(_loop(2.0)), [0.5])
 
 
 def _quad_grid(z):

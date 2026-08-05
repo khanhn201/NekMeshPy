@@ -69,7 +69,7 @@ def loft(
     """Loft a stack of conformal ``LineMesh`` profiles into a quad section
     (the general primitive behind :meth:`extrude`, and the middle rung of the
     uniform sweep shared with
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` and
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
     :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`).
 
     ``slices`` is ``nz+1`` line profiles sharing the same ``lines``,
@@ -90,7 +90,7 @@ def loft(
     ``order > 1`` a swept curved surface is high-order in storage and linear in
     geometry between consecutive slices -- exact input rings do not save it.
     ``sweep_nodes`` is the escape hatch, and the exact analogue of
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>`'s ``interior``
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`'s ``interior``
     override one rung down: ``sweep_nodes[i]`` is the ``order-1`` profiles lying
     strictly *between* slice ``i`` and the slice it sweeps to, at that layer's
     interior GLL levels.  Supplied, they replace both interpolations -- the rung
@@ -421,7 +421,7 @@ def loft_fn(
     blended along the sweep.
 
     This is the quad rung of
-    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`, and it
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`, and it
     exists for the same reason: a plain :func:`loft` has only the corner-level
     profiles to go on, so at ``order > 1`` it subdivides the sweep straight and a
     swept curved surface ends up high-order in storage and linear in geometry (a
@@ -440,7 +440,7 @@ def loft_fn(
     **Why ``f`` is scalar here and ``sweep``'s ``path`` is vectorized.**  ``f`` returns
     a *mesh*, and a callable that hands back one mesh can only be given one parameter
     value -- there is no array-of-meshes for a vectorized form to return (which is also
-    why :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`, whose
+    why :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`, whose
     ``f`` returns plain coordinates, *is* vectorized).  :func:`sweep`'s ``path`` is
     vectorized for a different reason again: it returns coordinates *and* the default
     frame generator is a sequential integration along the whole curve, so it cannot be

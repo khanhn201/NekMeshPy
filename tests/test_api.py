@@ -6,10 +6,10 @@ import numpy as np
 
 from nekmeshpy import (
     SECTION_METHODS,
-    LineMesh,
     PhysicalGroups,
     QuadMesh,
     export,
+    linemesh,
     register_section_smoothing,
     set_section_smoothing,
 )
@@ -48,8 +48,8 @@ def test_section_smoothing_registry_extensible():
 
     assert "noop_test" in SECTION_METHODS
     qm = QuadMesh.structured(
-        [LineMesh.loft([(0, 0, 0), (1, 0, 0)]), LineMesh.loft([(1, 0, 0), (1, 1, 0)]),
-         LineMesh.loft([(1, 1, 0), (0, 1, 0)]), LineMesh.loft([(0, 1, 0), (0, 0, 0)])])
+        [linemesh.assemble.loft([(0, 0, 0), (1, 0, 0)]), linemesh.assemble.loft([(1, 0, 0), (1, 1, 0)]),
+         linemesh.assemble.loft([(1, 1, 0), (0, 1, 0)]), linemesh.assemble.loft([(0, 1, 0), (0, 0, 0)])])
     set_section_smoothing(qm, "noop_test")
     assert calls.get("hit") is True
     del SECTION_METHODS["noop_test"]
@@ -77,7 +77,7 @@ def test_int_layer_count_is_uniform_spacing():
 def test_int_layer_count_reaches_the_factories_bit_identically():
     from nekmeshpy import HexMesh
     from nekmeshpy.model.fields import uniform_spacing
-    circ = LineMesh.circle(1.0, 8)
+    circ = linemesh.shape.circle(1.0, 8)
     a = QuadMesh.ogrid(circ, 2, uniform_spacing(2))
     b = QuadMesh.ogrid(circ, 2, 2)
     assert a.points.tobytes() == b.points.tobytes()
@@ -100,7 +100,7 @@ def test_layer_count_rejects_zero_and_floats():
 
 def test_repr_of_each_container_names_counts_and_tag_groups():
     from nekmeshpy import HexMesh, TriMesh
-    section = QuadMesh.ogrid(LineMesh.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
+    section = QuadMesh.ogrid(linemesh.shape.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
     block = HexMesh.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
                             first_tag="inlet", last_tag="outlet")
     assert repr(section).startswith("<QuadMesh ")

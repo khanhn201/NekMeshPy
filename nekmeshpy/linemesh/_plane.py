@@ -1,4 +1,4 @@
-"""Shared internals for the planar :class:`~nekmeshpy.LineMesh` factories.
+"""Shared internals for the planar :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` factories.
 
 ``_in_plane_axes`` returns an orthonormal ``(e1, e2)`` frame spanning the plane with a
 given normal, so a factory can place a planar loop (``circle`` / ``rectangle``) or an

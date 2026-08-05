@@ -171,7 +171,7 @@ def from_grid(
     is exact under this subdivision).
 
     Built as a :meth:`loft` of the grid's **column profiles**, each of which is
-    itself a :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` of the
+    itself a :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` of the
     grid's ``i`` points -- profile ``j`` is the open chain lofted from
     ``P[:, j, :]`` running ``i = 0..ni`` -- and the sweep runs ``j = 0..nj``, so
     the whole ladder ``HexMesh.from_grid -> from_grid -> LineMesh.loft`` is

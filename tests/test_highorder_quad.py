@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from conftest import GOLDEN, curved, run_example
 
-from nekmeshpy import LineMesh, QuadMesh
+from nekmeshpy import LineMesh, QuadMesh, linemesh
 from nekmeshpy.io import export
 from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.interp import corner_indices, quad_edge_indices
@@ -56,7 +56,7 @@ def test_box_nodes_on_flat_faces(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_ogrid_wall_nodes_on_the_circle(order):
     r = 2.0
-    loop = LineMesh.circle(r, 16, order=order)          # 16 pts = 4 per side
+    loop = linemesh.shape.circle(r, 16, order=order)          # 16 pts = 4 per side
     # no smoothing: the wall overlay stamps the true arc regardless (a repositioning
     # smoother is rejected at order > 1 -- see test_high_order_smoothing_rejected).
     qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
@@ -83,12 +83,12 @@ def test_structured_stamps_its_edges_high_order_nodes(order):
     # not be replaced by the transfinite blend's straight subdivision (which would
     # miss the arc by the chord sagitta, ~2e-2 here).
     r, n = 1.0, 8
-    bottom = LineMesh.arc(r, n, start_theta=np.pi, end_theta=0.0, order=order)
-    right = LineMesh.line((r, 0.0, 0.0), (r, 2.0, 0.0), uniform_spacing(3),
+    bottom = linemesh.shape.arc(r, n, start_theta=np.pi, end_theta=0.0, order=order)
+    right = linemesh.shape.line((r, 0.0, 0.0), (r, 2.0, 0.0), uniform_spacing(3),
                           order=order)
-    top = LineMesh.line((r, 2.0, 0.0), (-r, 2.0, 0.0), uniform_spacing(n),
+    top = linemesh.shape.line((r, 2.0, 0.0), (-r, 2.0, 0.0), uniform_spacing(n),
                         order=order)
-    left = LineMesh.line((-r, 2.0, 0.0), (-r, 0.0, 0.0), uniform_spacing(3),
+    left = linemesh.shape.line((-r, 2.0, 0.0), (-r, 0.0, 0.0), uniform_spacing(3),
                          order=order)
     qm = QuadMesh.structured([bottom, right, top, left])
     assert qm.order == order
@@ -130,7 +130,7 @@ def test_ogrid_interior_edges_are_curved(order):
     # too.  A straight-subdivided interior (the old behaviour) leaves every non-wall
     # edge dead on its chord at ~1e-17.
     r = 2.0
-    loop = LineMesh.circle(r, 16, order=order)
+    loop = linemesh.shape.circle(r, 16, order=order)
     qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0])        # one interior ring at t=0.5
     dev = _edge_chord_deviation(qm)
     wall = _on_radius(qm, r)
@@ -145,7 +145,7 @@ def test_half_ogrid_interior_edges_are_curved(order):
     # half_ogrid had no order>1 coverage at all.  Reached through spined_ogrid (the
     # bifurcation path), which runs two half_ogrids and merges them.
     r = 1.5
-    loop = LineMesh.circle(r, 32, order=order)
+    loop = linemesh.shape.circle(r, 32, order=order)
     qm = QuadMesh.spined_ogrid(loop, [0.0, 0.4, 1.0])
     assert qm.order == order
     dev = _edge_chord_deviation(qm)
@@ -167,11 +167,11 @@ def test_structured_interior_matches_the_analytic_coons_blend(order):
     # collapses to a radial lerp of the arcs -- every node in a block column shares
     # the bottom arc's angle, and every node in a block row shares one radius.
     r_in, r_out, n, nr = 1.0, 2.0, 6, 3
-    inner = LineMesh.arc(r_in, n, start_theta=0.0, end_theta=np.pi / 2, order=order)
-    outer = LineMesh.arc(r_out, n, start_theta=np.pi / 2, end_theta=0.0, order=order)
+    inner = linemesh.shape.arc(r_in, n, start_theta=0.0, end_theta=np.pi / 2, order=order)
+    outer = linemesh.shape.arc(r_out, n, start_theta=np.pi / 2, end_theta=0.0, order=order)
     ip, op = inner.points, outer.points
-    right = LineMesh.line(ip[-1], op[0], uniform_spacing(nr + 1), order=order)
-    left = LineMesh.line(op[-1], ip[0], uniform_spacing(nr + 1), order=order)
+    right = linemesh.shape.line(ip[-1], op[0], uniform_spacing(nr + 1), order=order)
+    left = linemesh.shape.line(op[-1], ip[0], uniform_spacing(nr + 1), order=order)
     qm = QuadMesh.structured([inner, right, outer, left])
     assert qm.order == order
     row = order + 1
@@ -189,13 +189,13 @@ def test_structured_interior_matches_the_analytic_coons_blend(order):
 def test_structured_rejects_a_non_chain_edge():
     # the overlay maps line k onto the k-th interval of the side, so an edge whose
     # lines are not the consecutive chain would be stamped in the wrong place
-    edges = [LineMesh.line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), uniform_spacing(3),
+    edges = [linemesh.shape.line((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), uniform_spacing(3),
                            order=2),
-             LineMesh.line((1.0, 0.0, 0.0), (1.0, 1.0, 0.0), uniform_spacing(2),
+             linemesh.shape.line((1.0, 0.0, 0.0), (1.0, 1.0, 0.0), uniform_spacing(2),
                            order=2),
-             LineMesh.line((1.0, 1.0, 0.0), (0.0, 1.0, 0.0), uniform_spacing(3),
+             linemesh.shape.line((1.0, 1.0, 0.0), (0.0, 1.0, 0.0), uniform_spacing(3),
                            order=2),
-             LineMesh.line((0.0, 1.0, 0.0), (0.0, 0.0, 0.0), uniform_spacing(2),
+             linemesh.shape.line((0.0, 1.0, 0.0), (0.0, 0.0, 0.0), uniform_spacing(2),
                            order=2)]
     scrambled = LineMesh(edges[0].points, [[0, 2], [2, 1], [1, 3]], order=2,
                          interior=np.zeros((3, 1, 3)))
@@ -210,8 +210,8 @@ def test_annulus_interior_rings_are_high_order_curved(order):
     # straight subdivision -- so interior nodes sit off the straight chord.
     r_in, r_out = 1.0, 3.0
     L = 16
-    inner = LineMesh.circle(r_in, L, order=order)
-    outer = LineMesh.circle(r_out, L, order=order)
+    inner = linemesh.shape.circle(r_in, L, order=order)
+    outer = linemesh.shape.circle(r_out, L, order=order)
     qm = QuadMesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])   # 2 layers
     idx = quad_edge_indices(1, order)            # side-1 (tangential) node indices
     # first quad of layer 1: its side-1 (bottom) edge is the middle ring (t=0.5),
@@ -226,8 +226,8 @@ def test_annulus_interior_rings_are_high_order_curved(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_annulus_wall_nodes_on_both_rings(order):
     r_in, r_out = 1.0, 3.0
-    inner = LineMesh.circle(r_in, 16, order=order)
-    outer = LineMesh.circle(r_out, 16, order=order)
+    inner = linemesh.shape.circle(r_in, 16, order=order)
+    outer = linemesh.shape.circle(r_out, 16, order=order)
     qm = QuadMesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
     assert qm.order == order
     cb = curved(qm)
@@ -249,11 +249,11 @@ def test_annulus_wall_nodes_on_both_rings(order):
 def test_high_order_smoothing_rejected(method):
     # a repositioning smoother moves only corner nodes, so it cannot smooth an
     # order-N section; the factory must raise rather than silently degrade.
-    loop = LineMesh.circle(2.0, 16, order=3)
+    loop = linemesh.shape.circle(2.0, 16, order=3)
     with pytest.raises(NotImplementedError, match="order-3"):
         QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
-    inner = LineMesh.circle(1.0, 16, order=3)
-    outer = LineMesh.circle(3.0, 16, order=3)
+    inner = linemesh.shape.circle(1.0, 16, order=3)
+    outer = linemesh.shape.circle(3.0, 16, order=3)
     with pytest.raises(NotImplementedError, match="order-3"):
         QuadMesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0],
                          smoothing_method=method)
@@ -262,7 +262,7 @@ def test_high_order_smoothing_rejected(method):
 def test_high_order_noop_smoothing_allowed():
     # the no-op strategies (bilinear/tfi/none) leave every node in place, so they
     # stay allowed at any order (e.g. circular_pipe.py runs order 2 + "bilinear").
-    loop = LineMesh.circle(2.0, 16, order=3)
+    loop = linemesh.shape.circle(2.0, 16, order=3)
     for method in ("bilinear", "tfi", "none"):
         qm = QuadMesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
         assert qm.order == 3
@@ -327,8 +327,8 @@ def test_merge_concatenates_curved_blocks():
 def test_order1_factories_are_linear_no_op():
     for qm in (QuadMesh.sphere(1.0, 2),
                QuadMesh.box(1.0, 2),
-               QuadMesh.annulus(LineMesh.circle(1.0, 12),
-                                LineMesh.circle(2.0, 12),
+               QuadMesh.annulus(linemesh.shape.circle(1.0, 12),
+                                linemesh.shape.circle(2.0, 12),
                                 radial=[0.0, 1.0])):
         # order 1: every high-order table is empty, the walk is just the corners
         assert qm.order == 1

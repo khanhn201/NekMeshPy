@@ -14,7 +14,7 @@ on a closed sweep is rejected at all three levels."""
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, QuadMesh, linemesh
 from nekmeshpy.model import topology
 
 R0, RSEC = 3.0, 1.0          # torus major / minor radius
@@ -28,7 +28,7 @@ def _ring_profiles(order=1, nsec=NSEC, nring=NRING):
     Placing them is exactly the rung-preserving ``rotate``: it maps the ring's
     high-order ``interior`` by the same rigid map as its corners, so each profile
     stays an exact circle."""
-    ring = LineMesh.circle(RSEC, nring, center=(R0, 0.0, 0.0),
+    ring = linemesh.shape.circle(RSEC, nring, center=(R0, 0.0, 0.0),
                            element_tags=["wall"] * nring, order=order)
     return [ring.rotate(2.0 * np.pi * k / nsec, axis=(0.0, 1.0, 0.0))
             for k in range(nsec)]
@@ -46,8 +46,8 @@ def test_line_loft_loop_is_the_loop_factory(order):
     """One dimension down each profile is a single point and the rungs *are* the
     lines, so ``loft(loop=True)`` is what makes the curve closed at all."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.5]])
-    lofted = LineMesh.loft(P, loop=True, order=order)
-    factory = LineMesh.loft(P, order=order, loop=True)
+    lofted = linemesh.assemble.loft(P, loop=True, order=order)
+    factory = linemesh.assemble.loft(P, order=order, loop=True)
     assert np.array_equal(lofted.points, factory.points)
     assert np.array_equal(lofted.lines, factory.lines)
     assert np.array_equal(lofted.interior, factory.interior)
@@ -59,14 +59,14 @@ def test_line_loft_loop_is_the_loop_factory(order):
 @pytest.mark.parametrize("order", [1, 3])
 def test_line_loft_open_is_the_open_factory(order):
     P = np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0.5]])
-    lofted = LineMesh.loft(P, loop=False, order=order)
-    factory = LineMesh.loft(P, order=order)
+    lofted = linemesh.assemble.loft(P, loop=False, order=order)
+    factory = linemesh.assemble.loft(P, order=order)
     assert np.array_equal(lofted.points, factory.points)
     assert np.array_equal(lofted.lines, factory.lines)
     assert np.array_equal(lofted.interior, factory.interior)
     # the closing rung is the only difference between the two modes
     assert lofted.n_lines == P.shape[0] - 1
-    assert LineMesh.loft(P, loop=True).n_lines == P.shape[0]
+    assert linemesh.assemble.loft(P, loop=True).n_lines == P.shape[0]
     assert lofted.boundary_points().tolist() == [0, P.shape[0] - 1]
 
 
@@ -75,7 +75,7 @@ def test_line_loft_high_order_interior_is_the_straight_gll_blend():
     blend between its endpoints -- the same nodes ``LineMesh.line`` places."""
     from nekmeshpy.model.fields import gll_nodes
     P = np.array([[0.0, 0, 0], [2, 0, 0], [2, 3, 0]])
-    lm = LineMesh.loft(P, loop=True, order=4)
+    lm = linemesh.assemble.loft(P, loop=True, order=4)
     g = gll_nodes(4)[1:4]
     a, b = lm.points[lm.lines[:, 0]], lm.points[lm.lines[:, 1]]
     assert np.allclose(lm.interior,
@@ -85,7 +85,7 @@ def test_line_loft_high_order_interior_is_the_straight_gll_blend():
 def test_line_loft_end_point_tags():
     """``first_tag``/``last_tag`` name the 1-D end caps: the chain's two end points."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
-    lm = LineMesh.loft(P, first_tag="inlet", last_tag="outlet")
+    lm = linemesh.assemble.loft(P, first_tag="inlet", last_tag="outlet")
     assert lm.point_tags.rows.tolist() == [[0, 1], [1, 2]]
     assert lm.point_group_tags == ["inlet", "outlet"]
 
@@ -147,7 +147,7 @@ def test_quad_loft_loop_beats_repeating_the_first_profile():
 def test_quad_loft_loop_emits_no_cap_rows_but_keeps_side_walls():
     """No cap boundary row on a periodic sweep; side walls from the profiles' own
     tagged boundary points are unaffected."""
-    chain = LineMesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
+    chain = linemesh.assemble.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
                           first_tag="left", last_tag="right")
     profiles = [chain.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0, 3.0)]
     closed = QuadMesh.loft(profiles, loop=True)
@@ -197,7 +197,7 @@ def test_hex_loft_loop_beats_repeating_the_first_profile():
 @pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
 def test_line_loft_loop_rejects_cap_tags(cap):
     with pytest.raises(ValueError, match="no near/far cap"):
-        LineMesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0]]),
+        linemesh.assemble.loft(np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0]]),
                       loop=True, **{cap: "cap"})
 
 

@@ -79,7 +79,7 @@ def loft(
 ) -> HexMesh:
     """Loft a stack of conformal quad profiles into a hex block (the general
     primitive behind ``extrude``, and the top rung of the uniform sweep shared
-    with :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` and
+    with :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
     :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>`).
 
     ``slices`` is ``nz+1`` profiles sharing the same quad connectivity,
@@ -398,7 +398,7 @@ def loft_fn(
     **Why ``f`` is scalar here and ``sweep``'s ``path`` is vectorized.**  ``f`` returns
     a *mesh*, and a callable that hands back one mesh can only be given one parameter
     value -- there is no array-of-meshes for a vectorized form to return (which is why
-    :meth:`LineMesh.loft_fn <nekmeshpy.linemesh.LineMesh.loft_fn>`, whose ``f``
+    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`, whose ``f``
     returns plain coordinates, *is* vectorized).  :func:`sweep`'s ``path`` is
     vectorized for a different reason again: it returns coordinates *and* the default
     frame generator is a sequential integration along the whole curve, so it cannot be

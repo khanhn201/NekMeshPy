@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from conftest import curved
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, linemesh
 from nekmeshpy.model.fields import (
     gll_nodes,
     gll_weights,
@@ -123,7 +123,7 @@ def test_scaled_jacobian_ho_hex_reduces_at_order1():
     from nekmeshpy.hexmesh import quality as hq
     from nekmeshpy.model.fields import uniform_spacing
 
-    loop = LineMesh.circle(1.0, 24)
+    loop = linemesh.shape.circle(1.0, 24)
     qm = QuadMesh.ogrid(loop, n_side=6, radial=uniform_spacing(4),
                         smoothing_method="bilinear")
     blk = HexMesh.extrude(qm, axis=(0, 0, 1), length=5.0, layers=uniform_spacing(6))
@@ -218,7 +218,7 @@ def test_blend_ho_endpoints_and_midpoint():
 def test_default_order_is_one_and_brep_is_empty():
     # order 1: every entity table of the B-rep is empty and the conformal walk is
     # just the corners, i.e. points[conn] in connectivity order.
-    lm = LineMesh.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
+    lm = linemesh.assemble.loft([[0, 0, 0], [1, 0, 0], [2, 0, 0]])
     assert lm.order == 1 and lm.interior.shape == (2, 0, 3)
     assert curved(lm).shape == (2, 2, 3)
     assert np.allclose(curved(lm), lm.points[lm.lines])
@@ -242,7 +242,7 @@ def test_default_order_is_one_and_brep_is_empty():
 
 
 def test_factory_meshes_default_to_order_one():
-    circ = LineMesh.circle(1.0, 8)
+    circ = linemesh.shape.circle(1.0, 8)
     assert circ.order == 1 and circ.interior.shape == (8, 0, 3)
     assert np.allclose(curved(circ), circ.points[circ.lines])
     og = QuadMesh.ogrid(circ, 2, np.array([0.0, 0.5, 1.0]))

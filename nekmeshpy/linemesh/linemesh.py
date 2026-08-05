@@ -12,7 +12,7 @@ resampling here.
 
 ``lines`` is a **required** constructor argument: the container never invents
 connectivity, so there is nothing in ``LineMesh`` that could imply a wrap.  The
-bottom rung of the uniform sweep primitive, :meth:`LineMesh.loft`, is what authors it
+bottom rung of the uniform sweep primitive, :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`, is what authors it
 -- one dimension below ``QuadMesh.loft``/``HexMesh.loft``, each "profile" is a single
 point and the rungs joining consecutive profiles *are* the line elements, with
 ``loop=True`` adding the closing rung from the last point back to the first.  It is
@@ -43,13 +43,13 @@ from .._typing import (
     StrArray,
 )
 from ..model.tags import ElementTags, PointTags
-from . import _assemble, _closed, _morph, _open, _query
+from . import _morph, _query
 
 
 def _as_points(points: PointArray) -> PointArray:
     """Normalize an array-like to a validated ``(N,3)`` float point array, raising
     the one actionable "points live in 3-D" error for anything else.  Shared by
-    ``LineMesh.__init__`` and :meth:`LineMesh.loft` so both report it identically."""
+    ``LineMesh.__init__`` and :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` so both report it identically."""
     a: PointArray = np.asarray(points, dtype=float)
     if a.ndim == 1:
         a = a.reshape(1, -1)
@@ -84,28 +84,17 @@ class LineMesh:
     EDGE_POINTS = np.array([[0], [1]], dtype=np.int64)
 
     # -- operations ------------------------------------------------------
-    # The operations live in the sibling modules, split by arity and rung delta, and
-    # are assigned in here rather than defined here: the container stays pure data and
-    # adding an operation still touches one sibling file plus one line of manifest.
-    # Plain assignment (not ``setattr`` in the package ``__init__``) is what lets mypy
-    # resolve ``LineMesh.blend`` to its real signature -- so internal toolkit code can
-    # call through the class, and a wrong argument is a type error rather than
-    # ``Any``.  A function taking the mesh first becomes an instance method by being
-    # assigned bare; one that does not takes an explicit ``staticmethod``.
-    loft = staticmethod(_assemble.loft)
-    loft_fn = staticmethod(_assemble.loft_fn)
-    merge = staticmethod(_assemble.merge)
-    blend = staticmethod(_morph.blend)
-    line = staticmethod(_open.line)
-    arc = staticmethod(_open.arc)
-    circle = staticmethod(_closed.circle)
-    rectangle = staticmethod(_closed.rectangle)
-    # helpers: they answer a question *about* a factory's input contract and return a
-    # plain array rather than a mesh, which is what keeps them out of the group above.
-    arclength_fractions = staticmethod(_open.arclength_fractions)
-    sweep_fractions = staticmethod(_open.sweep_fractions)
-    # unary placements and reads -- these take the mesh, so ``lm.translate(v)`` reads
-    # as it should.
+    # Only the *mesh-first* operations are bound here -- the ones whose natural
+    # spelling is ``lm.translate(v)``.  Assigning them in the class body (rather than
+    # ``setattr``-ing from the package ``__init__``) is what lets mypy resolve them to
+    # their real signatures.
+    #
+    # The factories are deliberately *not* here.  They take no mesh, so they gain
+    # nothing from being bound, and keeping them out means ``linemesh.py`` imports only
+    # ``_morph`` and ``_query`` -- every other sibling is free to import this module
+    # normally instead of deferring it around a cycle.  They live in the package
+    # namespaces: ``linemesh.assemble.loft``, ``linemesh.shape.circle``,
+    # ``linemesh.morph.blend``.
     reverse = _morph.reverse
     transform = _morph.transform
     translate = _morph.translate
@@ -141,7 +130,7 @@ class LineMesh:
         chain" default and therefore nothing here that could imply a wrap.  Callers
         either own their ``lines`` outright (``merge``'s rewelded lines, ``blend``'s
         copy of ``a.lines``, the quad/hex edge meshes built from
-        ``conform.unique_edges``) or author them with :meth:`loft`, which is the only
+        ``conform.unique_edges``) or author them with :func:`loft <nekmeshpy.linemesh.assemble.loft>`, which is the only
         connectivity-generating entry point (``loop=False`` chain / ``loop=True``
         ring).
 

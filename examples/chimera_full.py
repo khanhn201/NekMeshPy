@@ -60,7 +60,7 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, export, linemesh
 from nekmeshpy.model import frames
 from nekmeshpy.model.paths import turtle_path
 
@@ -378,7 +378,7 @@ def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, las
         xz = path.tangent(s)
         return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
 
-    fr = LineMesh.sweep_fractions(path.break_fractions * total, total, total / n_layers)
+    fr = linemesh.shape.sweep_fractions(path.break_fractions * total, total, total / n_layers)
     return HexMesh.sweep(section, centerline, fr, tangent=tangent, orientation="fixed",
                          up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag)
 
@@ -879,7 +879,7 @@ def build_coil(dbr_i, dbr_o):
     inflow_moves = moves_in + COIL_MOVES
     path = turtle_path(inflow_moves, start=(ci[0], ci[2]), heading=0.0)
     total = path.total_length
-    fr = LineMesh.sweep_fractions(path.break_fractions * total, total, COIL_TARGET_LEN)
+    fr = linemesh.shape.sweep_fractions(path.break_fractions * total, total, COIL_TARGET_LEN)
 
     def centerline(s):
         xz = path.centerline(s)

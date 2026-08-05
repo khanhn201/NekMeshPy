@@ -15,21 +15,31 @@ module         arity    delta contents
 ``_closed``    fixed    +1    closed-loop shape factories (``circle`` / ...)
 ============== ======== ===== ===============================================
 
-Each sibling holds plain free functions taking the mesh first, and ``linemesh.py``
-assigns them into the ``LineMesh`` class body -- one manifest line per operation,
-grouped there by how each binds.  A function taking the mesh first is assigned bare
-and becomes an instance method; a pure factory takes an explicit ``staticmethod``.
-That keeps the container pure data while leaving ``LineMesh.circle(...)`` /
-``lm.boundary_points()`` reachable, and adding an operation still touches only the
-sibling module plus that one manifest line.
+Operations reach callers two ways, split by whether they take a mesh.
 
-Assignment rather than ``setattr`` is the load-bearing detail: mypy resolves a
-class-body assignment to the function's real signature, so internal toolkit code may
-call ``LineMesh.loft(...)`` and still have its arguments checked.  (Neither
-``setattr`` nor a class-scoped ``import`` works -- mypy rejects the latter outright
+**Mesh-first** operations -- the unary placements and the reads -- are assigned into
+the ``LineMesh`` class body by ``linemesh.py``, so ``lm.translate(v)`` /
+``lm.boundary_points()`` read as they should.
+
+**Factories** take no mesh, so binding them onto the class buys nothing.  They are
+reached through the namespaces re-exported here instead::
+
+    linemesh.assemble.loft(points)        # n-ary: loft / loft_fn / merge
+    linemesh.shape.circle(radius, n)      # shape factories: line / arc / circle / ...
+    linemesh.morph.blend(a, b, fractions)
+
+That split is also what keeps the import graph a DAG.  ``linemesh.py`` imports only
+``_morph`` and ``_query`` (the two holding mesh-first operations), so every factory
+module is free to ``from .linemesh import LineMesh`` at module level like any normal
+module -- no deferred function-body imports, and ``TYPE_CHECKING`` only in those two.
+
+Assignment rather than ``setattr`` is the load-bearing detail for the bound half: mypy
+resolves a class-body assignment to the function's real signature, so a wrong argument
+is a type error.  (A class-scoped ``import`` would not work -- mypy rejects it outright
 with ``Unsupported class scoped import`` and types every name ``Any``.)
 """
 
+from . import assemble, morph, shape
 from .linemesh import LineMesh
 
-__all__ = ["LineMesh"]
+__all__ = ["LineMesh", "assemble", "morph", "shape"]

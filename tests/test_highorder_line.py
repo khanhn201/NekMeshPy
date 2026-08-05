@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from conftest import GOLDEN, curved, run_example
 
-from nekmeshpy import LineMesh
+from nekmeshpy import LineMesh, linemesh
 from nekmeshpy.io import export
 
 
@@ -19,7 +19,7 @@ from nekmeshpy.io import export
 @pytest.mark.parametrize("order", [2, 3, 5, 7])
 def test_circle_nodes_lie_on_the_true_arc(order):
     r = 2.5
-    c = LineMesh.circle(r, 8, order=order)
+    c = linemesh.shape.circle(r, 8, order=order)
     assert c.order == order
     cb = curved(c)                                       # B-rep -> per-line block
     assert cb.shape == (8, order + 1, 3)
@@ -33,7 +33,7 @@ def test_circle_nodes_lie_on_the_true_arc(order):
 
 def test_circle_curved_off_the_chord():
     # the interior HO nodes must bulge off the straight chord onto the arc
-    c = LineMesh.circle(1.0, 4, order=3)
+    c = linemesh.shape.circle(1.0, 4, order=3)
     cb = curved(c)
     chord_mid = 0.5 * (cb[:, 0, :] + cb[:, -1, :])
     interior = cb[:, 1:-1, :]
@@ -44,7 +44,7 @@ def test_circle_curved_off_the_chord():
 
 @pytest.mark.parametrize("order", [2, 4])
 def test_line_nodes_on_straight_segment(order):
-    lm = LineMesh.line([0, 0, 0], [3, 0, 0], [0.0, 0.5, 1.0], order=order)
+    lm = linemesh.shape.line([0, 0, 0], [3, 0, 0], [0.0, 0.5, 1.0], order=order)
     cb = curved(lm)
     assert lm.order == order and cb.shape == (2, order + 1, 3)
     # all nodes collinear on the x-axis (y=z=0), corner-consistent
@@ -54,7 +54,7 @@ def test_line_nodes_on_straight_segment(order):
 
 @pytest.mark.parametrize("order", [2, 3])
 def test_rectangle_nodes_on_straight_sides(order):
-    rc = LineMesh.rectangle(4.0, 2.0, 8, order=order)
+    rc = linemesh.shape.rectangle(4.0, 2.0, 8, order=order)
     cb = curved(rc)
     assert rc.order == order and cb.shape == (8, order + 1, 3)
     assert np.allclose(cb[:, [0, order], :], rc.points[rc.lines])
@@ -70,9 +70,9 @@ def test_rectangle_nodes_on_straight_sides(order):
 
 # -- N=1 no-op: order-1 factories reproduce the old linear meshes -------
 def test_order1_factories_are_linear_no_op():
-    for lm in (LineMesh.circle(1.3, 12),
-               LineMesh.line([0, 0, 0], [1, 2, 3], np.linspace(0, 1, 5)),
-               LineMesh.rectangle(3.0, 1.0, 8)):
+    for lm in (linemesh.shape.circle(1.3, 12),
+               linemesh.shape.line([0, 0, 0], [1, 2, 3], np.linspace(0, 1, 5)),
+               linemesh.shape.rectangle(3.0, 1.0, 8)):
         # order 1: the private interior is empty and the walk is just the corners
         assert lm.order == 1
         assert lm.interior.shape == (lm.lines.shape[0], 0, 3)
@@ -81,17 +81,17 @@ def test_order1_factories_are_linear_no_op():
 
 
 def test_order1_circle_points_match_high_order_corners():
-    lin = LineMesh.circle(1.7, 10)
-    ho = LineMesh.circle(1.7, 10, order=4)
+    lin = linemesh.shape.circle(1.7, 10)
+    ho = linemesh.shape.circle(1.7, 10, order=4)
     assert np.allclose(lin.points, ho.points)            # corner points identical
     assert np.array_equal(lin.lines, ho.lines)
 
 
 # -- high-order blend ---------------------------------------------------
 def test_blend_morphs_curved_blocks():
-    a = LineMesh.circle(1.0, 6, order=3)
-    b = LineMesh.circle(3.0, 6, order=3)
-    lo, mid, hi = LineMesh.blend(a, b, [0.0, 0.5, 1.0])
+    a = linemesh.shape.circle(1.0, 6, order=3)
+    b = linemesh.shape.circle(3.0, 6, order=3)
+    lo, mid, hi = linemesh.morph.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cb_, cmid = curved(a), curved(b), curved(mid)
     assert np.allclose(curved(lo), ca)
@@ -104,10 +104,10 @@ def test_blend_morphs_curved_blocks():
 
 
 def test_blend_rejects_mismatched_order():
-    a = LineMesh.circle(1.0, 6, order=3)
-    b = LineMesh.circle(1.0, 6, order=2)
+    a = linemesh.shape.circle(1.0, 6, order=3)
+    b = linemesh.shape.circle(1.0, 6, order=2)
     with pytest.raises(ValueError, match="same order"):
-        LineMesh.blend(a, b, [0.5])
+        linemesh.morph.blend(a, b, [0.5])
 
 
 # -- VTK Lagrange curve node ordering -----------------------------------
@@ -134,14 +134,14 @@ def _vtu_num_points(path):
 
 def test_vtu_order1_is_plain_line(tmp_path):
     p = str(tmp_path / "lin.vtu")
-    export.line_to_vtu(LineMesh.circle(1.0, 5), p)
+    export.line_to_vtu(linemesh.shape.circle(1.0, 5), p)
     assert _vtu_cell_types(p) == {"3"}                   # VTK_LINE
     assert _vtu_num_points(p) == 10                      # 5 elems x 2 nodes
 
 
 def test_vtu_high_order_is_lagrange_curve(tmp_path):
     p = str(tmp_path / "ho.vtu")
-    export.line_to_vtu(LineMesh.circle(1.0, 4, order=5), p)
+    export.line_to_vtu(linemesh.shape.circle(1.0, 4, order=5), p)
     assert _vtu_cell_types(p) == {"68"}                  # VTK_LAGRANGE_CURVE
     # conformal (welded) numbering: shared corners are written once.  A closed
     # 4-element loop has 4 corners + 4 x (6-2) private interior nodes = 20.

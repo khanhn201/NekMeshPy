@@ -17,11 +17,11 @@ import numpy as np
 
 from nekmeshpy import (
     HexMesh,
-    LineMesh,
     PhysicalGroups,
     QuadMesh,
     TriMesh,
     export,
+    linemesh,
     smoothing,
     trimesh,
     viz,
@@ -260,7 +260,7 @@ def _arc_mesh(p, n, element_tag):
     """Mesh an ``_arc_curve`` into ``n`` high-order elements, evenly spaced by arc
     length.  ``LineMesh.loft_fn`` evaluates ``p`` at every node -- corners *and* the
     private GLL interiors -- so no node lands on a chord."""
-    return LineMesh.loft_fn(p, LineMesh.arclength_fractions(p, n),
+    return linemesh.assemble.loft_fn(p, linemesh.shape.arclength_fractions(p, n),
                           order=ORDER, element_tags=[element_tag] * n)
 
 
@@ -271,7 +271,7 @@ def _ring(p, q):
 
     ``reverse`` carries ``q``'s high-order nodes with it; re-lofting its points
     would straight-subdivide them and lose the curve at ``ORDER > 1``."""
-    return LineMesh.merge([p, q.reverse()])
+    return linemesh.assemble.merge([p, q.reverse()])
 
 
 def seam_rings(V, faces, gloops, n_half):
@@ -308,7 +308,7 @@ def seam_rings(V, faces, gloops, n_half):
     bcP = _arc_mesh(_arc_curve(V, arcBC, iA1, n_half), n_half, "wall")
 
     rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
-    spine = LineMesh.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
+    spine = linemesh.assemble.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
     return rings, A1, A2, spine
 
 
@@ -344,7 +344,7 @@ def fourier_wall(P, order, element_tag):
     ``LineMesh.loft_fn`` only ever makes an open chain, so weld the two ends into a loop
     the way the toolkit expects (``LineMesh.merge``)."""
     M = np.asarray(P).shape[0]
-    return LineMesh.merge([LineMesh.loft_fn(
+    return linemesh.assemble.merge([linemesh.assemble.loft_fn(
         fourier_ring(P), np.linspace(0.0, 2.0 * np.pi, M + 1),
         order=order, element_tags=[element_tag] * M)])
 
@@ -416,7 +416,7 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
         slices.append(QuadMesh.spined_ogrid(
-            wall, radial, spine=LineMesh.loft(spn, order=ORDER),
+            wall, radial, spine=linemesh.assemble.loft(spn, order=ORDER),
             center_scale=center_scale, smoothing_method=m))
     return slices
 

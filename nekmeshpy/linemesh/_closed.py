@@ -1,4 +1,4 @@
-"""Closed-loop :class:`~nekmeshpy.LineMesh` factories: parametric shapes whose
+"""Closed-loop :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` factories: parametric shapes whose
 boundary closes on itself (``circle`` / ``rectangle``).
 
 These are plain free functions returning a ``LineMesh``; ``linemesh/__init__.py``
@@ -10,17 +10,13 @@ here needs no edit there).  Internal toolkit code calls the free functions direc
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .._typing import Point, PointArray, StrArray, Vec3
 from ._assemble import loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
-
-if TYPE_CHECKING:
-
-    from .linemesh import LineMesh
+from .linemesh import LineMesh
 
 
 def circle(radius: float, n: int, *,
@@ -44,7 +40,7 @@ def circle(radius: float, n: int, *,
     circle, as the element's private ``interior``, so a high-order ``vtu`` export
     renders the exact arc.
 
-    The open sibling is :meth:`LineMesh.arc <nekmeshpy.linemesh.LineMesh.arc>`; the
+    The open sibling is :func:`linemesh.shape.arc <nekmeshpy.linemesh.shape.arc>`; the
     two share the node
     placement (``_plane._arc_points`` / ``_arc_interior``) but not the angle sampling:
     a full turn's step is exactly ``2*pi/n`` here, whereas ``arc`` must form
@@ -95,7 +91,7 @@ def rectangle(width: float, height: float, n: int, *,
     each element carries ``order+1`` GLL nodes on its straight side -- the two
     endpoints are the corners in ``points`` and the ``order-1`` nodes strictly
     between them are the straight GLL blend
-    :meth:`LineMesh.loft <nekmeshpy.linemesh.LineMesh.loft>` places by default
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` places by default
     (read by high-order ``vtu`` export)."""
     ni = int(n)
     if ni < 4 or ni % 4 != 0:
