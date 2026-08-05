@@ -48,7 +48,7 @@ def test_section_smoothing_registry_extensible():
         return qm
 
     assert "noop_test" in SECTION_METHODS
-    qm = quadmesh.region.structured(
+    qm = quadmesh.shape.structured(
         [linemesh.assemble.loft([(0, 0, 0), (1, 0, 0)]), linemesh.assemble.loft([(1, 0, 0), (1, 1, 0)]),
          linemesh.assemble.loft([(1, 1, 0), (0, 1, 0)]), linemesh.assemble.loft([(0, 1, 0), (0, 0, 0)])])
     set_section_smoothing(qm, "noop_test")
@@ -78,8 +78,8 @@ def test_int_layer_count_is_uniform_spacing():
 def test_int_layer_count_reaches_the_factories_bit_identically():
     from nekmeshpy.model.fields import uniform_spacing
     circ = linemesh.shape.circle(1.0, 8)
-    a = quadmesh.region.ogrid(circ, 2, uniform_spacing(2))
-    b = quadmesh.region.ogrid(circ, 2, 2)
+    a = quadmesh.shape.ogrid(circ, 2, uniform_spacing(2))
+    b = quadmesh.shape.ogrid(circ, 2, 2)
     assert a.points.tobytes() == b.points.tobytes()
     ha = hexmesh.lift.extrude(a, axis=(0, 0, 1), length=1.0, layers=uniform_spacing(3))
     hb = hexmesh.lift.extrude(b, axis=(0, 0, 1), length=1.0, layers=3)
@@ -100,7 +100,7 @@ def test_layer_count_rejects_zero_and_floats():
 
 def test_repr_of_each_container_names_counts_and_tag_groups():
     from nekmeshpy import TriMesh
-    section = quadmesh.region.ogrid(linemesh.shape.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
+    section = quadmesh.shape.ogrid(linemesh.shape.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
     block = hexmesh.lift.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
                             first_tag="inlet", last_tag="outlet")
     assert repr(section).startswith("<QuadMesh ")

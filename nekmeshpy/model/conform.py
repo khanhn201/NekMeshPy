@@ -270,7 +270,7 @@ def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     Returns ``(canonical_conn (Nf,4), elem_faces (E,6), face_orient (E,6))`` where
     ``canonical_conn`` is the **CCW corner connectivity** of each unique face in its
     canonical D4 frame (corner order ``(0,0)->(1,0)->(1,1)->(0,1)``), suitable directly
-    as the ``quads`` of a shared-face :class:`~nekmeshpy.QuadMesh`; ``elem_faces`` and
+    as the ``quads`` of a shared-face :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>`; ``elem_faces`` and
     ``face_orient`` are exactly as :func:`unique_faces` returns them.  The owner (lowest
     incidence) hex of each unique face supplies its corner ids."""
     _, elem_faces, face_orient = unique_faces(hexes)

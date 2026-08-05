@@ -18,11 +18,11 @@ def _radius(theta, fr, order=1):
 
 def _disc(n, order=1, center_scale=CS, radial=RADIAL, wall_tag="wall"):
     """The four quadrants of the unit disk, sharing their seam objects."""
-    fr = quadmesh.region.quadrant_seam_fractions(n, radial, center_scale)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, radial, center_scale)
     ang = [0.0, np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi]
     seams = [_radius(a, fr, order) for a in ang[:4]]
     seams.append(seams[0])
-    return [quadmesh.region.quadrant_ogrid(
+    return [quadmesh.shape.quadrant_ogrid(
         linemesh.shape.arc(R, 2 * n, start_theta=ang[q], end_theta=ang[q + 1], order=order),
         seams[q], seams[q + 1], radial, center_scale=center_scale, wall_tag=wall_tag)
         for q in range(4)]
@@ -84,12 +84,12 @@ def test_a_bowed_seam_is_meshed_exactly(order):
         t = np.asarray(t, dtype=float)
         return np.stack([t, 0.25 * np.sin(np.pi * t), np.zeros_like(t)], axis=1)
 
-    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, CS)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, RADIAL, CS)
     s1 = linemesh.assemble.loft_fn(bow, fr, order=order)
     s2 = linemesh.shape.line(np.zeros(3), np.array([0.0, 1.0, 0.0]), fr, order=order)
     # a wall arc joining the two seam ends; its shape is irrelevant to this check
     arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=order)
-    q = quadmesh.region.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
+    q = quadmesh.shape.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     # every node of the mesh that sits on the bowed seam's line must satisfy the curve
     lm = q.lines
     seam_pts = s1.points
@@ -105,18 +105,18 @@ def test_a_bowed_seam_is_meshed_exactly(order):
 
 def test_tags_ride_up_from_the_line_level():
     n = 2
-    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, CS)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, RADIAL, CS)
     arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2,
                        element_tags=["wall"] * (2 * n))
     s1 = linemesh.shape.line(np.zeros(3), np.array([R, 0.0, 0.0]), fr, element_tag="sym")
     s2 = _radius(np.pi / 2, fr)
-    q = quadmesh.region.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
+    q = quadmesh.shape.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     assert q.edge_group_tags == ["sym", "wall"]
     counts = {t: q.edge_tags.count(t) for t in q.edge_group_tags}
     assert counts["wall"] == 2 * n
     assert counts["sym"] == n + NR
     # an explicit override replaces the whole wall
-    q2 = quadmesh.region.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS,
+    q2 = quadmesh.shape.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS,
                                  wall_tag="outer", side_tags={"seam2": "cut"})
     assert q2.edge_group_tags == ["cut", "outer", "sym"]
 
@@ -125,7 +125,7 @@ def test_seam_fraction_helper_places_the_core_corner_on_the_square():
     """``|O-M| == center_scale * cos(45 deg) * R``, not ``center_scale * R``: M is the
     midpoint of the core square's side while K is its corner."""
     n, cs = 4, 0.6
-    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, cs)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, RADIAL, cs)
     assert fr.size == n + 1 + NR
     assert fr[0] == 0.0 and fr[-1] == 1.0
     assert np.all(np.diff(fr) > 0.0)
@@ -138,28 +138,28 @@ def test_seam_fraction_helper_places_the_core_corner_on_the_square():
 
 def test_input_contract_is_loud():
     n = 3
-    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, CS)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, RADIAL, CS)
     arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2)
     s1, s2 = _radius(0.0, fr), _radius(np.pi / 2, fr)
     even = linemesh.shape.arc(R, 2 * n + 1, start_theta=0.0, end_theta=np.pi / 2)
     with pytest.raises(ValueError, match="2\\*n\\+1 points"):
-        quadmesh.region.quadrant_ogrid(even, s1, s2, RADIAL)
+        quadmesh.shape.quadrant_ogrid(even, s1, s2, RADIAL)
     short = _radius(0.0, np.linspace(0.0, 1.0, n + NR))
     with pytest.raises(ValueError, match="never resampled"):
-        quadmesh.region.quadrant_ogrid(arc, short, s2, RADIAL)
+        quadmesh.shape.quadrant_ogrid(arc, short, s2, RADIAL)
     with pytest.raises(ValueError, match="must end at"):
-        quadmesh.region.quadrant_ogrid(arc, s2, s1, RADIAL)
+        quadmesh.shape.quadrant_ogrid(arc, s2, s1, RADIAL)
     with pytest.raises(ValueError, match="same center point O"):
-        quadmesh.region.quadrant_ogrid(
+        quadmesh.shape.quadrant_ogrid(
             arc, linemesh.shape.line(np.array([0.1, 0.0, 0.0]), arc.points[0], fr), s2, RADIAL)
     with pytest.raises(ValueError, match="share an order"):
-        quadmesh.region.quadrant_ogrid(
+        quadmesh.shape.quadrant_ogrid(
             linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=2),
             s1, s2, RADIAL)
     with pytest.raises(ValueError, match="seam1/seam2"):
-        quadmesh.region.quadrant_ogrid(arc, s1, s2, RADIAL, side_tags={"bottom": "x"})
+        quadmesh.shape.quadrant_ogrid(arc, s1, s2, RADIAL, side_tags={"bottom": "x"})
     with pytest.raises(ValueError, match="center_scale"):
-        quadmesh.region.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=0.0)
+        quadmesh.shape.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=0.0)
 
 
 def test_quadrant_matches_ogrid_geometry_on_the_wall():
@@ -176,12 +176,12 @@ def test_quadrant_core_is_the_factory_s_own_core(n):
     """``QuadMesh.quadrant_core`` returns exactly the points ``quadrant_ogrid`` puts
     in its core block -- which is what lets a caller build a conforming block behind
     a quadrant face without reproducing the formula."""
-    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, CS)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, RADIAL, CS)
     s1, s2 = _radius(0.0, fr), _radius(np.pi / 2, fr)
     arc = linemesh.shape.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2)
-    core = quadmesh.region.quadrant_core(arc, s1, s2, center_scale=CS)
+    core = quadmesh.shape.quadrant_core(arc, s1, s2, center_scale=CS)
     assert core.shape == (n + 1, n + 1, 3)
-    q = quadmesh.region.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
+    q = quadmesh.shape.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     assert np.array_equal(core.reshape(-1, 3), q.points[:(n + 1) ** 2])
     # its two O-ward sides are the caller's own seam fans, verbatim
     assert np.array_equal(core[:, 0], s1.points[:n + 1])
@@ -191,13 +191,13 @@ def test_quadrant_core_is_the_factory_s_own_core(n):
 
 
 def test_quadrant_core_rejects_bad_shapes():
-    fr = quadmesh.region.quadrant_seam_fractions(2, RADIAL, CS)
+    fr = quadmesh.shape.quadrant_seam_fractions(2, RADIAL, CS)
     s1, s2 = _radius(0.0, fr), _radius(np.pi / 2, fr)
     even = linemesh.shape.arc(R, 3, start_theta=0.0, end_theta=np.pi / 2)
     with pytest.raises(ValueError, match="2\\*n\\+1 points"):
-        quadmesh.region.quadrant_core(even, s1, s2)
+        quadmesh.shape.quadrant_core(even, s1, s2)
     arc = linemesh.shape.arc(R, 4, start_theta=0.0, end_theta=np.pi / 2)
     with pytest.raises(ValueError, match="center_scale"):
-        quadmesh.region.quadrant_core(arc, s1, s2, center_scale=1.0)
+        quadmesh.shape.quadrant_core(arc, s1, s2, center_scale=1.0)
     with pytest.raises(ValueError, match="at least 3 points"):
-        quadmesh.region.quadrant_core(arc, _radius(0.0, np.array([0.0, 0.5])), s2)
+        quadmesh.shape.quadrant_core(arc, _radius(0.0, np.array([0.0, 0.5])), s2)

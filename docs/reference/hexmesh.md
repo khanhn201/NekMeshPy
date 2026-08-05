@@ -26,7 +26,8 @@ per-hex quality metrics.
 
 ## Operations
 
-Every operation is a free function in one of these namespaces -- `hexmesh.region.ogrid(...)`, not `HexMesh.ogrid(...)`.
+Every operation is a free function in one of these namespaces --
+`hexmesh.shape.circle(...)`, not `HexMesh.circle(...)`.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.hexmesh.assemble

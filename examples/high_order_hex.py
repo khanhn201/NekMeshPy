@@ -37,11 +37,11 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
 
 # -- two closed order-N quad surfaces, paired by index -----------------------
-cube = quadmesh.surface.box(S, N_FACE, order=ORDER, patch_tags={
+cube = quadmesh.shape.box(S, N_FACE, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})
-sphere = quadmesh.surface.sphere(R, N_FACE, order=ORDER)
+sphere = quadmesh.shape.sphere(R, N_FACE, order=ORDER)
 
 # -- fill the shell sphere -> cube -------------------------------------------
 mesh = hexmesh.lift.annulus(sphere, cube, radial=np.linspace(0.0, 1.0, N_RADIAL + 1))

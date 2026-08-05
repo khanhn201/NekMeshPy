@@ -8,10 +8,10 @@
 This file stays a **pure container**: storage, validation, ``from_corners``, and the
 derived views.  Every operation on a finished section lives beside it as a free function
 bound onto the class in ``quadmesh/__init__.py``, split by arity and by rung delta --
-``_assemble.py`` (the n-ary ``loft`` / ``merge``, which build a new index space),
-``_lift.py`` (``extrude`` / ``from_grid``, which delegate to it), ``_morph.py``
-(``blend``), ``_query.py`` (read-only queries), ``_open.py`` (region fills) and
-``_closed.py`` (closed surfaces).  Adding an operation touches only the sibling module,
+``assemble.py`` (the n-ary ``loft`` / ``merge``, which build a new index space),
+``lift.py`` (``extrude`` / ``from_grid``, which delegate to it), ``morph.py``
+(``blend``), ``query.py`` (read-only queries), ``shape.py`` (region fills) and
+``shape.py`` (closed surfaces).  Adding an operation touches only the sibling module,
 never this one; the shared ``_apply_smoothing`` / ``_check_boundary`` / ``_elevate``
 factory internals live in ``_helpers.py``.
 """

@@ -31,7 +31,7 @@ n = 4 * 6                                   # 4 * n_side points around the ring
 boundary = linemesh.shape.circle(radius=0.5, n=n, element_tags=["wall"] * n)
 
 # 2. Section: fill the loop with an O-grid, 4 radial layers.
-section = quadmesh.region.ogrid(boundary, n_side=6, radial=4,
+section = quadmesh.shape.ogrid(boundary, n_side=6, radial=4,
                          smoothing_method="bilinear")
 
 # 3. Volume: sweep 40 layers along +z; name the two end caps.

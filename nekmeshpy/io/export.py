@@ -19,7 +19,7 @@ import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
 from ..hexmesh import HexMesh
-from ..hexmesh._query import weld as hex_weld
+from ..hexmesh.query import weld as hex_weld
 from ..linemesh import LineMesh
 from ..model import conform, topology
 from ..model.fields import gll_nodes, lagrange_matrix, uniform_spacing

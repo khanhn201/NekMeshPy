@@ -48,7 +48,7 @@ def readnek(path):
 
 
 def _mesh(order):
-    section = quadmesh.region.ogrid(linemesh.shape.circle(1.0, 8, order=order), 2, LAYERS)
+    section = quadmesh.shape.ogrid(linemesh.shape.circle(1.0, 8, order=order), 2, LAYERS)
     return hexmesh.lift.extrude(section, length=1.0, layers=LAYERS)
 
 

@@ -5,15 +5,14 @@ Everything that *acts* on a finished mesh is a free function in a sibling module
 split by **arity** and by **rung delta** (how far up or down the line -> quad -> hex
 ladder the operation moves):
 
-============== ======== ===== ===============================================
-module         arity    delta contents
-============== ======== ===== ===============================================
-``_assemble``  n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
-``_morph``     fixed     0    ``blend``, ``translate``/``rotate``/``scale``, ``reverse``
-``_query``     fixed     exit read-only queries returning plain arrays
-``_open``      fixed    +1    open shape factories (``line`` / ``arc``)
-``_closed``    fixed    +1    closed-loop shape factories (``circle`` / ...)
-============== ======== ===== ===============================================
+============ ======== ===== ==================================================
+module       arity    delta contents
+============ ======== ===== ==================================================
+``assemble`` n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
+``shape``    fixed    +1    shape factories: ``line``/``arc``/``circle``/...
+``morph``    fixed    0     ``blend``, ``translate``/``rotate``/``scale``/...
+``query``    fixed    exit  read-only queries returning plain arrays
+============ ======== ===== ==================================================
 
 Every operation is a free function taking the mesh first, reached through one of the
 namespaces re-exported here.  Nothing is bound onto the container::
@@ -31,7 +30,7 @@ there are no deferred function-body imports and no ``TYPE_CHECKING`` guards anyw
 The namespaces are real modules rather than aliases of the private siblings
 (``from . import _assemble as assemble``), because Sphinx registers a target under a
 module's own ``__name__`` -- an alias documents nothing and every cross-reference to it
-breaks.  ``shape`` merges ``_open`` and ``_closed``, since open vs closed is a storage
+breaks.  ``shape`` merges ``shape`` and ``shape``, since open vs closed is a storage
 split rather than a caller-facing one.
 """
 

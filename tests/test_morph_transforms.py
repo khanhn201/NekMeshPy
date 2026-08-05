@@ -23,7 +23,7 @@ def _meshes(order):
     """One mesh per rung, all curved at ``order > 1`` (the circle's interior nodes sit
     on the true arc), so a transform that skipped a table would show up."""
     ring = linemesh.shape.circle(2.0, 8, element_tags=["wall"] * 8, order=order)
-    section = quadmesh.region.ogrid(ring, 2, RADIAL, wall_tag="wall")
+    section = quadmesh.shape.ogrid(ring, 2, RADIAL, wall_tag="wall")
     block = hexmesh.lift.extrude(section, length=1.0, layers=np.linspace(0.0, 1.0, 3),
                             first_tag="inlet", last_tag="outlet")
     return ring, section, block
@@ -143,7 +143,7 @@ def test_transform_is_the_general_case():
     """``transform`` with the rotation's own matrix reproduces ``rotate`` exactly."""
     from nekmeshpy.model import affine
 
-    section = quadmesh.region.ogrid(linemesh.shape.circle(1.0, 8, order=2), 2, RADIAL)
+    section = quadmesh.shape.ogrid(linemesh.shape.circle(1.0, 8, order=2), 2, RADIAL)
     matrix, offset = affine.rotation(0.6, axis=(0.0, 1.0, 1.0), center=(1.0, 0, 0))
     out = quadmesh.morph.transform(section, matrix, offset)
     ref = quadmesh.morph.rotate(section, 0.6, axis=(0.0, 1.0, 1.0), center=(1.0, 0, 0))

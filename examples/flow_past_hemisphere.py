@@ -50,10 +50,10 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "hemisphere": "W  ", "ground": "W  ",
 # half_box tags each patch with the far-field side it forms; hemisphere reuses the
 # same (N_FACE, N_HALF) connectivity, so the two pair by index for annulus.  The
 # ground rim rides on the inner surface, whose edge_tags the shells inherit.
-outer = quadmesh.surface.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, patch_tags={
+outer = quadmesh.shape.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "back", "y_min": "front", "z_max": "top"})
-inner = quadmesh.surface.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
+inner = quadmesh.shape.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
                             rim_tag="ground")
 
 # fill the shell hemisphere -> half box, radial clustered toward the body; inner cap

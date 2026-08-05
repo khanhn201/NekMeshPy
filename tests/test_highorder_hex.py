@@ -22,10 +22,10 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
 
 
 def _shell(order, n_face=2, n_radial=2):
-    cube = quadmesh.surface.box(3.0, n_face, order=order, patch_tags={
+    cube = quadmesh.shape.box(3.0, n_face, order=order, patch_tags={
         "x_max": "outlet", "x_min": "inlet", "y_max": "top",
         "y_min": "bottom", "z_max": "back", "z_min": "front"})
-    sphere = quadmesh.surface.sphere(1.0, n_face, order=order)
+    sphere = quadmesh.shape.sphere(1.0, n_face, order=order)
     return hexmesh.lift.annulus(sphere, cube,
                            radial=np.linspace(0.0, 1.0, n_radial + 1))
 
@@ -52,7 +52,7 @@ def test_annulus_inner_wall_on_true_sphere(order):
 # -- extrude / loft straight sweep is corner-consistent -----------------
 @pytest.mark.parametrize("order", [2, 3])
 def test_extrude_order_n_corner_consistent(order):
-    sec = quadmesh.region.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+    sec = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                              3, 2, order=order)
     hb = hexmesh.lift.extrude(sec, length=4.0, layers=[0.0, 0.5, 1.0],
                          first_tag="in", last_tag="out")

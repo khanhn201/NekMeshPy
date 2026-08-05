@@ -345,7 +345,7 @@ def test_check_within_is_the_only_thing_needing_the_mesh():
 def test_the_container_still_rejects_an_out_of_range_element():
     from nekmeshpy import HexMesh
     ring = linemesh.shape.circle(1.0, 8)
-    sec = quadmesh.region.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
+    sec = quadmesh.shape.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
     blk = hexmesh.lift.extrude(sec, length=1.0, layers=2)
     with pytest.raises(ValueError, match="FaceTags names element"):
         HexMesh(blk.quads, blk.hex, blk.face_orient, None,

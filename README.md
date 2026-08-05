@@ -40,7 +40,7 @@ boundary = linemesh.shape.circle(radius=1.0, n=24, element_tags=["wall"] * 24)
 # Fill the loop with an O-grid section, then sweep it into a hex block.
 # radial / layers count *cells*: an int is n uniform layers; pass an explicit
 # array of normalized positions (geometric_spacing(n, r), ...) to grade them.
-section = quadmesh.region.ogrid(boundary, n_side=6, radial=4)
+section = quadmesh.shape.ogrid(boundary, n_side=6, radial=4)
 block   = hexmesh.lift.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
                           first_tag="inlet", last_tag="outlet")
 
@@ -102,7 +102,7 @@ carried along a curve — a pipe through a 90° elbow, a U-turn, a coil —
 `quadmesh.lift.sweep` / `hexmesh.lift.sweep` do the placing, from a moving frame:
 
 ```python
-disc = quadmesh.region.ogrid(linemesh.shape.circle(0.1, 20, order=2), n_side=5, radial=3)
+disc = quadmesh.shape.ogrid(linemesh.shape.circle(0.1, 20, order=2), n_side=5, radial=3)
 bend = hexmesh.lift.sweep(disc, path, np.linspace(0.0, 1.0, 21),   # path: (K,) -> (K,3)
                      origin=(0, 0, 0),          # the section's reference point
                      tangent=dpath, orientation="fixed", up=(0, 1, 0))
@@ -129,7 +129,7 @@ a visible kink in the wall. `linemesh.shape.sweep_fractions(breaks, total_length
 returns the stations that avoid it: each interval between consecutive junctions is
 subdivided on its own at roughly `target`, so every junction reappears in the output
 bit-for-bit instead of being approached by a global `linspace`. Like
-`linemesh.shape.arclength_fractions` and `quadmesh.region.spine_fractions` it is a helper, not a
+`linemesh.shape.arclength_fractions` and `quadmesh.shape.spine_fractions` it is a helper, not a
 factory — it returns a plain array of `fractions`, because the sweep meshes exactly at
 the stations it is given. See `examples/serpentine_pipe.py`.
 
@@ -137,7 +137,7 @@ the stations it is given. See `examples/serpentine_pipe.py`.
 
 The order is declared **once, at the bottom of the ladder**. A factory that builds its
 points from nothing takes an optional `order=N` (default `1`) — `linemesh.shape.circle` /
-`arc` / `line` / `rectangle` / `loft`, `quadmesh.surface.box` / `sphere` / `rectangle` /
+`arc` / `line` / `rectangle` / `loft`, `quadmesh.shape.box` / `sphere` / `rectangle` /
 `from_grid`, `hexmesh.lift.from_grid`; everything that takes a *mesh* in (`ogrid`,
 `structured`, `annulus`, `extrude`, `sweep`, `blend`, `loft`, `merge`) has no `order=`
 at all and inherits it from its inputs, rejecting a mismatch loudly. So `order=` is set
@@ -176,7 +176,7 @@ the whole node lattice, corners *and* interiors),
 every node level, not just the corner levels),
 `quadmesh.lift.sweep` / `hexmesh.lift.sweep` carrying **one** profile along a curved path by a moving
 frame (a bent pipe from one O-grid disc),
-`quadmesh.surface.sphere` / `quadmesh.surface.hemisphere` projecting every node onto the exact sphere —
+`quadmesh.shape.sphere` / `quadmesh.shape.hemisphere` projecting every node onto the exact sphere —
 the region fills (`ogrid` / `half_ogrid` / `quadrant_ogrid` / `structured`) carry their input walls'
 curvature into the interior as well as onto the wall, and the combinators (`extrude` /
 `blend` / `loft` / `annulus`) carry that curvature up the ladder. Anything built from an explicit point array

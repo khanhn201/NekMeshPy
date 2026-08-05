@@ -1,7 +1,7 @@
-"""Shared internals for the :class:`~nekmeshpy.QuadMesh` factory functions.
+"""Shared internals for the :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>` factory functions.
 
 ``_apply_smoothing`` and ``_check_boundary`` are used by both the core container
-(``quadmesh.py``) and the split-out factory files (``_open.py``); they live here so
+(``quadmesh.py``) and the split-out factory files (``shape.py``); they live here so
 those files can share them without an import cycle.
 """
 

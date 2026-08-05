@@ -163,7 +163,7 @@ ORIGIN = np.zeros(3)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
-FR = quadmesh.region.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+FR = quadmesh.shape.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
 
 #: Branch polar angles of the four footprint corners, measured from ``+z`` (the main
 #: axis) and **descending**, which is the winding whose normal points along the
@@ -282,7 +282,7 @@ def quadrant(arc, seam1, seam2, wall_tag=""):
     """One quadrant face.  Every quadrant in the mesh -- disc sections and crotch
     caps alike -- comes from here, so a cap shares its points with the leg or branch
     on the other side of it."""
-    return quadmesh.region.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+    return quadmesh.shape.quadrant_ogrid(arc, seam1, seam2, RADIAL,
                                    center_scale=CENTER_SCALE, wall_tag=wall_tag)
 
 
@@ -499,7 +499,7 @@ def leg(composite, walls, sign, run, end_tag):
     w_plain = plain_walls(walls, z, sign)
 
     def station(s):
-        return quadmesh.region.quadrant_disc(
+        return quadmesh.shape.quadrant_disc(
             [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
             np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
@@ -521,10 +521,10 @@ def leg(composite, walls, sign, run, end_tag):
 if TOPOLOGY == "quadrant":
     OPEN_ARCS = [linemesh.assemble.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
     C_OPEN = np.array([H_BRANCH, 0.0, 0.0])
-    OPENING_DISC = quadmesh.region.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
+    OPENING_DISC = quadmesh.shape.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
                                           center_scale=CENTER_SCALE, wall_tag="wall")
 else:
-    OPENING_DISC = quadmesh.region.spined_ogrid(OPENING_LOOP, RADIAL,
+    OPENING_DISC = quadmesh.shape.spined_ogrid(OPENING_LOOP, RADIAL,
                                          center_scale=CENTER_SCALE, wall_tag="wall")
 
 
@@ -534,7 +534,7 @@ def branch():
     is tagged -- both become interior faces once the bend welds onto the far one."""
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
-    sections = [quadmesh.region.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
+    sections = [quadmesh.shape.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
     return [hexmesh.assemble.loft(sections),
@@ -548,7 +548,7 @@ def leg_half(seam_ring, sign, run, end_tag, n_slices=N_TRANS):
     same two-piece transition/run split as :func:`leg`."""
     loops = linemesh.morph.blend(seam_ring, opening_main(sign * Z_NEAR),
                            np.linspace(0.0, 1.0, n_slices + 1))
-    stations = [quadmesh.region.spined_ogrid(loop, RADIAL, center_scale=CENTER_SCALE,
+    stations = [quadmesh.shape.spined_ogrid(loop, RADIAL, center_scale=CENTER_SCALE,
                                       wall_tag="wall") for loop in loops]
     plain = stations[-1]
     n_run = max(1, round(run / AXIAL_CELL))
@@ -563,7 +563,7 @@ def branch_half():
     straight ``ARM_LEN`` extrude as :func:`branch`."""
     loops = linemesh.morph.blend(SEAM_BRANCH, OPENING_LOOP,
                            np.linspace(0.0, 1.0, N_BRANCH + 1))
-    stations = [quadmesh.region.spined_ogrid(loop, RADIAL, center_scale=CENTER_SCALE,
+    stations = [quadmesh.shape.spined_ogrid(loop, RADIAL, center_scale=CENTER_SCALE,
                                       wall_tag="wall") for loop in loops]
     return [hexmesh.assemble.loft(stations),
             hexmesh.lift.extrude(stations[-1], ARM_LEN, N_ARM, axis=(1.0, 0.0, 0.0))]

@@ -56,7 +56,7 @@ def disc(order=1, normal=(0, 0, 1), center=(RB, 0.0, 0.0), tag="wall"):
     """An O-grid disc of radius ``RP``, wall-tagged on the loop (the lowest rung)."""
     ring = linemesh.shape.circle(RP, NU, center=center, normal=normal, order=order,
                            element_tags=[tag] * NU)
-    return quadmesh.region.ogrid(ring, NS, uniform_spacing(NR))
+    return quadmesh.shape.ogrid(ring, NS, uniform_spacing(NR))
 
 
 def hex_nodes(b):

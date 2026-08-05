@@ -11,9 +11,9 @@ topology is fixed at construction, but coordinates may be repositioned in place.
 This file stays a **pure container**: storage, validation, ``from_corners``, and the
 derived views.  Every operation on a finished block lives beside it as a free function
 bound onto the class in ``hexmesh/__init__.py``, split by arity and by rung delta --
-``_assemble.py`` (the n-ary ``loft`` / ``merge``, which build a new index space),
-``_lift.py`` (``extrude`` / ``annulus`` / ``from_grid``, which delegate to it),
-``_morph.py`` (``blend``) and ``_query.py`` (queries, topology and reporting).  Adding
+``assemble.py`` (the n-ary ``loft`` / ``merge``, which build a new index space),
+``lift.py`` (``extrude`` / ``annulus`` / ``from_grid``, which delegate to it),
+``morph.py`` (``blend``) and ``query.py`` (queries, topology and reporting).  Adding
 an operation touches only the sibling module, never this one.
 """
 

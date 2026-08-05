@@ -37,7 +37,7 @@ def _tube_disc(order, *, flipped=False, wall_tag=""):
                            element_tags=["wall"] * (4 * NS) if wall_tag else None)
     if flipped:
         ring = linemesh.morph.reverse(ring)
-    return quadmesh.region.ogrid(ring, NS, RADIAL, wall_tag=wall_tag)
+    return quadmesh.shape.ogrid(ring, NS, RADIAL, wall_tag=wall_tag)
 
 
 def _flat_disc(order, *, flipped=False):
@@ -46,7 +46,7 @@ def _flat_disc(order, *, flipped=False):
     ring = linemesh.shape.circle(RT, 4 * NS, order=order)
     if flipped:
         ring = linemesh.morph.reverse(ring)
-    return quadmesh.region.ogrid(ring, NS, RADIAL)
+    return quadmesh.shape.ogrid(ring, NS, RADIAL)
 
 
 def _torus_f(order, **kw):
@@ -209,7 +209,7 @@ def test_grading_is_honored_per_layer():
 # -- tags --------------------------------------------------------------------
 
 def test_per_layer_element_tags_override_the_section_quad_tags():
-    base = quadmesh.region.ogrid(
+    base = quadmesh.shape.ogrid(
         linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     tagged = QuadMesh(base.lines, base.quad, base.flip, base.interior,
@@ -256,10 +256,10 @@ def test_rejects_a_section_of_the_wrong_order():
 
 
 def test_rejects_sections_that_are_not_index_paired():
-    a = quadmesh.region.ogrid(
+    a = quadmesh.shape.ogrid(
         linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
-    b = quadmesh.region.ogrid(
+    b = quadmesh.shape.ogrid(
         linemesh.shape.circle(RT, 4 * (NS + 1), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS + 1, RADIAL)
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
@@ -281,7 +281,7 @@ def test_sweep_nodes_must_be_sized_per_layer():
 
 def test_sweep_nodes_must_match_the_slices():
     base = _flat_disc(2)
-    other = quadmesh.region.ogrid(linemesh.shape.circle(RT, 4 * (NS + 1), order=2),
+    other = quadmesh.shape.ogrid(linemesh.shape.circle(RT, 4 * (NS + 1), order=2),
                            NS + 1, RADIAL)
     slices = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="must match the slices"):

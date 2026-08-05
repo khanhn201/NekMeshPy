@@ -26,7 +26,8 @@ per-quad quality metrics.
 
 ## Operations
 
-Every operation is a free function in one of these namespaces -- `quadmesh.region.ogrid(...)`, not `QuadMesh.ogrid(...)`.
+Every operation is a free function in one of these namespaces --
+`quadmesh.shape.circle(...)`, not `QuadMesh.circle(...)`.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.assemble
@@ -35,10 +36,7 @@ Every operation is a free function in one of these namespaces -- `quadmesh.regio
 .. automodule:: nekmeshpy.quadmesh.lift
    :members:
 
-.. automodule:: nekmeshpy.quadmesh.region
-   :members:
-
-.. automodule:: nekmeshpy.quadmesh.surface
+.. automodule:: nekmeshpy.quadmesh.shape
    :members:
 
 .. automodule:: nekmeshpy.quadmesh.morph

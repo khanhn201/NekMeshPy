@@ -18,7 +18,7 @@ Fill a tagged circular loop with an O-grid section and sweep it along an axis.
 
 ```python
 boundary = linemesh.shape.circle(radius, 4 * n_side, element_tags=["wall"] * (4 * n_side))
-section  = quadmesh.region.ogrid(boundary, n_side=n_side, radial=4,
+section  = quadmesh.shape.ogrid(boundary, n_side=n_side, radial=4,
                           smoothing_method="bilinear")
 mesh     = hexmesh.lift.extrude(section, axis=(0, 0, 1), length=L, layers=n_axial,
                            first_tag="inlet", last_tag="outlet")
@@ -29,7 +29,7 @@ interface, see `examples/circular_pipe_tjunction.py`.
 
 ## Build a structured duct
 
-Give `quadmesh.region.structured` four open `LineMesh` edges, each tagged with its own
+Give `quadmesh.shape.structured` four open `LineMesh` edges, each tagged with its own
 uniform side name; resolution comes from the edges' own points. Prefer the
 **mapping** spelling — `structured({"bottom": …, "right": …, "top": …, "left": …})`
 — over the CCW 4-sequence: a misspelt key raises, whereas two transposed positions
@@ -78,16 +78,16 @@ end caps.
 
 ## External flow past a sphere (3-D shell)
 
-Build a closed far-field cube surface with `quadmesh.surface.box` (each face tagged with
-the far-field side it forms), take the body surface from `quadmesh.surface.sphere` at the
+Build a closed far-field cube surface with `quadmesh.shape.box` (each face tagged with
+the far-field side it forms), take the body surface from `quadmesh.shape.sphere` at the
 **same** `n` — it is the cube's connectivity with the points projected, so the two
 pair by index — and fill the shell with `hexmesh.lift.annulus`:
 
 ```python
-cube   = quadmesh.surface.box(S, n, patch_tags={"x_min": "inlet", "x_max": "outlet",
+cube   = quadmesh.shape.box(S, n, patch_tags={"x_min": "inlet", "x_max": "outlet",
                                        "y_min": "bottom", "y_max": "top",
                                        "z_min": "front", "z_max": "back"})
-sphere = quadmesh.surface.sphere(R, n)                  # same quads, index-paired
+sphere = quadmesh.shape.sphere(R, n)                  # same quads, index-paired
 mesh   = hexmesh.lift.annulus(sphere, cube, radial=geometric_spacing(n_radial, ratio))
 ```
 

@@ -5,18 +5,16 @@ Everything that *acts* on a finished block is a free function in a sibling modul
 split by **arity** and by **rung delta** (how far up or down the line -> quad -> hex
 ladder the operation moves):
 
-============== ======== ===== ===============================================
-module         arity    delta contents
-============== ======== ===== ===============================================
-``_assemble``  n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
-``_lift``      fixed    +1    ``extrude``/``sweep``/``annulus``/``from_grid`` -> ``loft``
-``_morph``     fixed     0    ``blend`` + ``translate``/``rotate``/``scale``
-``_query``     fixed     exit read-only queries, topology and reporting
-============== ======== ===== ===============================================
+============ ======== ===== ==================================================
+module       arity    delta contents
+============ ======== ===== ==================================================
+``assemble`` n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
+``lift``     fixed    +1    ``extrude``/``sweep``/``annulus``/``from_grid``
+``shape``    fixed    +1    ``tetra`` -- owns a *shape* model, unlike ``lift``
+``morph``    fixed    0     ``blend`` + ``translate``/``rotate``/``scale``/...
+``query``    fixed    exit  read-only queries, topology and reporting
+============ ======== ===== ==================================================
 
-Each module ends in a registry -- ``FACTORIES`` for the ``staticmethod``-bound
-combinators, ``METHODS`` for the instance-method-bound queries -- and this package
-binds them onto the class below, so callers write ``HexMesh.extrude(...)`` /
 Every operation is a free function taking the mesh first, reached through one of the
 namespaces re-exported here.  Nothing is bound onto the container::
 

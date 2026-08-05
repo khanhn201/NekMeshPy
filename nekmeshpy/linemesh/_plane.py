@@ -6,8 +6,8 @@ open curve (``arc``) in any plane. The axes are world-aligned so an axis-aligned
 is not rotated.
 
 ``_arc_points`` / ``_arc_interior`` place nodes on the **exact** circle of a given
-radius in that frame; ``circle`` (closed, ``_closed.py``) and ``arc`` (open,
-``_open.py``) share them so both put their high-order GLL nodes on the true arc rather
+radius in that frame; ``circle`` (closed, ``shape.py``) and ``arc`` (open,
+``shape.py``) share them so both put their high-order GLL nodes on the true arc rather
 than on the chord.
 """
 

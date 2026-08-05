@@ -47,7 +47,7 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 # node fractions grade the section toward the walls.  All four sides are the wall.
 corners = [(0.0, -WIDTH / 2, -HEIGHT / 2), (0.0, WIDTH / 2, -HEIGHT / 2),
            (0.0, WIDTH / 2, HEIGHT / 2), (0.0, -WIDTH / 2, HEIGHT / 2)]
-section = quadmesh.region.rectangle(
+section = quadmesh.shape.rectangle(
     corners, NX, NY,
     x_frac=symmetric_spacing(NX, WALL_GRADING),   # width-direction node fractions
     y_frac=symmetric_spacing(NY, WALL_GRADING),   # height-direction node fractions

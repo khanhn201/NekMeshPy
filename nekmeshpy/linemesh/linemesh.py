@@ -22,10 +22,10 @@ with its ``lines`` spelled out.
 
 This file stays a **pure container**: storage, validation, and the derived views.
 Every operation on a finished mesh lives beside it as a free function bound onto the
-class in ``linemesh/__init__.py``, split by arity and by rung delta -- ``_assemble.py``
-(the n-ary ``loft`` / ``merge``, which build a new index space), ``_morph.py`` (the
-rung-preserving ``blend``), ``_query.py`` (read-only queries), ``_open.py`` /
-``_closed.py`` (shape factories).  Adding an operation touches only the sibling module,
+class in ``linemesh/__init__.py``, split by arity and by rung delta -- ``assemble.py``
+(the n-ary ``loft`` / ``merge``, which build a new index space), ``morph.py`` (the
+rung-preserving ``blend``), ``query.py`` (read-only queries), ``shape.py`` /
+``shape.py`` (shape factories).  Adding an operation touches only the sibling module,
 never this one.
 """
 

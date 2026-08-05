@@ -16,8 +16,8 @@ import scipy.sparse as sp
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..trimesh import TriMesh, ops
 from . import quality
-from ._query import _unique_edges, classify_points, weld
 from .hexmesh import HexMesh
+from .query import _unique_edges, classify_points, weld
 
 _log = logging.getLogger("nekmeshpy")
 

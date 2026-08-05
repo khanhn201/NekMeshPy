@@ -163,7 +163,7 @@ def test_quadrant_faces_make_an_octant():
     block split the faces already carry: an ``n**3`` core and three ``n x n x Nradial``
     slabs."""
     n = 2
-    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, CS)
+    fr = quadmesh.shape.quadrant_seam_fractions(n, RADIAL, CS)
     e = np.eye(3)
     seams = [linemesh.shape.line(np.zeros(3), d, fr) for d in e]
 
@@ -175,11 +175,11 @@ def test_quadrant_faces_make_an_octant():
             np.linspace(0.0, np.pi / 2, 2 * n + 1))
 
     arcs = [great(e[0], e[1]), great(e[1], e[2]), great(e[2], e[0])]
-    quads = [quadmesh.region.quadrant_ogrid(arcs[0], seams[0], seams[1], RADIAL,
+    quads = [quadmesh.shape.quadrant_ogrid(arcs[0], seams[0], seams[1], RADIAL,
                                      center_scale=CS),
-             quadmesh.region.quadrant_ogrid(arcs[1], seams[1], seams[2], RADIAL,
+             quadmesh.shape.quadrant_ogrid(arcs[1], seams[1], seams[2], RADIAL,
                                      center_scale=CS),
-             quadmesh.region.quadrant_ogrid(arcs[2], seams[2], seams[0], RADIAL,
+             quadmesh.shape.quadrant_ogrid(arcs[2], seams[2], seams[0], RADIAL,
                                      center_scale=CS)]
     # the spherical side, as three patches about the octant's centre direction
     ctr = np.ones(3) / np.sqrt(3.0)

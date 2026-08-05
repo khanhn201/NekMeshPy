@@ -28,7 +28,7 @@ ORDER = 2                    # polynomial order: (ORDER+1)**2 GLL nodes per quad
 OUT_NAME = "high_order_quad"
 
 # -- build the high-order surface --------------------------------------------
-mesh = quadmesh.surface.sphere(RADIUS, N_CELL, order=ORDER)
+mesh = quadmesh.shape.sphere(RADIUS, N_CELL, order=ORDER)
 
 # every curved node sits on the true sphere, to machine precision.  The entity
 # B-rep numbers each node once: corner ``points``, the shared ``edge_nodes``, and

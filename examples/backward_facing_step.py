@@ -50,7 +50,7 @@ def rect(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int,
          side_tags: dict[str, str]) -> QuadMesh:
     """Structured quad grid over ``[x0,x1]x[y0,y1]`` with the named outer sides
     (bottom/right/top/left) tagged; an absent side stays untagged."""
-    return quadmesh.region.rectangle(
+    return quadmesh.shape.rectangle(
         [(x0, y0, 0.0), (x1, y0, 0.0), (x1, y1, 0.0), (x0, y1, 0.0)],
         nx, ny, side_tags=side_tags, order=ORDER)
 

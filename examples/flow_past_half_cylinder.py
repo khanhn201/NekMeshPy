@@ -94,7 +94,7 @@ top = linemesh.shape.line((W, H, 0.0), (-W, H, 0.0),
 left = linemesh.shape.line((-W, H, 0.0), (-W, 0.0, 0.0),
                      np.linspace(0.0, 1.0, NY + 1), element_tag="inlet",
                      order=ORDER)
-section = quadmesh.region.structured([bottom, right, top, left])
+section = quadmesh.shape.structured([bottom, right, top, left])
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the section along +z; edge names ride onto the side faces

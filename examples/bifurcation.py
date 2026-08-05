@@ -410,12 +410,12 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # curve at the wrong count (there is no analytic form to evaluate: the
         # deviation comes off the STL, so the chord is the honest interpolant).
         spn = trimesh.ops.resample_polyline(
-            spn, quadmesh.region.spine_fractions(nh // 4, radial, center_scale))
+            spn, quadmesh.shape.spine_fractions(nh // 4, radial, center_scale))
         # reposition interior stations; leave opening cap (k=0) and pinned seam
         # (k=nr-1) as raw algebraic fill.  Wall tagged on the loop (see
         # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
-        slices.append(quadmesh.region.spined_ogrid(
+        slices.append(quadmesh.shape.spined_ogrid(
             wall, radial, spine=linemesh.assemble.loft(spn, order=ORDER),
             center_scale=center_scale, smoothing_method=m))
     return slices

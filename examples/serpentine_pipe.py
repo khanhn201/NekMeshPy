@@ -172,7 +172,7 @@ START_TANGENT = tuple(tangent(np.array([0.0]))[0])
 # outer ring and the sweep carries it onto the side faces. ogrid has no order=
 # kwarg -- the order is inherited from the loop, which must carry exactly 4*N_SIDE
 # points so the wall is meshed exactly.
-section = quadmesh.region.ogrid(
+section = quadmesh.shape.ogrid(
     linemesh.shape.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
                     element_tags=["wall"] * (4 * N_SIDE), order=ORDER),
     N_SIDE, uniform_spacing(N_RADIAL),

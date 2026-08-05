@@ -97,7 +97,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return linemesh.shape.line(center, target, fr, order=order)
 
     def quadrant(arc, seam1, seam2, wall_tag=""):
-        return quadmesh.region.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+        return quadmesh.shape.quadrant_ogrid(arc, seam1, seam2, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag=wall_tag)
 
     def disc(pieces):
@@ -108,7 +108,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         ang = sign * np.deg2rad(-45.0 + 90.0 * np.arange(5))
         return [plain_wall(composite[q], ang[q], ang[q + 1], z) for q in range(4)]
 
-    FR = quadmesh.region.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+    FR = quadmesh.shape.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
 
     P = [footprint(TQ[q:q + 1])[0] for q in range(4)]
     WP, WM = cyl(PHI_W, 0.0), cyl(-PHI_W, 0.0)
@@ -199,7 +199,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         w_plain = plain_walls(walls, z, sign)
 
         def station(s):
-            return quadmesh.region.quadrant_disc(
+            return quadmesh.shape.quadrant_disc(
                 [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
                 np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
                 wall_tag="wall")
@@ -214,7 +214,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
         walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
-        sections = [quadmesh.region.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+        sections = [quadmesh.shape.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
                                            center_scale=CENTER_SCALE, wall_tag="wall")
                    for i in range(t.size)]
         return hexmesh.assemble.loft(sections), sections[-1]

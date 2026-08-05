@@ -10,7 +10,7 @@ import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
-from ..linemesh._assemble import loft as line_loft
+from ..linemesh.assemble import loft as line_loft
 from .trimesh import TriMesh
 
 

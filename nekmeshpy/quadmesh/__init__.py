@@ -5,27 +5,24 @@ Everything that *acts* on a finished section is a free function in a sibling mod
 split by **arity** and by **rung delta** (how far up or down the line -> quad -> hex
 ladder the operation moves):
 
-============== ======== ===== ===============================================
-module         arity    delta contents
-============== ======== ===== ===============================================
-``_assemble``  n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
-``_lift``      fixed    +1    ``extrude``/``sweep``/``annulus``/``from_grid`` -> ``loft``
-``_morph``     fixed     0    ``blend`` + ``translate``/``rotate``/``scale``
-``_query``     fixed     exit read-only queries returning plain arrays
-``_open``      fixed    +1    region fills (``structured`` / ``ogrid`` / ...)
-``_closed``    fixed    +1    closed surfaces (``box`` / ``sphere`` / ...)
-============== ======== ===== ===============================================
-
-``_open`` / ``_closed`` are also rung-raising, but they own a *shape* model rather than
-being generic over any input, which is what keeps them separate from ``_lift``.
+============ ======== ===== ==================================================
+module       arity    delta contents
+============ ======== ===== ==================================================
+``assemble`` n-ary    +1/0  ``loft``, ``loft_fn``, ``merge`` -- new index space
+``lift``     fixed    +1    ``extrude``/``sweep``/``annulus``/``from_grid``
+``shape``    fixed    +1    region fills and closed surfaces; own a *shape*
+                            model, unlike ``lift``
+``morph``    fixed    0     ``blend`` + ``translate``/``rotate``/``scale``/...
+``query``    fixed    exit  read-only queries returning plain arrays
+============ ======== ===== ==================================================
 
 Every operation is a free function taking the mesh first, reached through one of the
 namespaces re-exported here.  Nothing is bound onto the container::
 
     quadmesh.assemble.loft(sections, fractions)   # n-ary: loft / loft_fn / merge
     quadmesh.lift.extrude(curve, length=1.0)      # generic rung-raising
-    quadmesh.region.ogrid(boundary, n, radial)    # region fills (own a shape model)
-    quadmesh.surface.box(lo, hi, n)               # closed shells
+    quadmesh.shape.ogrid(boundary, n, radial)     # region fills and closed shells
+    quadmesh.shape.box(lo, hi, n)                 #   -- both own a shape model
     quadmesh.morph.translate(qm, vector)          # rung-preserving + blend
     quadmesh.query.boundary_edges(qm)             # reads that leave the ladder
 
@@ -42,8 +39,7 @@ The shared ``_apply_smoothing`` / ``_check_boundary`` / ``_elevate`` factory int
 live in ``_helpers.py``.
 """
 
-from . import assemble, lift, morph, query, region, surface
+from . import assemble, lift, morph, query, shape
 from .quadmesh import NO_TAG, QuadMesh
 
-__all__ = ["NO_TAG", "QuadMesh", "assemble", "lift", "morph", "query", "region",
-           "surface"]
+__all__ = ["NO_TAG", "QuadMesh", "assemble", "lift", "morph", "query", "shape"]

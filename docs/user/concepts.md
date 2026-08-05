@@ -62,7 +62,7 @@ explicitly:
   (bottom / right / top / left), corners always landing on a point. `side_tags` is
   a **mapping** keyed by those four names — an absent key leaves that side
   untagged, an unrecognized one is a loud `ValueError` rather than a silently lost
-  wall — the same spelling as its one-rung-up twin `quadmesh.region.rectangle`. Pass `n` equal
+  wall — the same spelling as its one-rung-up twin `quadmesh.shape.rectangle`. Pass `n` equal
   to the inner loop's point count and rotate the inner `circle` with `start_theta`
   so index 0 meets the lower-left corner, and the two loops pair index-for-index in
   `annulus` (the radial spokes need not be straight).
@@ -76,31 +76,31 @@ explicitly:
 Every factory meshes its points **exactly** — there is no resampling API; the
 caller hands in an exactly-sized, correctly-oriented curve. The ordered ops treat
 points in index order as a path/loop. That holds for curves handed to a
-section factory too: {func}`quadmesh.region.spined_ogrid <nekmeshpy.quadmesh.region.spined_ogrid>` used to
+section factory too: {func}`quadmesh.shape.spined_ogrid <nekmeshpy.quadmesh.shape.spined_ogrid>` used to
 arc-length-resample its `spine`, and no longer does — a caller-supplied spine must
 carry exactly the `2*Ntheta+1 + 2*Nradial` points ascending `A1 -> A2` that
 `half_ogrid` consumes, or it is a loud `ValueError`. Derive that sampling from
-{meth}`quadmesh.region.spine_fractions <nekmeshpy.quadmesh.region.spine_fractions>`
+{meth}`quadmesh.shape.spine_fractions <nekmeshpy.quadmesh.shape.spine_fractions>`
 (`n_theta`, `radial`, `center_scale` → the normalized fractions) and evaluate your own
 spine curve there, at the boundary's order — above order 1 the spine's own private
 interior nodes *are* the seam geometry, so the two orders must match (a mismatch is a
 `ValueError`). Omitting `spine` still gives the straight `A1..A2` chord, which the
 factory owns as a shape and places itself at `boundary.order`.
 
-{func}`quadmesh.region.quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` takes the same line one step
+{func}`quadmesh.shape.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` takes the same line one step
 further: its two seams are **arguments**, not something it derives from a centre, so
 two adjacent quadrants hand in the *same* `LineMesh` object (the second through
 {meth}`linemesh.morph.reverse <nekmeshpy.linemesh.morph.reverse>`) and weld bit-exactly
 rather than to a tolerance. Each seam must carry exactly `n_side+1 + Nradial` points
 ascending from the centre; derive them with
-{meth}`quadmesh.region.quadrant_seam_fractions <nekmeshpy.quadmesh.region.quadrant_seam_fractions>`.
+{meth}`quadmesh.shape.quadrant_seam_fractions <nekmeshpy.quadmesh.shape.quadrant_seam_fractions>`.
 Its one non-obvious term is that the core's shared corner `M` sits at
 `center_scale * cos(45°) * R`, not `center_scale * R` — `center_scale` places the core's
 *far* corner `K`, and `M` is the midpoint of the core square's side, half a diagonal
 further in.
 
 The core patch itself is public as
-{meth}`quadmesh.region.quadrant_core <nekmeshpy.quadmesh.region.quadrant_core>`, which is
+{meth}`quadmesh.shape.quadrant_core <nekmeshpy.quadmesh.shape.quadrant_core>`, which is
 the construction `quadrant_ogrid` builds its own core with.
 
 A quadrant face is also, read another way, a **triangle meshed as three structured
@@ -179,7 +179,7 @@ The factory args (`wall_tag`, `inner_tag`, `outer_tag`, `side_tags[side]`)
 are **overrides**: a non-empty arg replaces the line-level tag; an empty/absent
 one falls through (a present-but-empty `side_tags[side]` / `NO_TAG`
 suppresses the side). The named-side override is spelt `side_tags` — a
-**mapping** keyed `bottom` / `right` / `top` / `left`, on `quadmesh.region.structured`,
+**mapping** keyed `bottom` / `right` / `top` / `left`, on `quadmesh.shape.structured`,
 on both `rectangle` conveniences and on `from_grid` at both rungs — not the
 positional 4-list it was, and distinct from the stored `edge_tags` / `face_tags`
 tables of `(element, side, tag)` rows it feeds. Sweep end caps (`first_tag` / `last_tag`) are named at the
@@ -193,10 +193,10 @@ filled in place with its true shape.
 
 | factory | fills |
 |---|---|
-| {func}`quadmesh.region.structured <nekmeshpy.quadmesh.region.structured>` | transfinite (Coons) grid over 4 open `LineMesh` edges, given either as a CCW `[bottom, right, top, left]` sequence or — preferably — as a **mapping** keyed by those four names, since in the sequence spelling the position alone says which edge is which and transposing two yields a plausible-looking twisted patch instead of an error; resolution comes from the edges' own points (no resampling — opposite edges must match counts); each side named from its edge tag |
-| {func}`quadmesh.region.ogrid <nekmeshpy.quadmesh.region.ogrid>` | O-grid inside a closed loop (no collapsed centre); outer ring named from the loop's per-line tags |
-| {func}`quadmesh.region.half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>` | half-disc O-grid split along a spine; wall named from the arc's per-segment tags |
-| {func}`quadmesh.region.quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` | quarter-disk O-grid bounded by a wall arc and two caller-supplied radii — the 90° sibling of `half_ogrid`, and exactly the quarter of `ogrid` you get by cutting a full disk along two perpendicular diameters through its core-edge midpoints, so four of them `merge` back into a conforming disk |
+| {func}`quadmesh.shape.structured <nekmeshpy.quadmesh.shape.structured>` | transfinite (Coons) grid over 4 open `LineMesh` edges, given either as a CCW `[bottom, right, top, left]` sequence or — preferably — as a **mapping** keyed by those four names, since in the sequence spelling the position alone says which edge is which and transposing two yields a plausible-looking twisted patch instead of an error; resolution comes from the edges' own points (no resampling — opposite edges must match counts); each side named from its edge tag |
+| {func}`quadmesh.shape.ogrid <nekmeshpy.quadmesh.shape.ogrid>` | O-grid inside a closed loop (no collapsed centre); outer ring named from the loop's per-line tags |
+| {func}`quadmesh.shape.half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` | half-disc O-grid split along a spine; wall named from the arc's per-segment tags |
+| {func}`quadmesh.shape.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid bounded by a wall arc and two caller-supplied radii — the 90° sibling of `half_ogrid`, and exactly the quarter of `ogrid` you get by cutting a full disk along two perpendicular diameters through its core-edge midpoints, so four of them `merge` back into a conforming disk |
 | {func}`quadmesh.lift.annulus <nekmeshpy.quadmesh.lift.annulus>` | ring O-grid between inner and outer closed loops, paired **by index** (equal point counts — e.g. `linemesh.shape.rectangle(w, h, N)` against `circle(r, N, start_theta=…)`) |
 | {func}`quadmesh.lift.extrude <nekmeshpy.quadmesh.lift.extrude>` / {func}`quadmesh.assemble.loft <nekmeshpy.quadmesh.assemble.loft>` | sweep/stack a `LineMesh` one dimension down into a quad strip |
 | {func}`quadmesh.lift.sweep <nekmeshpy.quadmesh.lift.sweep>` | carry **one** `LineMesh` profile along a curved path by a moving frame — the curved generalization of `extrude` |
@@ -349,7 +349,7 @@ for you.
 section** carried along a path — a round pipe bent through an elbow, a U-turn, a coil —
 {func}`quadmesh.lift.sweep <nekmeshpy.quadmesh.lift.sweep>` and {func}`hexmesh.lift.sweep <nekmeshpy.hexmesh.lift.sweep>`
 do the placing for you. They are the curved generalization of `extrude` (hence
-`_lift.py`, not `_assemble.py`) and end in the same `loft`-with-`sweep_nodes` assembly,
+`lift.py`, not `assemble.py`) and end in the same `loft`-with-`sweep_nodes` assembly,
 so a bent tube is exact at every order both around the section and along the bend.
 
 ```python
@@ -357,7 +357,7 @@ Rb = 1.0                                             # bend radius
 path  = lambda t: np.column_stack([Rb * np.sin(t), Rb * (1 - np.cos(t)), 0 * t])
 dpath = lambda t: np.column_stack([Rb * np.cos(t), Rb * np.sin(t), 0 * t])
 
-disc = quadmesh.region.ogrid(linemesh.shape.circle(0.1, 20, normal=(1, 0, 0), order=2), 5, 3)
+disc = quadmesh.shape.ogrid(linemesh.shape.circle(0.1, 20, normal=(1, 0, 0), order=2), 5, 3)
 bend = hexmesh.lift.sweep(disc, path, np.linspace(0.0, 0.5 * np.pi, 11),
                      origin=(0, 0, 0), tangent=dpath,
                      orientation="fixed", up=(0, 0, 1))
@@ -448,7 +448,7 @@ registry; the constrained volume untangle/polish is the separate
 
 The order is set once, at the **bottom** of the ladder, and rides up. `order=N`
 (default `1`) is an argument only where a factory genuinely *authors* geometry from
-nothing — the `LineMesh` shapes, `quadmesh.region.rectangle` / `box` / `sphere` /
+nothing — the `LineMesh` shapes, `quadmesh.shape.rectangle` / `box` / `sphere` /
 `half_box` / `hemisphere`, and the two `from_grid`s. Everything that consumes a mesh
 inherits its order instead and has no such argument: `ogrid` / `half_ogrid` /
 `quadrant_ogrid` / `spined_ogrid` / `structured` / `annulus` take it from the boundary loop or edges,
@@ -538,11 +538,11 @@ anywhere other than on the straight line between the corners.
   others. {func}`quadmesh.assemble.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` is the same idea one rung
   up — the profiles are evaluated at every node level of the *sweep*, so the swept
   surface is exact in that direction too.
-  `quadmesh.surface.sphere` and `quadmesh.surface.hemisphere` project **every** node of the
+  `quadmesh.shape.sphere` and `quadmesh.shape.hemisphere` project **every** node of the
   cubed sphere / half box — corners, shared edge nodes and private quad interiors alike
   — radially, so the whole surface is exact, not just its corners. Straight-sided
-  analytic shapes (`linemesh.shape.line`, `linemesh.shape.rectangle`, `quadmesh.surface.box` /
-  `quadmesh.surface.half_box`) are also exact, trivially: a straight GLL blend *is* the true
+  analytic shapes (`linemesh.shape.line`, `linemesh.shape.rectangle`, `quadmesh.shape.box` /
+  `quadmesh.shape.half_box`) are also exact, trivially: a straight GLL blend *is* the true
   geometry of a straight side, and a flat grid cell is exact under tensor subdivision.
 - **Straight GLL subdivision.** Anything built from an explicit array of points has
   nothing but those points to go on, so the nodes between them are the straight

@@ -21,7 +21,7 @@ def _rect_edges(x0, x1, y0, y1, nx=1, ny=1):
 
 
 def test_structured_grid():
-    qm = quadmesh.region.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
+    qm = quadmesh.shape.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
     assert qm.n_quads == 3 * 2
     assert qm.n_points == (3 + 1) * (2 + 1)
     # no names passed -> no tagged edges; the outline is a topological query
@@ -32,7 +32,7 @@ def test_structured_grid():
 
 def test_structured_straight_edges_equal_bilinear():
     # straight edges must reduce the Coons patch to the exact bilinear grid
-    qm = quadmesh.region.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
+    qm = quadmesh.shape.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
     P = np.asarray(qm.points)
     us = np.linspace(0, 1, 4)
     vs = np.linspace(0, 1, 3)
@@ -53,7 +53,7 @@ def test_structured_uses_edge_nodes_verbatim():
     top = linemesh.shape.line((1, 1, 0), (-1, 1, 0), uniform_spacing(nx))
     right = linemesh.shape.line((1, bottom.points[-1, 1], 0), (1, 1, 0), uniform_spacing(ny))
     left = linemesh.shape.line((-1, 1, 0), (-1, bottom.points[0, 1], 0), uniform_spacing(ny))
-    qm = quadmesh.region.structured([bottom, right, top, left])
+    qm = quadmesh.shape.structured([bottom, right, top, left])
     assert qm.n_quads == nx * ny
     P = np.asarray(qm.points).reshape(nx + 1, ny + 1, 3)
     row = P[:, 0, :]
@@ -71,7 +71,7 @@ def test_structured_graded_edges_cluster_toward_walls():
                       (1.0, 1.0, 0.0), (-1.0, 1.0, 0.0))
     edges = [linemesh.shape.line(c0, c1, xf), linemesh.shape.line(c1, c2, xf),
              linemesh.shape.line(c2, c3, xf), linemesh.shape.line(c3, c0, xf)]
-    qm = quadmesh.region.structured(edges)
+    qm = quadmesh.shape.structured(edges)
     P = np.asarray(qm.points).reshape(9, 9, 3)
     # first cell (near wall) is thinner than the middle cell in both directions
     dx = np.diff(P[:, 0, 0])
@@ -87,7 +87,7 @@ def _rect_corners(x0, x1, y0, y1):
 
 
 def test_rectangle_counts_and_side_tags():
-    qm = quadmesh.region.rectangle(_rect_corners(-1, 1, -0.5, 0.5), 3, 2,
+    qm = quadmesh.shape.rectangle(_rect_corners(-1, 1, -0.5, 0.5), 3, 2,
                             side_tags={"bottom": "wall", "left": "inlet"})
     assert qm.n_quads == 3 * 2 and qm.n_points == 4 * 3
     from collections import Counter
@@ -98,8 +98,8 @@ def test_rectangle_counts_and_side_tags():
 def test_rectangle_matches_manual_structured():
     # rectangle is a thin wrapper over structured: identical points for equal input
     corners = _rect_corners(-1, 1, -0.5, 0.5)
-    qm = quadmesh.region.rectangle(corners, 3, 2)
-    manual = quadmesh.region.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
+    qm = quadmesh.shape.rectangle(corners, 3, 2)
+    manual = quadmesh.shape.structured(_rect_edges(-1, 1, -0.5, 0.5, 3, 2))
     assert np.allclose(qm.points, manual.points)
     assert np.array_equal(qm.quads, manual.quads)
 
@@ -107,7 +107,7 @@ def test_rectangle_matches_manual_structured():
 def test_rectangle_grading_via_fracs():
     from nekmeshpy.model.fields import symmetric_spacing
     xf = symmetric_spacing(4, 1.4)
-    qm = quadmesh.region.rectangle(_rect_corners(-1, 1, -1, 1), 4, 4, x_frac=xf, y_frac=xf)
+    qm = quadmesh.shape.rectangle(_rect_corners(-1, 1, -1, 1), 4, 4, x_frac=xf, y_frac=xf)
     P = np.asarray(qm.points).reshape(5, 5, 3)
     dx = np.diff(P[:, 0, 0])
     assert dx[0] < dx[len(dx) // 2]                   # clustered toward the walls
@@ -116,7 +116,7 @@ def test_rectangle_grading_via_fracs():
 # -- box / sphere (closed 3-D surfaces) --------------------------------------
 
 def test_box_is_closed_surface_with_face_tags():
-    qm = quadmesh.surface.box(2.0, 4, patch_tags={
+    qm = quadmesh.shape.box(2.0, 4, patch_tags={
         "x_min": "inlet", "x_max": "outlet", "y_min": "bottom",
         "y_max": "top", "z_min": "front", "z_max": "back"})
     assert qm.n_quads == 6 * 4 * 4
@@ -129,7 +129,7 @@ def test_box_is_closed_surface_with_face_tags():
 
 
 def test_box_nonuniform_half_sizes_and_counts():
-    qm = quadmesh.surface.box((1.0, 2.0, 3.0), (2, 3, 4))
+    qm = quadmesh.shape.box((1.0, 2.0, 3.0), (2, 3, 4))
     # per-axis counts: 2*(nx*ny + ny*nz + nz*nx)
     assert qm.n_quads == 2 * (2 * 3 + 3 * 4 + 4 * 2)
     assert quadmesh.query.boundary_edges(qm).shape[0] == 0          # still closed and conforming
@@ -138,8 +138,8 @@ def test_box_nonuniform_half_sizes_and_counts():
 
 def test_sphere_pairs_with_box_by_index():
     R, S, N = 0.5, 3.0, 4
-    box = quadmesh.surface.box(S, N, patch_tags={"x_max": "outlet"})
-    sph = quadmesh.surface.sphere(R, N)
+    box = quadmesh.shape.box(S, N, patch_tags={"x_max": "outlet"})
+    sph = quadmesh.shape.sphere(R, N)
     assert np.array_equal(sph.quads, box.quads)       # identical connectivity
     assert sph.n_points == box.n_points
     assert np.allclose(np.linalg.norm(sph.points, axis=1), R)   # all on the sphere
@@ -148,15 +148,15 @@ def test_sphere_pairs_with_box_by_index():
 
 def test_sphere_box_annulus_is_watertight():
     from nekmeshpy.model.fields import uniform_spacing as us
-    box = quadmesh.surface.box(3.0, 4)
-    sph = quadmesh.surface.sphere(0.5, 4)
+    box = quadmesh.shape.box(3.0, 4)
+    sph = quadmesh.shape.sphere(0.5, 4)
     block = hexmesh.lift.annulus(sph, box, radial=us(3))
     assert hexmesh.query.is_watertight(block) and hexmesh.query.is_conforming(block)
     assert float(np.min(hexmesh.query.scaled_jacobian(block))) > 0.0
 
 
 def test_half_box_is_open_at_the_ground_with_face_tags():
-    qm = quadmesh.surface.half_box(2.0, 4, n_vertical=3, rim_tag="ground", patch_tags={
+    qm = quadmesh.shape.half_box(2.0, 4, n_vertical=3, rim_tag="ground", patch_tags={
         "x_min": "inlet", "x_max": "outlet",
         "y_min": "front", "y_max": "back", "z_max": "top"})
     # four upright sides (4 x n_vertical each) + the flat lid
@@ -176,8 +176,8 @@ def test_half_box_is_open_at_the_ground_with_face_tags():
 
 def test_hemisphere_pairs_with_half_box_by_index():
     R, S, N, NV = 0.5, 3.0, 4, 3
-    hb = quadmesh.surface.half_box(S, N, n_vertical=NV, patch_tags={"x_max": "outlet"})
-    hs = quadmesh.surface.hemisphere(R, N, n_vertical=NV, rim_tag="ground")
+    hb = quadmesh.shape.half_box(S, N, n_vertical=NV, patch_tags={"x_max": "outlet"})
+    hs = quadmesh.shape.hemisphere(R, N, n_vertical=NV, rim_tag="ground")
     assert np.array_equal(hs.quads, hb.quads)          # identical connectivity
     assert hs.n_points == hb.n_points
     assert np.allclose(np.linalg.norm(hs.points, axis=1), R)   # all on the sphere
@@ -189,7 +189,7 @@ def test_hemisphere_pairs_with_half_box_by_index():
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
 def test_hemisphere_high_order_nodes_lie_on_the_exact_sphere(order):
     R = 1.25
-    hs = quadmesh.surface.hemisphere(R, 3, n_vertical=2, order=order)
+    hs = quadmesh.shape.hemisphere(R, 3, n_vertical=2, order=order)
     for block in (hs.points, hs.lines.interior.reshape(-1, 3),
                   hs.interior.reshape(-1, 3)):
         if block.size:
@@ -200,8 +200,8 @@ def test_hemisphere_high_order_nodes_lie_on_the_exact_sphere(order):
 
 def test_hemisphere_half_box_annulus_is_watertight():
     from nekmeshpy.model.fields import uniform_spacing as us
-    hb = quadmesh.surface.half_box(3.0, 4, n_vertical=4)
-    hs = quadmesh.surface.hemisphere(0.5, 4, n_vertical=4, rim_tag="ground")
+    hb = quadmesh.shape.half_box(3.0, 4, n_vertical=4)
+    hs = quadmesh.shape.hemisphere(0.5, 4, n_vertical=4, rim_tag="ground")
     block = hexmesh.lift.annulus(hs, hb, radial=us(3))
     assert hexmesh.query.is_watertight(block) and hexmesh.query.is_conforming(block)
     assert float(np.min(hexmesh.query.scaled_jacobian(block))) > 0.0
@@ -214,7 +214,7 @@ def _circle(radius, n):
 
 
 def test_ogrid_counts_and_boundary():
-    qm = quadmesh.region.ogrid(_circle(0.5, 16), n_side=4, radial=uniform_spacing(3))
+    qm = quadmesh.shape.ogrid(_circle(0.5, 16), n_side=4, radial=uniform_spacing(3))
     # central n_side^2 + n_radial rings of 4*n_side quads
     assert qm.n_quads == 4 * 4 + 3 * (4 * 4)
     assert qm.n_points == (4 + 1) ** 2 + 3 * (4 * 4)
@@ -224,8 +224,8 @@ def test_ogrid_counts_and_boundary():
 
 def test_ogrid_smoothing_method_repositions():
     boundary = _circle(0.5, 16)
-    raw = quadmesh.region.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
-    smoothed = quadmesh.region.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
+    raw = quadmesh.shape.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
+    smoothed = quadmesh.shape.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
                               smoothing_method="conduction")
     r = np.asarray(raw.points)
     s = np.asarray(smoothed.points)
@@ -382,7 +382,7 @@ def test_half_ogrid_valid():
     ang = np.linspace(np.pi, 0.0, na)                # semicircle A1(-1,0)..A2(1,0)
     arc = linemesh.assemble.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))   # the diameter A1..A2
-    qm = quadmesh.region.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
+    qm = quadmesh.shape.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
     assert qm.n_quads == 2 * Nt * Nt + 4 * Nt * Nr
     assert qm.n_edge_tags == 0                       # no wall_name -> untagged
     # topological perimeter = wall arc + straight diameter, both 4*Nt edges
@@ -424,7 +424,7 @@ def test_circle_default_is_xy_plane():
 def test_ogrid_on_tilted_plane_is_coplanar_and_extrudes():
     n = np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)
     boundary = linemesh.shape.circle(0.5, 16, normal=n)
-    qm = quadmesh.region.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
+    qm = quadmesh.shape.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
     P = np.asarray(qm.points)
     # every section point lies in the boundary's plane (through its centroid)
     c = P.mean(axis=0)
@@ -458,7 +458,7 @@ def test_ogrid_on_curvy_boundary_stays_nonplanar():
     # sits on the true curved surface and conduction lifts the interior onto it.
     amp = 0.4
     boundary = _saddle_loop(4 * 4, amp)              # 4*n_side points, meshed exactly
-    qm = quadmesh.region.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
+    qm = quadmesh.shape.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
                         smoothing_method="conduction")
     X = np.asarray(qm.points)
     # the whole section is genuinely non-planar (not snapped to a best-fit plane)
@@ -474,7 +474,7 @@ def test_ogrid_on_curvy_boundary_stays_nonplanar():
     # holding the boundary ring fixed
     interior = np.setdiff1d(np.arange(len(X)), wall_ids)
     assert np.abs(X[interior, 2]).max() > 0.1
-    raw = np.asarray(quadmesh.region.ogrid(boundary, n_side=4,
+    raw = np.asarray(quadmesh.shape.ogrid(boundary, n_side=4,
                                     radial=uniform_spacing(3)).points)
     assert np.max(np.abs(raw[interior] - X[interior])) > 1e-3   # interior moved
     assert np.allclose(raw[wall_ids], X[wall_ids])              # wall held fixed
@@ -577,7 +577,7 @@ def test_ogrid_reads_boundary_element_tags():
     # the wall is named at the lowest level -- the boundary loop's element_tags --
     # with no scalar wall_tag.  The wall ring (4*n_side edges) all inherit the tag.
     boundary = linemesh.shape.circle(0.5, 16, element_tags=["wall"] * 16)
-    qm = quadmesh.region.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
+    qm = quadmesh.shape.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
     assert qm.n_edge_tags == 4 * 4
     assert set(qm.edge_tags.tags.tolist()) == {"wall"}
 
@@ -585,7 +585,7 @@ def test_ogrid_reads_boundary_element_tags():
 def test_ogrid_wall_tag_overrides_boundary_element_tags():
     # a non-empty scalar wall_tag OVERRIDES the loop's element_tags for the whole wall
     boundary = linemesh.shape.circle(0.5, 16, element_tags=["ring"] * 16)
-    qm = quadmesh.region.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
+    qm = quadmesh.shape.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
                         wall_tag="override")
     assert set(qm.edge_tags.tags.tolist()) == {"override"}
     assert qm.n_edge_tags == 4 * 4
@@ -605,7 +605,7 @@ def test_half_ogrid_reads_arc_element_tags():
     tags = ["a"] * (2 * Nt) + ["b"] * (2 * Nt)      # first half "a", second half "b"
     arc = _tagged_arc(Nt, tags)
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))
-    qm = quadmesh.region.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
+    qm = quadmesh.shape.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
     from collections import Counter
     assert Counter(qm.edge_tags.tags.tolist()) == {"a": 2 * Nt, "b": 2 * Nt}
 
@@ -614,7 +614,7 @@ def test_half_ogrid_wall_tag_overrides_arc_element_tags():
     Nt = 2
     arc = _tagged_arc(Nt, ["arc"] * (4 * Nt))
     spine = _diameter_spine(arc, 0.5, uniform_spacing(2))
-    qm = quadmesh.region.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5,
+    qm = quadmesh.shape.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5,
                              wall_tag="override")
     assert set(qm.edge_tags.tags.tolist()) == {"override"}
     assert qm.n_edge_tags == 4 * Nt
@@ -632,7 +632,7 @@ def _tagged_rect_edges(nx, ny, tags):
 
 def test_structured_reads_edge_element_tags():
     # each side is named from its own edge's uniform element tag (no edge_tags)
-    qm = quadmesh.region.structured(_tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"]))
+    qm = quadmesh.shape.structured(_tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"]))
     from collections import Counter
     counts = Counter(qm.edge_tags.tags.tolist())
     assert counts == {"wall": 3, "top": 3, "outlet": 2, "inlet": 2}
@@ -640,7 +640,7 @@ def test_structured_reads_edge_element_tags():
 
 def test_structured_side_tags_override_edge_tags():
     # a non-empty side_tags entry OVERRIDES that side's edge tag
-    qm = quadmesh.region.structured(
+    qm = quadmesh.shape.structured(
         _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
         side_tags={"bottom": "floor"})
     from collections import Counter
@@ -653,7 +653,7 @@ def test_structured_side_tags_empty_suppresses_edge_tag():
     # a present-but-empty override (NO_TAG / "") suppresses a tagged edge -- e.g.
     # a shared edge that merge will weld away
     from nekmeshpy import NO_TAG
-    qm = quadmesh.region.structured(
+    qm = quadmesh.shape.structured(
         _tagged_rect_edges(3, 2, ["wall", "wall", "wall", "wall"]),
         side_tags={"left": NO_TAG})
     names = qm.edge_tags.tags.tolist()
@@ -689,7 +689,7 @@ def test_linemesh_rejects_2d_input():
 
 def test_structured_rejects_wrong_edge_count():
     with pytest.raises(ValueError, match="exactly 4 edge"):
-        quadmesh.region.structured(_rect_edges(-1, 1, -1, 1)[:3])
+        quadmesh.shape.structured(_rect_edges(-1, 1, -1, 1)[:3])
 
 
 def test_structured_rejects_mismatched_edge_counts():
@@ -699,14 +699,14 @@ def test_structured_rejects_mismatched_edge_counts():
              linemesh.shape.line((1, 1, 0), (-1, 1, 0), uniform_spacing(2)),     # 3 pts
              linemesh.assemble.loft([(-1, 1, 0), (-1, -1, 0)])]
     with pytest.raises(ValueError, match="bottom and top .* equal point counts"):
-        quadmesh.region.structured(edges)
+        quadmesh.shape.structured(edges)
 
 
 def test_structured_rejects_non_linemesh_edge():
     edges = _rect_edges(-1, 1, -1, 1)
     edges[0] = np.array([[-1, -1, 0], [1, -1, 0]])   # bare array, not a LineMesh
     with pytest.raises(TypeError, match="must be a LineMesh"):
-        quadmesh.region.structured(edges)
+        quadmesh.shape.structured(edges)
 
 
 def test_structured_rejects_open_loop():
@@ -714,7 +714,7 @@ def test_structured_rejects_open_loop():
     edges = [linemesh.assemble.loft([(0, 0, 0), (1, 0, 0)]), linemesh.assemble.loft([(1, 0, 0), (1, 1, 0)]),
              linemesh.assemble.loft([(1, 1, 0), (0, 1, 0)]), linemesh.assemble.loft([(0, 1, 0), (0.5, 0.5, 0)])]
     with pytest.raises(ValueError, match="closed loop"):
-        quadmesh.region.structured(edges)
+        quadmesh.shape.structured(edges)
 
 
 def test_ogrid_rejects_non_loop_boundary():
@@ -722,7 +722,7 @@ def test_ogrid_rejects_non_loop_boundary():
     # (Closedness itself is no longer a stored flag -- see
     # test_ogrid_reads_the_loop_wrap_from_connectivity below.)
     with pytest.raises(ValueError, match=r"exactly 4\*n_side"):
-        quadmesh.region.ogrid(linemesh.assemble.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
+        quadmesh.shape.ogrid(linemesh.assemble.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)]), n_side=4,
                        radial=uniform_spacing(3))
 
 
@@ -732,18 +732,18 @@ def test_ogrid_reads_the_loop_wrap_from_connectivity():
     # edges with no degree-1 end anywhere.
     loop = _circle(0.5, 16)
     assert loop.lines[-1].tolist() == [15, 0] and linemesh.query.boundary_points(loop).size == 0
-    qm = quadmesh.region.ogrid(loop, n_side=4, radial=uniform_spacing(3))
+    qm = quadmesh.shape.ogrid(loop, n_side=4, radial=uniform_spacing(3))
     assert quadmesh.query.boundary_edges(qm).shape[0] == 16
 
 
 def test_ogrid_rejects_bad_center_scale():
     with pytest.raises(ValueError, match="center_scale in"):
-        quadmesh.region.ogrid(_circle(0.5, 16), n_side=4, radial=uniform_spacing(3), center_scale=1.5)
+        quadmesh.shape.ogrid(_circle(0.5, 16), n_side=4, radial=uniform_spacing(3), center_scale=1.5)
 
 
 def test_ogrid_rejects_bad_radial():
     with pytest.raises(ValueError, match="strictly increasing"):
-        quadmesh.region.ogrid(_circle(0.5, 16), n_side=4, radial=np.array([1.0, 0.5]))
+        quadmesh.shape.ogrid(_circle(0.5, 16), n_side=4, radial=np.array([1.0, 0.5]))
 
 
 def _semicircle_arc(Nt):
@@ -756,21 +756,21 @@ def test_half_ogrid_rejects_bad_arc_count():
     arc = linemesh.assemble.loft(np.column_stack([np.linspace(-1, 1, 6), np.zeros(6), np.zeros(6)]))
     spine = linemesh.assemble.loft([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="4.Ntheta"):
-        quadmesh.region.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
+        quadmesh.shape.half_ogrid(arc, spine, uniform_spacing(2), center_scale=0.5)
 
 
 def test_half_ogrid_rejects_non_increasing_radial():
     arc = _semicircle_arc(2)
     spine = linemesh.assemble.loft([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="strictly increasing"):
-        quadmesh.region.half_ogrid(arc, spine, np.array([1.0, 0.5]), center_scale=0.5)
+        quadmesh.shape.half_ogrid(arc, spine, np.array([1.0, 0.5]), center_scale=0.5)
 
 
 def test_half_ogrid_rejects_radial_not_reaching_wall():
     arc = _semicircle_arc(2)
     spine = linemesh.assemble.loft([[-1.0, 0, 0], [1.0, 0, 0]])
     with pytest.raises(ValueError, match="last layer position must be 1.0"):
-        quadmesh.region.half_ogrid(arc, spine, np.array([0.3, 0.6]), center_scale=0.5)
+        quadmesh.shape.half_ogrid(arc, spine, np.array([0.3, 0.6]), center_scale=0.5)
 
 
 # -- spined_ogrid (closed loop + spine -> two half_ogrids welded) ------------
@@ -786,7 +786,7 @@ def _circle_loop(Nt, tag="wall"):
 def test_spined_ogrid_valid_and_tagged():
     Nt, Nr = 2, 2
     loop = _circle_loop(Nt)
-    qm = quadmesh.region.spined_ogrid(loop, uniform_spacing(Nr), center_scale=0.5)
+    qm = quadmesh.shape.spined_ogrid(loop, uniform_spacing(Nr), center_scale=0.5)
     # two half-discs merged (no quads dropped, points welded along the spine)
     assert qm.n_quads == 2 * (2 * Nt * Nt + 4 * Nt * Nr)
     assert set(qm.edge_tags.tags.tolist()) == {"wall"}        # loop tag on the wall
@@ -801,10 +801,10 @@ def test_spined_ogrid_default_spine_equals_explicit_chord():
     Nt = 2
     loop = _circle_loop(Nt)
     radial = uniform_spacing(2)
-    fr = quadmesh.region.spine_fractions(Nt, radial, 0.5)
+    fr = quadmesh.shape.spine_fractions(Nt, radial, 0.5)
     chord = linemesh.shape.line(loop.points[0], loop.points[4 * Nt], fr)
-    auto = quadmesh.region.spined_ogrid(loop, radial, center_scale=0.5)
-    explicit = quadmesh.region.spined_ogrid(loop, radial, spine=chord, center_scale=0.5)
+    auto = quadmesh.shape.spined_ogrid(loop, radial, center_scale=0.5)
+    explicit = quadmesh.shape.spined_ogrid(loop, radial, spine=chord, center_scale=0.5)
     assert np.array_equal(np.asarray(auto.points), np.asarray(explicit.points))
     assert np.array_equal(np.asarray(auto.quads), np.asarray(explicit.quads))
 
@@ -818,13 +818,13 @@ def test_spined_ogrid_rejects_wrong_length_spine():
     loop = _circle_loop(Nt)
     chord = linemesh.assemble.loft(loop.points[[0, 4 * Nt], :])
     with pytest.raises(ValueError, match="spine_fractions"):
-        quadmesh.region.spined_ogrid(loop, uniform_spacing(2), spine=chord,
+        quadmesh.shape.spined_ogrid(loop, uniform_spacing(2), spine=chord,
                               center_scale=0.5)
 
 
 def test_spine_fractions_shape_and_ordering():
     Nt, radial, cs = 3, uniform_spacing(4), 0.4
-    fr = np.asarray(quadmesh.region.spine_fractions(Nt, radial, cs))
+    fr = np.asarray(quadmesh.shape.spine_fractions(Nt, radial, cs))
     Nr = len(radial) - 1
     assert fr.shape == (2 * Nt + 1 + 2 * Nr,)
     assert np.all(np.diff(fr) > 0.0)                  # strictly ascending A1 -> A2
@@ -833,13 +833,13 @@ def test_spine_fractions_shape_and_ordering():
 
 def test_spine_fractions_rejects_bad_n_theta():
     with pytest.raises(ValueError, match="n_theta >= 1"):
-        quadmesh.region.spine_fractions(0, uniform_spacing(2), 0.5)
+        quadmesh.shape.spine_fractions(0, uniform_spacing(2), 0.5)
 
 
 @pytest.mark.parametrize("cs", [0.0, 1.0, -0.2, 1.5])
 def test_spine_fractions_rejects_bad_center_scale(cs):
     with pytest.raises(ValueError, match=r"center_scale in \(0, 1\)"):
-        quadmesh.region.spine_fractions(2, uniform_spacing(2), cs)
+        quadmesh.shape.spine_fractions(2, uniform_spacing(2), cs)
 
 
 def test_spined_ogrid_curved_spine_is_meshed_exactly():
@@ -848,11 +848,11 @@ def test_spined_ogrid_curved_spine_is_meshed_exactly():
     Nt, radial, cs = 3, uniform_spacing(3), 0.5
     loop = _circle_loop(Nt)
     A1, A2 = loop.points[0], loop.points[4 * Nt]
-    fr = np.asarray(quadmesh.region.spine_fractions(Nt, radial, cs))
+    fr = np.asarray(quadmesh.shape.spine_fractions(Nt, radial, cs))
     pts = A1 + fr[:, None] * (A2 - A1)
     pts[:, 2] = 0.35 * np.sin(np.pi * fr)             # +z bow, pinned at both ends
     spine = linemesh.assemble.loft(pts)
-    qm = quadmesh.region.spined_ogrid(loop, radial, spine=spine, center_scale=cs)
+    qm = quadmesh.shape.spined_ogrid(loop, radial, spine=spine, center_scale=cs)
 
     assert not np.any(np.isnan(np.asarray(qm.points)))
     assert qm.n_quads == 2 * (2 * Nt * Nt + 4 * Nt * radial[1:].size)
@@ -876,13 +876,13 @@ def test_spined_ogrid_matches_two_half_ogrids():
     P = loop.points
     M, nh = 8 * Nt, 4 * Nt
     radial = uniform_spacing(2)
-    combined = quadmesh.region.spined_ogrid(loop, radial, center_scale=0.5)
+    combined = quadmesh.shape.spined_ogrid(loop, radial, center_scale=0.5)
 
     arc1 = linemesh.assemble.loft(P[0:nh + 1, :], element_tags=["wall"] * nh)
     arc2 = linemesh.assemble.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags=["wall"] * nh)
-    h1 = quadmesh.region.half_ogrid(arc1, _diameter_spine(arc1, 0.5, radial), radial,
+    h1 = quadmesh.shape.half_ogrid(arc1, _diameter_spine(arc1, 0.5, radial), radial,
                              center_scale=0.5, wall_tag="")
-    h2 = quadmesh.region.half_ogrid(arc2, _diameter_spine(arc2, 0.5, radial), radial,
+    h2 = quadmesh.shape.half_ogrid(arc2, _diameter_spine(arc2, 0.5, radial), radial,
                              center_scale=0.5, wall_tag="")
     manual = quadmesh.assemble.merge([h1, h2])
 
@@ -893,7 +893,7 @@ def test_spined_ogrid_matches_two_half_ogrids():
 
 def test_spined_ogrid_wall_tag_overrides_loop_tags():
     loop = _circle_loop(2, tag="skin")
-    qm = quadmesh.region.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5,
+    qm = quadmesh.shape.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5,
                                wall_tag="override")
     assert set(qm.edge_tags.tags.tolist()) == {"override"}
 
@@ -907,7 +907,7 @@ def test_spined_ogrid_curved_spine_drives_interior_geometry():
     t = np.linspace(0.0, 1.0, 9)
     curved = e1 + t[:, None] * (e2 - e1)
     curved[:, 2] = 0.3 * np.sin(np.pi * t)                   # +z bulge, 0 at both ends
-    qm = quadmesh.region.spined_ogrid(loop, uniform_spacing(2), spine=linemesh.assemble.loft(curved),
+    qm = quadmesh.shape.spined_ogrid(loop, uniform_spacing(2), spine=linemesh.assemble.loft(curved),
                                center_scale=0.5)
     assert np.max(np.abs(np.asarray(qm.points)[:, 2])) > 1e-3
 
@@ -917,7 +917,7 @@ def test_spined_ogrid_rejects_bad_boundary_count():
     th = np.linspace(0.0, 2 * np.pi, 12, endpoint=False)
     loop = linemesh.assemble.loft(np.column_stack([np.cos(th), np.sin(th), np.zeros(12)]), loop=True)
     with pytest.raises(ValueError, match="8.Ntheta"):
-        quadmesh.region.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
+        quadmesh.shape.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
 
 
 def test_spined_ogrid_boundary_wrap_is_structural():
@@ -929,7 +929,7 @@ def test_spined_ogrid_boundary_wrap_is_structural():
     loop = linemesh.assemble.loft(np.column_stack([np.cos(th), np.sin(th), np.zeros(M)]), loop=True)
     assert loop.lines[-1].tolist() == [M - 1, 0]
     assert linemesh.query.boundary_points(loop).size == 0
-    qm = quadmesh.region.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
+    qm = quadmesh.shape.spined_ogrid(loop, uniform_spacing(2), center_scale=0.5)
     # the filled disc's only free perimeter is the wall ring itself
     assert quadmesh.query.boundary_edges(qm).shape[0] == M
 
@@ -940,8 +940,8 @@ def test_structured_accepts_edges_as_a_keyed_mapping():
     # the same four edges named rather than positional -- byte-identical result,
     # so the Sequence form stays the canonical one and this is pure sugar
     seq = _tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"])
-    a = quadmesh.region.structured(seq)
-    b = quadmesh.region.structured(dict(zip(("bottom", "right", "top", "left"), seq)))
+    a = quadmesh.shape.structured(seq)
+    b = quadmesh.shape.structured(dict(zip(("bottom", "right", "top", "left"), seq)))
     assert np.array_equal(a.points, b.points)
     assert np.array_equal(a.quads, b.quads)
     assert a.edge_tags.tags.tolist() == b.edge_tags.tags.tolist()
@@ -951,8 +951,8 @@ def test_structured_edge_mapping_is_order_insensitive():
     seq = _tagged_rect_edges(3, 2, ["wall", "outlet", "top", "inlet"])
     keys = ("bottom", "right", "top", "left")
     shuffled = {k: e for k, e in sorted(zip(keys, seq), key=lambda kv: kv[0])}
-    assert np.array_equal(quadmesh.region.structured(seq).points,
-                          quadmesh.region.structured(shuffled).points)
+    assert np.array_equal(quadmesh.shape.structured(seq).points,
+                          quadmesh.shape.structured(shuffled).points)
 
 
 def test_structured_edge_mapping_rejects_missing_and_unknown_keys():
@@ -960,6 +960,6 @@ def test_structured_edge_mapping_rejects_missing_and_unknown_keys():
     keys = ("bottom", "right", "top", "left")
     full = dict(zip(keys, seq))
     with pytest.raises(ValueError):                      # all four are required
-        quadmesh.region.structured({k: full[k] for k in keys[:3]})
+        quadmesh.shape.structured({k: full[k] for k in keys[:3]})
     with pytest.raises(ValueError):                      # typo must not pass silently
-        quadmesh.region.structured({**full, "lft": full["left"]})
+        quadmesh.shape.structured({**full, "lft": full["left"]})

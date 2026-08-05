@@ -26,7 +26,7 @@ qualified explicit target — ``:func:`quadmesh.morph.blend
 <nekmeshpy.quadmesh.morph.blend>` `` — because the operations are module-level
 functions now, so a bare ``:func:`blend` `` has no enclosing class to resolve against.
 Note the target names the **namespace** module (`quadmesh.morph`), not the private
-sibling (`quadmesh._morph`): Sphinx registers each object under the `__name__` of the
+container module: Sphinx registers each object under the `__name__` of the
 module that documents it.
 
 ## The golden-regression invariant
@@ -70,7 +70,7 @@ views only — and imports **no** sibling. Operations live in sibling modules an
 reached through per-rung namespaces, never bound onto the class:
 
 ```python
-quadmesh.region.ogrid(boundary, n_side, radial)   # not quadmesh.region.ogrid(...)
+quadmesh.shape.ogrid(boundary, n_side, radial)    # not QuadMesh.ogrid(...)
 hexmesh.query.is_watertight(mesh)                 # not mesh.is_watertight()
 ```
 
@@ -85,28 +85,28 @@ hex ladder the op moves):
 
 | module | arity | Δ | contents |
 |---|---|---|---|
-| `_assemble.py` | n-ary | +1 / 0 | `loft`, `loft_fn`, `merge` |
-| `_lift.py` | fixed | +1 | `extrude` / `sweep` / `annulus` / `from_grid` → `loft` |
-| `_morph.py` | fixed | 0 | `blend`; unary `translate`/`rotate`/`scale`/`transform` |
-| `_query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
-| `_open.py`, `_closed.py` | fixed | +1 | shape factories — own a *shape model*, unlike `_lift` |
+| `assemble.py` | n-ary | +1 / 0 | `loft`, `loft_fn`, `merge` |
+| `lift.py` | fixed | +1 | `extrude` / `sweep` / `annulus` / `from_grid` → `loft` |
+| `morph.py` | fixed | 0 | `blend`; unary `translate`/`rotate`/`scale`/`transform` |
+| `query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
+| `shape.py` | fixed | +1 | shape factories — own a *shape model*, unlike `lift` |
 
-`_assemble` is load-bearing: **`loft` and `merge` are the only operations that
+`assemble` is load-bearing: **`loft` and `merge` are the only operations that
 manufacture a global index space.** Everything fixed-arity either reuses an existing
 numbering (`blend` keeps `a`'s verbatim) or delegates here. To place a new operation
-ask: *does it invent a numbering?* → `_assemble`; *does it change rung?* → `_lift`;
-*neither?* → `_morph`. Δ = −1 (a block's boundary **as** a `QuadMesh`) is empty at every
+ask: *does it invent a numbering?* → `assemble`; *does it change rung?* → `lift`;
+*neither?* → `morph`. Δ = −1 (a block's boundary **as** a `QuadMesh`) is empty at every
 rung — `boundary_faces` returns `[element, face]` pairs, not a mesh.
 
 Namespaces, one public module per group — `assemble`, `lift`, `morph`, `query`, plus
-the shape factories: `shape` at line and hex, `region` (fills) and `surface` (closed
-shells) at quad. They are **real modules** re-exporting from the private siblings, not
-`from . import _assemble as assemble` aliases: Sphinx registers a target under a
-module's own `__name__`, so an alias documents nothing and every cross-reference to it
-breaks the `-n -W` build. `shape` merges `_open` and `_closed`, since open vs closed is
-a storage split rather than a caller-facing one.
+`shape`. These modules **are** the code — there is no private `_assemble.py` behind
+`assemble.py`, and no facade layer. `shape` holds both the open and the closed shape
+factories: that split was storage-side, not caller-facing.
 
-`linemesh.shape` and `quadmesh.region` also carry the samplings —
+Only genuinely internal helpers stay underscored: `linemesh/_plane.py` and
+`quadmesh/_helpers.py`.
+
+`linemesh.shape` and `quadmesh.shape` also carry the samplings —
 `arclength_fractions`, `sweep_fractions`, `spine_fractions`,
 `quadrant_seam_fractions`, `quadrant_core` — which return a plain array rather than a
 mesh. These exist because **no factory resamples its input**: a factory meshes exactly
@@ -121,7 +121,7 @@ Public API is re-exported from `nekmeshpy/__init__.py`; keep `__all__` in sync.
 are unchecked, which is why a wrong-rung call there (`quadmesh.morph.translate(hexmesh_obj, v)`)
 surfaces as a pytest `AttributeError` rather than a type error. Internal toolkit code
 imports the free functions directly from the private sibling
-(`from ..linemesh._open import line`); the public namespaces are for callers.
+(`from ..linemesh.shape import line`) — same modules the public namespaces name.
 
 Operations are per-rung, so a call site **names its rung**. Code meant to run at every
 rung pairs each mesh with its package explicitly rather than dispatching on

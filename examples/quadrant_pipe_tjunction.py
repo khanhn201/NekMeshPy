@@ -145,7 +145,7 @@ ORIGIN = np.zeros(3)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
-FR = quadmesh.region.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+FR = quadmesh.shape.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
 
 #: Branch polar angles of the four footprint corners, measured from ``+z`` (the main
 #: axis) and **descending**, which is the winding whose normal points along the
@@ -273,7 +273,7 @@ def quadrant(arc, seam1, seam2, wall_tag=""):
     """One quadrant face.  Every quadrant in the mesh -- disc sections and crotch
     caps alike -- comes from here, so a cap shares its points with the leg or branch
     on the other side of it."""
-    return quadmesh.region.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+    return quadmesh.shape.quadrant_ogrid(arc, seam1, seam2, RADIAL,
                                    center_scale=CENTER_SCALE, wall_tag=wall_tag)
 
 
@@ -455,7 +455,7 @@ def leg(composite, walls, sign, end_tag):
     w_plain = plain_walls(walls, z, sign)
 
     def station(s):
-        return quadmesh.region.quadrant_disc(
+        return quadmesh.shape.quadrant_disc(
             [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
             np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
@@ -473,7 +473,7 @@ def branch():
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
     c_open = np.array([H_BRANCH, 0.0, 0.0])
-    sections = [quadmesh.region.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+    sections = [quadmesh.shape.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
     return hexmesh.assemble.loft(sections, last_tag="branch")

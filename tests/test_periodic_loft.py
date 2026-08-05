@@ -36,7 +36,7 @@ def _ring_profiles(order=1, nsec=NSEC, nring=NRING):
 
 def _disc_profiles(order=1, nsec=NSEC, nring=8):
     """The same sections filled with an O-grid disc, ready for a hex loft."""
-    return [quadmesh.region.ogrid(r, 2, np.linspace(0.5, 1.0, 2))
+    return [quadmesh.shape.ogrid(r, 2, np.linspace(0.5, 1.0, 2))
             for r in _ring_profiles(order=order, nsec=nsec, nring=nring)]
 
 
