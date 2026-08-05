@@ -10,7 +10,7 @@ pip install -e ".[all,dev]"                  # numpy, scipy, matplotlib, meshio,
 ruff check nekmeshpy tests examples
 mypy                                         # config pins files=["nekmeshpy"]; do NOT pass paths
 python -m pytest                             # conftest pins the Agg backend for headless viz tests
-python -m pytest -m slow                     # the 3 big chimera examples, deselected by default
+python -m pytest -m slow                     # the 2 big chimera examples, deselected by default
 sphinx-build -b html -n -W --keep-going docs docs/_build/html
 
 pytest tests/test_pipes.py::test_quadrant_pipe_tjunction   # single test
@@ -27,12 +27,11 @@ settles; a local pass is not the gate.
 valid `mesh` — non-empty, watertight, conforming, no inverted element. It *discovers*
 the scripts rather than listing them, so a new example is covered the moment it lands;
 this exists because five examples had no coverage at all and a refactor left four of
-them broken with CI green. The three large chimera meshers carry `@pytest.mark.slow`
+them broken with CI green. The two large chimera meshers carry `@pytest.mark.slow`
 and are deselected by `addopts`, so a bare `pytest` shows them as *deselected*, not
-passed — the `Slow examples` job is what actually runs them. `chimera.py` builds one
-inverted element (min scaled Jacobian ≈ −0.17, true on `main` too) and is recorded as a
-**strict** xfail in `KNOWN_INVERTED`, so fixing it will fail the suite until the entry
-is removed. The docs build runs `-n -W` (nitpicky, warnings-as-errors), so one unresolved
+passed — the `Slow examples` job is what actually runs them. `KNOWN_INVERTED` records any example that ships an
+inverted element as a **strict** xfail, so fixing one fails the suite until its entry
+is removed; it is currently empty and worth keeping that way. The docs build runs `-n -W` (nitpicky, warnings-as-errors), so one unresolved
 autodoc reference fails it. Every `:func:`/`:class:`/`:data:` role needs a fully
 qualified explicit target — ``:func:`quadmesh.blend
 <nekmeshpy.quadmesh.morph.blend>` `` — because the operations are module-level

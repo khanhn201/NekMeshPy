@@ -1,13 +1,13 @@
-r"""Full chimera manifold: two chimera_chain ports fed by a serpentine coil.
+r"""Full chimera manifold: two chimera ports fed by a serpentine coil.
 
 The whole assembly, inlet to outlet:
 
-    riser -> T1 -> (main leg) elbow up into chimera_chain's own opening
+    riser -> T1 -> (main leg) elbow up into chimera's own opening
                 \-- (branch, -y) --> T2 --> bridge inward, bend to +z
                                               --> the serpentine coil
 
 Two of those, mirrored about the coil's midspan: the T1 on the **negative-x**
-side feeds chimera_chain's *outlet*, the one on the **positive-x** side its
+side feeds chimera's *outlet*, the one on the **positive-x** side its
 *inlet*.
 
 Each T1 branch does not carry one T2 but a **chain of ``N_T2``**, each hanging
@@ -24,7 +24,7 @@ above the first coil in y.
 
 Produces ``chimera_full.re2`` and ``chimera_full.vtu``.
 
-``FAST`` (default ``True``) swaps the real ``chimera_chain.py`` build -- 350k
+``FAST`` (default ``True``) swaps the real ``chimera.py`` build -- 350k
 elements, a couple of minutes -- for two short capped stubs carrying its exact
 inlet/outlet disc pattern, so the manifold's own geometry can be checked in
 seconds.  Set it ``False`` for the whole thing.
@@ -200,8 +200,8 @@ RADIAL = np.array([0.0, 0.4, 0.8, 1.0])
 CENTER_SCALE = 0.5
 n_slices = 3
 
-R_MAIN = 1.2     # == chimera_chain's R_MAIN
-R_BR = 0.5       # == chimera_chain's R_BRANCH
+R_MAIN = 1.2     # == chimera's R_MAIN
+R_BR = 0.5       # == chimera's R_BRANCH
 
 L1 = 2.5 * R_MAIN     # T1 main half-length
 H1 = 2.5 * R_MAIN     # T1 branch length
@@ -219,7 +219,7 @@ def normal_of(qm):
     return vt[-1]
 
 
-# chimera_chain's own port cross-section: the same quadrant_disc recipe its
+# chimera's own port cross-section: the same quadrant_disc recipe its
 # junctions are built from, so it reproduces a port's pattern exactly.
 _chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
                CENTER_SCALE=0.7, PHI_W=np.deg2rad(100.0), N_TRANS=2, N_BRANCH=2)
@@ -238,7 +238,7 @@ def port_disc(hexmesh, tag, template):
     ``hexmesh``, paired to the template by nearest corner.
 
     Needed because a recipe that reproduces one port exactly need not
-    reproduce the other: chimera_chain builds its *inlet* as a straight
+    reproduce the other: chimera builds its *inlet* as a straight
     ``end_stub`` (which ``fake_chi_disc`` matches to 1e-15) but its *outlet*
     through ``outlet_return()``'s bend, whose end disc lands ~3.4e-3 away.
     At order 1 that difference just welds; at order > 1 ``HexMesh.merge``
@@ -283,7 +283,7 @@ def port_disc(hexmesh, tag, template):
                     order=template.order)
 
 
-# chimera_chain's REAL inlet/outlet disc centres (probed: both at z = -17.5,
+# chimera's REAL inlet/outlet disc centres (probed: both at z = -17.5,
 # facing -z -- the chain body extends up to z = +160). Our whole manifold
 # therefore sits BELOW that plane and every pipe that meets chimera arrives
 # heading +z, face to face with chimera's own -z-facing openings.
@@ -295,9 +295,9 @@ CHI_OUT = np.array([-15.0, 6.6, -17.5])
 chi_mesh = None
 if not FAST:
     import runpy as _runpy
-    print("building real chimera_chain (slow)...")
+    print("building real chimera (slow)...")
     _chi_ns = _runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                           "chimera_chain.py"))
+                                           "chimera.py"))
     chi_mesh = _chi_ns["mesh"]
 
 if chi_mesh is None:
@@ -490,7 +490,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
 
 
 # T1 on the negative-x side (the assembly's own "inlet" riser) connects to
-# chimera_chain's OUTLET; T1 on the positive-x side ("outlet" riser) to its
+# chimera's OUTLET; T1 on the positive-x side ("outlet" riser) to its
 # INLET.  Which physical port a side reaches is carried entirely by the
 # (chi_target, chi_disc) pair -- place_t1 itself is agnostic.
 X_MID = 0.5 * (CHI_IN[0] + CHI_OUT[0])
@@ -569,7 +569,7 @@ def build_t2(mirror=False):
 # in a single fixed-y plane), so T2_SHARED_Y = min(chi target y) - H1 -
 # RUN_T1_T2 -- meaning chimera sits exactly (H1 + RUN_T1_T2) above serp's own
 # y, for *any* absolute chimera y. Fixed at 10.0 - H1 so that gap is exactly
-# the user's requested 10, without having to move chimera_chain itself.
+# the user's requested 10, without having to move chimera itself.
 RUN_T1_T2 = 10.0 - H1
 
 
@@ -913,7 +913,7 @@ print("stage3:", mesh3.n_hexes, "watertight", hexmesh.is_watertight(mesh3),
 # -- registration check: does the connector's rising end actually land point-
 # for-point on chimera's own disc pattern (mod the quadrant disc's 90-degree
 # symmetry)?  The fake stand-in discs use the identical pattern/params as the
-# real chimera_chain, so this check is valid in FAST mode too. conn_chi_in
+# real chimera, so this check is valid in FAST mode too. conn_chi_in
 # targets CHI_OUT and conn_chi_out targets CHI_IN (the swap above), so the
 # discs paired here follow the same swap, not the "in"/"out" name.
 for nm, conn, disc in (("in", conn_chi_in[-1], chi_out_disc),

@@ -29,14 +29,14 @@ LIBRARY_ONLY = {"tjunction_lib.py"}
 
 #: Wall-clock over ~10 s on a warm machine, so they are deselected from a default run
 #: (``-m "not slow"`` in ``addopts``) and run explicitly by one CI job.  Measured:
-#: chimera 19 s, chimera_chain 57 s, chimera_full 138 s.
-SLOW = {"chimera.py", "chimera_chain.py", "chimera_full.py"}
+#: chimera 57 s, chimera_full 138 s.
+SLOW = {"chimera.py", "chimera_full.py"}
 
-#: Examples known to build an inverted element.  ``chimera.py`` has a min scaled
-#: Jacobian of about -0.17 and always has -- ``origin/main`` produces the same value --
-#: so this is a real, pre-existing mesh defect rather than a regression.  Recorded as a
-#: strict xfail so that fixing it fails this test and forces the entry to be removed.
-KNOWN_INVERTED = {"chimera.py"}
+#: Examples known to build an inverted element, as a strict xfail so that fixing one
+#: fails this test and forces the entry out.  Empty, and worth keeping that way: the
+#: only entry was the old two-manifold ``chimera.py`` (min scaled Jacobian about -0.17,
+#: on ``main`` too), which has since been deleted.
+KNOWN_INVERTED = set()
 
 _CONTAINERS = (LineMesh, QuadMesh, HexMesh)
 
