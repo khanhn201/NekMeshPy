@@ -10,13 +10,18 @@ internal toolkit code imports them from here directly rather than through the bo
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from .._typing import (
     BoolArray,
     FloatArray,
     IntArray,
+    PointArray,
+    Vec3,
 )
+from ..model import frames
 from ..model.quality import QualitySummary
 from .quadmesh import QuadMesh
 
@@ -68,10 +73,45 @@ def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> QualitySumma
         return quality.summary_ho(mesh, mesh.order)
     return quality.summary(mesh.points, mesh.quads)
 
+def plane_normal(mesh: QuadMesh, *,
+                 hint: Vec3 | Sequence[float] | None = None,
+                 check: bool = True) -> Vec3:
+    """The unit normal of the plane a **planar** section lies in: the smallest right
+    singular vector of its centred points, i.e. the exact least-squares plane.
+
+    The question a caller asks of a cross-section before bridging or stubbing off it --
+    "which way does this disc face?" -- and the honest answer for that is the section's
+    own fitted plane, not the direction between two centroids, which a disc not
+    perfectly centred on its nominal position tilts by a small angle.  ``sweep``'s
+    ``"fixed"`` orientation makes the section exactly perpendicular to whatever tangent
+    it is handed, so that small tilt lands the first station a little off the very disc
+    it was supposed to reproduce.
+
+    ``hint=`` flips the sign to agree with a direction; without it the sign is
+    whichever the SVD returns, which is deterministic for a given point array but
+    carries no outward/inward meaning.  ``check=False`` skips the planarity check for a
+    section known not to be planar (a T-junction's saddle-shaped footprint disc, say),
+    where the fitted plane is still the best available answer but
+    :func:`frames.plane_frame <nekmeshpy.model.frames.plane_frame>` would rather refuse
+    than guess.
+
+    Only the normal: use ``frames.plane_frame`` directly for the full ``(R, origin)``
+    frame, which this delegates to."""
+    normal = None
+    if not check:
+        P: PointArray = np.asarray(mesh.points, dtype=float)
+        c = P.mean(axis=0)
+        normal = np.linalg.svd(P - c)[2][2]
+    R, _ = frames.plane_frame(mesh.points, normal=normal, hint=hint)
+    w: Vec3 = R[:, 2]
+    return w
+
+
 __all__ = [
     "boundary_edges",
     "boundary_elements",
     "boundary_points",
+    "plane_normal",
     "quality_summary",
     "scaled_jacobian",
 ]

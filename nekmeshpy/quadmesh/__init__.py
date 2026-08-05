@@ -48,12 +48,13 @@ unambiguous; across rungs they deliberately collide (each rung has its own ``lof
 from . import assemble, lift, morph, query, shape
 from .assemble import loft, loft_fn, merge
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
-from .morph import blend, rotate, scale, transform, translate
+from .morph import blend, place_on_path, rotate, scale, transform, translate
 from .quadmesh import NO_TAG, QuadMesh
 from .query import (
     boundary_edges,
     boundary_elements,
     boundary_points,
+    plane_normal,
     quality_summary,
     scaled_jacobian,
 )
@@ -95,6 +96,8 @@ __all__ = [
     "merge",
     "morph",
     "ogrid",
+    "place_on_path",
+    "plane_normal",
     "quadrant_core",
     "quadrant_disc",
     "quadrant_ogrid",

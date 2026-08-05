@@ -212,13 +212,6 @@ kw_t1 = dict(n_half=N_HALF, order=ORDER, radial=RADIAL, center_scale=CENTER_SCAL
 kw_t2 = kw_t1
 
 
-def normal_of(qm):
-    pts = qm.points
-    c = pts.mean(axis=0)
-    u, s, vt = np.linalg.svd(pts - c)
-    return vt[-1]
-
-
 # chimera's own port cross-section: the same quadrant_disc recipe its
 # junctions are built from, so it reproduces a port's pattern exactly.
 _chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
@@ -452,19 +445,16 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
         reproducer: it reproduces its input to machine precision when origin
         and the path's own start agree, and by exactly this residual when
         they don't)."""
-        p = xz_path(moves, (db_c[0], db_c[2]), heading, db_c[1])
-        s = np.array([0.0, 1.0])
-        m, o = frames.sweep_placements(disc.points, p.centerline(s),
-                                       orientation="fixed", up=(0.0, 1.0, 0.0),
-                                       origin=db_c, path_tangents=p.tangent(s))[1]
-        return quadmesh.transform(disc, m, o)
+        return quadmesh.place_on_path(
+            disc, xz_path(moves, (db_c[0], db_c[2]), heading, db_c[1]), [0.0, 1.0],
+            orientation="fixed", up=(0.0, 1.0, 0.0), origin=db_c)[-1]
 
     conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
     end_sec = _end_section(db)
     print("  [%s] end_sec center=%s normal=%s" %
-         (tag, end_sec.points.mean(axis=0), normal_of(end_sec)))
+         (tag, end_sec.points.mean(axis=0), quadmesh.plane_normal(end_sec, check=False)))
     print("  [%s] tgt center=%s normal=%s"
-         % (tag, chi_disc.points.mean(axis=0), normal_of(chi_disc)))
+         % (tag, chi_disc.points.mean(axis=0), quadmesh.plane_normal(chi_disc, check=False)))
     adapter, _ = pattern_adapter(end_sec, chi_disc, (0.0, 0.0, 1.0), n_layers=2,
                                  name="chi_" + tag)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
@@ -648,9 +638,9 @@ def weld_bridge(a, b, n=4, stub_frac=0.3, stub_max=1.5, n_blend=6):
     0.707."""
     ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
     length = np.linalg.norm(cb - ca)
-    na = normal_of(a)
+    na = quadmesh.plane_normal(a, check=False)
     na = na if np.dot(na, cb - ca) > 0 else -na
-    nb = normal_of(b)
+    nb = quadmesh.plane_normal(b, check=False)
     nb = nb if np.dot(nb, ca - cb) > 0 else -nb
     stub = min(stub_max, stub_frac * length)
 
@@ -823,12 +813,9 @@ def _end_section(section, moves, heading, y_fixed):
     frames.sweep_placements machinery sweep() uses internally (not
     re-derived) -- so a piece built to continue from it lands seamlessly."""
     c = section.points.mean(axis=0)
-    p = xz_path(moves, (c[0], c[2]), heading, y_fixed)
-    s = np.array([0.0, 1.0])
-    m, o = frames.sweep_placements(section.points, p.centerline(s), orientation="fixed",
-                                   up=(0.0, 1.0, 0.0), origin=c,
-                                   path_tangents=p.tangent(s))[1]
-    return quadmesh.transform(section, m, o)
+    return quadmesh.place_on_path(section, xz_path(moves, (c[0], c[2]), heading, y_fixed),
+                                  [0.0, 1.0], orientation="fixed", up=(0.0, 1.0, 0.0),
+                                  origin=c)[-1]
 
 
 TOTAL_COIL = _coil_local.total_length

@@ -18,6 +18,7 @@ the bound ``QuadMesh.<name>`` sugar.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 
@@ -29,7 +30,8 @@ from .._typing import (
 )
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
-from ..model import affine
+from ..model import affine, frames
+from ..model.paths import SpacePath
 from .quadmesh import QuadMesh
 
 
@@ -126,8 +128,50 @@ def scale(mesh: QuadMesh, factor: float | Vec3 | Sequence[float],
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
 
+
+def place_on_path(section: QuadMesh, path: SpacePath,
+                  fractions: FloatArray | Sequence[float], *,
+                  origin: Point | Sequence[float] | None = None,
+                  orientation: Literal["transport", "fixed", "frenet"] = "transport",
+                  up: Vec3 | Sequence[float] | PointArray | None = None,
+                  twist: float = 0.0,
+                  close_twist: bool = True,
+                  normal: Vec3 | Sequence[float] | None = None,
+                  loop: bool = False) -> list[QuadMesh]:
+    """Where :func:`sweep <nekmeshpy.hexmesh.lift.sweep_path>` **would** put ``section``
+    at each of ``fractions``, without building the block: one rigidly placed copy per
+    station, through the same
+    :func:`frames.sweep_placements <nekmeshpy.model.frames.sweep_placements>` the sweep
+    itself uses.
+
+    For continuing a build from a swept tube's own terminal cross-section, or for
+    stubbing a few rigid sections off a disc.  Going through the sweep's own machinery
+    rather than re-deriving the placement is the point: re-deriving lands *close*, and
+    at ``order > 1`` :func:`HexMesh.merge <nekmeshpy.hexmesh.assemble.merge>` verifies
+    shared high-order edge nodes against ``conform.entity_tol`` (~1e-9 of the model
+    extent), which close does not meet.
+
+    Takes the **whole** ``fractions`` array rather than a single station, because under
+    ``orientation="transport"`` the frame at a station is a sequential integration along
+    everything before it -- a one-station signature would silently return a different
+    placement than the sweep's.  Pass the same fractions the sweep will use.  Under
+    ``"fixed"`` each frame is pointwise and the sampling does not matter.
+
+    ``origin`` defaults to the section's centroid, exactly as ``sweep_placements`` does;
+    an O-grid disc's centroid misses its true centre slightly, so name the centre the
+    boundary loop was built about when there is one."""
+    P: PointArray = path.centerline(np.asarray(fractions, dtype=float).ravel())
+    T: PointArray = path.tangent(np.asarray(fractions, dtype=float).ravel())
+    places = frames.sweep_placements(
+        section.points, P, orientation=orientation, up=up, twist=twist,
+        close_twist=close_twist, loop=loop, origin=origin, normal=normal,
+        path_tangents=T)
+    return [transform(section, M, o) for M, o in places]
+
+
 __all__ = [
     "blend",
+    "place_on_path",
     "rotate",
     "scale",
     "transform",
