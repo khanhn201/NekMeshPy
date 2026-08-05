@@ -260,7 +260,7 @@ def _arc_mesh(p, n, element_tag):
     """Mesh an ``_arc_curve`` into ``n`` high-order elements, evenly spaced by arc
     length.  ``LineMesh.loft_fn`` evaluates ``p`` at every node -- corners *and* the
     private GLL interiors -- so no node lands on a chord."""
-    return linemesh.assemble.loft_fn(p, linemesh.shape.arclength_fractions(p, n),
+    return linemesh.loft_fn(p, linemesh.arclength_fractions(p, n),
                           order=ORDER, element_tags=[element_tag] * n)
 
 
@@ -271,7 +271,7 @@ def _ring(p, q):
 
     ``reverse`` carries ``q``'s high-order nodes with it; re-lofting its points
     would straight-subdivide them and lose the curve at ``ORDER > 1``."""
-    return linemesh.assemble.merge([p, linemesh.morph.reverse(q)])
+    return linemesh.merge([p, linemesh.reverse(q)])
 
 
 def seam_rings(V, faces, gloops, n_half):
@@ -308,7 +308,7 @@ def seam_rings(V, faces, gloops, n_half):
     bcP = _arc_mesh(_arc_curve(V, arcBC, iA1, n_half), n_half, "wall")
 
     rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
-    spine = linemesh.assemble.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
+    spine = linemesh.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
     return rings, A1, A2, spine
 
 
@@ -344,7 +344,7 @@ def fourier_wall(P, order, element_tag):
     ``LineMesh.loft_fn`` only ever makes an open chain, so weld the two ends into a loop
     the way the toolkit expects (``LineMesh.merge``)."""
     M = np.asarray(P).shape[0]
-    return linemesh.assemble.merge([linemesh.assemble.loft_fn(
+    return linemesh.merge([linemesh.loft_fn(
         fourier_ring(P), np.linspace(0.0, 2.0 * np.pi, M + 1),
         order=order, element_tags=[element_tag] * M)])
 
@@ -410,13 +410,13 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # curve at the wrong count (there is no analytic form to evaluate: the
         # deviation comes off the STL, so the chord is the honest interpolant).
         spn = trimesh.ops.resample_polyline(
-            spn, quadmesh.shape.spine_fractions(nh // 4, radial, center_scale))
+            spn, quadmesh.spine_fractions(nh // 4, radial, center_scale))
         # reposition interior stations; leave opening cap (k=0) and pinned seam
         # (k=nr-1) as raw algebraic fill.  Wall tagged on the loop (see
         # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
-        slices.append(quadmesh.shape.spined_ogrid(
-            wall, radial, spine=linemesh.assemble.loft(spn, order=ORDER),
+        slices.append(quadmesh.spined_ogrid(
+            wall, radial, spine=linemesh.loft(spn, order=ORDER),
             center_scale=center_scale, smoothing_method=m))
     return slices
 
@@ -459,18 +459,18 @@ for leg in range(3):
     # opening cap = leg outlet; seam end is interior.  With a flux plane, split
     # the leg there (a cap of the downstream segment); merge re-joins them.
     if flux_name and 0 < off < len(slices) - 1:
-        blocks.append(hexmesh.assemble.loft(slices[:off + 1], first_tag=outlet_name[leg]))
-        blocks.append(hexmesh.assemble.loft(slices[off:], first_tag=flux_name))
+        blocks.append(hexmesh.loft(slices[:off + 1], first_tag=outlet_name[leg]))
+        blocks.append(hexmesh.loft(slices[off:], first_tag=flux_name))
     else:
-        blocks.append(hexmesh.assemble.loft(slices, first_tag=outlet_name[leg]))
+        blocks.append(hexmesh.loft(slices, first_tag=outlet_name[leg]))
 
-mesh = hexmesh.assemble.merge(blocks)
+mesh = hexmesh.merge(blocks)
 
 if SMOOTH_ITERS > 0:
     smoothing.smooth(mesh, surf, smooth_iters=SMOOTH_ITERS, smooth_lambda=SMOOTH_LAMBDA,
                      wall="wall", project_to_stl=PROJECT_TO_STL)
 
-print(hexmesh.query.report(mesh))
+print(hexmesh.report(mesh))
 if EXPORT_VTK:
     export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 if EXPORT_RE2:

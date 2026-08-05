@@ -13,7 +13,7 @@ One chimera unit
 
 Every unit is built exactly as ``chimera.py``'s own quadrant-topology default: a
 chain of ``N_BR`` welded quadrant T-junctions along pipe A, pipe B built for free as
-``pipe_a.rotate(pi, ...)``, and a hairpin ``HexMesh.sweep`` bend per junction
+``hexmesh.rotate(pipe_a, pi, ...)``, and a hairpin ``HexMesh.sweep`` bend per junction
 connecting each of pipe A's branch stubs to its opposite number on pipe B. See that
 module's docstring for the full per-junction decomposition and the hairpin's
 turtle-walk path -- neither changes here.
@@ -123,7 +123,7 @@ ORIGIN = np.zeros(3)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
-FR = quadmesh.shape.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
 
 #: Branch polar angles of the four footprint corners, measured from ``+z`` (the main
 #: axis) and **descending**, which is the winding whose normal points along the
@@ -182,7 +182,7 @@ def cyl_pts(u):
 
 def wall_mesh(w):
     """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return linemesh.assemble.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    return linemesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
 
 
 def ruled_wall(pa, pb):
@@ -234,7 +234,7 @@ def shift_wall(w, turns):
 def seam(target, center=ORIGIN):
     """One of the radii ``O -> wall corner``, sampled where ``quadrant_ogrid`` wants
     its ``n+1 + Nradial`` seam points."""
-    return linemesh.shape.line(center, target, FR, order=ORDER)
+    return linemesh.line(center, target, FR, order=ORDER)
 
 
 # -- sections -----------------------------------------------------------------
@@ -242,13 +242,13 @@ def quadrant(arc, seam1, seam2, wall_tag=""):
     """One quadrant face.  Every quadrant in the mesh -- disc sections and crotch
     caps alike -- comes from here, so a cap shares its points with the leg or branch
     on the other side of it."""
-    return quadmesh.shape.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+    return quadmesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
                                    center_scale=CENTER_SCALE, wall_tag=wall_tag)
 
 
 def disc(pieces):
     """A full-disc section: four ``(arc, seam1, seam2)`` quadrants merged."""
-    return quadmesh.assemble.merge([quadrant(arc, s1, s2, wall_tag="wall")
+    return quadmesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
                            for arc, s1, s2 in pieces])
 
 
@@ -270,12 +270,12 @@ SP = [seam(p) for p in P]                            # the four footprint radii
 SWP, SWM = seam(WP), seam(WM)                        # the two bypass edge radii
 
 #: The parameter values of each footprint quadrant's nodes, even in arc length.
-FQ_FR = [linemesh.shape.arclength_fractions(footprint, 2 * N_QUAD,
+FQ_FR = [linemesh.arclength_fractions(footprint, 2 * N_QUAD,
                                       t_range=(TQ[q], TQ[q + 1]))
          for q in range(4)]
 #: The footprint quadrant arcs: 0 = ``A`` faces ``+z``, 1 = ``D`` faces ``-y``,
 #: 2 = ``C`` faces ``-z``, 3 = ``B`` faces ``+y``.
-FQ = [linemesh.assemble.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
+FQ = [linemesh.loft_fn(footprint, fr, order=ORDER) for fr in FQ_FR]
 
 #: ``(phi, z)`` of the four footprint corners and the two bypass edge corners.
 UP = [cyl_params(p) for p in P]
@@ -296,14 +296,14 @@ SIDE_RP, SIDE_RM = wall_mesh(W_R[1]), wall_mesh(W_R[3])
 SIDE_LM, SIDE_LP = wall_mesh(W_L[1]), wall_mesh(W_L[3])
 BYPASS = wall_mesh(W_R[2])        # the shared leg-to-leg face, wound for +z
 
-COMPOSITE_R = disc([(FQ[0].reverse(), SP[1], SP[0]),      # P4 -> P1
+COMPOSITE_R = disc([(linemesh.reverse(FQ[0]), SP[1], SP[0]),      # P4 -> P1
                     (SIDE_RP, SP[0], SWP),
                     (BYPASS, SWP, SWM),
                     (SIDE_RM, SWM, SP[1])])
 
-COMPOSITE_L = disc([(FQ[2].reverse(), SP[3], SP[2]),      # P2 -> P3
+COMPOSITE_L = disc([(linemesh.reverse(FQ[2]), SP[3], SP[2]),      # P2 -> P3
                     (SIDE_LM, SP[2], SWM),
-                    (linemesh.morph.reverse(BYPASS), SWM, SWP),
+                    (linemesh.reverse(BYPASS), SWM, SWP),
                     (SIDE_LP, SWP, SP[3])])
 
 
@@ -318,8 +318,8 @@ def arc_mids(walls):
 def wall_patch(fn, tag):
     """One patch of the wall triangle, evaluated on the cylinder at every node."""
     fr = np.linspace(0.0, 1.0, N + 1)
-    return quadmesh.assemble.loft_fn(
-        lambda y: linemesh.assemble.loft_fn(
+    return quadmesh.loft_fn(
+        lambda y: linemesh.loft_fn(
             lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
         fr, order=ORDER, element_tags=[tag] * N)
 
@@ -348,7 +348,7 @@ def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None, tip_bias=CAP_TIP_BIAS
     def spoke(mid):
         return lambda s: mid + np.asarray(s, dtype=float)[:, None] * (wc - mid)
 
-    return quadmesh.assemble.merge([
+    return quadmesh.merge([
         wall_patch(coons_fn(half(w_ab, 0, N), spoke(u_ca),
                             half(w_ca, 2 * N, N), spoke(u_ab)), tag),
         wall_patch(coons_fn(half(w_ab, 2 * N, N), spoke(u_bc),
@@ -367,7 +367,7 @@ def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
     u_ab, u_bc, u_ca = mids
     wc_param = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
     wc = cyl_pts(wc_param[None, :])[0]
-    return hexmesh.shape.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
+    return hexmesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
                           quadrant(m_ca, sc, sa),
                           wall_triangle(w_ab, w_bc, w_ca, mids=mids,
                                        tip_bias=tip_bias)],
@@ -387,19 +387,19 @@ def leg(composite, walls, sign, run):
     w_plain = plain_walls(walls, z, sign)
 
     def station(s):
-        return quadmesh.shape.quadrant_disc(
+        return quadmesh.quadrant_disc(
             [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
             np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
-    transition = hexmesh.assemble.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+    transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
                                  order=ORDER)
     if run <= 0.0:
         return [transition]
 
     n_run = max(1, round(run / AXIAL_CELL))
     return [transition,
-            hexmesh.lift.extrude(station(1.0), run, n_run,
+            hexmesh.extrude(station(1.0), run, n_run,
                             axis=(0.0, 0.0, float(sign)))]
 
 
@@ -410,17 +410,17 @@ def end_disc(sign):
     and welds to it with zero extra geometric risk."""
     walls = W_R if sign > 0 else W_L
     z = sign * Z_NEAR
-    face = quadmesh.shape.quadrant_disc([wall_mesh(w) for w in plain_walls(walls, z, sign)],
+    face = quadmesh.quadrant_disc([wall_mesh(w) for w in plain_walls(walls, z, sign)],
                                   np.array([0.0, 0.0, z]), RADIAL,
                                   center_scale=CENTER_SCALE, wall_tag="wall")
-    return face.translate((0.0, 0.0, Z_J[-1] if sign > 0 else Z_J[0]))
+    return quadmesh.translate(face, (0.0, 0.0, Z_J[-1] if sign > 0 else Z_J[0]))
 
 
 def end_stub(sign, tag, run):
     """The independent straight run past a unit's outermost junction, on the
     ``sign`` end, tagged ``tag`` at its far face."""
     n_run = max(1, round(run / AXIAL_CELL))
-    return hexmesh.lift.extrude(end_disc(sign), run, n_run,
+    return hexmesh.extrude(end_disc(sign), run, n_run,
                            axis=(0.0, 0.0, float(sign)), last_tag=tag)
 
 
@@ -449,7 +449,7 @@ def outlet_return():
         pq = path.tangent(s)
         return np.stack([np.zeros(pq.shape[0]), pq[:, 1], pq[:, 0]], axis=1)
 
-    return hexmesh.lift.sweep(end_disc(1), centerline, station_fr, tangent=tangent,
+    return hexmesh.sweep(end_disc(1), centerline, station_fr, tangent=tangent,
                          orientation="fixed", up=(1.0, 0.0, 0.0),
                          origin=(0.0, 0.0, z0), last_tag="outlet")
 
@@ -457,15 +457,15 @@ def outlet_return():
 def to_b(m):
     """Carry a block built in pipe A's own frame onto pipe B, by the rotation that
     turns the whole unit's pipe A into pipe B."""
-    return m.rotate(np.pi, axis=(0.0, 0.0, 1.0), center=(BEND_CENTER_X, 0.0, 0.0))
+    return hexmesh.rotate(m, np.pi, axis=(0.0, 0.0, 1.0), center=(BEND_CENTER_X, 0.0, 0.0))
 
 
 #: The branch's round opening disc, axis ``x``, centred at ``(H_BRANCH, 0, 0)`` --
 #: shared by ``branch()`` (as its far cross-section) and every junction's hairpin
 #: bend (as the disc the straight arm carries out to the bend).
-OPEN_ARCS = [linemesh.assemble.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
+OPEN_ARCS = [linemesh.loft_fn(opening, fr, order=ORDER) for fr in FQ_FR]
 C_OPEN = np.array([H_BRANCH, 0.0, 0.0])
-OPENING_DISC = quadmesh.shape.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
+OPENING_DISC = quadmesh.quadrant_disc(OPEN_ARCS, C_OPEN, RADIAL,
                                       center_scale=CENTER_SCALE, wall_tag="wall")
 
 
@@ -474,12 +474,12 @@ def branch():
     short straight arm out to where this junction's hairpin bend begins. Neither end
     is tagged -- both become interior faces once the bend welds onto the far one."""
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
-    walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
-    sections = [quadmesh.shape.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
+    walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
+    sections = [quadmesh.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
-    return [hexmesh.assemble.loft(sections),
-            hexmesh.lift.extrude(OPENING_DISC, ARM_LEN, N_ARM, axis=(1.0, 0.0, 0.0))]
+    return [hexmesh.loft(sections),
+            hexmesh.extrude(OPENING_DISC, ARM_LEN, N_ARM, axis=(1.0, 0.0, 0.0))]
 
 
 def build_junction(z0, run_minus, run_plus):
@@ -494,14 +494,14 @@ def build_junction(z0, run_minus, run_plus):
               # that are authored a full turn away in a leg's unwrapped list
               # are shifted back.
               cap(SP[0], SP[3], SWP,                    # +y crotch: P1, P2, W+
-                  (FQ[3].reverse(), foot_wall(FQ_FR[3][::-1])),
-                  (linemesh.morph.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
-                  (linemesh.morph.reverse(SIDE_RP), reverse_wall(W_R[1]))),
+                  (linemesh.reverse(FQ[3]), foot_wall(FQ_FR[3][::-1])),
+                  (linemesh.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
+                  (linemesh.reverse(SIDE_RP), reverse_wall(W_R[1]))),
               cap(SP[2], SP[1], SWM,                    # -y crotch: P3, P4, W-
-                  (FQ[1].reverse(), foot_wall(FQ_FR[1][::-1])),
-                  (linemesh.morph.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
-                  (linemesh.morph.reverse(SIDE_LM), reverse_wall(W_L[1])))]
-    return hexmesh.assemble.merge(blocks).translate((0.0, 0.0, z0))
+                  (linemesh.reverse(FQ[1]), foot_wall(FQ_FR[1][::-1])),
+                  (linemesh.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
+                  (linemesh.reverse(SIDE_LM), reverse_wall(W_L[1])))]
+    return hexmesh.translate(hexmesh.merge(blocks), (0.0, 0.0, z0))
 
 
 #: The hairpin path, in the plane ``z = z0``, as a declarative turtle walk exactly
@@ -540,8 +540,8 @@ def bend(z0):
         xy = _PATH.tangent(s)
         return np.concatenate([xy, np.zeros((xy.shape[0], 1))], axis=1)
 
-    section = OPENING_DISC.translate((ARM_LEN, 0.0, z0))
-    return hexmesh.lift.sweep(section, centerline, _STATION_FR,
+    section = quadmesh.translate(OPENING_DISC, (ARM_LEN, 0.0, z0))
+    return hexmesh.sweep(section, centerline, _STATION_FR,
                          tangent=tangent, orientation="fixed", up=(0.0, 0.0, 1.0),
                          origin=(X_MID, 0.0, z0))
 
@@ -565,7 +565,7 @@ def build_chimera(a_minus, a_plus, b_minus, b_plus, *, b_plus_return=False):
     built in pipe A's own frame and carried over by :func:`to_b` -- so this still
     never derives the branch/crotch geometry twice."""
     mid_run = BR_SPACING / 2.0 - Z_NEAR
-    pipe_a = hexmesh.assemble.merge([
+    pipe_a = hexmesh.merge([
         build_junction(Z_J[i], 0.0 if i == 0 else mid_run,
                        0.0 if i == N_BR - 1 else mid_run)
         for i in range(N_BR)])
@@ -574,7 +574,7 @@ def build_chimera(a_minus, a_plus, b_minus, b_plus, *, b_plus_return=False):
     b_plus_stub = to_b(outlet_return()) if b_plus_return else to_b(end_stub(1, *b_plus))
     stubs = [end_stub(-1, *a_minus), end_stub(1, *a_plus),
              to_b(end_stub(-1, *b_minus)), b_plus_stub]
-    return hexmesh.assemble.merge([pipe_a, pipe_b, *bends, *stubs])
+    return hexmesh.merge([pipe_a, pipe_b, *bends, *stubs])
 
 
 # -- the chain of copies --------------------------------------------------------
@@ -612,12 +612,12 @@ for _k in range(N_COPIES):
                           end_spec(_is_first, "wall", _connector_before == "B"),
                           end_spec(_is_last, "outlet", _connector_after == "B"),
                           b_plus_return=_is_last)
-    copies.append(_unit.translate((0.0, 0.0, 2.0 * L_HALF * _k)))
+    copies.append(hexmesh.translate(_unit, (0.0, 0.0, 2.0 * L_HALF * _k)))
 
-mesh = hexmesh.assemble.merge(copies)
+mesh = hexmesh.merge(copies)
 
-print(hexmesh.query.report(mesh))
-print(hexmesh.query.topology_report(mesh))
+print(hexmesh.report(mesh))
+print(hexmesh.topology_report(mesh))
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

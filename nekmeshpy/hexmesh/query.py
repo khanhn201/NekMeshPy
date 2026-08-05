@@ -154,3 +154,18 @@ def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
     Ei = HC[:, he[:, 0]].ravel()
     Ej = HC[:, he[:, 1]].ravel()
     return np.unique(np.sort(np.column_stack([Ei, Ej]), axis=1), axis=0)
+
+__all__ = [
+    "WeldResult",
+    "boundary_elements",
+    "boundary_faces",
+    "boundary_points",
+    "classify_points",
+    "is_conforming",
+    "is_watertight",
+    "quality_summary",
+    "report",
+    "scaled_jacobian",
+    "topology_report",
+    "weld",
+]

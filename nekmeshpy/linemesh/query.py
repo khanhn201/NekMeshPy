@@ -37,3 +37,8 @@ def boundary_elements(mesh: LineMesh) -> IntArray:
     is_end: BoolArray = np.zeros(mesh.points.shape[0], dtype=bool)
     is_end[ends] = True
     return np.flatnonzero(is_end[mesh.lines].any(axis=1)).astype(np.int64)
+
+__all__ = [
+    "boundary_elements",
+    "boundary_points",
+]

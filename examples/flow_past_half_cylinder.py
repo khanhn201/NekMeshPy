@@ -72,38 +72,38 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
 # ~10, so N_BUMP = 24 is the coarsest bump that still clears the 0.2 floor the tests
 # assert.  (That floor is the corner metric; scaled_jacobian(high_order=True) on the
 # same mesh reads 0.181 -- the curved wall genuinely costs quality at the GLL nodes.)
-left_ground = linemesh.shape.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
+left_ground = linemesh.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
                             np.linspace(0.0, 1.0, N_GROUND + 1),
                             element_tag="wall", order=ORDER)
 # theta pi -> 0 walks the bump left to right over the top, so the three runs chain
 # in order; at ORDER > 1 the interior GLL nodes sit on the exact circle
-bump = linemesh.shape.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
+bump = linemesh.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
                     start_theta=np.pi, end_theta=0.0,
                     element_tags=["wall"] * N_BUMP, order=ORDER)
-right_ground = linemesh.shape.line((R, 0.0, 0.0), (W, 0.0, 0.0),
+right_ground = linemesh.line((R, 0.0, 0.0), (W, 0.0, 0.0),
                              np.linspace(0.0, 1.0, N_GROUND + 1),
                              element_tag="wall", order=ORDER)
 # weld the shared ends at x = -R and x = +R into one (-W,0) -> (W,0) chain; the whole
 # edge is tagged "wall" at the line level, so structured names the bottom side from it
-bottom = linemesh.assemble.merge([left_ground, bump, right_ground])
-right = linemesh.shape.line((W, 0.0, 0.0), (W, H, 0.0),
+bottom = linemesh.merge([left_ground, bump, right_ground])
+right = linemesh.line((W, 0.0, 0.0), (W, H, 0.0),
                       np.linspace(0.0, 1.0, NY + 1), element_tag="outlet",
                       order=ORDER)
-top = linemesh.shape.line((W, H, 0.0), (-W, H, 0.0),
+top = linemesh.line((W, H, 0.0), (-W, H, 0.0),
                     np.linspace(0.0, 1.0, NX + 1), element_tag="top", order=ORDER)
-left = linemesh.shape.line((-W, H, 0.0), (-W, 0.0, 0.0),
+left = linemesh.line((-W, H, 0.0), (-W, 0.0, 0.0),
                      np.linspace(0.0, 1.0, NY + 1), element_tag="inlet",
                      order=ORDER)
-section = quadmesh.shape.structured([bottom, right, top, left])
+section = quadmesh.structured([bottom, right, top, left])
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the section along +z; edge names ride onto the side faces
-mesh = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
-print(hexmesh.query.report(mesh))
+print(hexmesh.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

@@ -27,7 +27,7 @@ per-hex quality metrics.
 ## Operations
 
 Every operation is a free function in one of these namespaces --
-`hexmesh.shape.circle(...)`, not `HexMesh.circle(...)`.
+`hexmesh.circle(...)`, not `HexMesh.circle(...)`.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.hexmesh.assemble

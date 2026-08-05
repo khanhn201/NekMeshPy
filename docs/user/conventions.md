@@ -9,7 +9,7 @@
   input required — a `(N,2)` array is rejected, not padded**; `lines` is a
   **required** constructor argument — the container never synthesizes a default
   chain, so nothing in it can imply a wrap. Connectivity is authored one rung up by
-  {func}`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`, whose `loop=False` / `loop=True` spell
+  {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>`, whose `loop=False` / `loop=True` spell
   the chain and the ring); the mesh containers
   (`TriMesh` / `QuadMesh` / `HexMesh` / `Mesh`) store a `(P,3)` `points` array
   (mutate with `mesh.points[:] = X`).

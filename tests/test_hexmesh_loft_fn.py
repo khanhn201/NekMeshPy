@@ -32,21 +32,21 @@ def _tube_disc(order, *, flipped=False, wall_tag=""):
     ``z`` sweeps the torus.  ``flipped`` reverses the boundary loop, which reverses
     the section winding and drives ``loft`` down its left-handed branch.
     """
-    ring = linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0),
+    ring = linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            order=order,
                            element_tags=["wall"] * (4 * NS) if wall_tag else None)
     if flipped:
-        ring = linemesh.morph.reverse(ring)
-    return quadmesh.shape.ogrid(ring, NS, RADIAL, wall_tag=wall_tag)
+        ring = linemesh.reverse(ring)
+    return quadmesh.ogrid(ring, NS, RADIAL, wall_tag=wall_tag)
 
 
 def _flat_disc(order, *, flipped=False):
     """The same O-grid disc, but in the ``z = 0`` plane -- the section for the
     straight ``translate``-along-``z`` stacks the ``loft`` argument tests use."""
-    ring = linemesh.shape.circle(RT, 4 * NS, order=order)
+    ring = linemesh.circle(RT, 4 * NS, order=order)
     if flipped:
-        ring = linemesh.morph.reverse(ring)
-    return quadmesh.shape.ogrid(ring, NS, RADIAL)
+        ring = linemesh.reverse(ring)
+    return quadmesh.ogrid(ring, NS, RADIAL)
 
 
 def _torus_f(order, **kw):
@@ -56,7 +56,7 @@ def _torus_f(order, **kw):
     affine ops move no index, so every section stays index-paired with the first.
     """
     base = _tube_disc(order, **kw)
-    return lambda t: quadmesh.morph.rotate(base, t, axis=(0, 0, 1))
+    return lambda t: quadmesh.rotate(base, t, axis=(0, 0, 1))
 
 
 def _ring_fractions(n=NV):
@@ -91,14 +91,14 @@ def test_plain_loft_of_exact_sections_is_straight_along_the_sweep(order):
     """The baseline: exact input sections do *not* give an exact swept solid."""
     f = _torus_f(order)
     fr = _ring_fractions()
-    straight = hexmesh.assemble.loft([f(t) for t in fr[:-1]], loop=True)
+    straight = hexmesh.loft([f(t) for t in fr[:-1]], loop=True)
     # off by a sizeable fraction of the tube radius -- not float noise
     assert _revolution_deviation(straight, order) > 0.1 * RT
 
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
 def test_every_node_lies_on_the_true_solid_torus(order):
-    torus = hexmesh.assemble.loft_fn(_torus_f(order), _ring_fractions(),
+    torus = hexmesh.loft_fn(_torus_f(order), _ring_fractions(),
                             loop=True, order=order)
     assert _revolution_deviation(torus, order) < 1e-13
 
@@ -106,7 +106,7 @@ def test_every_node_lies_on_the_true_solid_torus(order):
 @pytest.mark.parametrize("order", [1, 2, 3])
 def test_corners_are_exact_at_every_order(order):
     """Corners were always exact; the fix must not disturb them."""
-    torus = hexmesh.assemble.loft_fn(_torus_f(order), _ring_fractions(),
+    torus = hexmesh.loft_fn(_torus_f(order), _ring_fractions(),
                             loop=True, order=order)
     x, y, z = torus.points.T
     rho = np.hypot(x, y)
@@ -120,16 +120,16 @@ def test_corners_are_exact_at_every_order(order):
 
 @pytest.mark.parametrize("order", [1, 2, 3])
 def test_loop_gives_a_closed_solid_with_no_duplicated_layer(order):
-    torus = hexmesh.assemble.loft_fn(_torus_f(order), _ring_fractions(),
+    torus = hexmesh.loft_fn(_torus_f(order), _ring_fractions(),
                             loop=True, order=order)
     sec = _tube_disc(order)
     assert torus.n_points == sec.n_points * NV      # no seam section duplicated
     assert torus.n_hexes == sec.n_quads * NV        # NV layers, not NV-1
-    assert hexmesh.query.is_conforming(torus)
+    assert hexmesh.is_conforming(torus)
     # the seam faces are genuine shared entities, so the only free surface is the
     # swept tube wall -- and that surface is closed, i.e. the solid is watertight
-    assert hexmesh.query.is_watertight(torus)
-    faces = hexmesh.query.boundary_faces(torus)
+    assert hexmesh.is_watertight(torus)
+    faces = hexmesh.boundary_faces(torus)
     assert faces.shape[0] == 4 * NS * NV            # only the outer ring's wall
     # no boundary face is a sweep-direction cap (faces 5/6): the sweep is periodic
     assert set(np.unique(faces[:, 1])) <= {1, 2, 3, 4}
@@ -140,24 +140,24 @@ def test_loop_rejects_a_family_that_does_not_close():
     # a full turn *plus* a bit: f(fr[-1]) does not land back on f(fr[0])
     fr = np.linspace(0.0, 2.0 * np.pi + 0.3, NV + 1)
     with pytest.raises(ValueError, match="map back to the first section"):
-        hexmesh.assemble.loft_fn(lambda t: quadmesh.morph.rotate(base, t, axis=(0, 0, 1)), fr,
+        hexmesh.loft_fn(lambda t: quadmesh.rotate(base, t, axis=(0, 0, 1)), fr,
                         loop=True, order=2)
 
 
 def test_loop_rejects_end_caps():
     with pytest.raises(ValueError):
-        hexmesh.assemble.loft_fn(_torus_f(1), _ring_fractions(), loop=True,
+        hexmesh.loft_fn(_torus_f(1), _ring_fractions(), loop=True,
                         first_tag="in")
 
 
 def test_loop_rejects_fewer_than_three_fractions():
     with pytest.raises(ValueError, match="at least 3 fractions"):
-        hexmesh.assemble.loft_fn(_torus_f(1), np.array([0.0, 2.0 * np.pi]), loop=True)
+        hexmesh.loft_fn(_torus_f(1), np.array([0.0, 2.0 * np.pi]), loop=True)
 
 
 def test_needs_at_least_two_fractions():
     with pytest.raises(ValueError, match="at least 2 fractions"):
-        hexmesh.assemble.loft_fn(_torus_f(1), np.array([0.0]))
+        hexmesh.loft_fn(_torus_f(1), np.array([0.0]))
 
 
 # -- order 1 and the open sweep are the plain loft ---------------------------
@@ -166,8 +166,8 @@ def test_needs_at_least_two_fractions():
 def test_order_one_equals_a_plain_loft_of_the_same_sections(loop):
     f = _torus_f(1)
     fr = _ring_fractions()
-    got = hexmesh.assemble.loft_fn(f, fr, loop=loop, order=1)
-    want = hexmesh.assemble.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
+    got = hexmesh.loft_fn(f, fr, loop=loop, order=1)
+    want = hexmesh.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.hexes, want.hexes)
     assert np.array_equal(got.hex, want.hex)
@@ -180,7 +180,7 @@ def test_open_sweep_has_the_expected_shape_and_caps():
     order = 2
     f = _torus_f(order)
     fr = np.linspace(0.0, np.pi / 2, 4)
-    blk = hexmesh.assemble.loft_fn(f, fr, order=order,
+    blk = hexmesh.loft_fn(f, fr, order=order,
                           first_tag="start", last_tag="end")
     sec = _tube_disc(order)
     assert blk.n_points == sec.n_points * 4
@@ -197,7 +197,7 @@ def test_grading_is_honored_per_layer():
     order = 3
     f = _torus_f(order)
     fr = np.array([0.0, 0.3, 2.4, 2.0 * np.pi])
-    blk = hexmesh.assemble.loft_fn(f, fr, order=order)
+    blk = hexmesh.loft_fn(f, fr, order=order)
     assert _revolution_deviation(blk, order) < 1e-13
     # the corner levels sit exactly at the requested parameters
     theta = np.arctan2(blk.points[:, 1], blk.points[:, 0])
@@ -209,15 +209,15 @@ def test_grading_is_honored_per_layer():
 # -- tags --------------------------------------------------------------------
 
 def test_per_layer_element_tags_override_the_section_quad_tags():
-    base = quadmesh.shape.ogrid(
-        linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+    base = quadmesh.ogrid(
+        linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     tagged = QuadMesh(base.lines, base.quad, base.flip, base.interior,
                       base.edge_tags,
                       ElementTags.uniform(base.n_quads, "fluid"))
-    f = lambda t: quadmesh.morph.rotate(tagged, t, axis=(0, 0, 1))                 # noqa: E731
+    f = lambda t: quadmesh.rotate(tagged, t, axis=(0, 0, 1))                 # noqa: E731
     layers = ["", "hot", ""]
-    blk = hexmesh.assemble.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
+    blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
     tags = blk.element_tags.dense(blk.n_hexes).reshape(3, base.n_quads)   # hex (layer i, quad q)
     assert list(np.unique(tags[0])) == ["fluid"]
     assert list(np.unique(tags[1])) == ["hot"]         # non-empty layer tag wins
@@ -226,7 +226,7 @@ def test_per_layer_element_tags_override_the_section_quad_tags():
 
 def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
     f = _torus_f(1, wall_tag="wall")
-    blk = hexmesh.assemble.loft_fn(f, np.linspace(0.0, 1.0, 3), order=1,
+    blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 3), order=1,
                           element_tags=["a", "b"],
                              first_tag="inlet", last_tag="outlet")
     assert set(blk.face_group_tags) == {"wall", "inlet", "outlet"}
@@ -241,9 +241,9 @@ def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
 
 def test_loft_rejects_a_mis_sized_element_tags():
     base = _flat_disc(1)
-    slices = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="per layer"):
-        hexmesh.assemble.loft(slices, element_tags=["a", "b", "c"])   # 3 tags, 2 layers
+        hexmesh.loft(slices, element_tags=["a", "b", "c"])   # 3 tags, 2 layers
 
 
 # -- validation of what f returns --------------------------------------------
@@ -251,49 +251,49 @@ def test_loft_rejects_a_mis_sized_element_tags():
 def test_rejects_a_section_of_the_wrong_order():
     base = _tube_disc(1)
     with pytest.raises(ValueError, match="order-1 section"):
-        hexmesh.assemble.loft_fn(lambda t: quadmesh.morph.rotate(base, t, axis=(0, 0, 1)),
+        hexmesh.loft_fn(lambda t: quadmesh.rotate(base, t, axis=(0, 0, 1)),
                         np.linspace(0.0, 1.0, 3), order=2)
 
 
 def test_rejects_sections_that_are_not_index_paired():
-    a = quadmesh.shape.ogrid(
-        linemesh.shape.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+    a = quadmesh.ogrid(
+        linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
-    b = quadmesh.shape.ogrid(
-        linemesh.shape.circle(RT, 4 * (NS + 1), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+    b = quadmesh.ogrid(
+        linemesh.circle(RT, 4 * (NS + 1), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS + 1, RADIAL)
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
     with pytest.raises(ValueError, match="index-paired and conformal"):
-        hexmesh.assemble.loft_fn(f, np.linspace(0.0, 1.0, 3))
+        hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 3))
 
 
 # -- sweep_nodes on loft itself ----------------------------------------------
 
 def test_sweep_nodes_must_be_sized_per_layer():
     base = _flat_disc(3)
-    slices = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
-    mid = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.3, 0.7)]
+    slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    mid = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.3, 0.7)]
     with pytest.raises(ValueError, match="one entry per layer"):
-        hexmesh.assemble.loft(slices, sweep_nodes=[mid])
+        hexmesh.loft(slices, sweep_nodes=[mid])
     with pytest.raises(ValueError, match="order-1"):
-        hexmesh.assemble.loft(slices, sweep_nodes=[mid[:1], mid[:1]])
+        hexmesh.loft(slices, sweep_nodes=[mid[:1], mid[:1]])
 
 
 def test_sweep_nodes_must_match_the_slices():
     base = _flat_disc(2)
-    other = quadmesh.shape.ogrid(linemesh.shape.circle(RT, 4 * (NS + 1), order=2),
+    other = quadmesh.ogrid(linemesh.circle(RT, 4 * (NS + 1), order=2),
                            NS + 1, RADIAL)
-    slices = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="must match the slices"):
-        hexmesh.assemble.loft(slices, sweep_nodes=[[other], [other]])
+        hexmesh.loft(slices, sweep_nodes=[[other], [other]])
 
 
 def test_sweep_nodes_at_order_one_is_ignored_not_an_error():
     """Order 1 has no interior level, so an empty stack is simply a no-op."""
     base = _flat_disc(1)
-    slices = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
-    got = hexmesh.assemble.loft(slices, sweep_nodes=[[], []])
-    want = hexmesh.assemble.loft(slices)
+    slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
+    got = hexmesh.loft(slices, sweep_nodes=[[], []])
+    want = hexmesh.loft(slices)
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.hexes, want.hexes)
 
@@ -309,12 +309,12 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft(flipped):
     order = 3
     base = _flat_disc(order, flipped=flipped)
     zs = [0.0, 1.0, 2.0]
-    slices = [quadmesh.morph.translate(base, (0.0, 0.0, z)) for z in zs]
+    slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in zs]
     g = gll_nodes(order)[1:order]
-    sweep = [[quadmesh.morph.translate(base, (0.0, 0.0, zs[i] + t * (zs[i + 1] - zs[i])))
+    sweep = [[quadmesh.translate(base, (0.0, 0.0, zs[i] + t * (zs[i + 1] - zs[i])))
               for t in g] for i in range(2)]
-    got = hexmesh.assemble.loft(slices, sweep_nodes=sweep)
-    want = hexmesh.assemble.loft(slices)
+    got = hexmesh.loft(slices, sweep_nodes=sweep)
+    want = hexmesh.loft(slices)
     assert np.allclose(got.interior, want.interior, atol=1e-14)
     assert np.allclose(got.quads.interior, want.quads.interior, atol=1e-14)
     assert np.allclose(got.quads.lines.interior, want.quads.lines.interior,
@@ -330,8 +330,8 @@ def test_reverse_wound_section_sweeps_exactly_too(order):
     column's grid is scrambled against its own corner table."""
     f = _torus_f(order, flipped=True)
     fr = _ring_fractions()
-    torus = hexmesh.assemble.loft_fn(f, fr, loop=True, order=order)
+    torus = hexmesh.loft_fn(f, fr, loop=True, order=order)
     assert _revolution_deviation(torus, order, flipped=True) < 1e-13
-    assert hexmesh.query.is_conforming(torus)
-    straight = hexmesh.assemble.loft([f(t) for t in fr[:-1]], loop=True)
+    assert hexmesh.is_conforming(torus)
+    straight = hexmesh.loft([f(t) for t in fr[:-1]], loop=True)
     assert _revolution_deviation(straight, order, flipped=True) > 0.1 * RT

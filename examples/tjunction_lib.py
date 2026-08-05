@@ -62,7 +62,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return cyl(u[:, 0], u[:, 1])
 
     def wall_mesh(w):
-        return linemesh.assemble.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=order)
+        return linemesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=order)
 
     def ruled_wall(pa, pb):
         pa, pb = np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)
@@ -94,21 +94,21 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return Wall(lambda x: w.g(x) + d, w.fr)
 
     def seam(target, fr, center=ORIGIN):
-        return linemesh.shape.line(center, target, fr, order=order)
+        return linemesh.line(center, target, fr, order=order)
 
     def quadrant(arc, seam1, seam2, wall_tag=""):
-        return quadmesh.shape.quadrant_ogrid(arc, seam1, seam2, RADIAL,
+        return quadmesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag=wall_tag)
 
     def disc(pieces):
-        return quadmesh.assemble.merge([quadrant(arc, s1, s2, wall_tag="wall")
+        return quadmesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
                                for arc, s1, s2 in pieces])
 
     def plain_walls(composite, z, sign):
         ang = sign * np.deg2rad(-45.0 + 90.0 * np.arange(5))
         return [plain_wall(composite[q], ang[q], ang[q + 1], z) for q in range(4)]
 
-    FR = quadmesh.shape.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+    FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
 
     P = [footprint(TQ[q:q + 1])[0] for q in range(4)]
     WP, WM = cyl(PHI_W, 0.0), cyl(-PHI_W, 0.0)
@@ -116,9 +116,9 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
     SP = [seam(p, FR) for p in P]
     SWP, SWM = seam(WP, FR), seam(WM, FR)
 
-    FQ_FR = [linemesh.shape.arclength_fractions(footprint, 2 * N_QUAD,
+    FQ_FR = [linemesh.arclength_fractions(footprint, 2 * N_QUAD,
                                           t_range=(TQ[q], TQ[q + 1])) for q in range(4)]
-    FQ = [linemesh.assemble.loft_fn(footprint, fr, order=order) for fr in FQ_FR]
+    FQ = [linemesh.loft_fn(footprint, fr, order=order) for fr in FQ_FR]
 
     UP = [cyl_params(p) for p in P]
     UWP, UWM = np.array([PHI_W, 0.0]), np.array([-PHI_W, 0.0])
@@ -137,13 +137,13 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
     SIDE_LM, SIDE_LP = wall_mesh(W_L[1]), wall_mesh(W_L[3])
     BYPASS = wall_mesh(W_R[2])
 
-    COMPOSITE_R = disc([(FQ[0].reverse(), SP[1], SP[0]),
+    COMPOSITE_R = disc([(linemesh.reverse(FQ[0]), SP[1], SP[0]),
                         (SIDE_RP, SP[0], SWP),
                         (BYPASS, SWP, SWM),
                         (SIDE_RM, SWM, SP[1])])
-    COMPOSITE_L = disc([(FQ[2].reverse(), SP[3], SP[2]),
+    COMPOSITE_L = disc([(linemesh.reverse(FQ[2]), SP[3], SP[2]),
                         (SIDE_LM, SP[2], SWM),
-                        (linemesh.morph.reverse(BYPASS), SWM, SWP),
+                        (linemesh.reverse(BYPASS), SWM, SWP),
                         (SIDE_LP, SWP, SP[3])])
 
     def arc_mids(walls):
@@ -151,8 +151,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
     def wall_patch(fn, tag):
         fr = np.linspace(0.0, 1.0, N + 1)
-        return quadmesh.assemble.loft_fn(
-            lambda y: linemesh.assemble.loft_fn(
+        return quadmesh.loft_fn(
+            lambda y: linemesh.loft_fn(
                 lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=order),
             fr, order=order, element_tags=[tag] * N)
 
@@ -174,7 +174,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         def spoke(mid):
             return lambda s: mid + np.asarray(s, dtype=float)[:, None] * (wc - mid)
 
-        return quadmesh.assemble.merge([
+        return quadmesh.merge([
             wall_patch(coons_fn(half(w_ab, 0, N), spoke(u_ca),
                                 half(w_ca, 2 * N, N), spoke(u_ab)), tag),
             wall_patch(coons_fn(half(w_ab, 2 * N, N), spoke(u_bc),
@@ -188,7 +188,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         u_ab, u_bc, u_ca = mids
         wc_param = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
         wc = cyl_pts(wc_param[None, :])[0]
-        return hexmesh.shape.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
+        return hexmesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
                               quadrant(m_ca, sc, sa),
                               wall_triangle(w_ab, w_bc, w_ca, mids=mids,
                                            tip_bias=tip_bias)],
@@ -199,25 +199,25 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         w_plain = plain_walls(walls, z, sign)
 
         def station(s):
-            return quadmesh.shape.quadrant_disc(
+            return quadmesh.quadrant_disc(
                 [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
                 np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
                 wall_tag="wall")
 
         plain = station(1.0)
-        transition = hexmesh.assemble.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
+        transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
                                      order=order)
         return transition, plain
 
     def branch():
-        open_arcs = [linemesh.assemble.loft_fn(opening, fr, order=order) for fr in FQ_FR]
+        open_arcs = [linemesh.loft_fn(opening, fr, order=order) for fr in FQ_FR]
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
-        walls = [linemesh.morph.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
+        walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
-        sections = [quadmesh.shape.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+        sections = [quadmesh.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
                                            center_scale=CENTER_SCALE, wall_tag="wall")
                    for i in range(t.size)]
-        return hexmesh.assemble.loft(sections), sections[-1]
+        return hexmesh.loft(sections), sections[-1]
 
     trans_plus, disc_plus = leg(COMPOSITE_R, W_R, 1)
     trans_minus, disc_minus = leg(COMPOSITE_L, W_L, -1)
@@ -225,12 +225,12 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
     blocks = [trans_plus, trans_minus, trans_branch,
               cap(SP[0], SP[3], SWP,
-                  (FQ[3].reverse(), foot_wall(FQ_FR[3][::-1])),
-                  (linemesh.morph.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
-                  (linemesh.morph.reverse(SIDE_RP), reverse_wall(W_R[1]))),
+                  (linemesh.reverse(FQ[3]), foot_wall(FQ_FR[3][::-1])),
+                  (linemesh.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
+                  (linemesh.reverse(SIDE_RP), reverse_wall(W_R[1]))),
               cap(SP[2], SP[1], SWM,
-                  (FQ[1].reverse(), foot_wall(FQ_FR[1][::-1])),
-                  (linemesh.morph.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
-                  (linemesh.morph.reverse(SIDE_LM), reverse_wall(W_L[1])))]
-    core = hexmesh.assemble.merge(blocks)
+                  (linemesh.reverse(FQ[1]), foot_wall(FQ_FR[1][::-1])),
+                  (linemesh.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
+                  (linemesh.reverse(SIDE_LM), reverse_wall(W_L[1])))]
+    core = hexmesh.merge(blocks)
     return TJunction(core, disc_minus, disc_plus, disc_branch)

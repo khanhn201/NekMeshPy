@@ -27,7 +27,7 @@ per-quad quality metrics.
 ## Operations
 
 Every operation is a free function in one of these namespaces --
-`quadmesh.shape.circle(...)`, not `QuadMesh.circle(...)`.
+`quadmesh.circle(...)`, not `QuadMesh.circle(...)`.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.assemble

@@ -335,3 +335,10 @@ def sweep(
         profs.append(profs[0])          # the seam profile *is* the first placement
     return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="sweep")
+
+__all__ = [
+    "annulus",
+    "extrude",
+    "from_grid",
+    "sweep",
+]

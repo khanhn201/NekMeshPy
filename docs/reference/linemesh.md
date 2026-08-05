@@ -11,7 +11,7 @@ branching `(L,2)` line connectivity, open or closed.
 ## Operations
 
 Every operation is a free function in one of these namespaces --
-`linemesh.shape.circle(...)`, not `LineMesh.circle(...)`.
+`linemesh.circle(...)`, not `LineMesh.circle(...)`.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.assemble

@@ -44,7 +44,7 @@ def test_tag_face_counts(built_mesh):
 
 
 def test_scaled_jacobian_quality(built_mesh):
-    X, HC, _ = hexmesh.query.weld(built_mesh["mesh"])
+    X, HC, _ = hexmesh.weld(built_mesh["mesh"])
     sj = quality.scaled_jacobian(X, HC)
     # values for the order-3 pipeline whose wall is refit analytically before meshing:
     # each private station ring as a truncated-Fourier loop (``fourier_ring``) and each

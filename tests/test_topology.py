@@ -65,13 +65,13 @@ def test_t_junction_is_watertight_but_not_conformal():
     coarse = _hex(_box(0, 1, 0, 1, 0, 1))
     fine = [_hex(_box(1, 2, y0, y0 + 0.5, z0, z0 + 0.5))
             for y0 in (0.0, 0.5) for z0 in (0.0, 0.5)]
-    mesh = hexmesh.assemble.merge([coarse, *fine])
-    rep = hexmesh.query.topology_report(mesh)
+    mesh = hexmesh.merge([coarse, *fine])
+    rep = hexmesh.topology_report(mesh)
     assert rep.n_open_edges == 0        # the defect leaves NO open edge...
     assert rep.watertight is True       # ...so it reads as watertight...
     assert rep.n_hanging_points >= 4     # ...but the hanging points expose it
     assert rep.conformal is False
-    assert hexmesh.query.is_conforming(mesh) is False
+    assert hexmesh.is_conforming(mesh) is False
 
 
 def test_disjoint_hexes_are_two_components():
@@ -86,15 +86,15 @@ def test_disjoint_hexes_are_two_components():
 
 def test_bifurcation_mesh_is_watertight(built_mesh):
     mesh = built_mesh["mesh"]
-    rep = hexmesh.query.topology_report(mesh)
+    rep = hexmesh.topology_report(mesh)
     assert rep.n_components == 1
     assert rep.n_nonmanifold_faces == 0
     assert rep.n_open_edges == 0
     assert rep.n_hanging_points == 0
     assert rep.watertight is True
     assert rep.conformal is True
-    assert hexmesh.query.is_watertight(mesh) is True
-    assert hexmesh.query.is_conforming(mesh) is True
+    assert hexmesh.is_watertight(mesh) is True
+    assert hexmesh.is_conforming(mesh) is True
     # the true (topological) boundary is exactly the wall + outlet faces; the
     # flux-measurement planes (flux_1/flux_2) are interior faces that also carry a name
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
@@ -105,34 +105,34 @@ def test_bifurcation_mesh_is_watertight(built_mesh):
 
 def test_hexmesh_report_matches_free_function(built_mesh):
     mesh = built_mesh["mesh"]
-    X, HC, _ = hexmesh.query.weld(mesh)
-    assert hexmesh.query.topology_report(mesh) == topology.hex_report(X, HC)
+    X, HC, _ = hexmesh.weld(mesh)
+    assert hexmesh.topology_report(mesh) == topology.hex_report(X, HC)
 
 
 def test_boundary_helpers_single_hex():
     mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
-    assert hexmesh.query.boundary_faces(mesh).shape == (6, 2)                 # all 6 faces
-    assert set(hexmesh.query.boundary_faces(mesh)[:, 1]) == {1, 2, 3, 4, 5, 6}
-    assert hexmesh.query.boundary_elements(mesh).tolist() == [0]
-    assert hexmesh.query.boundary_points(mesh).tolist() == list(range(8))      # every point
+    assert hexmesh.boundary_faces(mesh).shape == (6, 2)                 # all 6 faces
+    assert set(hexmesh.boundary_faces(mesh)[:, 1]) == {1, 2, 3, 4, 5, 6}
+    assert hexmesh.boundary_elements(mesh).tolist() == [0]
+    assert hexmesh.boundary_points(mesh).tolist() == list(range(8))      # every point
 
 
 def test_boundary_helpers_match_topology(built_mesh):
     mesh = built_mesh["mesh"]
-    rep = hexmesh.query.topology_report(mesh)
-    assert hexmesh.query.boundary_faces(mesh).shape[0] == rep.n_boundary_faces
+    rep = hexmesh.topology_report(mesh)
+    assert hexmesh.boundary_faces(mesh).shape[0] == rep.n_boundary_faces
     # boundary faces are the wall + outlet named faces (flux planes are interior)
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
     exterior = mesh.face_tags.select(np.isin(mesh.face_tags.tags, outer))
-    got = {(int(e), int(f)) for e, f in hexmesh.query.boundary_faces(mesh)}
+    got = {(int(e), int(f)) for e, f in hexmesh.boundary_faces(mesh)}
     want = {(int(e), int(f)) for e, f, _t in exterior}
     assert got == want
     # point ids on the domain boundary, consistent with the face points
     face_points = np.unique(
-        mesh.hexes[hexmesh.query.boundary_faces(mesh)[:, 0][:, None],
-                   mesh.FACE_POINTS[hexmesh.query.boundary_faces(mesh)[:, 1] - 1]])
-    assert np.array_equal(hexmesh.query.boundary_points(mesh), face_points)
-    assert set(hexmesh.query.boundary_elements(mesh)) <= set(range(mesh.n_hexes))
+        mesh.hexes[hexmesh.boundary_faces(mesh)[:, 0][:, None],
+                   mesh.FACE_POINTS[hexmesh.boundary_faces(mesh)[:, 1] - 1]])
+    assert np.array_equal(hexmesh.boundary_points(mesh), face_points)
+    assert set(hexmesh.boundary_elements(mesh)) <= set(range(mesh.n_hexes))
 
 
 # -- triangle surface ---------------------------------------------------
@@ -159,14 +159,14 @@ def test_trimesh_boundary_helpers():
 def test_chain_segments_builds_a_closed_loop():
     # Ordering an unordered segment soup into a ring is a *surface* op (it is how a
     # marched isocontour arrives), so it lives in trimesh.ops beside its only caller
-    # and hands the ordered points to linemesh.assemble.loft(..., loop=True).
+    # and hands the ordered points to linemesh.loft(..., loop=True).
     from nekmeshpy.trimesh.ops import _chain_segments
     # four segments of a unit square, given unordered, chain into a closed loop
     segs = np.array([[0, 0, 0, 1, 0, 0], [1, 1, 0, 0, 1, 0],
                      [1, 0, 0, 1, 1, 0], [0, 1, 0, 0, 0, 0]], float)
     lm = _chain_segments(segs)
     # the degree-based walk closes the loop structurally: every point has degree 2
-    assert lm is not None and linemesh.query.boundary_points(lm).size == 0
+    assert lm is not None and linemesh.boundary_points(lm).size == 0
     # the four square corners are recovered (the walk repeats the start to close)
     assert len(np.unique(np.round(lm.points, 9), axis=0)) == 4
     assert _chain_segments(None) is None
@@ -178,13 +178,13 @@ def test_quadmesh_boundary_helpers():
                       [0, 1, 0], [1, 1, 0], [2, 1, 0]], dtype=float)
     quads = np.array([[0, 1, 4, 3], [1, 2, 5, 4]], dtype=np.int64)
     qm = QuadMesh.from_corners(points, quads)
-    assert quadmesh.query.boundary_edges(qm).shape[0] == 6              # 8 edges - 2 shared
-    assert quadmesh.query.boundary_elements(qm).tolist() == [0, 1]
-    assert quadmesh.query.boundary_points(qm).tolist() == [0, 1, 2, 3, 4, 5]
+    assert quadmesh.boundary_edges(qm).shape[0] == 6              # 8 edges - 2 shared
+    assert quadmesh.boundary_elements(qm).tolist() == [0, 1]
+    assert quadmesh.boundary_points(qm).tolist() == [0, 1, 2, 3, 4, 5]
     square = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
     single = QuadMesh.from_corners(square, np.array([[0, 1, 2, 3]]))
-    assert quadmesh.query.boundary_edges(single).shape[0] == 4
-    assert quadmesh.query.boundary_points(single).tolist() == [0, 1, 2, 3]
+    assert quadmesh.boundary_edges(single).shape[0] == 4
+    assert quadmesh.boundary_points(single).tolist() == [0, 1, 2, 3]
 
 
 def test_single_triangle_is_open():
@@ -214,4 +214,4 @@ def test_format_report_roundtrips():
 def test_hexmesh_from_arrays_is_watertight():
     """A HexMesh built from the array constructor reports watertight."""
     mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
-    assert hexmesh.query.is_watertight(mesh) is True
+    assert hexmesh.is_watertight(mesh) is True

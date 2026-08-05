@@ -1246,3 +1246,20 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
                   project(cube.interior) if order > 1 else None,
                   element_tags=etags, order=order)
     return _tag_rim(qm, rim_tag)
+
+__all__ = [
+    "box",
+    "half_box",
+    "half_ogrid",
+    "hemisphere",
+    "ogrid",
+    "quadrant_core",
+    "quadrant_disc",
+    "quadrant_ogrid",
+    "quadrant_seam_fractions",
+    "rectangle",
+    "sphere",
+    "spine_fractions",
+    "spined_ogrid",
+    "structured",
+]

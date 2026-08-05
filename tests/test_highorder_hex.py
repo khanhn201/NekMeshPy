@@ -22,11 +22,11 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
 
 
 def _shell(order, n_face=2, n_radial=2):
-    cube = quadmesh.shape.box(3.0, n_face, order=order, patch_tags={
+    cube = quadmesh.box(3.0, n_face, order=order, patch_tags={
         "x_max": "outlet", "x_min": "inlet", "y_max": "top",
         "y_min": "bottom", "z_max": "back", "z_min": "front"})
-    sphere = quadmesh.shape.sphere(1.0, n_face, order=order)
-    return hexmesh.lift.annulus(sphere, cube,
+    sphere = quadmesh.sphere(1.0, n_face, order=order)
+    return hexmesh.annulus(sphere, cube,
                            radial=np.linspace(0.0, 1.0, n_radial + 1))
 
 
@@ -52,9 +52,9 @@ def test_annulus_inner_wall_on_true_sphere(order):
 # -- extrude / loft straight sweep is corner-consistent -----------------
 @pytest.mark.parametrize("order", [2, 3])
 def test_extrude_order_n_corner_consistent(order):
-    sec = quadmesh.shape.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
+    sec = quadmesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                              3, 2, order=order)
-    hb = hexmesh.lift.extrude(sec, length=4.0, layers=[0.0, 0.5, 1.0],
+    hb = hexmesh.extrude(sec, length=4.0, layers=[0.0, 0.5, 1.0],
                          first_tag="in", last_tag="out")
     assert hb.order == order
     cb = curved(hb)
@@ -72,7 +72,7 @@ def test_from_grid_order_n_corner_consistent():
     z = np.linspace(0, 3, 2)
     X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
     grid = np.stack([X, Y, Z], axis=-1)
-    fg = hexmesh.lift.from_grid(grid, order=4)
+    fg = hexmesh.from_grid(grid, order=4)
     assert fg.order == 4
     cc = curved(fg)[:, corner_indices(4, 3), :]
     assert np.allclose(cc, fg.points[fg.hexes], atol=1e-9)
@@ -88,7 +88,7 @@ def test_blend_morphs_hex_curved_blocks():
                           interior=a.interior * 2.0,
                           face_tags=a.face_tags,
                           order=3)
-    lo, mid, hi = hexmesh.morph.blend(a, b, [0.0, 0.5, 1.0])
+    lo, mid, hi = hexmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)
     assert np.allclose(curved(lo), ca)
@@ -104,14 +104,14 @@ def test_blend_rejects_mismatched_order():
     a = _shell(3, n_face=1, n_radial=1)
     b = _shell(2, n_face=1, n_radial=1)
     with pytest.raises(ValueError, match="same order"):
-        hexmesh.morph.blend(a, b, [0.5])
+        hexmesh.blend(a, b, [0.5])
 
 
 def test_merge_rejects_mismatched_order():
     a = _shell(2, n_face=1, n_radial=1)
     b = _shell(3, n_face=1, n_radial=1)
     with pytest.raises(ValueError, match="same order"):
-        hexmesh.assemble.merge([a, b])
+        hexmesh.merge([a, b])
 
 
 # -- N=1 no-op ----------------------------------------------------------
@@ -119,7 +119,7 @@ def test_order1_factories_are_linear_no_op():
     x = np.linspace(0, 1, 3)
     X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
     grid = np.stack([X, Y, Z], axis=-1)
-    for hm in (_shell(1), hexmesh.lift.from_grid(grid)):
+    for hm in (_shell(1), hexmesh.from_grid(grid)):
         # order 1: every high-order table is empty, the walk is just the corners
         assert hm.order == 1
         assert hm.edge_nodes.shape == (hm.edges.shape[0], 0, 3)
@@ -140,20 +140,20 @@ def test_order1_shell_points_match_high_order_corners():
 # -- order-N quality metric (opt-in) ------------------------------------
 def test_high_order_quality_matches_corner_at_order1():
     hm = _shell(1)
-    assert np.allclose(hexmesh.query.scaled_jacobian(hm, high_order=True),
-                       hexmesh.query.scaled_jacobian(hm), atol=1e-12)
+    assert np.allclose(hexmesh.scaled_jacobian(hm, high_order=True),
+                       hexmesh.scaled_jacobian(hm), atol=1e-12)
 
 
 @pytest.mark.parametrize("order", [2, 3])
 def test_high_order_quality_non_degenerate_on_curved_shell(order):
     hm = _shell(order, n_face=3, n_radial=2)
-    sj = hexmesh.query.scaled_jacobian(hm, high_order=True)
+    sj = hexmesh.scaled_jacobian(hm, high_order=True)
     assert sj.shape == (hm.n_hexes,)
     assert np.all(np.isfinite(sj))
     assert float(sj.min()) > 0.0                         # no folded GLL nodes
     # sampling the curved interior differs from the corner-only metric
-    assert not np.allclose(sj, hexmesh.query.scaled_jacobian(hm))
-    assert hexmesh.query.quality_summary(hm, high_order=True).n_elements == hm.n_hexes
+    assert not np.allclose(sj, hexmesh.scaled_jacobian(hm))
+    assert hexmesh.quality_summary(hm, high_order=True).n_elements == hm.n_hexes
 
 
 # -- re2 export stays linear regardless of order ------------------------

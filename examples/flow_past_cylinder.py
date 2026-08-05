@@ -49,24 +49,24 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "cylinder": "W  ",
 # rotate the circle so its index 0 meets the box's lower-left corner, so the two
 # loops pair index-for-index in annulus (the radial spokes are not straight)
 CORNER = np.arctan2(-HALF_BOX, -HALF_BOX)
-inner = linemesh.shape.circle(R, N_THETA, start_theta=CORNER,
+inner = linemesh.circle(R, N_THETA, start_theta=CORNER,
                         element_tags=["cylinder"] * N_THETA, order=ORDER)
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),
 # sides named bottom (y=-HB), outlet (x=+HB), top (y=+HB), inlet (x=-HB)
-outer = linemesh.shape.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
+outer = linemesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
-section = quadmesh.lift.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
+section = quadmesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the section along +z; edge names ride onto the side faces
-mesh = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
-print(hexmesh.query.report(mesh))
+print(hexmesh.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

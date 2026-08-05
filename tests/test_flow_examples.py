@@ -15,7 +15,7 @@ from nekmeshpy.model.interp import hex_face_indices
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(*hexmesh.query.weld(mesh)[:2])
+    return quality.scaled_jacobian(*hexmesh.weld(mesh)[:2])
 
 
 def _wall_nodes(mesh, name):
@@ -41,8 +41,8 @@ def _tag_count(mesh, name):
 
 def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):
     # one watertight, conformal, positively-oriented block
-    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
-    assert topology.hex_report(*hexmesh.query.weld(mesh)[:2]).n_components == 1
+    assert hexmesh.is_watertight(mesh) and hexmesh.is_conforming(mesh)
+    assert topology.hex_report(*hexmesh.weld(mesh)[:2]).n_components == 1
     assert float(np.min(_scaled_jac(mesh))) > jac_floor
     # exactly the expected named groups, all non-empty
     assert set(mesh.face_group_tags) == groups

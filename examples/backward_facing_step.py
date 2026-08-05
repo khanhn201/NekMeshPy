@@ -50,12 +50,12 @@ def rect(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int,
          side_tags: dict[str, str]) -> QuadMesh:
     """Structured quad grid over ``[x0,x1]x[y0,y1]`` with the named outer sides
     (bottom/right/top/left) tagged; an absent side stays untagged."""
-    return quadmesh.shape.rectangle(
+    return quadmesh.rectangle(
         [(x0, y0, 0.0), (x1, y0, 0.0), (x1, y1, 0.0), (x0, y1, 0.0)],
         nx, ny, side_tags=side_tags, order=ORDER)
 
 
-section = quadmesh.assemble.merge([
+section = quadmesh.merge([
     rect(-L_UP, 0.0, 0.0, H, NX_UP, NY_CH,             # inlet channel
          {"left": "inlet", "bottom": "wall", "top": "wall"}),
     rect(0.0, L_DOWN, 0.0, H, NX_DOWN, NY_CH,          # downstream upper channel
@@ -66,12 +66,12 @@ section = quadmesh.assemble.merge([
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the xy section along +z; edge names ride onto the side faces
-mesh = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
-print(hexmesh.query.report(mesh))
+print(hexmesh.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

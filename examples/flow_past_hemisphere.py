@@ -50,19 +50,19 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "hemisphere": "W  ", "ground": "W  ",
 # half_box tags each patch with the far-field side it forms; hemisphere reuses the
 # same (N_FACE, N_HALF) connectivity, so the two pair by index for annulus.  The
 # ground rim rides on the inner surface, whose edge_tags the shells inherit.
-outer = quadmesh.shape.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, patch_tags={
+outer = quadmesh.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "back", "y_min": "front", "z_max": "top"})
-inner = quadmesh.shape.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
+inner = quadmesh.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
                             rim_tag="ground")
 
 # fill the shell hemisphere -> half box, radial clustered toward the body; inner cap
 # tagged `hemisphere`, outer cap per patch tag, rim swept into the `ground` annulus
-mesh = hexmesh.lift.annulus(inner, outer,
+mesh = hexmesh.annulus(inner, outer,
                        radial=geometric_spacing(N_RADIAL, RADIAL_GRADING))
 
 # -- report + export ---------------------------------------------------------
-print(hexmesh.query.report(mesh))
+print(hexmesh.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

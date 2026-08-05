@@ -37,19 +37,21 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
 # -- build the O-grid cross-section, then extrude it along the axis -----------
 # interior filled + repositioned (wall fixed); extrude copies it along the axis
-section = quadmesh.shape.ogrid(
-    linemesh.shape.circle(RADIUS, 4 * N_SIDE, element_tags=["wall"] * (4 * N_SIDE),
-                    order=ORDER), N_SIDE,
-    geometric_spacing(N_RADIAL, RADIAL_GRADING),
-    center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)
+wall = linemesh.circle(RADIUS, 4 * N_SIDE,
+                       element_tags=["wall"] * (4 * N_SIDE), order=ORDER)
+radial = geometric_spacing(N_RADIAL, RADIAL_GRADING)
 
-mesh = hexmesh.lift.extrude(
+section = quadmesh.ogrid(wall, N_SIDE, radial,
+                         center_scale=CENTER_SCALE,
+                         smoothing_method=SMOOTHING_METHOD)
+
+mesh = hexmesh.extrude(
     section, axis=AXIS, length=LENGTH,
     layers=geometric_spacing(N_AXIAL, AXIAL_GRADING),
     origin=CENTER, first_tag="inlet", last_tag="outlet")
 
 # -- report + export ---------------------------------------------------------
-stats = hexmesh.query.quality_summary(mesh)
+stats = hexmesh.quality_summary(mesh)
 print("circular pipe: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 
