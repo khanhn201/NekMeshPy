@@ -17,45 +17,33 @@ module         arity    delta contents
 ============== ======== ===== ===============================================
 
 ``_open`` / ``_closed`` are also rung-raising, but they own a *shape* model rather than
-being generic over any input, which is what keeps them separate from ``_lift``.  Each
-module ends in a registry -- ``FACTORIES`` for the ``staticmethod``-bound combinators,
-``METHODS`` for the instance-method-bound queries -- and this package binds them onto
-the class below.  ``_open`` carries a third one, ``HELPERS``: also ``staticmethod``-bound,
-but for functions that answer a question *about* a factory's input contract and return a
-plain array rather than a mesh, which is what keeps them out of ``FACTORIES``
-(``QuadMesh.spine_fractions``, the sampling a ``spined_ogrid``/``half_ogrid`` spine must
-carry; ``QuadMesh.quadrant_seam_fractions``, the one a ``quadrant_ogrid`` seam must --
-no factory resamples one; and ``QuadMesh.quadrant_core``, the core patch
-``quadrant_ogrid`` builds its own core with, exposed so a block filling the region
-*behind* a quadrant face can land on the same points instead of reproducing the
-formula).  So callers write ``QuadMesh.ogrid(...)`` / ``qm.boundary_edges()``
-while adding an operation touches only the sibling module (the function plus one
-registry entry), never the container or this file.  The shared ``_apply_smoothing`` /
-``_check_boundary`` / ``_elevate`` factory internals live in ``_helpers.py``.
+being generic over any input, which is what keeps them separate from ``_lift``.
+
+Every operation is a free function taking the mesh first, reached through one of the
+namespaces re-exported here.  Nothing is bound onto the container::
+
+    quadmesh.assemble.loft(sections, fractions)   # n-ary: loft / loft_fn / merge
+    quadmesh.lift.extrude(curve, length=1.0)      # generic rung-raising
+    quadmesh.region.ogrid(boundary, n, radial)    # region fills (own a shape model)
+    quadmesh.surface.box(lo, hi, n)               # closed shells
+    quadmesh.morph.translate(qm, vector)          # rung-preserving + blend
+    quadmesh.query.boundary_edges(qm)             # reads that leave the ladder
+
+``quadmesh.py`` is therefore pure storage -- arrays, validation and the derived views --
+and imports no sibling.  That makes the package a strict DAG: every sibling does a
+plain ``from .quadmesh import QuadMesh`` like any normal module, so there are no
+deferred function-body imports and no ``TYPE_CHECKING`` guards anywhere.
+
+The namespaces are real modules rather than aliases of the private siblings, because
+Sphinx registers a target under a module's own ``__name__`` -- an alias documents
+nothing and every cross-reference to it breaks.
+
+The shared ``_apply_smoothing`` / ``_check_boundary`` / ``_elevate`` factory internals
+live in ``_helpers.py``.
 """
 
-from ._assemble import FACTORIES as _ASSEMBLE_FACTORIES
-from ._closed import FACTORIES as _CLOSED_FACTORIES
-from ._lift import FACTORIES as _LIFT_FACTORIES
-from ._morph import FACTORIES as _MORPH_FACTORIES
-from ._morph import METHODS as _MORPH_METHODS
-from ._open import FACTORIES as _OPEN_FACTORIES
-from ._open import HELPERS as _OPEN_HELPERS
-from ._query import METHODS as _QUERY_METHODS
+from . import assemble, lift, morph, query, region, surface
 from .quadmesh import NO_TAG, QuadMesh
 
-# The combinators are plain free functions (no ``cls``); bind as ``staticmethod`` so
-# ``QuadMesh.ogrid(boundary, ...)`` passes no implicit first argument.
-for _name, _fn in {**_CLOSED_FACTORIES, **_OPEN_FACTORIES, **_ASSEMBLE_FACTORIES,
-                   **_LIFT_FACTORIES, **_MORPH_FACTORIES,
-                   **_OPEN_HELPERS}.items():
-    setattr(QuadMesh, _name, staticmethod(_fn))
-
-# The queries and the unary placements take the mesh (or bare connectivity) first.
-# ``_boundary_mask`` reads only connectivity, so it stays a ``staticmethod``; the rest
-# become instance methods.
-for _name, _fn in {**_QUERY_METHODS, **_MORPH_METHODS}.items():
-    setattr(QuadMesh, _name,
-            staticmethod(_fn) if _name == "_boundary_mask" else _fn)
-
-__all__ = ["NO_TAG", "QuadMesh"]
+__all__ = ["NO_TAG", "QuadMesh", "assemble", "lift", "morph", "query", "region",
+           "surface"]

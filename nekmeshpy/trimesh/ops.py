@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
@@ -12,9 +11,7 @@ import scipy.sparse.linalg as spla
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
 from ..linemesh._assemble import loft as line_loft
-
-if TYPE_CHECKING:
-    from .trimesh import TriMesh
+from .trimesh import TriMesh
 
 
 # -- Laplace ------------------------------------------------------------

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, QuadMesh, linemesh
+from nekmeshpy import HexMesh, hexmesh, linemesh, quadmesh
 
 V = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]])
 RADIAL = np.array([0.0, 0.45, 0.8, 1.0])
@@ -22,8 +22,8 @@ def _triangle(a, b, c, n=2, order=1, tag=""):
                                        + u[None, :, None] * e2)
              + u[:, None, None] * ((1 - u)[None, :, None] * e1
                                    + u[None, :, None] * ctr))
-        pats.append(QuadMesh.from_grid(g, element_tag=tag, order=order))
-    return QuadMesh.merge(pats)
+        pats.append(quadmesh.lift.from_grid(g, element_tag=tag, order=order))
+    return quadmesh.assemble.merge(pats)
 
 
 def _unit_tet(n=2, order=1, tags=("", "", "", ""), **kw):
@@ -31,7 +31,7 @@ def _unit_tet(n=2, order=1, tags=("", "", "", ""), **kw):
              _triangle(V[0], V[1], V[3], n, order, tags[1]),
              _triangle(V[0], V[2], V[3], n, order, tags[2]),
              _triangle(V[1], V[2], V[3], n, order, tags[3])]
-    return HexMesh.tetra(faces, **kw)
+    return hexmesh.shape.tetra(faces, **kw)
 
 
 @pytest.mark.parametrize("n", [1, 2, 3])
@@ -39,10 +39,10 @@ def test_counts_and_topology(n):
     t = _unit_tet(n)
     # four corner blocks, each n x n x n
     assert t.hexes.shape[0] == 4 * n ** 3
-    rep = t.topology_report()
+    rep = hexmesh.query.topology_report(t)
     assert rep.watertight and rep.conformal and rep.n_components == 1
     assert rep.n_open_edges == 0 and rep.n_hanging_points == 0
-    assert float(np.min(t.scaled_jacobian())) > 0.0
+    assert float(np.min(hexmesh.query.scaled_jacobian(t))) > 0.0
 
 
 def test_face_order_does_not_matter():
@@ -50,7 +50,7 @@ def test_face_order_does_not_matter():
     a = _unit_tet(2)
     faces = [_triangle(V[0], V[1], V[2], 2), _triangle(V[0], V[1], V[3], 2),
              _triangle(V[0], V[2], V[3], 2), _triangle(V[1], V[2], V[3], 2)]
-    b = HexMesh.tetra([faces[2], faces[0], faces[3], faces[1]])
+    b = hexmesh.shape.tetra([faces[2], faces[0], faces[3], faces[1]])
     assert b.hexes.shape[0] == a.hexes.shape[0]
     assert np.allclose(np.sort(b.points, axis=0), np.sort(a.points, axis=0),
                        atol=1e-12)
@@ -93,7 +93,7 @@ def test_flat_tet_stays_flat_at_order_n(order):
     p = t.points
     assert p[:, 0].min() > -1e-12 and p[:, 1].min() > -1e-12
     assert p[:, 2].min() > -1e-12 and p.sum(axis=1).max() < 1.0 + 1e-12
-    assert float(np.min(t.scaled_jacobian(high_order=True))) > 0.0
+    assert float(np.min(hexmesh.query.scaled_jacobian(t, high_order=True))) > 0.0
 
 
 def test_tags_follow_their_face():
@@ -131,19 +131,19 @@ def test_rejects_a_face_that_is_not_a_three_patch_triangle():
     grid = np.zeros((3, 3, 3))
     grid[..., 0] = np.arange(3)[:, None]
     grid[..., 1] = np.arange(3)[None, :]
-    square = QuadMesh.from_grid(grid)
+    square = quadmesh.lift.from_grid(grid)
     faces = [square] + [_triangle(V[0], V[1], V[2], 2)] * 3
     with pytest.raises(ValueError, match="three structured patches"):
-        HexMesh.tetra(faces)
+        hexmesh.shape.tetra(faces)
 
 
 def test_rejects_wrong_face_count_and_mixed_order():
     with pytest.raises(ValueError, match="exactly 4 faces"):
-        HexMesh.tetra([_triangle(V[0], V[1], V[2], 2)] * 3)
+        hexmesh.shape.tetra([_triangle(V[0], V[1], V[2], 2)] * 3)
     faces = [_triangle(V[0], V[1], V[2], 2), _triangle(V[0], V[1], V[3], 2),
              _triangle(V[0], V[2], V[3], 2), _triangle(V[1], V[2], V[3], 2, order=2)]
     with pytest.raises(ValueError, match="share an order"):
-        HexMesh.tetra(faces)
+        hexmesh.shape.tetra(faces)
 
 
 def test_rejects_faces_that_do_not_close():
@@ -152,7 +152,7 @@ def test_rejects_faces_that_do_not_close():
     faces = [_triangle(V[0], V[1], V[2], 2), _triangle(V[0], V[1], V[3], 2),
              _triangle(V[0], V[2], V[3], 2), _triangle(V[1], V[2], far, 2)]
     with pytest.raises(ValueError, match="4 corners|share their six edges"):
-        HexMesh.tetra(faces)
+        hexmesh.shape.tetra(faces)
 
 
 def test_quadrant_faces_make_an_octant():
@@ -163,7 +163,7 @@ def test_quadrant_faces_make_an_octant():
     block split the faces already carry: an ``n**3`` core and three ``n x n x Nradial``
     slabs."""
     n = 2
-    fr = QuadMesh.quadrant_seam_fractions(n, RADIAL, CS)
+    fr = quadmesh.region.quadrant_seam_fractions(n, RADIAL, CS)
     e = np.eye(3)
     seams = [linemesh.shape.line(np.zeros(3), d, fr) for d in e]
 
@@ -175,11 +175,11 @@ def test_quadrant_faces_make_an_octant():
             np.linspace(0.0, np.pi / 2, 2 * n + 1))
 
     arcs = [great(e[0], e[1]), great(e[1], e[2]), great(e[2], e[0])]
-    quads = [QuadMesh.quadrant_ogrid(arcs[0], seams[0], seams[1], RADIAL,
+    quads = [quadmesh.region.quadrant_ogrid(arcs[0], seams[0], seams[1], RADIAL,
                                      center_scale=CS),
-             QuadMesh.quadrant_ogrid(arcs[1], seams[1], seams[2], RADIAL,
+             quadmesh.region.quadrant_ogrid(arcs[1], seams[1], seams[2], RADIAL,
                                      center_scale=CS),
-             QuadMesh.quadrant_ogrid(arcs[2], seams[2], seams[0], RADIAL,
+             quadmesh.region.quadrant_ogrid(arcs[2], seams[2], seams[0], RADIAL,
                                      center_scale=CS)]
     # the spherical side, as three patches about the octant's centre direction
     ctr = np.ones(3) / np.sqrt(3.0)
@@ -194,12 +194,12 @@ def test_quadrant_faces_make_an_octant():
              + u[:, None, None] * ((1 - u)[None, :, None] * m1
                                    + u[None, :, None] * ctr))
         g /= np.linalg.norm(g, axis=-1, keepdims=True)          # onto the sphere
-        pats.append(QuadMesh.from_grid(g, element_tag="sphere"))
-    t = HexMesh.tetra(quads + [QuadMesh.merge(pats)])
+        pats.append(quadmesh.lift.from_grid(g, element_tag="sphere"))
+    t = hexmesh.shape.tetra(quads + [quadmesh.assemble.merge(pats)])
     assert t.hexes.shape[0] == n ** 3 + 3 * (n * n * NR)
-    rep = t.topology_report()
+    rep = hexmesh.query.topology_report(t)
     assert rep.watertight and rep.conformal and rep.n_components == 1
-    assert float(np.min(t.scaled_jacobian())) > 0.0
+    assert float(np.min(hexmesh.query.scaled_jacobian(t))) > 0.0
     assert set(t.face_group_tags) == {"sphere"}
     # the tagged side really is on the sphere; the three quadrant sides are the flat
     # cuts through the ball, so they are not (and must not be).

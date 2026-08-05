@@ -62,7 +62,7 @@ def _slice_block(s: QuadMesh, order: int) -> PointArray:
     natively from that section's B-rep (shared corners ++ shared edge-interior nodes in
     element traversal order ++ private quad interiors).  A loft column's geometry is a
     straight sweep between two such in-plane blocks, so this is the only intermediate
-    :meth:`HexMesh.loft` needs -- no per-element hex block is ever materialized."""
+    :func:`hexmesh.assemble.loft <nekmeshpy.hexmesh.assemble.loft>` needs -- no per-element hex block is ever materialized."""
     row = order + 1
     out: PointArray = np.empty((s.quads.shape[0], row * row, 3), dtype=float)
     out[:, corner_indices(order, 2), :] = s.points[s.quads]

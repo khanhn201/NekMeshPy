@@ -8,7 +8,7 @@ quad surfaces and tags the inner / outer wall faces from the surfaces' per-quad
 import numpy as np
 import pytest
 
-from nekmeshpy import ElementTags, HexMesh, QuadMesh
+from nekmeshpy import ElementTags, HexMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.model.fields import uniform_spacing
 
 # the six cube faces: outward normal n with right-handed tangents (u x v = n)
@@ -33,9 +33,9 @@ def _cube_surface(half, nf, *, tag_faces=True):
     for nrm, u, v in _FACES:
         n, u, v = (np.asarray(x, float) for x in (nrm, u, v))
         face = half * (n + a[..., None] * u + b[..., None] * v)
-        patches.append(QuadMesh.from_grid(
+        patches.append(quadmesh.lift.from_grid(
             face, element_tag=_SIDE[nrm] if tag_faces else ""))
-    return QuadMesh.merge(patches)
+    return quadmesh.assemble.merge(patches)
 
 
 def _face_pts(mesh, e, f):
@@ -48,7 +48,7 @@ def test_quad_from_grid_connectivity_winding_and_element_tag():
     xs, ys = np.linspace(0.0, 2.0, 3), np.linspace(0.0, 1.0, 2)
     X, Y = np.meshgrid(xs, ys, indexing="ij")               # (3,2)
     P = np.stack([X, Y, np.zeros_like(X)], axis=-1)         # ni=2, nj=1 -> 2 quads
-    qm = QuadMesh.from_grid(P, element_tag="patch")
+    qm = quadmesh.lift.from_grid(P, element_tag="patch")
     assert qm.n_quads == 2
     assert qm.element_group_tags == ["patch"]               # not clipped to "p"
     # every quad is wound CCW (outward normal +z)
@@ -62,7 +62,7 @@ def test_quad_from_grid_edge_tags_land_on_correct_sides():
     xs = ys = np.linspace(0.0, 1.0, 3)
     X, Y = np.meshgrid(xs, ys, indexing="ij")               # (3,3) -> 4 quads
     P = np.stack([X, Y, np.zeros_like(X)], axis=-1)
-    qm = QuadMesh.from_grid(P, side_tags={"x_min": "west", "y_max": "north"})
+    qm = quadmesh.lift.from_grid(P, side_tags={"x_min": "west", "y_max": "north"})
     assert qm.edge_group_tags == ["north", "west"]
     for r in range(qm.n_edge_tags):
         q, s = int(qm.edge_tags.elements[r]), int(qm.edge_tags.sides[r])
@@ -79,10 +79,10 @@ def test_annulus_shell_watertight_and_tagged_from_element_tags():
     outer = _cube_surface(2.0, 2)                           # faces tagged xp/xm/...
     inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads,       # inner cube, half=1.0
                      element_tags=ElementTags.uniform(outer.n_quads, "body"))
-    mesh = HexMesh.annulus(inner, outer, uniform_spacing(3))
+    mesh = hexmesh.lift.annulus(inner, outer, uniform_spacing(3))
 
-    assert mesh.is_watertight() and mesh.is_conforming()
-    assert float(mesh.scaled_jacobian().min()) > 0.0
+    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
+    assert float(hexmesh.query.scaled_jacobian(mesh).min()) > 0.0
     assert set(mesh.face_group_tags) == {"body", "xp", "xm", "yp", "ym",
                                              "zp", "zm"}
     assert mesh.element_group_tags == []                    # hexes stay untagged
@@ -97,7 +97,7 @@ def test_annulus_shell_watertight_and_tagged_from_element_tags():
 def test_annulus_scalar_wall_tags_fallback():
     outer = _cube_surface(2.0, 1, tag_faces=False)          # untagged surfaces
     inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads)
-    mesh = HexMesh.annulus(inner, outer, uniform_spacing(2),
+    mesh = hexmesh.lift.annulus(inner, outer, uniform_spacing(2),
                            inner_tag="body", outer_tag="far")
     assert set(mesh.face_group_tags) == {"body", "far"}
 
@@ -108,7 +108,7 @@ def test_annulus_scalar_tag_overrides_surface_element_tags():
     outer = _cube_surface(2.0, 2)                           # faces tagged xp/xm/...
     inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads,
                      element_tags=ElementTags.uniform(outer.n_quads, "body"))
-    mesh = HexMesh.annulus(inner, outer, uniform_spacing(3),
+    mesh = hexmesh.lift.annulus(inner, outer, uniform_spacing(3),
                            inner_tag="cylinder", outer_tag="far")
     # the per-quad surface tags are gone; each wall is a single overridden group
     assert set(mesh.face_group_tags) == {"cylinder", "far"}
@@ -117,21 +117,21 @@ def test_annulus_scalar_tag_overrides_surface_element_tags():
 def test_annulus_rejects_mismatched_point_counts():
     a, b = _cube_surface(1.0, 1), _cube_surface(2.0, 2)
     with pytest.raises(ValueError, match="equal point counts"):
-        HexMesh.annulus(a, b, uniform_spacing(2))
+        hexmesh.lift.annulus(a, b, uniform_spacing(2))
 
 
 def test_annulus_rejects_mismatched_connectivity():
     outer = _cube_surface(2.0, 2)
     inner = QuadMesh.from_corners(0.5 * outer.points, outer.quads[::-1])  # same points, diff quads
     with pytest.raises(ValueError, match="identical quad connectivity"):
-        HexMesh.annulus(inner, outer, uniform_spacing(2))
+        hexmesh.lift.annulus(inner, outer, uniform_spacing(2))
 
 
 def test_annulus_rejects_touching_surfaces():
     outer = _cube_surface(2.0, 2)
     inner = QuadMesh.from_corners(outer.points.copy(), outer.quads)      # coincident with outer
     with pytest.raises(ValueError, match="touch or cross"):
-        HexMesh.annulus(inner, outer, uniform_spacing(2))
+        hexmesh.lift.annulus(inner, outer, uniform_spacing(2))
 
 
 # -- HexMesh.loft per-quad caps ----------------------------------------------
@@ -145,7 +145,7 @@ def _two_quad_slices():
 
 def test_loft_per_quad_first_tag_and_scalar_last_tag():
     s0, s1 = _two_quad_slices()
-    block = HexMesh.loft([s0, s1], first_tag=["capA", "capB"], last_tag="top")
+    block = hexmesh.assemble.loft([s0, s1], first_tag=["capA", "capB"], last_tag="top")
     tag_at = {(e, f): t for e, f, t in block.face_tags}
     assert tag_at[(0, 5)] == "capA"        # per-quad bottom caps
     assert tag_at[(1, 5)] == "capB"
@@ -156,4 +156,4 @@ def test_loft_per_quad_first_tag_and_scalar_last_tag():
 def test_loft_cap_length_mismatch_raises():
     s0, s1 = _two_quad_slices()
     with pytest.raises(ValueError, match="cap tags length"):
-        HexMesh.loft([s0, s1], first_tag=["only_one"])
+        hexmesh.assemble.loft([s0, s1], first_tag=["only_one"])

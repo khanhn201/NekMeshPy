@@ -13,22 +13,20 @@ from __future__ import annotations
 import logging
 import struct
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Union
+from typing import Any, Union
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+from ..hexmesh import HexMesh
 from ..hexmesh._query import weld as hex_weld
+from ..linemesh import LineMesh
 from ..model import conform, topology
 from ..model.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..model.interp import hex_face_indices
 from ..model.mesh import Mesh
 from ..model.physical import PhysicalGroup, PhysicalGroups
-
-if TYPE_CHECKING:
-    from ..hexmesh import HexMesh
-    from ..linemesh import LineMesh
-    from ..quadmesh import QuadMesh
+from ..quadmesh import QuadMesh
 
 # VTK cell-type ids: linear + high-order (Lagrange) line / quad / hex.
 _VTK_LINE = 3

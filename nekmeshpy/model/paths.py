@@ -6,7 +6,7 @@ so the walk is C1 by construction with no fillet fitting or corner rounding. Exa
 closed forms (a straight's own length, ``radius * angle`` for an arc) make the
 arc-length parametrization ``s in [0, 1]`` exact to machine precision, and the
 **analytic** tangent -- rather than one differenced from the sampled centerline --
-keeps a :meth:`~nekmeshpy.hexmesh.HexMesh.sweep` frame from tilting at every
+keeps a :func:`hexmesh.lift.sweep <nekmeshpy.hexmesh.lift.sweep>` frame from tilting at every
 straight/arc junction, where the path's curvature jumps.
 
 This is pure 2-D turn-and-heading algebra with no notion of a 3-D embedding: a
@@ -34,7 +34,7 @@ class TurtlePath(NamedTuple):
     length ``s in [0, 1]`` rather than as its own segment table."""
 
     #: ``(K,)`` in ``[0, 1]`` -> ``(K, 2)`` points, vectorized for
-    #: :meth:`~nekmeshpy.hexmesh.HexMesh.sweep`, which samples the whole node
+    #: :func:`hexmesh.lift.sweep <nekmeshpy.hexmesh.lift.sweep>`, which samples the whole node
     #: lattice in one call to build a moving frame along it.
     centerline: Callable[[FloatArray], FloatArray]
     #: ``(K,)`` in ``[0, 1]`` -> ``(K, 2)`` unit tangents, the analytic derivative
@@ -43,8 +43,8 @@ class TurtlePath(NamedTuple):
     #: The exact total arc length of the walk.
     total_length: float
     #: Normalized ``s`` of every straight<->arc junction, strictly increasing --
-    #: feed these through :meth:`LineMesh.sweep_fractions
-    #: <nekmeshpy.linemesh.LineMesh.sweep_fractions>` so a sweep grades each piece
+    #: feed these through :func:`LineMesh.sweep_fractions
+    #: <nekmeshpy.linemesh.shape.sweep_fractions>` so a sweep grades each piece
     #: on its own and lands a station exactly on every junction.
     break_fractions: FloatArray
 

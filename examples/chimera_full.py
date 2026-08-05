@@ -60,7 +60,7 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export, linemesh
+from nekmeshpy import LineMesh, QuadMesh, export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model import frames
 from nekmeshpy.model.paths import turtle_path
 
@@ -182,7 +182,7 @@ def pattern_adapter(sec_a, sec_b, axis, n_layers=2, name=""):
             print("  worst[%d] d=%.4f a=%s b=%s" % (
                 i, d_per[i], np.round(sec_a.points[i] - ca, 3),
                 np.round(sec_b_aligned.points[i] - cb, 3)))
-    result = HexMesh.loft(QuadMesh.blend(sec_a, sec_b_aligned,
+    result = hexmesh.assemble.loft(quadmesh.morph.blend(sec_a, sec_b_aligned,
                                          np.linspace(0.0, 1.0, n_layers + 1)))
     if name:
         sj = result.scaled_jacobian()
@@ -379,7 +379,7 @@ def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, las
         return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
 
     fr = linemesh.shape.sweep_fractions(path.break_fractions * total, total, total / n_layers)
-    return HexMesh.sweep(section, centerline, fr, tangent=tangent, orientation="fixed",
+    return hexmesh.lift.sweep(section, centerline, fr, tangent=tangent, orientation="fixed",
                          up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag)
 
 
@@ -485,7 +485,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # specific residual, rather than loosening the tolerance for the whole
     # assembly (which welded an unrelated, closer-together pair by mistake
     # the one time this was tried globally).
-    conn_chi = HexMesh.merge([conn_chi, adapter], tol=0.05)
+    conn_chi = hexmesh.assemble.merge([conn_chi, adapter], tol=0.05)
     return core, [conn_chi], riser, dbr, t1_center
 
 
@@ -509,9 +509,9 @@ for _nm, _m in [("core_in", core_in), ("conn_chi_in", conn_chi_in[0]), ("riser_i
 
 pieces += [core_in, *conn_chi_in, riser_in, core_out, *conn_chi_out, riser_out]
 
-mesh1 = HexMesh.merge(pieces, tol=0.005)
-print("stage1:", mesh1.n_hexes, "hexes, watertight", mesh1.is_watertight(),
-     "conforming", mesh1.is_conforming(), "min sj", mesh1.scaled_jacobian().min())
+mesh1 = hexmesh.assemble.merge(pieces, tol=0.005)
+print("stage1:", mesh1.n_hexes, "hexes, watertight", hexmesh.query.is_watertight(mesh1),
+     "conforming", hexmesh.query.is_conforming(mesh1), "min sj", mesh1.scaled_jacobian().min())
 
 # -----------------------------------------------------------------------------
 # T2: branches off T1's -y branch.  Unequal radius (main = R_MAIN, matching
@@ -659,8 +659,8 @@ def weld_bridge(a, b, n=4, stub_frac=0.3, stub_max=1.5, n_blend=6):
         "two disc patterns are too dissimilar to pair one-for-one")
     b_secs = [_reindex_geometry(a_end, s, sigma) for s in b_secs_raw]
 
-    blend_secs = QuadMesh.blend(a_end, b_secs[0], np.linspace(0.0, 1.0, n_blend + 1))
-    return HexMesh.loft(a_secs[:-1] + blend_secs + b_secs[1:])
+    blend_secs = quadmesh.morph.blend(a_end, b_secs[0], np.linspace(0.0, 1.0, n_blend + 1))
+    return hexmesh.assemble.loft(a_secs[:-1] + blend_secs + b_secs[1:])
 
 
 def place_t2(source_disc, t2_y, mirror=False):
@@ -710,7 +710,7 @@ def t2_chain(source_disc, mirror):
                                             mirror=mirror)
         levels.append({"core": core, "conn": conn, "da": da, "dbr": dbr, "ctr": ctr})
         src = da
-    levels[-1]["dead"] = HexMesh.extrude(levels[-1]["da"], 1.5 * R_BR, 2,
+    levels[-1]["dead"] = hexmesh.lift.extrude(levels[-1]["da"], 1.5 * R_BR, 2,
                                          axis=(0.0, -1.0, 0.0), last_tag="wall")
     return levels
 
@@ -721,9 +721,9 @@ chain_out = t2_chain(br_out, mirror=True)
 pieces2 = pieces + [p for lv in (*chain_in, *chain_out)
                     for p in (lv["core"], lv["conn"], *( [lv["dead"]]
                                                          if "dead" in lv else []))]
-mesh2 = HexMesh.merge(pieces2, tol=0.005)
+mesh2 = hexmesh.assemble.merge(pieces2, tol=0.005)
 print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
-      mesh2.is_watertight(), "conforming", mesh2.is_conforming(),
+      hexmesh.query.is_watertight(mesh2), "conforming", hexmesh.query.is_conforming(mesh2),
       "min sj", mesh2.scaled_jacobian().min())
 
 # -----------------------------------------------------------------------------
@@ -889,9 +889,9 @@ def build_coil(dbr_i, dbr_o):
         xz = path.tangent(s)
         return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
 
-    inflow = HexMesh.sweep(dbr_i, centerline, fr, tangent=tangent,
+    inflow = hexmesh.lift.sweep(dbr_i, centerline, fr, tangent=tangent,
                            orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci)
-    assert inflow.is_conforming(), "coil sweep produced a non-conforming mesh"
+    assert hexmesh.query.is_conforming(inflow), "coil sweep produced a non-conforming mesh"
     conn_o = build_bend_mesh(dbr_o, co, moves_out, np.pi, co[1], n_slices)
 
     # conn_o's own end (dbr_o's pattern, through its own bend) and the coil's
@@ -907,9 +907,9 @@ coils = [p for lv_i, lv_o in zip(chain_in, chain_out)
          for p in build_coil(lv_i["dbr"], lv_o["dbr"])]
 
 pieces3 = pieces2 + coils
-mesh3 = HexMesh.merge(pieces3, tol=0.005)
-print("stage3:", mesh3.n_hexes, "watertight", mesh3.is_watertight(),
-     "conforming", mesh3.is_conforming(), "min sj", mesh3.scaled_jacobian().min())
+mesh3 = hexmesh.assemble.merge(pieces3, tol=0.005)
+print("stage3:", mesh3.n_hexes, "watertight", hexmesh.query.is_watertight(mesh3),
+     "conforming", hexmesh.query.is_conforming(mesh3), "min sj", mesh3.scaled_jacobian().min())
 # -- registration check: does the connector's rising end actually land point-
 # for-point on chimera's own disc pattern (mod the quadrant disc's 90-degree
 # symmetry)?  The fake stand-in discs use the identical pattern/params as the
@@ -930,15 +930,15 @@ if chi_mesh is not None:
     # riser tops); a stale tagged interior face would export as a bogus BC.
     chi_mesh.face_tags = chi_mesh.face_tags.select(
         chi_mesh.face_tags.mask_for("wall"))
-    mesh_out = HexMesh.merge([*manifold, chi_mesh], tol=0.005)
+    mesh_out = hexmesh.assemble.merge([*manifold, chi_mesh], tol=0.005)
 else:
-    chi_in_cap = HexMesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
-    chi_out_cap = HexMesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
-    mesh_out = HexMesh.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
+    chi_in_cap = hexmesh.lift.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
+    chi_out_cap = hexmesh.lift.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
+    mesh_out = hexmesh.assemble.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
 
-print("mesh_out:", mesh_out.n_hexes, "hexes, watertight", mesh_out.is_watertight(),
-      "conforming", mesh_out.is_conforming())
-print(mesh_out.topology_report())
+print("mesh_out:", mesh_out.n_hexes, "hexes, watertight", hexmesh.query.is_watertight(mesh_out),
+      "conforming", hexmesh.query.is_conforming(mesh_out))
+print(hexmesh.query.topology_report(mesh_out))
 
 mesh = mesh_out
 OUT_NAME = "chimera_full"

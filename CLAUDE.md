@@ -21,10 +21,13 @@ PYTHONPATH=. python examples/bifurcation.py  # run a mesher; writes .re2/.vtu in
 **Four CI checks gate a PR** — ruff + mypy (py3.12), pytest (py3.9–3.12), and the docs
 build. After pushing, poll `gh pr checks <n>` until it settles; a local pass is not the
 gate. The docs build runs `-n -W` (nitpicky, warnings-as-errors), so one unresolved
-autodoc reference fails it: any **cross-module** `:meth:`/`:class:`/`:data:` role must be
-fully qualified with an explicit target — ``:meth:`QuadMesh.blend
-<nekmeshpy.quadmesh.QuadMesh.blend>` `` — because a bare ``:meth:`QuadMesh.blend` ``
-resolves only within the same class.
+autodoc reference fails it. Every `:func:`/`:class:`/`:data:` role needs a fully
+qualified explicit target — ``:func:`quadmesh.morph.blend
+<nekmeshpy.quadmesh.morph.blend>` `` — because the operations are module-level
+functions now, so a bare ``:func:`blend` `` has no enclosing class to resolve against.
+Note the target names the **namespace** module (`quadmesh.morph`), not the private
+sibling (`quadmesh._morph`): Sphinx registers each object under the `__name__` of the
+module that documents it.
 
 ## The golden-regression invariant
 
@@ -63,10 +66,19 @@ a valid `mesh` (tests also read other globals, e.g. `ns["R_MAIN"]`).
 
 **Containers are pure data; everything acting on a finished mesh is a free function**
 taking the container first. `<type>/<type>.py` holds storage, validation and derived
-views only. Operations live in sibling modules and are bound onto the class in the
-package `__init__` via registries — so `QuadMesh.ogrid(...)` and `mesh.is_watertight()`
-stay reachable as methods, while adding an operation touches one sibling module (the
-function plus one registry entry) and never the container.
+views only — and imports **no** sibling. Operations live in sibling modules and are
+reached through per-rung namespaces, never bound onto the class:
+
+```python
+quadmesh.region.ogrid(boundary, n_side, radial)   # not quadmesh.region.ogrid(...)
+hexmesh.query.is_watertight(mesh)                 # not mesh.is_watertight()
+```
+
+That one-way import — container ← sibling, never back — is what makes each package a
+strict DAG, so every sibling does a plain `from .quadmesh import QuadMesh` and there
+are **no `TYPE_CHECKING` guards and no deferred function-body imports anywhere in
+`nekmeshpy/`**. Adding an operation touches one sibling module plus one line of the
+namespace's `__all__`.
 
 Siblings split on two axes, **arity** and **rung delta** (how far up the line → quad →
 hex ladder the op moves):
@@ -86,23 +98,34 @@ ask: *does it invent a numbering?* → `_assemble`; *does it change rung?* → `
 *neither?* → `_morph`. Δ = −1 (a block's boundary **as** a `QuadMesh`) is empty at every
 rung — `boundary_faces` returns `[element, face]` pairs, not a mesh.
 
-Registries: `FACTORIES` (staticmethod-bound combinators), `METHODS` (instance-bound
-queries and unary placements), and `HELPERS` in `linemesh/_open.py` and
-`quadmesh/_open.py` — staticmethod-bound but returning a plain array rather than a mesh,
-which is what keeps them out of `FACTORIES` (`LineMesh.arclength_fractions`,
-`LineMesh.sweep_fractions`, `QuadMesh.spine_fractions`,
-`QuadMesh.quadrant_seam_fractions`, `QuadMesh.quadrant_core`). These exist because **no
-factory resamples its input**: a factory meshes exactly at the points it is given and
-the caller proves the sampling.
+Namespaces, one public module per group — `assemble`, `lift`, `morph`, `query`, plus
+the shape factories: `shape` at line and hex, `region` (fills) and `surface` (closed
+shells) at quad. They are **real modules** re-exporting from the private siblings, not
+`from . import _assemble as assemble` aliases: Sphinx registers a target under a
+module's own `__name__`, so an alias documents nothing and every cross-reference to it
+breaks the `-n -W` build. `shape` merges `_open` and `_closed`, since open vs closed is
+a storage split rather than a caller-facing one.
+
+`linemesh.shape` and `quadmesh.region` also carry the samplings —
+`arclength_fractions`, `sweep_fractions`, `spine_fractions`,
+`quadrant_seam_fractions`, `quadrant_core` — which return a plain array rather than a
+mesh. These exist because **no factory resamples its input**: a factory meshes exactly
+at the points it is given and the caller proves the sampling.
+
+`TriMesh` is the exception: it keeps its own small query methods in `trimesh.py` and
+exposes the rest as `trimesh.ops.*`.
 
 Public API is re-exported from `nekmeshpy/__init__.py`; keep `__all__` in sync.
 
-`mypy` pins `files=["nekmeshpy"]`, so it only checks toolkit code, and the
-dynamically-bound sugar (`LineMesh.circle`, `mesh.weld()`, set via `setattr` in each
-package `__init__`) is invisible to it. **Internal toolkit code must call the free
-functions directly** (`from ..linemesh._open import line`, not `LineMesh.line`) so
-mypy actually type-checks the call; external callers (examples/tests/users) use the
-bound sugar.
+`mypy` pins `files=["nekmeshpy"]`, so it only checks toolkit code — tests and examples
+are unchecked, which is why a wrong-rung call there (`quadmesh.morph.translate(hexmesh_obj, v)`)
+surfaces as a pytest `AttributeError` rather than a type error. Internal toolkit code
+imports the free functions directly from the private sibling
+(`from ..linemesh._open import line`); the public namespaces are for callers.
+
+Operations are per-rung, so a call site **names its rung**. Code meant to run at every
+rung pairs each mesh with its package explicitly rather than dispatching on
+`type(mesh)` — see `tests/test_morph_transforms.py::_rungs`.
 
 ## The B-rep ladder *is* the storage
 
@@ -155,9 +178,9 @@ Order is declared **once, at the bottom of the ladder**, and rides up: factories
 build points from nothing take `order=N`; everything taking a *mesh* in inherits it and
 rejects a mismatch loudly.
 
-Anything built from an explicit point array (`LineMesh.loft`, `from_grid`) has only
+Anything built from an explicit point array (`linemesh.assemble.loft`, `from_grid`) has only
 those points to go on and **straight-subdivides** between them — high order in storage,
-linear in geometry. A plain `QuadMesh.loft`/`HexMesh.loft` is the same trap along its
+linear in geometry. A plain `quadmesh.assemble.loft`/`hexmesh.assemble.loft` is the same trap along its
 *sweep* direction: exact profiles still give a surface that is straight between them (a
 torus lofted from exact circles lands 62–83% of the tube radius off).
 
@@ -185,7 +208,7 @@ Order-N smoothing is not implemented: a repositioning smoother raises
   evaluates it), the second is the first's name plus `_fn`: `loft` / `loft_fn` at all
   three rungs, `coons_grid` / `coons_grid_fn`. An operation that only ever takes a
   callable is *not* a variant of anything and keeps its plain name
-  (`LineMesh.arclength_fractions`, `sweep`'s `path=`).
+  (`linemesh.shape.arclength_fractions`, `sweep`'s `path=`).
 - **Typing is enforced** (`disallow_untyped_defs`, `check_untyped_defs`,
   `disallow_any_generics`). Use the dtype-parametrized aliases in `_typing.py` —
   `FloatArray` / `IntArray` / `BoolArray` / `StrArray`; a bare `np.ndarray` is an error.

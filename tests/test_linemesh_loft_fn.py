@@ -128,7 +128,7 @@ def test_shapes(n, order):
     assert lm.interior.shape == (n, order - 1, 3)
     assert lm.n_lines == n
     assert lm.lines.tolist() == [[i, i + 1] for i in range(n)]
-    assert lm.boundary_points().size == 2            # open chain: two degree-1 ends
+    assert linemesh.query.boundary_points(lm).size == 2            # open chain: two degree-1 ends
 
 
 def test_order_one_interior_is_empty():
@@ -288,7 +288,7 @@ def test_descending_fractions_run_the_curve_backwards():
     assert np.allclose(bwd.interior, fwd.interior[::-1, ::-1, :], atol=1e-13)
     assert _collar_residual(_all_nodes(bwd)) < 1e-13
     # ... which is to say: it agrees with ``LineMesh.reverse`` of the forward chain
-    rev = fwd.reverse()
+    rev = linemesh.morph.reverse(fwd)
     assert np.allclose(bwd.points, rev.points, atol=1e-13)
     assert np.allclose(bwd.interior, rev.interior, atol=1e-13)
 
@@ -326,7 +326,7 @@ def test_loop_gives_a_ring_with_no_free_end(order):
     assert ring.points.shape == (n, 3)
     assert ring.n_lines == n
     assert ring.lines[-1].tolist() == [n - 1, 0]     # the seam rung, appended once
-    assert ring.boundary_points().size == 0          # no degree-1 end anywhere
+    assert linemesh.query.boundary_points(ring).size == 0          # no degree-1 end anywhere
 
 
 @pytest.mark.parametrize("order", [2, 3, 4])
@@ -357,7 +357,7 @@ def test_loop_is_the_open_chain_minus_its_duplicate_end(order):
     ring = linemesh.assemble.loft_fn(_circle_f(), fr, loop=True, order=order)
     chain = linemesh.assemble.loft_fn(_circle_f(), fr, order=order)
     assert chain.points.shape == (n + 1, 3)
-    assert chain.boundary_points().size == 2
+    assert linemesh.query.boundary_points(chain).size == 2
     # bit-exact: closing the sweep drops the duplicate point, it does not move any node
     assert np.array_equal(ring.points, chain.points[:-1])
     assert np.array_equal(ring.interior, chain.interior)

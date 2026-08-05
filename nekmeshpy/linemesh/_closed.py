@@ -29,8 +29,8 @@ def circle(radius: float, n: int, *,
     about ``center`` in the plane with the given ``normal`` (default ``+z``).
     Point ``k`` sits at angle ``2*pi*k/n + start_theta`` from the in-plane
     ``e1`` axis, so ``start_theta`` rotates the whole loop -- e.g. to align its
-    index 0 with a :meth:`rectangle` far-field box's lower-left corner before an
-    index-paired :meth:`QuadMesh.annulus <nekmeshpy.quadmesh.QuadMesh.annulus>`.
+    index 0 with a :func:`rectangle <nekmeshpy.linemesh.shape.rectangle>` far-field box's lower-left corner before an
+    index-paired :func:`QuadMesh.annulus <nekmeshpy.quadmesh.lift.annulus>`.
     ``element_tags`` tags the loop's line elements at construction.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
@@ -73,7 +73,7 @@ def rectangle(width: float, height: float, n: int, *,
     (bottom / right / top / left), corners always landing on a point.
 
     With ``n`` points it feeds
-    :meth:`QuadMesh.annulus <nekmeshpy.quadmesh.QuadMesh.annulus>` directly as
+    :func:`QuadMesh.annulus <nekmeshpy.quadmesh.lift.annulus>` directly as
     the outer far-field loop against a ``circle(radius, n)`` body -- rotate the
     circle with ``start_theta`` so its index 0 meets the lower-left corner
     (``atan2(-height, -width)``) and the two loops pair index-for-index (the
@@ -83,7 +83,7 @@ def rectangle(width: float, height: float, n: int, *,
     side's line elements; an absent key leaves that side untagged and
     ``side_tags=None`` leaves the whole loop untagged.  The keys -- rather than a
     positional 4-sequence -- are what make this spelling identical to its one-rung-up
-    twin :meth:`QuadMesh.rectangle <nekmeshpy.quadmesh.QuadMesh.rectangle>`, which
+    twin :func:`QuadMesh.rectangle <nekmeshpy.quadmesh.region.rectangle>`, which
     takes the same keyword with the same four names; an unrecognized key is a loud
     ``ValueError`` because a silent typo would otherwise just lose a wall.
 

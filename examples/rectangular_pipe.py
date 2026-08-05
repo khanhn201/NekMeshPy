@@ -16,7 +16,7 @@ Produces ``rectangular_pipe.re2`` and ``rectangular_pipe.vtu``.
 
 import logging
 
-from nekmeshpy import HexMesh, QuadMesh, export
+from nekmeshpy import export, hexmesh, quadmesh
 from nekmeshpy.model.fields import geometric_spacing, symmetric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -47,20 +47,20 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 # node fractions grade the section toward the walls.  All four sides are the wall.
 corners = [(0.0, -WIDTH / 2, -HEIGHT / 2), (0.0, WIDTH / 2, -HEIGHT / 2),
            (0.0, WIDTH / 2, HEIGHT / 2), (0.0, -WIDTH / 2, HEIGHT / 2)]
-section = QuadMesh.rectangle(
+section = quadmesh.region.rectangle(
     corners, NX, NY,
     x_frac=symmetric_spacing(NX, WALL_GRADING),   # width-direction node fractions
     y_frac=symmetric_spacing(NY, WALL_GRADING),   # height-direction node fractions
     side_tags={s: "wall" for s in ("bottom", "right", "top", "left")},
     smoothing_method=SMOOTHING_METHOD, order=ORDER)
 
-mesh = HexMesh.extrude(
+mesh = hexmesh.lift.extrude(
     section, axis=AXIS, length=LENGTH,
     layers=geometric_spacing(N_AXIAL, AXIAL_GRADING),
     origin=CENTER, first_tag="inlet", last_tag="outlet")
 
 # -- report + export ---------------------------------------------------------
-stats = mesh.quality_summary()
+stats = hexmesh.query.quality_summary(mesh)
 print("rectangular duct: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 

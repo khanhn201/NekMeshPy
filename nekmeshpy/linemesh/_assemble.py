@@ -14,11 +14,9 @@ from a parametrization instead of handed in -- and so takes the same ``loop`` fl
 Being open or closed is therefore not a property of the function: the same ``f`` meshes
 either way.
 
-Pure factories: they take no mesh, so they are reached through the package namespace
-(``linemesh.assemble.loft(...)``) rather than bound onto the class.  That is what lets
-them import the container normally -- only the modules holding *mesh-first*
-operations (``_morph``, ``_query``) are imported by ``linemesh.py``, and only those
-have to keep the container behind ``TYPE_CHECKING``.
+Reached as ``linemesh.assemble.loft(...)`` through the package namespace.  Nothing is
+bound onto the container, so ``linemesh.py`` imports no sibling and every sibling
+imports the container plainly -- there is no cycle here to guard against.
 """
 
 from __future__ import annotations
@@ -54,8 +52,8 @@ def loft(
 ) -> LineMesh:
     """Loft a stack of point "profiles" into a 1-D mesh -- the bottom rung of the
     uniform sweep primitive shared with
-    :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>` and
-    :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`.
+    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>` and
+    :func:`HexMesh.loft <nekmeshpy.hexmesh.assemble.loft>`.
 
     One dimension below a quad loft each profile is a **single point**, so the
     rungs joining consecutive profiles *are* the line elements: ``points``
@@ -72,8 +70,8 @@ def loft(
     ``first_tag`` / ``last_tag`` name the near / far **end points** of the chain
     (the 1-D end caps: line ``0`` side ``1`` and line ``L-1`` side ``2``).  A cap
     here is a single node, so each takes a scalar ``str`` or -- for shape parity
-    with :meth:`QuadMesh.loft <nekmeshpy.quadmesh.QuadMesh.loft>` /
-    :meth:`HexMesh.loft <nekmeshpy.hexmesh.HexMesh.loft>`, whose caps carry one tag
+    with :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>` /
+    :func:`HexMesh.loft <nekmeshpy.hexmesh.assemble.loft>`, whose caps carry one tag
     per section line / quad -- a one-element array-like.  A closed sweep has no
     near/far cap, so passing either with ``loop=True`` raises ``ValueError``
     rather than silently dropping it.
@@ -215,7 +213,7 @@ def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointAr
 def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
             loop: bool = False, order: int = 1,
             element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
-    """Loft a curve given as its own analytic parametrization -- :func:`loft` with the
+    """Loft a curve given as its own analytic parametrization -- :func:`loft <nekmeshpy.linemesh.assemble.loft>` with the
     profiles **evaluated** rather than handed in, so **every** node (corners *and* the
     private high-order ``interior``) comes from calling ``f`` and nothing is ever
     placed on a chord.
@@ -250,7 +248,7 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
     (``np.linspace(0.0, np.pi, n + 1)`` for a uniform chain over ``[0, pi]``).  A
     descending sequence runs the curve backwards; nothing here requires ascending order.
 
-    ``loop=True`` closes the curve, exactly as it does for :func:`loft`: the last
+    ``loop=True`` closes the curve, exactly as it does for :func:`loft <nekmeshpy.linemesh.assemble.loft>`: the last
     element joins back to the first point, so ``n+1`` fractions give ``n`` points
     *and* ``n`` lines, with no duplicated point and no degree-1 end.  The seam element
     is a real element with its own high-order nodes, and they can only be evaluated if
@@ -275,7 +273,7 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
     ``f = circle`` (kept separate because it can place its nodes without an inversion
     and to the last ulp).  Reach for ``loft_fn`` whenever a curve has a closed form
     that is not a circular arc -- an ellipse, a helix, a cylinder-cylinder intersection
-    -- instead of sampling it into an array and calling :func:`loft`, which can only
+    -- instead of sampling it into an array and calling :func:`loft <nekmeshpy.linemesh.assemble.loft>`, which can only
     subdivide straight between the samples and therefore loses the curve at
     ``order > 1``.  For a curve with **no** closed form (a scanned polyline) there is
     nothing to evaluate; resample it with ``trimesh.ops.resample_polyline`` and accept

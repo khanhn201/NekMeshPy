@@ -17,7 +17,7 @@ else ever reorders rows.
 import numpy as np
 import pytest
 
-from nekmeshpy import linemesh
+from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.model.tags import (
     EdgeTags,
     ElementTags,
@@ -343,10 +343,10 @@ def test_check_within_is_the_only_thing_needing_the_mesh():
 
 
 def test_the_container_still_rejects_an_out_of_range_element():
-    from nekmeshpy import HexMesh, QuadMesh
+    from nekmeshpy import HexMesh
     ring = linemesh.shape.circle(1.0, 8)
-    sec = QuadMesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
-    blk = HexMesh.extrude(sec, length=1.0, layers=2)
+    sec = quadmesh.region.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
+    blk = hexmesh.lift.extrude(sec, length=1.0, layers=2)
     with pytest.raises(ValueError, match="FaceTags names element"):
         HexMesh(blk.quads, blk.hex, blk.face_orient, None,
                 FaceTags.from_pairs([[blk.n_hexes, 1]], ["wall"]))

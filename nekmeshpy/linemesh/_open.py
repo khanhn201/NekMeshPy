@@ -64,7 +64,7 @@ def arc(radius: float, n: int, *,
 
     This is the open sibling of
     :func:`linemesh.shape.circle <nekmeshpy.linemesh.shape.circle>` -- the analytic
-    curve to hand to :meth:`QuadMesh.structured <nekmeshpy.quadmesh.QuadMesh.structured>` (or to
+    curve to hand to :func:`QuadMesh.structured <nekmeshpy.quadmesh.region.structured>` (or to
     weld into a composite edge with
     :func:`linemesh.assemble.merge <nekmeshpy.linemesh.assemble.merge>`) instead of sampling
     points and calling :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`,
@@ -172,11 +172,11 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     contains every ``break / total_length``, and closes with ``1.0``.
 
     Hand it straight to the ``fractions`` of
-    :meth:`HexMesh.sweep <nekmeshpy.hexmesh.HexMesh.sweep>` /
-    :meth:`QuadMesh.sweep <nekmeshpy.quadmesh.QuadMesh.sweep>` (or of
+    :func:`HexMesh.sweep <nekmeshpy.hexmesh.lift.sweep>` /
+    :func:`QuadMesh.sweep <nekmeshpy.quadmesh.lift.sweep>` (or of
     :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`) whose path is
     parametrized by normalized arc length.  Like
-    :func:`arclength_fractions` it is a ``HELPERS`` entry, not a factory: it answers a
+    :func:`arclength_fractions <nekmeshpy.linemesh.shape.arclength_fractions>` it is a ``HELPERS`` entry, not a factory: it answers a
     question about a sweep's input contract and returns a plain array, since the sweep
     itself meshes exactly at the stations given."""
     L = float(total_length)

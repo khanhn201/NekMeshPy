@@ -26,11 +26,11 @@ import logging
 import numpy as np
 
 from nekmeshpy import (
-    HexMesh,
-    QuadMesh,
     TriMesh,
     export,
+    hexmesh,
     linemesh,
+    quadmesh,
     smoothing,
 )
 
@@ -110,7 +110,7 @@ def join_arcs(p, q):
     (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
     :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
     crossing."""
-    return linemesh.assemble.merge([p, q.reverse()])
+    return linemesh.assemble.merge([p, linemesh.morph.reverse(q)])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------
@@ -148,7 +148,7 @@ def leg_slices(open_ring, seam_ring, n_slices):
         # spined_ogrid splits the loop along its A1..A2 chord (default spine) and
         # merges the two half-discs; wall_tag names every wall edge (see
         # flow_past_cylinder.py for the tag-flow-down convention).
-        slices.append(QuadMesh.spined_ogrid(
+        slices.append(quadmesh.region.spined_ogrid(
             loop, RADIAL, center_scale=CENTER_SCALE, wall_tag="wall",
             smoothing_method=m))
     return slices
@@ -209,15 +209,15 @@ seam_right = join_arcs(a_lm, a_rb)    # main-right : lower main wall + x>=0 coll
 seam_branch = join_arcs(a_lb, a_rb)   # branch     : the full collar
 
 blocks = [
-    HexMesh.loft(leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN),
+    hexmesh.assemble.loft(leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN),
                  first_tag="inlet"),
-    HexMesh.loft(leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN),
+    hexmesh.assemble.loft(leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN),
                  first_tag="outlet"),
-    HexMesh.loft(leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH),
+    hexmesh.assemble.loft(leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH),
                  first_tag="branch"),
 ]
 
-mesh = HexMesh.merge(blocks)
+mesh = hexmesh.assemble.merge(blocks)
 
 if SMOOTH_ITERS > 0:
     smoothing.smooth(mesh, wall_surface(), smooth_iters=SMOOTH_ITERS,
@@ -225,7 +225,7 @@ if SMOOTH_ITERS > 0:
                      project_to_stl=True)
 
 # -- report + export ---------------------------------------------------------
-print(mesh.report())
+print(hexmesh.query.report(mesh))
 
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

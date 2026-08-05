@@ -14,7 +14,7 @@ on a closed sweep is rejected at all three levels."""
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, QuadMesh, linemesh
+from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.model import topology
 
 R0, RSEC = 3.0, 1.0          # torus major / minor radius
@@ -30,13 +30,13 @@ def _ring_profiles(order=1, nsec=NSEC, nring=NRING):
     stays an exact circle."""
     ring = linemesh.shape.circle(RSEC, nring, center=(R0, 0.0, 0.0),
                            element_tags=["wall"] * nring, order=order)
-    return [ring.rotate(2.0 * np.pi * k / nsec, axis=(0.0, 1.0, 0.0))
+    return [linemesh.morph.rotate(ring, 2.0 * np.pi * k / nsec, axis=(0.0, 1.0, 0.0))
             for k in range(nsec)]
 
 
 def _disc_profiles(order=1, nsec=NSEC, nring=8):
     """The same sections filled with an O-grid disc, ready for a hex loft."""
-    return [QuadMesh.ogrid(r, 2, np.linspace(0.5, 1.0, 2))
+    return [quadmesh.region.ogrid(r, 2, np.linspace(0.5, 1.0, 2))
             for r in _ring_profiles(order=order, nsec=nsec, nring=nring)]
 
 
@@ -52,7 +52,7 @@ def test_line_loft_loop_is_the_loop_factory(order):
     assert np.array_equal(lofted.lines, factory.lines)
     assert np.array_equal(lofted.interior, factory.interior)
     # a closed sweep has no degree-1 end
-    assert lofted.boundary_points().size == 0
+    assert linemesh.query.boundary_points(lofted).size == 0
     assert lofted.lines.tolist() == [[0, 1], [1, 2], [2, 3], [3, 0]]
 
 
@@ -67,7 +67,7 @@ def test_line_loft_open_is_the_open_factory(order):
     # the closing rung is the only difference between the two modes
     assert lofted.n_lines == P.shape[0] - 1
     assert linemesh.assemble.loft(P, loop=True).n_lines == P.shape[0]
-    assert lofted.boundary_points().tolist() == [0, P.shape[0] - 1]
+    assert linemesh.query.boundary_points(lofted).tolist() == [0, P.shape[0] - 1]
 
 
 def test_line_loft_high_order_interior_is_the_straight_gll_blend():
@@ -96,7 +96,7 @@ def test_quad_loft_loop_builds_a_closed_torus_surface(order):
     """Revolving a closed ring with ``loop=True`` gives a torus surface: no free
     boundary edge, no duplicate line, and exactly the periodic element count."""
     profiles = _ring_profiles(order=order)
-    torus = QuadMesh.loft(profiles, loop=True)
+    torus = quadmesh.assemble.loft(profiles, loop=True)
 
     # periodic count: NSEC layers, not NSEC-1 (a duplicated seam would inflate it)
     assert torus.n_quads == NSEC * NRING
@@ -133,8 +133,8 @@ def test_quad_loft_loop_beats_repeating_the_first_profile():
     """The ``loop=False`` stack that repeats profile 0 covers the same geometry with
     a duplicated seam layer: same quads, strictly more points and lines."""
     profiles = _ring_profiles()
-    closed = QuadMesh.loft(profiles, loop=True)
-    repeated = QuadMesh.loft([*profiles, profiles[0]], loop=False)
+    closed = quadmesh.assemble.loft(profiles, loop=True)
+    repeated = quadmesh.assemble.loft([*profiles, profiles[0]], loop=False)
     assert closed.n_quads == repeated.n_quads
     assert closed.n_points < repeated.n_points
     assert closed.lines.n_lines < repeated.lines.n_lines
@@ -149,8 +149,8 @@ def test_quad_loft_loop_emits_no_cap_rows_but_keeps_side_walls():
     tagged boundary points are unaffected."""
     chain = linemesh.assemble.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
                           first_tag="left", last_tag="right")
-    profiles = [chain.translate((0.0, 0.0, z)) for z in (0.0, 1.0, 2.0, 3.0)]
-    closed = QuadMesh.loft(profiles, loop=True)
+    profiles = [linemesh.morph.translate(chain, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0, 3.0)]
+    closed = quadmesh.assemble.loft(profiles, loop=True)
     # 4 layers x 2 lines, one side-wall edge per layer per tagged end point
     assert closed.n_quads == 4 * 2
     assert sorted(set(closed.edge_tags.tags.tolist())) == ["left", "right"]
@@ -164,7 +164,7 @@ def test_hex_loft_loop_builds_a_watertight_solid_torus(order):
     """Revolving an O-grid disc with ``loop=True`` gives a solid torus: watertight,
     conformal, one component, and the only free faces are the outer wall."""
     profiles = _disc_profiles(order=order)
-    solid = HexMesh.loft(profiles, loop=True)
+    solid = hexmesh.assemble.loft(profiles, loop=True)
     report = topology.hex_report(solid.points, solid.hexes)
     assert report.n_components == 1
     assert report.n_nonmanifold_faces == 0
@@ -182,8 +182,8 @@ def test_hex_loft_loop_builds_a_watertight_solid_torus(order):
 
 def test_hex_loft_loop_beats_repeating_the_first_profile():
     profiles = _disc_profiles()
-    closed = HexMesh.loft(profiles, loop=True)
-    repeated = HexMesh.loft([*profiles, profiles[0]], loop=False)
+    closed = hexmesh.assemble.loft(profiles, loop=True)
+    repeated = hexmesh.assemble.loft([*profiles, profiles[0]], loop=False)
     assert closed.n_hexes == repeated.n_hexes
     assert closed.n_points < repeated.n_points
     # the open stack still has its two cap face layers
@@ -204,17 +204,17 @@ def test_line_loft_loop_rejects_cap_tags(cap):
 @pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
 def test_quad_loft_loop_rejects_cap_tags(cap):
     with pytest.raises(ValueError, match="no near/far cap"):
-        QuadMesh.loft(_ring_profiles(nsec=4), loop=True, **{cap: "cap"})
+        quadmesh.assemble.loft(_ring_profiles(nsec=4), loop=True, **{cap: "cap"})
 
 
 @pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
 def test_hex_loft_loop_rejects_cap_tags(cap):
     with pytest.raises(ValueError, match="no near/far cap"):
-        HexMesh.loft(_disc_profiles(nsec=4), loop=True, **{cap: "cap"})
+        hexmesh.assemble.loft(_disc_profiles(nsec=4), loop=True, **{cap: "cap"})
 
 
 def test_loft_loop_rejects_per_element_cap_arrays():
     """An array cap tag is rejected too -- not just the scalar form."""
     profiles = _ring_profiles(nsec=4)
     with pytest.raises(ValueError, match="no near/far cap"):
-        QuadMesh.loft(profiles, loop=True, first_tag=["cap"] * NRING)
+        quadmesh.assemble.loft(profiles, loop=True, first_tag=["cap"] * NRING)

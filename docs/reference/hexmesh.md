@@ -23,3 +23,24 @@ per-hex quality metrics.
 .. automodule:: nekmeshpy.hexmesh.quality
    :members:
 ```
+
+## Operations
+
+Every operation is a free function in one of these namespaces -- `hexmesh.region.ogrid(...)`, not `HexMesh.ogrid(...)`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.hexmesh.assemble
+   :members:
+
+.. automodule:: nekmeshpy.hexmesh.lift
+   :members:
+
+.. automodule:: nekmeshpy.hexmesh.shape
+   :members:
+
+.. automodule:: nekmeshpy.hexmesh.morph
+   :members:
+
+.. automodule:: nekmeshpy.hexmesh.query
+   :members:
+```

@@ -6,15 +6,11 @@ All metrics operate on a shared-point representation ``(points, hexes)`` where
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
 from ..model.quality import POOR_THRESHOLD, QualitySummary
-
-if TYPE_CHECKING:
-    from .hexmesh import HexMesh
+from .hexmesh import HexMesh
 
 # corner -> [corner, +xi, +eta, +zeta] neighbour point positions
 _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
@@ -64,14 +60,14 @@ def _ho_block(mesh: HexMesh, order: int) -> PointArray:
 def scaled_jacobian_ho(mesh: HexMesh, order: int) -> FloatArray:
     """Per-hex minimum scaled Jacobian sampled at the ``(order+1)**3`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
-    :func:`scaled_jacobian`.
+    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`.
 
     ``mesh`` is a ``HexMesh``; its high-order nodes are gathered from the entity B-rep
     on the fly.
 
     Each node's ``det(J) / prod(|tangent|)`` is formed from the mapping's parametric
     tangents there.  This is the **opt-in** metric: the default corner-based
-    :func:`scaled_jacobian` keeps the pinned linear numbers, and at ``order == 1`` (GLL
+    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` keeps the pinned linear numbers, and at ``order == 1`` (GLL
     nodes == corners) this reduces to it.
     """
     from ..model.interp import scaled_jacobian_ho as _sj

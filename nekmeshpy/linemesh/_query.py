@@ -10,17 +10,13 @@ from here directly.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from .._typing import (
     BoolArray,
     IntArray,
 )
-
-if TYPE_CHECKING:                    # the container imports us, so this cannot be
-    from .linemesh import LineMesh  # a runtime import -- annotations only
+from .linemesh import LineMesh
 
 
 def boundary_points(mesh: LineMesh) -> IntArray:

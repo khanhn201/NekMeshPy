@@ -7,8 +7,6 @@ those files can share them without an import cycle.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from .._typing import IntArray, PointArray
@@ -16,9 +14,7 @@ from ..linemesh import LineMesh
 from ..model import conform
 from ..model.fields import gll_nodes
 from ..model.interp import tensor_nodes
-
-if TYPE_CHECKING:
-    from .quadmesh import QuadMesh
+from .quadmesh import QuadMesh, _coons_at, _edge_interior_slots, _quad_interior_slots
 
 #: One wall overlay: ``(quad ids, quad side 1-4, wall curve)`` -- the true boundary
 #: ``LineMesh`` whose line ``k`` is the exact geometry of ``quad_ids[k]``'s named side,
@@ -53,7 +49,6 @@ def _elevate(qm: QuadMesh, order: int,
     Corners are never stored -- they stay single-sourced by ``points[quads]``."""
     if order == 1:
         return qm
-    from .quadmesh import QuadMesh, _coons_at, _edge_interior_slots, _quad_interior_slots
     points: PointArray = qm.points
     quads: IntArray = qm.quads
     nq = quads.shape[0]
@@ -126,7 +121,6 @@ def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray
     This is the inverse of the entity -> block gather, for a factory that can evaluate
     its region's true geometry at every node at once (``structured``) rather than
     subdividing a linear guess and stamping walls back on (``_elevate``)."""
-    from .quadmesh import _edge_interior_slots, _quad_interior_slots
     local: PointArray = blocks[:, _edge_interior_slots(order)]
     interior: PointArray = blocks[:, _quad_interior_slots(order)]
     edges, elem_edges, flip = conform.unique_edges(quads, 2)

@@ -31,7 +31,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, QuadMesh, export, linemesh
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -94,16 +94,16 @@ top = linemesh.shape.line((W, H, 0.0), (-W, H, 0.0),
 left = linemesh.shape.line((-W, H, 0.0), (-W, 0.0, 0.0),
                      np.linspace(0.0, 1.0, NY + 1), element_tag="inlet",
                      order=ORDER)
-section = QuadMesh.structured([bottom, right, top, left])
+section = quadmesh.region.structured([bottom, right, top, left])
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the section along +z; edge names ride onto the side faces
-mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+mesh = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
-print(mesh.report())
+print(hexmesh.query.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

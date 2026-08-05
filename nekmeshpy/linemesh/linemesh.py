@@ -43,7 +43,6 @@ from .._typing import (
     StrArray,
 )
 from ..model.tags import ElementTags, PointTags
-from . import _morph, _query
 
 
 def _as_points(points: PointArray) -> PointArray:
@@ -82,26 +81,6 @@ class LineMesh:
 
     # local line "edges": row s-1 is side s -> the single local vertex it names.
     EDGE_POINTS = np.array([[0], [1]], dtype=np.int64)
-
-    # -- operations ------------------------------------------------------
-    # Only the *mesh-first* operations are bound here -- the ones whose natural
-    # spelling is ``lm.translate(v)``.  Assigning them in the class body (rather than
-    # ``setattr``-ing from the package ``__init__``) is what lets mypy resolve them to
-    # their real signatures.
-    #
-    # The factories are deliberately *not* here.  They take no mesh, so they gain
-    # nothing from being bound, and keeping them out means ``linemesh.py`` imports only
-    # ``_morph`` and ``_query`` -- every other sibling is free to import this module
-    # normally instead of deferring it around a cycle.  They live in the package
-    # namespaces: ``linemesh.assemble.loft``, ``linemesh.shape.circle``,
-    # ``linemesh.morph.blend``.
-    reverse = _morph.reverse
-    transform = _morph.transform
-    translate = _morph.translate
-    rotate = _morph.rotate
-    scale = _morph.scale
-    boundary_points = _query.boundary_points
-    boundary_elements = _query.boundary_elements
 
     def __init__(
         self,

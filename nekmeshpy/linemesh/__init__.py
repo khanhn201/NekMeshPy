@@ -15,31 +15,27 @@ module         arity    delta contents
 ``_closed``    fixed    +1    closed-loop shape factories (``circle`` / ...)
 ============== ======== ===== ===============================================
 
-Operations reach callers two ways, split by whether they take a mesh.
+Every operation is a free function taking the mesh first, reached through one of the
+namespaces re-exported here.  Nothing is bound onto the container::
 
-**Mesh-first** operations -- the unary placements and the reads -- are assigned into
-the ``LineMesh`` class body by ``linemesh.py``, so ``lm.translate(v)`` /
-``lm.boundary_points()`` read as they should.
+    linemesh.assemble.loft(points)             # n-ary: loft / loft_fn / merge
+    linemesh.shape.circle(radius, n)           # shape factories
+    linemesh.morph.translate(lm, vector)       # rung-preserving placements + blend
+    linemesh.query.boundary_points(lm)         # reads that leave the ladder
 
-**Factories** take no mesh, so binding them onto the class buys nothing.  They are
-reached through the namespaces re-exported here instead::
+``linemesh.py`` is therefore pure storage -- it holds the arrays, their validation and
+the derived views, and imports no sibling.  That makes the package a strict DAG: every
+sibling does a plain ``from .linemesh import LineMesh`` like any normal module, so
+there are no deferred function-body imports and no ``TYPE_CHECKING`` guards anywhere.
 
-    linemesh.assemble.loft(points)        # n-ary: loft / loft_fn / merge
-    linemesh.shape.circle(radius, n)      # shape factories: line / arc / circle / ...
-    linemesh.morph.blend(a, b, fractions)
-
-That split is also what keeps the import graph a DAG.  ``linemesh.py`` imports only
-``_morph`` and ``_query`` (the two holding mesh-first operations), so every factory
-module is free to ``from .linemesh import LineMesh`` at module level like any normal
-module -- no deferred function-body imports, and ``TYPE_CHECKING`` only in those two.
-
-Assignment rather than ``setattr`` is the load-bearing detail for the bound half: mypy
-resolves a class-body assignment to the function's real signature, so a wrong argument
-is a type error.  (A class-scoped ``import`` would not work -- mypy rejects it outright
-with ``Unsupported class scoped import`` and types every name ``Any``.)
+The namespaces are real modules rather than aliases of the private siblings
+(``from . import _assemble as assemble``), because Sphinx registers a target under a
+module's own ``__name__`` -- an alias documents nothing and every cross-reference to it
+breaks.  ``shape`` merges ``_open`` and ``_closed``, since open vs closed is a storage
+split rather than a caller-facing one.
 """
 
-from . import assemble, morph, shape
+from . import assemble, morph, query, shape
 from .linemesh import LineMesh
 
-__all__ = ["LineMesh", "assemble", "morph", "shape"]
+__all__ = ["LineMesh", "assemble", "morph", "query", "shape"]

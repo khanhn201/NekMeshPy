@@ -22,7 +22,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, QuadMesh, export, linemesh
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model.fields import geometric_spacing, gll_nodes
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -78,16 +78,16 @@ inner = linemesh.assemble.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
 outer = linemesh.shape.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
-section = QuadMesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
+section = quadmesh.lift.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
                            smoothing_method=SMOOTHING_METHOD)
 
 # -- sweep along the span, naming the end caps front/back --------------------
-mesh = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
+mesh = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
                        layers=np.linspace(0.0, 1.0, N_SPAN + 1),
                        first_tag="front", last_tag="back")
 
 # -- report + export ---------------------------------------------------------
-print(mesh.report())
+print(hexmesh.query.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

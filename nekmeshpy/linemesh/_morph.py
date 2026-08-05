@@ -13,15 +13,11 @@ which is still rung-preserving and still invents no numbering.
 Free functions assigned into the :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` class body (see
 ``linemesh.py``) -- the binary ``blend`` wrapped in ``staticmethod``, the unary
 placements bare, so ``lm.translate(v)`` reads as it should.  Internal toolkit code
-imports them from here directly.  Each builds its result with ``type(mesh)`` rather
-than naming ``LineMesh``: the container imports this module, so a runtime import of
-it here would be a cycle.
-"""
+imports them from here directly.  """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -34,9 +30,7 @@ from .._typing import (
 )
 from ..model import affine
 from ..model.tags import PointTags
-
-if TYPE_CHECKING:                    # the container imports us, so this cannot be
-    from .linemesh import LineMesh  # a runtime import -- annotations only
+from .linemesh import LineMesh
 
 
 def blend(a: LineMesh, b: LineMesh,
@@ -77,8 +71,8 @@ def blend(a: LineMesh, b: LineMesh,
         # the blended points); at order 1 both interiors are empty, so this is a
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
-        out.append(type(a)((1.0 - t) * A + t * B, a.lines, ia,
-                           point_tags=a.point_tags, order=a.order))
+        out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
+                            point_tags=a.point_tags, order=a.order))
     return out
 
 
@@ -110,13 +104,13 @@ def reverse(mesh: LineMesh) -> LineMesh:
     lines: IntArray = (n - 1 - mesh.lines)[::-1, ::-1]
     b = mesh.point_tags
     bnd = PointTags(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
-    return type(mesh)(np.ascontiguousarray(mesh.points[::-1]),
-                      np.ascontiguousarray(lines),
-                      np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
-                      bnd,
-                      mesh.element_tags.renumber(
-                          (L - 1 - np.arange(L, dtype=np.int64))),
-                      order=mesh.order)
+    return LineMesh(np.ascontiguousarray(mesh.points[::-1]),
+                    np.ascontiguousarray(lines),
+                    np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
+                    bnd,
+                    mesh.element_tags.renumber(
+                        (L - 1 - np.arange(L, dtype=np.int64))),
+                    order=mesh.order)
 
 
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
@@ -126,17 +120,17 @@ def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh
     per-line private ``interior`` -- and both take the *same* map, so a curved
     element keeps its shape and its endpoints stay its corners.  Everything else
     (connectivity, element and point tags) is topology and rides through untouched."""
-    return type(mesh)(affine.apply(mesh.points, matrix, offset), mesh.lines,
-                      affine.apply(mesh.interior, matrix, offset),
-                      point_tags=mesh.point_tags,
-                      element_tags=mesh.element_tags, order=mesh.order)
+    return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
+                    affine.apply(mesh.interior, matrix, offset),
+                    point_tags=mesh.point_tags,
+                    element_tags=mesh.element_tags, order=mesh.order)
 
 
 def transform(mesh: LineMesh, matrix: FloatArray,
               offset: Vec3 | Sequence[float] = affine.ORIGIN) -> LineMesh:
     """A new curve with every node mapped through the affine ``p @ matrix.T +
-    offset``.  The general case behind :func:`translate` / :func:`rotate` /
-    :func:`scale`; reach for it for a map they do not name (a shear, a mirror, a
+    offset``.  The general case behind :func:`translate <nekmeshpy.linemesh.morph.translate>` / :func:`rotate <nekmeshpy.linemesh.morph.rotate>` /
+    :func:`scale <nekmeshpy.linemesh.morph.scale>`; reach for it for a map they do not name (a shear, a mirror, a
     pre-composed matrix)."""
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))

@@ -5,7 +5,7 @@ boundary tags."""
 import numpy as np
 import pytest
 
-from nekmeshpy import HexMesh, PointTags, QuadMesh, linemesh
+from nekmeshpy import PointTags, hexmesh, linemesh, quadmesh
 
 
 def _loop(radius):
@@ -23,7 +23,7 @@ def test_linemesh_blend_endpoints_and_midpoint():
     # connectivity carried from a -- and that connectivity *is* the topology:
     # a's wrapping cycle rides through, so the blend has no degree-1 ends.
     assert np.array_equal(mid.lines, a.lines)
-    assert mid.boundary_points().size == 0
+    assert linemesh.query.boundary_points(mid).size == 0
 
 
 def test_linemesh_blend_carries_point_tags_not_element_tags():
@@ -52,12 +52,12 @@ def _quad_grid(z):
     xs = np.linspace(0, 1, 4)
     ys = np.linspace(0, 1, 3)
     X, Y = np.meshgrid(xs, ys, indexing="ij")
-    return QuadMesh.from_grid(np.stack([X, Y, np.full_like(X, z)], axis=-1))
+    return quadmesh.lift.from_grid(np.stack([X, Y, np.full_like(X, z)], axis=-1))
 
 
 def test_quadmesh_blend_endpoints_and_connectivity():
     a, b = _quad_grid(0.0), _quad_grid(2.0)
-    lo, mid, hi = QuadMesh.blend(a, b, [0.0, 0.5, 1.0])
+    lo, mid, hi = quadmesh.morph.blend(a, b, [0.0, 0.5, 1.0])
     assert np.allclose(lo.points, a.points)
     assert np.allclose(hi.points, b.points)
     assert np.allclose(mid.points, 0.5 * (a.points + b.points))
@@ -69,9 +69,9 @@ def test_quadmesh_blend_rejects_connectivity_mismatch():
     xs = np.linspace(0, 1, 5)                                 # different ni -> different quads
     ys = np.linspace(0, 1, 3)
     X, Y = np.meshgrid(xs, ys, indexing="ij")
-    b = QuadMesh.from_grid(np.stack([X, Y, np.ones_like(X)], axis=-1))
+    b = quadmesh.lift.from_grid(np.stack([X, Y, np.ones_like(X)], axis=-1))
     with pytest.raises(ValueError, match="equal point counts|identical connectivity"):
-        QuadMesh.blend(a, b, [0.5])
+        quadmesh.morph.blend(a, b, [0.5])
 
 
 def _hex_block(z0):
@@ -80,12 +80,12 @@ def _hex_block(z0):
         for j in range(2):
             for k in range(2):
                 P[i, j, k] = [i / 2.0, j, z0 + k]
-    return HexMesh.from_grid(P)
+    return hexmesh.lift.from_grid(P)
 
 
 def test_hexmesh_blend_endpoints_and_connectivity():
     a, b = _hex_block(0.0), _hex_block(5.0)
-    lo, mid, hi = HexMesh.blend(a, b, [0.0, 0.5, 1.0])
+    lo, mid, hi = hexmesh.morph.blend(a, b, [0.0, 0.5, 1.0])
     assert np.allclose(lo.points, a.points)
     assert np.allclose(hi.points, b.points)
     assert np.allclose(mid.points, 0.5 * (a.points + b.points))

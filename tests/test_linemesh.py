@@ -4,7 +4,7 @@ tag systems (dense per-line
 ``element_tags`` + a sparse ``point_tags`` table), the
 ``loft`` / ``line`` / ``arc`` / ``circle`` / ``rectangle``
 factories (every curve meshed exactly at the points given -- no resampling), and
-the line -> quad -> hex tag ladder (``QuadMesh.extrude(LineMesh)`` and
+the line -> quad -> hex tag ladder (``quadmesh.lift.extrude(LineMesh)`` and
 ``HexMesh.extrude`` carrying the tags up)."""
 
 from collections import Counter
@@ -13,7 +13,15 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import ElementTags, HexMesh, LineMesh, PointTags, QuadMesh, linemesh
+from nekmeshpy import (
+    ElementTags,
+    LineMesh,
+    PointTags,
+    QuadMesh,
+    hexmesh,
+    linemesh,
+    quadmesh,
+)
 from nekmeshpy.model.fields import uniform_spacing
 
 # -- construction ------------------------------------------------------------
@@ -24,7 +32,7 @@ def test_open_default_chain_connectivity():
     assert lm.n_lines == 2                      # open chain: N-1 line elements
     assert lm.lines.tolist() == [[0, 1], [1, 2]]
     # openness is the connectivity: the chain does not wrap, so both ends survive
-    assert lm.boundary_points().tolist() == [0, 2]
+    assert linemesh.query.boundary_points(lm).tolist() == [0, 2]
     assert lm.element_group_tags == []          # untagged by default
 
 
@@ -34,7 +42,7 @@ def test_loop_default_chain_wraps():
     assert lm.n_lines == 3                       # closed loop: N line elements
     # closedness lives here and nowhere else: the wrap row [2, 0] is explicit
     assert lm.lines.tolist() == [[0, 1], [1, 2], [2, 0]]
-    assert lm.boundary_points().size == 0        # a cycle has no degree-1 end
+    assert linemesh.query.boundary_points(lm).size == 0        # a cycle has no degree-1 end
 
 
 def test_rejects_2d_points():
@@ -79,9 +87,9 @@ def test_boundary_table_columns_must_match_in_length():
 
 def test_boundary_points_are_open_ends():
     lm = linemesh.assemble.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)])
-    assert lm.boundary_points().tolist() == [0, 2]     # degree-1 ends
+    assert linemesh.query.boundary_points(lm).tolist() == [0, 2]     # degree-1 ends
     # a closed loop has no degree-1 ends
-    assert linemesh.assemble.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], loop=True).boundary_points().size == 0
+    assert linemesh.query.boundary_points(linemesh.assemble.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], loop=True)).size == 0
 
 
 def test_tagged_boundary_points_via_boundaries():
@@ -117,7 +125,7 @@ def test_circle_is_closed_loop_on_radius():
     # the loop actually wraps: 32 points -> 32 line elements ending [31, 0]
     assert lm.n_lines == 32
     assert lm.lines[-1].tolist() == [31, 0]
-    assert lm.boundary_points().size == 0
+    assert linemesh.query.boundary_points(lm).size == 0
     assert lm.n_points == 32
     assert np.allclose(lm.points[:, 2], 0.0)
     assert np.allclose(np.linalg.norm(lm.points[:, :2], axis=1), 2.0)
@@ -135,7 +143,7 @@ def test_arc_is_open_chain_on_radius():
     # n elements -> n+1 points, both ends free (this is circle's *open* sibling)
     lm = linemesh.shape.arc(2.0, 8, start_theta=0.0, end_theta=np.pi / 2.0)
     assert lm.n_lines == 8 and lm.n_points == 9
-    assert lm.boundary_points().tolist() == [0, 8]      # open: both ends free
+    assert linemesh.query.boundary_points(lm).tolist() == [0, 8]      # open: both ends free
     assert np.allclose(np.linalg.norm(lm.points[:, :2], axis=1), 2.0)
     assert np.allclose(lm.points[:, 2], 0.0)
     # evenly spaced in angle, endpoints exactly at start/end
@@ -214,7 +222,7 @@ def test_rectangle_discretizes_per_side_on_box():
     hb = 6.0
     lm = linemesh.shape.rectangle(2 * hb, 2 * hb, 32)
     assert lm.n_points == 32 and lm.n_lines == 32
-    assert lm.lines[-1].tolist() == [31, 0] and lm.boundary_points().size == 0
+    assert lm.lines[-1].tolist() == [31, 0] and linemesh.query.boundary_points(lm).size == 0
     assert np.isclose(np.abs(lm.points[:, :2]).max(axis=1), hb).all()
     for cxy in ([-hb, -hb], [hb, -hb], [hb, hb], [-hb, hb]):
         assert np.isclose(lm.points[:, :2] - cxy, 0.0).all(axis=1).any()
@@ -238,7 +246,7 @@ def test_rectangle_in_tilted_plane_is_planar():
     lm = linemesh.shape.rectangle(3.0, 1.0, 8, center=c, normal=n)
     assert np.max(np.abs((lm.points - c) @ n)) < 1e-12   # coplanar
     assert lm.n_points == 8
-    assert lm.lines[-1].tolist() == [7, 0] and lm.boundary_points().size == 0
+    assert lm.lines[-1].tolist() == [7, 0] and linemesh.query.boundary_points(lm).size == 0
 
 
 # -- merge (weld coincident end points) --------------------------------------
@@ -254,7 +262,7 @@ def test_merge_two_arcs_close_into_a_loop():
     ring = linemesh.assemble.merge([linemesh.assemble.loft(upper),
                            linemesh.assemble.loft(lower[::-1])])
     # welded at A1 and A2 -> one closed loop of 8 unique points (2*(5-1))
-    assert ring.boundary_points().size == 0     # no degree-1 end survived
+    assert linemesh.query.boundary_points(ring).size == 0     # no degree-1 end survived
     assert ring.n_points == 8
     assert ring.n_lines == 8
     # index 0 stays A1, index 4 (M//2) is A2 -- the split points spined_ogrid needs
@@ -272,7 +280,7 @@ def test_merge_open_chains_stay_open_and_carry_tags():
                       point_tags=PointTags.from_pairs([[0, 1]], ["start"]))
     b = linemesh.assemble.loft([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
     m = linemesh.assemble.merge([a, b])
-    assert m.boundary_points().tolist() == [0, 2]       # the two far ends survive
+    assert linemesh.query.boundary_points(m).tolist() == [0, 2]       # the two far ends survive
     assert m.n_points == 3                              # the shared point welded
     assert m.element_tags.dense(m.n_lines).tolist() == ["a", "b"]        # dense tags concatenate
     assert m.point_group_tags == ["start"]           # sparse BC markers carried
@@ -302,7 +310,7 @@ def test_extrude_line_to_quad_carries_element_and_edge_tags():
                          element_tags=["seg0", "seg1"],
                          point_tags=PointTags.from_pairs(
                              [[0, 1], [1, 2]], ["start", "end"]))
-    qm = QuadMesh.extrude(line, axis=(0.0, 1.0, 0.0), length=1.0,
+    qm = quadmesh.lift.extrude(line, axis=(0.0, 1.0, 0.0), length=1.0,
                           layers=uniform_spacing(1),
                           first_tag="near", last_tag="far")
     # element tag rides onto the swept quads (one quad per line, nz=1)
@@ -329,7 +337,7 @@ def test_hex_extrude_carries_quad_element_tags():
         [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [2, 0, 0], [2, 1, 0]],
         [[0, 1, 2, 3], [1, 4, 5, 2]],
         element_tags=ElementTags.from_dense(["A", "B"]))
-    block = HexMesh.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,
+    block = hexmesh.lift.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,
                             layers=uniform_spacing(2))
     assert block.n_hexes == 4
     assert Counter(block.element_tags.dense(block.n_hexes).tolist()) == {"A": 2, "B": 2}

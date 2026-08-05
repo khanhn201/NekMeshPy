@@ -9,16 +9,14 @@ callables ``fn(qm, **opts) -> qm`` registered by name via
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, IntArray
-
-if TYPE_CHECKING:
-    from .quadmesh import QuadMesh
+from .quadmesh import QuadMesh
 
 F = TypeVar("F", bound=Callable[..., "QuadMesh"])
 

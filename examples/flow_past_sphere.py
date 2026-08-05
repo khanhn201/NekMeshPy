@@ -19,7 +19,7 @@ Produces ``flow_past_sphere.re2`` and ``flow_past_sphere.vtu``.
 
 import logging
 
-from nekmeshpy import HexMesh, QuadMesh, export
+from nekmeshpy import export, hexmesh, quadmesh
 from nekmeshpy.model.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -43,19 +43,19 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
 # -- two closed quad surfaces: outer cube (tagged per face) and inner sphere -
 # QuadMesh.box tags each face with the far-field side it forms; QuadMesh.sphere
 # reuses the same (N_FACE) connectivity, so the two pair by index for annulus.
-cube = QuadMesh.box(S, N_FACE, order=ORDER, patch_tags={
+cube = quadmesh.surface.box(S, N_FACE, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})
-sphere = QuadMesh.sphere(R, N_FACE, order=ORDER)
+sphere = quadmesh.surface.sphere(R, N_FACE, order=ORDER)
 
 # fill the shell sphere -> cube, radial clustered toward the sphere; inner cap
 # tagged `sphere`, outer cap per cube-face element tag
-mesh = HexMesh.annulus(sphere, cube,
+mesh = hexmesh.lift.annulus(sphere, cube,
                        radial=geometric_spacing(N_RADIAL, RADIAL_GRADING))
 
 # -- report + export ---------------------------------------------------------
-print(mesh.report())
+print(hexmesh.query.report(mesh))
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

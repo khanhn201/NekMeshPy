@@ -21,7 +21,6 @@ code calls these free functions directly.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -30,10 +29,6 @@ from ..model.tags import EdgeTags, ElementTags
 from ._assemble import merge
 from ._lift import from_grid
 from ._query import boundary_edges
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 from .quadmesh import QuadMesh
 
 # the six box faces: outward normal n with right-handed tangents (u x v = n),
@@ -83,7 +78,7 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
         patch_tags: Mapping[str, str] | None = None,
         order: int = 1) -> QuadMesh:
     """Closed box surface centred at the origin: six quad patches welded with
-    :meth:`merge`.  ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n``
+    :func:`merge <nekmeshpy.quadmesh.assemble.merge>`.  ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n``
     is a scalar or ``(nx, ny, nz)`` cells per axis.  ``patch_tags`` (keyed
     ``x_min`` / ``x_max`` / ... / ``z_max``) writes each face's dense per-quad
     ``element_tags`` -- e.g. the far-field side it forms; an absent face stays
@@ -113,9 +108,9 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
 def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
            element_tag: str = "sphere", order: int = 1) -> QuadMesh:
     """Closed cubed-sphere surface of ``radius`` about the origin: a unit
-    :meth:`box` projected radially onto the sphere (same connectivity, so it
+    :func:`box <nekmeshpy.quadmesh.surface.box>` projected radially onto the sphere (same connectivity, so it
     pairs by index with a same-``n`` box for
-    :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>`).  Every
+    :func:`HexMesh.annulus <nekmeshpy.hexmesh.lift.annulus>`).  Every
     quad carries ``element_tag`` (default ``sphere``).
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
@@ -129,7 +124,6 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
     node-wise, so a shared edge lands in the same place seen from either incident
     quad and the result stays structurally conformal with nothing to reconcile."""
     from ..linemesh import LineMesh
-    from .quadmesh import QuadMesh
     cube = box(1.0, n, order=order)
 
     def project(a: PointArray) -> PointArray:
@@ -151,9 +145,8 @@ def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
 
     A half box / hemisphere is open at ``z = 0``, so its rim is exactly the surface's
     free edge set.  Sweeping the surface with
-    :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>` turns those edges into
+    :func:`HexMesh.annulus <nekmeshpy.hexmesh.lift.annulus>` turns those edges into
     the shell's side faces -- the ground annulus between body and far field."""
-    from .quadmesh import QuadMesh
     if not rim_tag:
         return qm
     rows = boundary_edges(qm)
@@ -168,8 +161,8 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
              patch_tags: Mapping[str, str] | None = None,
              rim_tag: str = "",
              order: int = 1) -> QuadMesh:
-    """The upper half of a :func:`box`: the five patches of the box surface that
-    bound ``[-sx, sx] x [-sy, sy] x [0, sz]``, welded with :meth:`merge` and left
+    """The upper half of a :func:`box <nekmeshpy.quadmesh.surface.box>`: the five patches of the box surface that
+    bound ``[-sx, sx] x [-sy, sy] x [0, sz]``, welded with :func:`merge <nekmeshpy.quadmesh.assemble.merge>` and left
     **open at the ``z = 0`` rim** (the ``z_min`` patch is dropped).
 
     ``half_sizes`` is a scalar (cube) or ``(sx, sy, sz)``; ``n`` is a scalar or
@@ -177,11 +170,11 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
     ``z in [0, sz]`` on the four upright side patches (default: ``nz``).  The top
     patch is ``nx x ny``.  ``patch_tags`` (keyed ``x_min`` / ``x_max`` / ``y_min`` /
     ``y_max`` / ``z_max``) writes each patch's dense per-quad ``element_tags``;
-    ``rim_tag`` names the ``z = 0`` rim edges (see :func:`hemisphere`).
+    ``rim_tag`` names the ``z = 0`` rim edges (see :func:`hemisphere <nekmeshpy.quadmesh.surface.hemisphere>`).
 
-    This is the far-field partner of :func:`hemisphere`: a ``hemisphere(R, n,
+    This is the far-field partner of :func:`hemisphere <nekmeshpy.quadmesh.surface.hemisphere>`: a ``hemisphere(R, n,
     n_vertical=v)`` has identical ``quads`` and point count, so the two pair by index
-    for :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>`.
+    for :func:`HexMesh.annulus <nekmeshpy.hexmesh.lift.annulus>`.
 
     ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1`` each
     flat patch carries ``(order+1)**2`` straight-sided GLL nodes (exact -- the
@@ -222,13 +215,13 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
                rim_tag: str = "",
                order: int = 1) -> QuadMesh:
     """Cubed-**hemisphere** surface of ``radius`` sitting on the ground plane
-    ``z = 0``: a unit :func:`half_box` projected radially onto the sphere.  It is
-    :func:`sphere` with the ``-z`` patch dropped, so it is open at the ``z = 0``
+    ``z = 0``: a unit :func:`half_box <nekmeshpy.quadmesh.surface.half_box>` projected radially onto the sphere.  It is
+    :func:`sphere <nekmeshpy.quadmesh.surface.sphere>` with the ``-z`` patch dropped, so it is open at the ``z = 0``
     rim -- a body resting on the floor rather than a closed surface.
 
     Same connectivity as ``half_box(s, n, n_vertical=v)`` for any ``s``, so the two
     pair point-for-point (identical ``quads``, equal point count) and
-    :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>` fills the shell
+    :func:`HexMesh.annulus <nekmeshpy.hexmesh.lift.annulus>` fills the shell
     between them -- the ground-plane analogue of the
     ``sphere`` / ``box`` pairing in ``flow_past_sphere.py``.  The rim is the equator
     ``x^2 + y^2 = radius^2``, and ``half_box``'s rim is the ground square, so the
@@ -248,7 +241,6 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
     ``interior`` -- so a shared edge lands in the same place seen from either
     incident quad and the result stays structurally conformal."""
     from ..linemesh import LineMesh
-    from .quadmesh import QuadMesh
     cube = half_box(1.0, n, n_vertical=n_vertical, order=order)
 
     def project(a: PointArray) -> PointArray:
@@ -262,12 +254,3 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
                   project(cube.interior) if order > 1 else None,
                   element_tags=etags, order=order)
     return _tag_rim(qm, rim_tag)
-
-
-#: Parametric-surface factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., QuadMesh]] = {
-    "box": box,
-    "sphere": sphere,
-    "half_box": half_box,
-    "hemisphere": hemisphere,
-}

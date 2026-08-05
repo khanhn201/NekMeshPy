@@ -10,8 +10,6 @@ internal toolkit code imports them from here directly rather than through the bo
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from .._typing import (
@@ -63,20 +61,9 @@ def scaled_jacobian(mesh: QuadMesh, *, high_order: bool = False) -> FloatArray:
     return quality.scaled_jacobian(mesh.points, mesh.quads)
 
 def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> QualitySummary:
-    """Aggregate scaled-Jacobian statistics (see :meth:`scaled_jacobian` for the
+    """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>` for the
     ``high_order`` flag)."""
     from . import quality
     if high_order:
         return quality.summary_ho(mesh, mesh.order)
     return quality.summary(mesh.points, mesh.quads)
-
-
-#: Read-only queries bound onto ``QuadMesh``.
-METHODS: dict[str, Any] = {
-    "_boundary_mask": _boundary_mask,
-    "boundary_edges": boundary_edges,
-    "boundary_elements": boundary_elements,
-    "boundary_points": boundary_points,
-    "scaled_jacobian": scaled_jacobian,
-    "quality_summary": quality_summary,
-}

@@ -18,7 +18,6 @@ internal toolkit code imports them from here directly rather than through the bo
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
 
@@ -42,13 +41,13 @@ def blend(a: HexMesh, b: HexMesh,
     result carries ``a``'s ``hexes`` and ``face_tags``
     (positional BC markers follow the morph); per-hex ``element_tags`` are left
     for the caller to assign.  The 3-D sibling of
-    :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>`.
+    :func:`QuadMesh.blend <nekmeshpy.quadmesh.morph.blend>`.
 
     The morph is delegated one rung **down the B-rep ladder**: the shared corners,
     shared edge nodes and shared face nodes are exactly the shared-face
     ``QuadMesh`` (whose own corners and edge nodes are in turn its edge
     ``LineMesh``), so
-    :meth:`QuadMesh.blend <nekmeshpy.quadmesh.QuadMesh.blend>` produces the blended
+    :func:`QuadMesh.blend <nekmeshpy.quadmesh.morph.blend>` produces the blended
     face mesh and this method only lerps what a hex owns privately -- its per-hex
     ``interior`` -- while keeping ``a``'s ``hex`` / ``face_orient`` incidence
     verbatim."""
@@ -101,11 +100,11 @@ def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
 def transform(mesh: HexMesh, matrix: FloatArray,
               offset: Vec3 | Sequence[float] = affine.ORIGIN) -> HexMesh:
     """A new block with every node mapped through the affine ``p @ matrix.T +
-    offset``.  The general case behind :func:`translate` / :func:`rotate` /
-    :func:`scale`; reach for it for a map they do not name (a shear, a mirror, a
+    offset``.  The general case behind :func:`translate <nekmeshpy.hexmesh.morph.translate>` / :func:`rotate <nekmeshpy.hexmesh.morph.rotate>` /
+    :func:`scale <nekmeshpy.hexmesh.morph.scale>`; reach for it for a map they do not name (a shear, a mirror, a
     pre-composed matrix).  A matrix with negative determinant mirrors the block and
     therefore inverts every element -- check
-    :meth:`scaled_jacobian <nekmeshpy.hexmesh.HexMesh.scaled_jacobian>` after one."""
+    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` after one."""
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
 
@@ -123,7 +122,7 @@ def rotate(mesh: HexMesh, angle: float,
     """A new block rotated by ``angle`` **radians** about the line through ``center``
     along ``axis`` (right-handed, ``axis`` need not be normalized).  The map is
     rigid, so element quality is unchanged -- place a block this way and
-    :meth:`merge <nekmeshpy.hexmesh.HexMesh.merge>` it onto its neighbour."""
+    :func:`merge <nekmeshpy.hexmesh.assemble.merge>` it onto its neighbour."""
     return _affine(mesh, *affine.rotation(angle, axis, center))
 
 
@@ -132,18 +131,3 @@ def scale(mesh: HexMesh, factor: float | Vec3 | Sequence[float],
     """A new block scaled about ``center`` by ``factor`` -- a scalar (uniform) or a
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
-
-
-#: Rung-preserving combinators bound onto ``HexMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "blend": blend,
-}
-
-#: Unary placements bound onto ``HexMesh`` as instance methods -- they take the mesh
-#: they act on, so ``hm.translate(v)`` is the natural spelling.
-METHODS: dict[str, Any] = {
-    "transform": transform,
-    "translate": translate,
-    "rotate": rotate,
-    "scale": scale,
-}

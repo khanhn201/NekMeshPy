@@ -1,7 +1,7 @@
 """Open-region :class:`~nekmeshpy.HexMesh` block factories: fills that take the
 *boundary* of a region and mesh the volume it encloses.
 
-:func:`tetra` is the only one today -- the hex-rung sibling of ``quadmesh._open``'s
+:func:`tetra <nekmeshpy.hexmesh.shape.tetra>` is the only one today -- the hex-rung sibling of ``quadmesh._open``'s
 region fills, and separate from ``_lift`` for the same reason they are: it owns a
 *shape* model (a curvilinear tetrahedron) rather than being generic over any input.
 Like the quad-rung factories these are plain free functions returning a ``HexMesh``;
@@ -12,7 +12,6 @@ Like the quad-rung factories these are plain free functions returning a ``HexMes
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -26,10 +25,6 @@ from ..quadmesh import QuadMesh
 from ..quadmesh._assemble import loft as quad_loft
 from ._assemble import loft as hex_loft
 from ._assemble import merge
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 from .hexmesh import HexMesh
 
 
@@ -421,7 +416,3 @@ def tetra(faces: Sequence[QuadMesh], *,
         # the two it is handed.
         blocks.append(_block(_coons3(f), order, (tb, tc, ta)))
     return merge(blocks)
-
-
-#: Open-region block factories bound onto ``HexMesh`` by ``hexmesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., HexMesh]] = {"tetra": tetra}

@@ -18,7 +18,6 @@ the bound ``QuadMesh.<name>`` sugar.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 import numpy as np
 
@@ -97,8 +96,8 @@ def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh
 def transform(mesh: QuadMesh, matrix: FloatArray,
               offset: Vec3 | Sequence[float] = affine.ORIGIN) -> QuadMesh:
     """A new section with every node mapped through the affine ``p @ matrix.T +
-    offset``.  The general case behind :func:`translate` / :func:`rotate` /
-    :func:`scale`; reach for it for a map they do not name (a shear, a mirror, a
+    offset``.  The general case behind :func:`translate <nekmeshpy.quadmesh.morph.translate>` / :func:`rotate <nekmeshpy.quadmesh.morph.rotate>` /
+    :func:`scale <nekmeshpy.quadmesh.morph.scale>`; reach for it for a map they do not name (a shear, a mirror, a
     pre-composed matrix)."""
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
@@ -126,18 +125,3 @@ def scale(mesh: QuadMesh, factor: float | Vec3 | Sequence[float],
     """A new section scaled about ``center`` by ``factor`` -- a scalar (uniform) or a
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
-
-
-#: Rung-preserving combinators bound onto ``QuadMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "blend": blend,
-}
-
-#: Unary placements bound onto ``QuadMesh`` as instance methods -- they take the mesh
-#: they act on, so ``qm.translate(v)`` is the natural spelling.
-METHODS: dict[str, Any] = {
-    "transform": transform,
-    "translate": translate,
-    "rotate": rotate,
-    "scale": scale,
-}

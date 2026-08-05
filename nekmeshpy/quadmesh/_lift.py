@@ -19,7 +19,7 @@ internal toolkit code imports them from here directly rather than through the bo
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Callable, Literal
+from typing import Callable, Literal
 
 import numpy as np
 
@@ -56,7 +56,7 @@ def extrude(
     last_tag: str | Sequence[str] | StrArray = "",
 ) -> QuadMesh:
     """Sweep a ``LineMesh`` a distance ``length`` along ``axis`` into a quad
-    section (the straight special case of :meth:`loft`).
+    section (the straight special case of :func:`loft <nekmeshpy.quadmesh.assemble.loft>`).
 
     The ``line`` is translated rigidly along ``axis``; ``origin`` shifts the whole
     section.  ``layers`` is either an ``int`` count of uniform layers or the
@@ -68,7 +68,7 @@ def extrude(
     the near / far cap edges.
 
     ``length`` and ``layers`` are positional-or-keyword, like ``path`` /
-    ``fractions`` on the sibling :func:`sweep`: they are required, so making them
+    ``fractions`` on the sibling :func:`sweep <nekmeshpy.quadmesh.lift.sweep>`: they are required, so making them
     keyword-only bought nothing.  Every existing
     ``extrude(line, axis=..., length=..., layers=...)`` call still binds."""
     axis_u: Vec3 = np.asarray(axis, dtype=float)
@@ -109,14 +109,14 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
 
     The rings are always a genuine high-order blend: ``LineMesh.blend`` interpolates
     the two loops' curved blocks (``blend_ho``) so every ring carries curved
-    tangential edges, and :meth:`loft` sweeps them radially -- the sibling of
-    :meth:`HexMesh.annulus <nekmeshpy.hexmesh.HexMesh.annulus>` one dimension down.
+    tangential edges, and :func:`loft <nekmeshpy.quadmesh.assemble.loft>` sweeps them radially -- the sibling of
+    :func:`HexMesh.annulus <nekmeshpy.hexmesh.lift.annulus>` one dimension down.
     A repositioning ``smoothing_method`` (``conduction`` / ``winslow``) relaxes the
     corner grid, which cannot ride a curved block, so it is rejected at ``order > 1``
     (high-order smoothing is not implemented -- use ``order=1`` or drop the smoother);
     at ``order 1`` it relaxes the ring interior as usual.
 
-    Built by :meth:`loft`-ing the blended rings; the inner / outer rings are the
+    Built by :func:`loft <nekmeshpy.quadmesh.assemble.loft>`-ing the blended rings; the inner / outer rings are the
     loft's near / far caps.  Gives ``N x (radial.size - 1)`` quads."""
     radial = validate_layers(radial, "annulus radial")
     A: PointArray = _check_boundary(inner, "annulus inner", 3)   # (N,3)
@@ -170,7 +170,7 @@ def from_grid(
     each quad carries ``(order+1)**2`` straight-sided GLL nodes (a flat grid cell
     is exact under this subdivision).
 
-    Built as a :meth:`loft` of the grid's **column profiles**, each of which is
+    Built as a :func:`loft <nekmeshpy.quadmesh.assemble.loft>` of the grid's **column profiles**, each of which is
     itself a :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` of the
     grid's ``i`` points -- profile ``j`` is the open chain lofted from
     ``P[:, j, :]`` running ``i = 0..ni`` -- and the sweep runs ``j = 0..nj``, so
@@ -245,7 +245,7 @@ def sweep(
 
     Sweep one cross-section along a **curved** path: the section is carried by a moving
     orthonormal frame, so at every station it is placed by a *rigid* motion -- the
-    curved generalization of :func:`extrude`, which is this with a straight path and a
+    curved generalization of :func:`extrude <nekmeshpy.quadmesh.lift.extrude>`, which is this with a straight path and a
     constant frame.
 
     **The section is moved rigidly, not point-by-point.**  Through a bend of radius
@@ -269,7 +269,7 @@ def sweep(
     the whole node lattice
     ``_refined_lattice(fractions, order)`` in one call, builds the frame field on it,
     places the section at every level -- corner levels *and* the intermediate GLL levels
-    -- and delegates to :func:`loft` through ``sweep_nodes``.  So the sweep direction is
+    -- and delegates to :func:`loft <nekmeshpy.quadmesh.assemble.loft>` through ``sweep_nodes``.  So the sweep direction is
     exact at any order, not straight-subdivided between slices.
 
     ``fractions`` are the path parameter values themselves, in ``path``'s own units, and
@@ -309,7 +309,7 @@ def sweep(
     the profile was built about.  ``normal=`` overrides the profile's own fitted plane,
     needed when it is not planar (otherwise a ``ValueError`` rather than a silent
     shear) -- and a straight-segment profile has no plane of its own at all, so it
-    always needs one.  Tags behave exactly as on :func:`loft`:
+    always needs one.  Tags behave exactly as on :func:`loft <nekmeshpy.quadmesh.assemble.loft>`:
     ``element_tags`` is per sweep layer and overrides the section's own where non-empty,
     and ``first_tag`` / ``last_tag`` cap the ends (rejected when ``loop=True``).
 
@@ -335,12 +335,3 @@ def sweep(
         profs.append(profs[0])          # the seam profile *is* the first placement
     return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="sweep")
-
-
-#: Rung-raising combinators bound onto ``QuadMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "extrude": extrude,
-    "sweep": sweep,
-    "annulus": annulus,
-    "from_grid": from_grid,
-}

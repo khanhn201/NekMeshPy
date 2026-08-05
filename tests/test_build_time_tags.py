@@ -8,7 +8,7 @@ from collections import Counter
 import numpy as np
 import pytest
 
-from nekmeshpy import NO_TAG, EdgeTags, HexMesh, QuadMesh
+from nekmeshpy import NO_TAG, EdgeTags, HexMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.model.fields import uniform_spacing
 
 # a unit square, one quad, CCW: side 1 (0,1) bottom, 2 (1,2) right, 3 (2,3) top,
@@ -54,20 +54,20 @@ def test_mismatched_rows_and_names_raises():
 def test_loft_propagates_per_edge_tags_to_side_faces():
     qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
                   edge_tags=EdgeTags.from_pairs(_SQUARE_BND, _SQUARE_BND_TAGS))
-    blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
+    blk = hexmesh.lift.extrude(qm, length=1.0, layers=uniform_spacing(1),
                           first_tag="inlet", last_tag="outlet")
     counts = Counter(blk.face_tags.tags.tolist())
     # 4 named sides + 2 caps, each once (one hex)
     assert counts == {"bottom": 1, "right": 1, "top": 1, "left": 1,
                       "inlet": 1, "outlet": 1}
-    assert blk.is_watertight()
+    assert hexmesh.query.is_watertight(blk)
 
 
 def test_no_boundary_suppresses_a_swept_face():
     # name three edges "wall"; the right edge (side 2) is declared NO_TAG
     qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
                   edge_tags=EdgeTags.from_pairs([[0, 1], [0, 3], [0, 4], [0, 2]], ["wall", "wall", "wall", NO_TAG]))
-    blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(2))
+    blk = hexmesh.lift.extrude(qm, length=1.0, layers=uniform_spacing(2))
     names = blk.face_tags.tags.tolist()
     assert "" not in names                       # NO_TAG never emitted
     # 3 walls x 2 layers = 6 wall faces; the 4th (right) edge is suppressed
@@ -77,7 +77,7 @@ def test_no_boundary_suppresses_a_swept_face():
 def test_untagged_section_tags_only_caps():
     # a section with no tagged edges -> only the caps are named
     qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS)
-    blk = HexMesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
+    blk = hexmesh.lift.extrude(qm, length=1.0, layers=uniform_spacing(1),
                           first_tag="inlet", last_tag="outlet")
     assert Counter(blk.face_tags.tags.tolist()) == {"inlet": 1, "outlet": 1}
 
@@ -87,7 +87,7 @@ def test_quadmesh_merge_concats_and_offsets_edge_tags():
                  edge_tags=EdgeTags.from_pairs([[0, 1]], ["a_bottom"]))
     b = QuadMesh.from_corners([[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], _SQUARE_QUADS,
                  edge_tags=EdgeTags.from_pairs([[0, 1]], ["b_bottom"]))
-    m = QuadMesh.merge([a, b])
+    m = quadmesh.assemble.merge([a, b])
     assert set(m.edge_tags.tags.tolist()) == {"a_bottom", "b_bottom"}
     # each name still sits on a y=0 edge after the point weld + quad-id offset
     for r in range(m.n_edge_tags):
@@ -99,7 +99,7 @@ def _box(lo, hi, tags):
     ys = np.linspace(lo[1], hi[1], 2)
     zs = np.linspace(lo[2], hi[2], 2)
     X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
-    return HexMesh.from_grid(np.stack([X, Y, Z], axis=-1), side_tags=tags)
+    return hexmesh.lift.from_grid(np.stack([X, Y, Z], axis=-1), side_tags=tags)
 
 
 def test_no_boundary_seam_keeps_merge_a_plain_concatenate():
@@ -108,9 +108,9 @@ def test_no_boundary_seam_keeps_merge_a_plain_concatenate():
     sides = {"x_min": "wall", "x_max": "wall", "y_min": "wall", "y_max": "wall"}
     lower = _box((0, 0, 0), (1, 1, 1), {**sides, "z_min": "bottom", "z_max": NO_TAG})
     upper = _box((0, 0, 1), (1, 1, 2), {**sides, "z_min": NO_TAG, "z_max": "top"})
-    mesh = HexMesh.merge([lower, upper])
+    mesh = hexmesh.assemble.merge([lower, upper])
 
-    assert mesh.is_watertight() and mesh.is_conforming()
+    assert hexmesh.query.is_watertight(mesh) and hexmesh.query.is_conforming(mesh)
     assert set(mesh.face_group_tags) == {"wall", "bottom", "top"}
     # nothing tagged on the interior interface plane z=1
     z = _face_centroids(mesh)[:, 2]

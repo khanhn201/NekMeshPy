@@ -17,7 +17,6 @@ points.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -32,20 +31,16 @@ from ..model.interp import coons_grid
 from ..model.tags import EdgeTags, TagBuilder
 from ._assemble import merge
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
+from .quadmesh import QuadMesh
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from .quadmesh import QuadMesh
-
-#: The four sides of a :func:`structured` patch, in the CCW loop order its ``edges``
+#: The four sides of a :func:`structured <nekmeshpy.quadmesh.region.structured>` patch, in the CCW loop order its ``edges``
 #: are consumed in.  Both the ``edges`` mapping and ``side_tags`` are keyed by these.
 _SIDES = ("bottom", "right", "top", "left")
 
 
 def _ordered_sides(edges: Sequence[LineMesh] | Mapping[str, LineMesh],
                    ) -> list[LineMesh]:
-    """``edges`` as the positional ``[bottom, right, top, left]`` list :func:`structured`
+    """``edges`` as the positional ``[bottom, right, top, left]`` list :func:`structured <nekmeshpy.quadmesh.region.structured>`
     works in, accepting either spelling.
 
     A bare 4-sequence lets the *order* silently encode which edge is which, so
@@ -78,7 +73,7 @@ def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
     names the outer sides; an absent side stays untagged.
 
     ``order`` (default 1 = linear) sets the polynomial order: the four edges are
-    built at ``order`` (straight sides) and :func:`structured` inherits it."""
+    built at ``order`` (straight sides) and :func:`structured <nekmeshpy.quadmesh.region.structured>` inherits it."""
     c = np.asarray(corners, dtype=float).reshape(-1, 3)
     if c.shape[0] != 4:
         raise ValueError("rectangle needs exactly 4 corners")
@@ -185,7 +180,7 @@ def _blended_ring(pos: PointArray, wall: LineMesh, tau: float,
     lerp the ring's corners get, applied to the private ``interior`` nodes as well, so
     an intermediate ring inherits its share of the wall's curvature instead of being a
     straight chord between blended corners.  This is what
-    :func:`annulus` gets from :func:`linemesh.morph.blend <nekmeshpy.linemesh.morph.blend>`; the rings here cannot use ``blend`` directly
+    :func:`annulus <nekmeshpy.quadmesh.lift.annulus>` gets from :func:`linemesh.morph.blend <nekmeshpy.linemesh.morph.blend>`; the rings here cannot use ``blend`` directly
     because ``half_ogrid`` snaps its two end points onto exact spine samples, so the
     curve is re-anchored on ``pos`` (the ring's true corner positions) with a linear
     correction that vanishes wherever no snapping happened.  At ``tau == 1`` it
@@ -208,7 +203,7 @@ def _ring_overlays(ring_pts: Sequence[PointArray], wall: LineMesh,
                    width: int, outer_side: int) -> list[Overlay]:
     """Both incident copies of every O-ring curve, as ``_elevate`` overlays.
 
-    Shared by :func:`ogrid` / :func:`half_ogrid` / :func:`quadrant_ogrid`, whose ring
+    Shared by :func:`ogrid <nekmeshpy.quadmesh.region.ogrid>` / :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>` / :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>`, whose ring
     bands differ only in where they start (``q0``, the first band quad), how wide a
     band is (``width`` quads) and which local side faces outward (``outer_side``, 1 for
     the ``[b, b_next, a_next, a]`` winding of ``ogrid`` and ``quadrant_ogrid``, 3 for
@@ -301,7 +296,6 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
     rather than straight-subdivided between its points; the transfinite interior
     stays a straight order-N fill.
     """
-    from .quadmesh import QuadMesh
     edge_list = _ordered_sides(edges)
     if len(edge_list) != 4:
         raise ValueError("structured needs exactly 4 edge lines "
@@ -429,7 +423,6 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
 
     The outer ring (wall) is named from ``boundary``'s per-line ``element_tags``;
     a non-empty scalar ``wall_tag`` overrides that for the whole wall."""
-    from .quadmesh import QuadMesh
     if n_side < 1:
         raise ValueError("ogrid needs n_side >= 1")
     if not 0.0 < center_scale < 1.0:
@@ -543,7 +536,6 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     The ``arc`` wall is named from the
     arc's per-segment ``element_tags``; a non-empty scalar ``wall_tag`` overrides
     that for the whole wall."""
-    from .quadmesh import QuadMesh
     apts = _check_boundary(arc, "half_ogrid arc", 5)   # (na,3) backing array
     na = apts.shape[0]
     if (na - 1) % 4 != 0:
@@ -660,14 +652,14 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     return _apply_smoothing(qm, smoothing_method)
 
 
-#: The two nameable seams of a :func:`quadrant_ogrid`, in the order its arguments
+#: The two nameable seams of a :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>`, in the order its arguments
 #: are taken.  ``side_tags`` is keyed by these.
 _QUADRANT_SEAMS = ("seam1", "seam2")
 
 
 def quadrant_core(arc: LineMesh, seam1: LineMesh, seam2: LineMesh, *,
                   center_scale: float = 0.5) -> PointArray:
-    """The core quarter of a :func:`quadrant_ogrid` as an ``(n+1, n+1, 3)`` grid,
+    """The core quarter of a :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` as an ``(n+1, n+1, 3)`` grid,
     indexed ``[i][j]`` with ``i`` running ``O -> M1`` along ``seam1`` and ``j``
     running ``O -> M2`` along ``seam2``.
 
@@ -684,7 +676,7 @@ def quadrant_core(arc: LineMesh, seam1: LineMesh, seam2: LineMesh, *,
 
     Only the seams' first ``n+1`` points and the arc's midpoint are read, so the
     ring-station part of a seam may be anything -- but the shapes must still be the
-    ones :func:`quadrant_ogrid` takes."""
+    ones :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` takes."""
     apts = _check_boundary(arc, "quadrant_core arc", 3)
     na = apts.shape[0]
     if na < 3 or (na - 1) % 2 != 0:
@@ -708,13 +700,13 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
                    wall_tag: str = "",
                    side_tags: Mapping[str, str] | None = None,
                    smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
-    """Quarter-disk O-grid: the 90-degree sibling of :func:`half_ogrid`.
+    """Quarter-disk O-grid: the 90-degree sibling of :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>`.
 
     The region is bounded by the wall ``arc`` (open, ``A1 -> A2``, ``2*n+1`` points)
     and the two radii ``seam1`` (``O -> A1``) and ``seam2`` (``O -> A2``).  It is
     filled with **two** blocks -- a ``n x n`` core quarter plus one ``2n x Nradial``
     ring band wrapping the core's far corner -- which is exactly the quarter of
-    :func:`ogrid` you get by cutting a full disk along two perpendicular diameters
+    :func:`ogrid <nekmeshpy.quadmesh.region.ogrid>` you get by cutting a full disk along two perpendicular diameters
     through its core-edge midpoints.  Four such quadrants
     ``QuadMesh.merge`` back into a conforming full disk.
 
@@ -729,7 +721,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     in the toolkit they are never resampled.  Each must carry exactly
     ``n+1 + Nradial`` points ascending from ``O``: the ``n+1`` core fan, then the
     ``Nradial`` ring stations.  Derive that sampling with
-    :func:`quadrant_seam_fractions` and evaluate your own radius curve there
+    :func:`quadrant_seam_fractions <nekmeshpy.quadmesh.region.quadrant_seam_fractions>` and evaluate your own radius curve there
     (:func:`linemesh.shape.line <nekmeshpy.linemesh.shape.line>` for a straight radius,
     :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` for a bowed
     one), at ``arc``'s order -- at ``order > 1`` a seam's own private nodes *are* the
@@ -738,14 +730,13 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     Passing the seams in rather than deriving them from a ``center`` is what makes
     adjacent quadrants weld exactly: two neighbours share one ``LineMesh`` object,
     the second through
-    :meth:`LineMesh.reverse <nekmeshpy.linemesh.LineMesh.reverse>`, so the seam
+    :func:`LineMesh.reverse <nekmeshpy.linemesh.morph.reverse>`, so the seam
     coordinates are bit-identical instead of two independent placements that agree
-    only to round-off (the same reason :func:`spined_ogrid` reverses its spine).
+    only to round-off (the same reason :func:`spined_ogrid <nekmeshpy.quadmesh.region.spined_ogrid>` reverses its spine).
 
     The wall is named from ``arc``'s per-line ``element_tags``, each seam from its
     own; a non-empty scalar ``wall_tag`` overrides the whole wall and a non-empty
     ``side_tags[...]`` (keyed ``seam1`` / ``seam2``) the whole seam."""
-    from .quadmesh import QuadMesh
     apts = _check_boundary(arc, "quadrant_ogrid arc", 3)
     na = apts.shape[0]
     if na < 3 or (na - 1) % 2 != 0:
@@ -879,7 +870,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
 def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
                             center_scale: float = 0.5) -> FloatArray:
     """The normalized ``O -> A`` positions of the ``n_side+1 + Nradial`` seam points
-    that :func:`quadrant_ogrid` requires, ascending: the ``n_side+1`` core fan, then
+    that :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` requires, ascending: the ``n_side+1`` core fan, then
     the ``Nradial`` ring stations.
 
     The non-obvious term is where the core corner ``M`` lands.  ``center_scale``
@@ -889,7 +880,7 @@ def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
     at ``center_scale * R``.  Using the latter builds a quadrant whose merged core is
     not a square and whose elements are visibly skewed at ``K``.
 
-    :func:`quadrant_ogrid` never resamples a seam, so this is how a caller derives
+    :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` never resamples a seam, so this is how a caller derives
     the sampling to prove: evaluate its own radius curve at these fractions and hand
     the result in."""
     ns = int(n_side)
@@ -907,13 +898,13 @@ def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
 def quadrant_disc(arcs: Sequence[LineMesh], center: Point, radial: int | FloatArray,
                   *, center_scale: float = 0.5, wall_tag: str = "") -> QuadMesh:
     """Full disc from its four wall arcs and centre point: the four-quadrant
-    analogue of :func:`ogrid`.
+    analogue of :func:`ogrid <nekmeshpy.quadmesh.region.ogrid>`.
 
     ``arcs[q]`` is the wall running from corner ``q`` to corner ``q + 1`` (mod 4),
     all at the same order and node count.  Builds the four ``O -> corner`` seams
     once each -- shared by both neighboring quadrants, which is what makes them weld
     bit-exactly rather than to a tolerance -- sampled at
-    :func:`quadrant_seam_fractions`, the same fan :func:`quadrant_ogrid` requires of
+    :func:`quadrant_seam_fractions <nekmeshpy.quadmesh.region.quadrant_seam_fractions>`, the same fan :func:`quadrant_ogrid <nekmeshpy.quadmesh.region.quadrant_ogrid>` requires of
     any seam it is handed, then merges the four quadrants those seams and ``arcs``
     bound."""
     from ._assemble import merge
@@ -929,9 +920,9 @@ def quadrant_disc(arcs: Sequence[LineMesh], center: Point, radial: int | FloatAr
 def spine_fractions(n_theta: int, radial: int | FloatArray,
                     center_scale: float = 0.5) -> FloatArray:
     """The normalized ``A1 -> A2`` positions of the ``2*n_theta+1 + 2*Nradial`` spine
-    points that :func:`half_ogrid` and :func:`spined_ogrid` require, in ascending
+    points that :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>` and :func:`spined_ogrid <nekmeshpy.quadmesh.region.spined_ogrid>` require, in ascending
     order: ``Nradial`` north caps, the ``2*n_theta+1`` center fan, then ``Nradial``
-    south caps (see :func:`half_ogrid` for what each region is).
+    south caps (see :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>` for what each region is).
 
     Neither factory resamples a spine for you -- both mesh it exactly at the points
     given -- so this is how a caller **derives** the sampling to prove: evaluate its
@@ -958,7 +949,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
                  wall_tag: str = "",
                  smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """Full-disk O-grid over a closed ``boundary`` split along a spine diameter
-    into two :func:`half_ogrid` halves welded along the spine -- the clean way to
+    into two :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>` halves welded along the spine -- the clean way to
     O-grid a disk that has a natural ``A1..A2`` seam (a saddle-split vessel or pipe
     cross-section), so the caller need not hand-roll the arc split and merge.
 
@@ -969,13 +960,13 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
     ``spine`` is the open ``A1 -> A2`` diameter curve and is **meshed exactly at the
     points given** -- like every other curve in the toolkit, it is never resampled or
     reordered on the caller's behalf.  It must therefore carry exactly the
-    :func:`spine_fractions` sampling that :func:`half_ogrid` consumes
+    :func:`spine_fractions <nekmeshpy.quadmesh.region.spine_fractions>` sampling that :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>` consumes
     (``2*Ntheta+1 + 2*Nradial`` points, ascending ``A1 -> A2``); anything else is a
     loud ``ValueError`` rather than a silent reinterpolation.  Derive it with
     ``spine_fractions(M // 8, radial, center_scale)`` and evaluate your own curve
     there, at ``boundary``'s order (a curved spine's own high-order nodes *are* the
     seam geometry, so the two orders must match).  The second half consumes
-    :meth:`LineMesh.reverse <nekmeshpy.linemesh.LineMesh.reverse>` of that same mesh,
+    :func:`LineMesh.reverse <nekmeshpy.linemesh.morph.reverse>` of that same mesh,
     so both halves share the seam bit-for-bit and the merge welds an exact
     coincidence rather than a near one.
 
@@ -983,7 +974,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
     and ``A2``, which this factory owns as a shape and so can place exactly itself --
     the common case for a planar disc; pass a curve only to bow the seam.
 
-    ``radial`` and ``center_scale`` are as in :func:`half_ogrid`.  Wall names come
+    ``radial`` and ``center_scale`` are as in :func:`half_ogrid <nekmeshpy.quadmesh.region.half_ogrid>`.  Wall names come
     from ``boundary``'s per-line ``element_tags`` (split onto the two arcs); a
     non-empty scalar ``wall_tag`` overrides that for the whole wall.
     ``smoothing_method`` repositions each half's interior before the merge."""
@@ -1036,24 +1027,3 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
     h2 = half_ogrid(arc2, spine2, radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
     return merge([h1, h2])
-
-
-#: Section helpers bound onto ``QuadMesh`` as ``staticmethod``s.  These answer a
-#: question *about* a factory's input contract and return plain arrays rather than a
-#: mesh, which is what keeps them out of ``FACTORIES``.
-HELPERS: dict[str, Callable[..., FloatArray]] = {
-    "spine_fractions": spine_fractions,
-    "quadrant_seam_fractions": quadrant_seam_fractions,
-    "quadrant_core": quadrant_core,
-}
-
-#: Open-region section factories bound onto ``QuadMesh`` by ``quadmesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., QuadMesh]] = {
-    "structured": structured,
-    "rectangle": rectangle,
-    "ogrid": ogrid,
-    "half_ogrid": half_ogrid,
-    "quadrant_ogrid": quadrant_ogrid,
-    "spined_ogrid": spined_ogrid,
-    "quadrant_disc": quadrant_disc,
-}

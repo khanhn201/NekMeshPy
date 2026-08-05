@@ -13,7 +13,7 @@ internal toolkit code imports them from here directly rather than through the bo
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import numpy as np
 
@@ -72,7 +72,7 @@ def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
     return quality.scaled_jacobian(mesh.points, mesh.hexes)
 
 def quality_summary(mesh: HexMesh, *, high_order: bool = False) -> QualitySummary:
-    """Aggregate scaled-Jacobian statistics (see :meth:`scaled_jacobian` for the
+    """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` for the
     ``high_order`` flag)."""
     from . import quality
     if high_order:
@@ -81,7 +81,7 @@ def quality_summary(mesh: HexMesh, *, high_order: bool = False) -> QualitySummar
 
 
 class WeldResult(NamedTuple):
-    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld`.
+    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld <nekmeshpy.hexmesh.query.weld>`.
 
     The name is historical.  A ``HexMesh`` is *already* stored shared-point -- one
     ``(P,3)`` array single-sourced through the whole B-rep ladder -- so nothing is
@@ -154,22 +154,3 @@ def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
     Ei = HC[:, he[:, 0]].ravel()
     Ej = HC[:, he[:, 1]].ravel()
     return np.unique(np.sort(np.column_stack([Ei, Ej]), axis=1), axis=0)
-
-
-#: Read-only queries bound onto ``HexMesh``.
-METHODS: dict[str, Any] = {
-    "_boundary_mask": _boundary_mask,
-    "_boundary_points": _boundary_points,
-    "boundary_faces": boundary_faces,
-    "boundary_elements": boundary_elements,
-    "boundary_points": boundary_points,
-    "scaled_jacobian": scaled_jacobian,
-    "quality_summary": quality_summary,
-    "weld": weld,
-    "classify_points": classify_points,
-    "topology_report": topology_report,
-    "is_watertight": is_watertight,
-    "is_conforming": is_conforming,
-    "report": report,
-    "_unique_edges": _unique_edges,
-}

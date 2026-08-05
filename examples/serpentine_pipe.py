@@ -41,7 +41,7 @@ import time
 
 import numpy as np
 
-from nekmeshpy import HexMesh, QuadMesh, export, linemesh
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.paths import turtle_path
 
@@ -172,7 +172,7 @@ START_TANGENT = tuple(tangent(np.array([0.0]))[0])
 # outer ring and the sweep carries it onto the side faces. ogrid has no order=
 # kwarg -- the order is inherited from the loop, which must carry exactly 4*N_SIDE
 # points so the wall is meshed exactly.
-section = QuadMesh.ogrid(
+section = quadmesh.region.ogrid(
     linemesh.shape.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
                     element_tags=["wall"] * (4 * N_SIDE), order=ORDER),
     N_SIDE, uniform_spacing(N_RADIAL),
@@ -186,14 +186,14 @@ section = QuadMesh.ogrid(
 # circle's centre, because the O-grid's centroid misses it slightly. tangent= hands
 # in the analytic derivative so the sections stay exactly perpendicular (see above).
 _t0 = time.perf_counter()
-mesh = HexMesh.sweep(section, centerline, FRACTIONS, tangent=tangent,
+mesh = hexmesh.lift.sweep(section, centerline, FRACTIONS, tangent=tangent,
                      orientation="fixed", up=PLANE_NORMAL, origin=START,
                      first_tag="inlet", last_tag="outlet")
 BUILD_SECONDS = time.perf_counter() - _t0
 
 # -- checks -------------------------------------------------------------------
-assert mesh.is_watertight(), "the swept coil must be a single watertight block"
-assert mesh.is_conforming(), "the swept coil must be conforming"
+assert hexmesh.query.is_watertight(mesh), "the swept coil must be a single watertight block"
+assert hexmesh.query.is_conforming(mesh), "the swept coil must be conforming"
 assert set(mesh.face_group_tags) == {"wall", "inlet", "outlet"}, \
     "boundary groups must be exactly wall/inlet/outlet, got %s" % (
         list(mesh.face_group_tags),)
