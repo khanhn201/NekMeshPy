@@ -257,10 +257,3 @@ class LineMesh:
             return None
         return [str(x) for x in self.element_tags.dense(self.lines.shape[0]).tolist()]
 
-    # -- arc length ------------------------------------------------------
-    @property
-    def length(self) -> float:
-        """Total (open) arc length through the points in index order."""
-        P = self.points
-        return float(np.sum(np.sqrt(np.sum(np.diff(P, axis=0) ** 2, axis=1))))
-

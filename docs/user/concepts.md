@@ -75,7 +75,7 @@ explicitly:
 
 Every factory meshes its points **exactly** — there is no resampling API; the
 caller hands in an exactly-sized, correctly-oriented curve. The ordered ops treat
-points in index order as a path/loop (`.length`). That holds for curves handed to a
+points in index order as a path/loop. That holds for curves handed to a
 section factory too: {meth}`~nekmeshpy.quadmesh.QuadMesh.spined_ogrid` used to
 arc-length-resample its `spine`, and no longer does — a caller-supplied spine must
 carry exactly the `2*Ntheta+1 + 2*Nradial` points ascending `A1 -> A2` that

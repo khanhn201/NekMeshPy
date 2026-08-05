@@ -93,12 +93,7 @@ def test_tagged_boundary_points_via_boundaries():
     assert lm.point_group_tags == ["end", "start"]
 
 
-# -- length + exact-mesh factories -------------------------------------------
-
-def test_open_length():
-    lm = LineMesh.loft([(0, 0, 0), (2, 0, 0)])
-    assert np.isclose(lm.length, 2.0)
-
+# -- exact-mesh factories -----------------------------------------------------
 
 def test_line_grades_directly_no_resample():
     frac = np.array([0.0, 0.25, 0.5, 1.0])            # non-uniform: graded edge
