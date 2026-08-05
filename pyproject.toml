@@ -48,7 +48,12 @@ nekmeshpy = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# the three chimera examples take 19 s / 57 s / 138 s, so a default run deselects them;
+# CI runs `pytest -m slow` once, on one interpreter, to keep them honest.
+addopts = "-q -m 'not slow'"
+markers = [
+    "slow: takes more than ~10 s (the large chimera examples)",
+]
 
 [tool.ruff]
 line-length = 100
