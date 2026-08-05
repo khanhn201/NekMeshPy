@@ -416,31 +416,31 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
         fid.write("      <Points>\n")
         fid.write('        <DataArray type="Float64" NumberOfComponents="3" '
                   'format="ascii">\n')
-        for r in range(P):
-            fid.write("          %.17g %.17g %.17g\n" % (X[r, 0], X[r, 1], X[r, 2]))
+        # one formatted block per DataArray rather than a write() per row: the row
+        # loops were ~17M write calls on a 490k-cell mesh.  ``tolist()`` converts to
+        # Python scalars in C, so the remaining per-element cost is only the format.
+        fid.write("".join("          %.17g %.17g %.17g\n" % (x, y, z)
+                          for x, y, z in X.tolist()))
         fid.write("        </DataArray>\n")
         fid.write("      </Points>\n")
         fid.write("      <Cells>\n")
         fid.write('        <DataArray type="Int64" Name="connectivity" '
                   'format="ascii">\n')
-        for e in range(N):
-            fid.write("          %s\n" % " ".join(str(int(c)) for c in conn[e]))
+        fid.write("".join("          %s\n" % " ".join(map(str, row))
+                          for row in conn.tolist()))
         fid.write("        </DataArray>\n")
         fid.write('        <DataArray type="Int64" Name="offsets" format="ascii">\n')
-        for e in range(1, N + 1):
-            fid.write("          %d\n" % (m * e))
+        fid.write("".join("          %d\n" % off for off in range(m, m * N + 1, m)))
         fid.write("        </DataArray>\n")
         fid.write('        <DataArray type="UInt8" Name="types" format="ascii">\n')
-        for _ in range(N):
-            fid.write("          %d\n" % cell_type)
+        fid.write(("          %d\n" % cell_type) * N)
         fid.write("        </DataArray>\n")
         fid.write("      </Cells>\n")
         if bc_out is not None:
             fid.write('      <PointData Scalars="bc_id">\n')
             fid.write('        <DataArray type="Int32" Name="bc_id" '
                       'format="ascii">\n')
-            for val in bc_out:
-                fid.write("          %d\n" % int(val))
+            fid.write("".join("          %d\n" % v for v in bc_out.tolist()))
             fid.write("        </DataArray>\n")
             fid.write("      </PointData>\n")
         fid.write("    </Piece>\n")

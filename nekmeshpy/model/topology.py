@@ -101,24 +101,36 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
     tol = rtol * (scale if scale > 0 else 1.0)
     Xc = X[cand]
     tree = cKDTree(Xc)
-    hanging: set[int] = set()
-    for i, j in E:
-        i, j = int(i), int(j)
-        a, b = X[i], X[j]
-        d = b - a
-        L2 = float(d @ d)
-        if L2 <= tol * tol:
-            continue
-        for c in tree.query_ball_point(0.5 * (a + b), 0.5 * float(np.sqrt(L2)) + tol):
-            k = int(cand[c])
-            if k == i or k == j:
-                continue
-            t = float((Xc[c] - a) @ d) / L2
-            if t <= 1e-9 or t >= 1.0 - 1e-9:
-                continue
-            if float(np.linalg.norm(Xc[c] - (a + t * d))) <= tol:
-                hanging.add(k)
-    return len(hanging)
+    # One batched ball query and one vectorized projection, rather than a Python loop
+    # per edge: the loop was ~12 s of a 490k-hex build, almost all of it in its own
+    # body rather than in the tree.
+    A, B = X[E[:, 0]], X[E[:, 1]]
+    D = B - A
+    L2 = np.einsum("ij,ij->i", D, D)
+    idx = np.flatnonzero(L2 > tol * tol)              # skip degenerate edges
+    if idx.size == 0:
+        return 0
+    hits = tree.query_ball_point(0.5 * (A[idx] + B[idx]),
+                                 0.5 * np.sqrt(L2[idx]) + tol, workers=-1)
+    counts: IntArray = np.fromiter((len(h) for h in hits), dtype=np.int64,
+                                   count=len(hits))
+    if not counts.any():
+        return 0
+    ci = np.concatenate([np.asarray(h, dtype=np.int64) for h in hits if h])
+    ei: IntArray = np.repeat(idx, counts)              # the edge each hit belongs to
+    k = cand[ci]
+    keep = (k != E[ei, 0]) & (k != E[ei, 1])           # an endpoint is not hanging
+    ci, ei, k = ci[keep], ei[keep], k[keep]
+    if ci.size == 0:
+        return 0
+    t = np.einsum("ij,ij->i", Xc[ci] - A[ei], D[ei]) / L2[ei]
+    keep = (t > 1e-9) & (t < 1.0 - 1e-9)               # strictly interior
+    ci, ei, k, t = ci[keep], ei[keep], k[keep], t[keep]
+    if ci.size == 0:
+        return 0
+    perp = Xc[ci] - (A[ei] + t[:, None] * D[ei])
+    on_edge = np.sqrt(np.einsum("ij,ij->i", perp, perp)) <= tol
+    return int(np.unique(k[on_edge]).size)
 
 
 # -- hex (volume) meshes ------------------------------------------------
