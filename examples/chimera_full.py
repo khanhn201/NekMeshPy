@@ -96,7 +96,7 @@ kw_t2 = kw_t1
 # chimera's own port cross-section: the same quadrant_disc recipe its
 # junctions are built from, so it reproduces a port's pattern exactly.
 _chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
-               CENTER_SCALE=0.7, PHI_W=np.deg2rad(100.0), N_TRANS=2, N_BRANCH=2)
+               CENTER_SCALE=0.7, N_TRANS=2, N_BRANCH=2)
 
 
 def fake_chi_disc(center):
@@ -146,13 +146,14 @@ else:
 # T1: same quadrant pattern family as T2 (not eqtee) so the T1-branch <-> T2-
 # main weld is a same-family tolerance weld, not a cross-family one. Equal
 # main/branch radius is not directly supported by the quadrant construction
-# (the footprint curve degenerates as R_BRANCH -> R_MAIN) -- R_BRANCH is
-# 99.9% of R_MAIN (visually/functionally equal) with PHI_W opened up to 172
-# degrees, which was enough to pull the crotch caps back to a valid,
-# reasonable-quality (~0.21 min scaled Jacobian) octant split; CENTER_SCALE
-# has no effect on this at all (checked). main axis -> x, branch -> -y.
+# (the footprint curve degenerates as R_BRANCH -> R_MAIN), so R_BRANCH is
+# 99.9% of R_MAIN -- visually and functionally equal. PHI_W / CAP_TIP_BIAS /
+# ORIGIN are left to tjunction_lib.auto_params, which picks them from the
+# radius ratio; at this ratio a hand-tuned PHI_W=165 with the old fixed
+# bias and hub gave 0.105 min scaled Jacobian and the automatic choice gives
+# 0.253. CENTER_SCALE has no effect on this at all (checked).
+# main axis -> x, branch -> -y.
 # -----------------------------------------------------------------------------
-T1_PHI_W = np.deg2rad(165.0)
 T1_RATIO = 0.999
 ROT_T1 = -np.deg2rad(120.0)
 AXIS_T1 = (1.0, -1.0, 1.0)
@@ -161,8 +162,7 @@ AXIS_T1 = (1.0, -1.0, 1.0)
 def build_t1(mirror=False):
     tj = build_tjunction(R_MAIN, R_MAIN * T1_RATIO, H1, order=ORDER, N_QUAD=2,
                          RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         PHI_W=T1_PHI_W, N_TRANS=n_slices, N_BRANCH=n_slices,
-                         Z_NEAR=L1)
+                         N_TRANS=n_slices, N_BRANCH=n_slices, Z_NEAR=L1)
     ang, axis = ROT_T1, AXIS_T1
     core, da, db, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
@@ -379,8 +379,7 @@ N2_BRANCH = max(2, int(round(H2_BRANCH / 2.0)))   # ~2.0-long layers, as the coi
 def build_t2(mirror=False):
     tj = build_tjunction(R_MAIN, R_BR, H2_BRANCH, order=ORDER, N_QUAD=2,
                          RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         PHI_W=np.deg2rad(100.0), N_TRANS=n_slices,
-                         N_BRANCH=N2_BRANCH)
+                         N_TRANS=n_slices, N_BRANCH=N2_BRANCH)
     ang, axis = ROT_T2, AXIS_T2
     core, dm, dp, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))

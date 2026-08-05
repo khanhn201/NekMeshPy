@@ -21,20 +21,81 @@ from nekmeshpy.model import surfaces
 
 TJunction = namedtuple("TJunction", "core disc_minus disc_plus disc_branch")
 
-#: default radial station fractions / wall half-angle (module-level singletons so
-#: they are not rebuilt -- or flagged -- as argument defaults)
+#: default radial station fractions (a module-level singleton so it is not rebuilt --
+#: or flagged -- as an argument default)
 _RADIAL_DEFAULT = np.array([0.0, 0.6, 1.0])
-_PHI_W_DEFAULT = np.deg2rad(100.0)
+
+#: Bounds on the bypass half-angle.  Below the floor the bypass quadrant spans so much
+#: of the pipe that it folds; above the ceiling the two side quadrants do.  Both were
+#: measured, not derived -- see ``auto_params``.
+_PHI_W_FLOOR, _PHI_W_CEIL = np.deg2rad(60.0), np.deg2rad(170.0)
+
+
+def footprint_angle(ratio):
+    """Cylindrical half-angle subtended by the branch footprint, ``asin(r/sqrt(2))``.
+
+    The footprint quadrant of the composite junction face spans exactly twice this, so
+    it is the natural scale for the other three quadrants -- and the hard lower bound
+    on ``PHI_W``, since below it the two side quadrants invert."""
+    return float(np.arcsin(min(float(ratio), 1.0) / np.sqrt(2.0)))
+
+
+def auto_params(R_MAIN, R_BRANCH):
+    """``(PHI_W, CAP_TIP_BIAS, ORIGIN)`` chosen for the radius ratio.
+
+    The quadrant construction has one shape that has to work across a 10:1 range of
+    branch-to-main radius, and a single fixed set of these three -- which is what this
+    file shipped before -- is only good near the middle of it.  Measured over the
+    order-2 scaled Jacobian on 16 ratios from 0.10 to 0.99 (and validated on 7 more it
+    was not fitted to), the fixed defaults leave the junction **inverted** above
+    ratio 0.8 and fail to build at all near 1.0; these keep the worst element above
+    0.10 across the whole range and within 0.08 of the best the parameters can do at
+    any ratio.
+
+    ``PHI_W = 5 * footprint_angle`` is the fit, and it has a plain reading: the side
+    quadrant then spans ``4 * footprint_angle``, exactly **twice** the footprint
+    quadrant's own ``2 * footprint_angle``.  The clamps are where that stops being
+    achievable -- at small ratio it would leave the bypass spanning almost the whole
+    pipe, at large ratio it would exceed 180 degrees.
+
+    ``ORIGIN`` walks the junction hub from near the branch wall back to the axis as the
+    branch grows: a small branch sits in a shallow dimple far off-axis, and putting the
+    hub out there is what keeps the crotch caps from being stretched across the pipe.
+
+    **The three ports are unaffected.**  ``disc_minus`` / ``disc_plus`` /
+    ``disc_branch`` come out bit-identical whatever these are set to -- only the
+    junction's own interior changes -- so re-tuning them can never disturb a seam
+    something downstream is already bonded to.
+
+    Caveat worth knowing: below ratio ~0.3 the quality gain is paid for in element
+    *size* uniformity.  At ratio 0.15 the worst element improves 8x (0.022 -> 0.18) but
+    the largest-to-smallest element volume ratio grows from ~100 to ~900.  That is
+    inherent to a small branch on a large pipe, not an artefact of the tuning, but it
+    is the reason the hub shift is capped rather than pushed as far as the Jacobian
+    alone would like."""
+    r = float(R_BRANCH) / float(R_MAIN)
+    phi_w = float(np.clip(5.0 * footprint_angle(r), _PHI_W_FLOOR, _PHI_W_CEIL))
+    origin = np.array([float(np.clip(0.80 - 0.6 * r, -0.4, 0.8)) * float(R_MAIN),
+                       0.0, 0.0])
+    return phi_w, 0.20, origin
 
 
 def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                      RADIAL=None, CENTER_SCALE=0.7,
-                     order=2, PHI_W=None, CAP_TIP_BIAS=1.0 / 3.0,
-                     N_TRANS=5, N_BRANCH=4):
+                     order=2, PHI_W=None, CAP_TIP_BIAS=None,
+                     N_TRANS=5, N_BRANCH=4, ORIGIN=None):
     RADIAL = _RADIAL_DEFAULT if RADIAL is None else RADIAL
-    PHI_W = _PHI_W_DEFAULT if PHI_W is None else PHI_W
+    # each of the three defaults to the ratio-dependent choice; pass one explicitly to
+    # override just that one
+    _phi_w, _bias, _origin = auto_params(R_MAIN, R_BRANCH)
+    PHI_W = _phi_w if PHI_W is None else PHI_W
+    CAP_TIP_BIAS = _bias if CAP_TIP_BIAS is None else CAP_TIP_BIAS
     N = N_QUAD
-    ORIGIN = np.zeros(3)
+    # The junction hub: the point every quadrant seam radiates from, and the base the
+    # crotch caps' own centres are measured from.  Defaults to the main axis; moving it
+    # toward the branch is one of the three knobs that trade quality between the crotch
+    # caps and the transitions as the radius ratio changes.
+    ORIGIN = _origin if ORIGIN is None else np.asarray(ORIGIN, dtype=float).reshape(3)
     TQ = np.deg2rad(45.0 - 90.0 * np.arange(5))
 
     def footprint(t):
@@ -150,7 +211,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         def station(s):
             return quadmesh.quadrant_disc(
                 [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
-                np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
+                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]),
+                RADIAL, center_scale=CENTER_SCALE,
                 wall_tag="wall")
 
         plain = station(1.0)
@@ -163,7 +225,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
         walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
-        sections = [quadmesh.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+        sections = [quadmesh.quadrant_disc([w[i] for w in walls],
+                                           (1.0 - t[i]) * ORIGIN + t[i] * c_open, RADIAL,
                                            center_scale=CENTER_SCALE, wall_tag="wall")
                    for i in range(t.size)]
         return hexmesh.loft(sections), sections[-1]
