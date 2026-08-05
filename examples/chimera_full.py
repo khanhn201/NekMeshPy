@@ -255,11 +255,17 @@ def port_disc(hexmesh, tag, template):
     assert len(set(g.tolist())) == g.size, (
         "port_disc[%s]: template does not pair one-for-one with the port" % tag)
 
+    # Only the port's own entities can match, so narrow to those before building any
+    # Python lookup: the mesh has millions of edges and faces and the template a few
+    # hundred, and indexing numpy scalars one at a time over the whole mesh was ~8 s.
     he, hn = hexmesh.edges, hexmesh.edge_nodes
+    on_port = np.zeros(hexmesh.points.shape[0], dtype=bool)
+    on_port[gids] = True
+    ekeep = np.flatnonzero(on_port[he[:, 0]] & on_port[he[:, 1]])
     ekey = {}
-    for e in range(he.shape[0]):
-        ekey[(int(he[e, 0]), int(he[e, 1]))] = (e, False)
-        ekey[(int(he[e, 1]), int(he[e, 0]))] = (e, True)
+    for e, (a, b) in zip(ekeep.tolist(), he[ekeep].tolist()):
+        ekey[(a, b)] = (e, False)
+        ekey[(b, a)] = (e, True)
     tl = template.lines
     new_ei = np.empty_like(tl.interior)
     for e in range(tl.lines.shape[0]):
@@ -271,7 +277,8 @@ def port_disc(hexmesh, tag, template):
                          tl.element_tags, order=tl.order)
 
     hf, hfn = hexmesh.faces, hexmesh.face_nodes
-    fkey = {frozenset(int(x) for x in hf[i]): i for i in range(hf.shape[0])}
+    fkeep = np.flatnonzero(on_port[hf].all(axis=1))
+    fkey = {frozenset(r): i for i, r in zip(fkeep.tolist(), hf[fkeep].tolist())}
     new_qi = np.empty_like(template.interior)
     for q in range(template.quads.shape[0]):
         new_qi[q] = hfn[fkey[frozenset(int(g[c]) for c in template.quads[q])]]
@@ -510,8 +517,12 @@ for _nm, _m in [("core_in", core_in), ("conn_chi_in", conn_chi_in[0]), ("riser_i
 pieces += [core_in, *conn_chi_in, riser_in, core_out, *conn_chi_out, riser_out]
 
 mesh1 = hexmesh.merge(pieces, tol=0.005)
-print("stage1:", mesh1.n_hexes, "hexes, watertight", hexmesh.is_watertight(mesh1),
-     "conforming", hexmesh.is_conforming(mesh1), "min sj", hexmesh.scaled_jacobian(mesh1).min())
+# one report, read twice: is_watertight and is_conforming each recompute the
+# whole thing, which is seconds apiece at this size.
+_rep1 = hexmesh.topology_report(mesh1)
+print("stage1:", mesh1.n_hexes, "hexes, watertight",
+      _rep1.watertight and _rep1.n_components == 1,
+      "conforming", _rep1.conformal, "min sj", hexmesh.scaled_jacobian(mesh1).min())
 
 # -----------------------------------------------------------------------------
 # T2: branches off T1's -y branch.  Unequal radius (main = R_MAIN, matching
@@ -722,8 +733,9 @@ pieces2 = pieces + [p for lv in (*chain_in, *chain_out)
                     for p in (lv["core"], lv["conn"], *( [lv["dead"]]
                                                          if "dead" in lv else []))]
 mesh2 = hexmesh.merge(pieces2, tol=0.005)
+_rep2 = hexmesh.topology_report(mesh2)
 print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
-      hexmesh.is_watertight(mesh2), "conforming", hexmesh.is_conforming(mesh2),
+      _rep2.watertight and _rep2.n_components == 1, "conforming", _rep2.conformal,
       "min sj", hexmesh.scaled_jacobian(mesh2).min())
 
 # -----------------------------------------------------------------------------
@@ -908,8 +920,10 @@ coils = [p for lv_i, lv_o in zip(chain_in, chain_out)
 
 pieces3 = pieces2 + coils
 mesh3 = hexmesh.merge(pieces3, tol=0.005)
-print("stage3:", mesh3.n_hexes, "watertight", hexmesh.is_watertight(mesh3),
-     "conforming", hexmesh.is_conforming(mesh3), "min sj", hexmesh.scaled_jacobian(mesh3).min())
+_rep3 = hexmesh.topology_report(mesh3)
+print("stage3:", mesh3.n_hexes, "watertight",
+      _rep3.watertight and _rep3.n_components == 1,
+      "conforming", _rep3.conformal, "min sj", hexmesh.scaled_jacobian(mesh3).min())
 # -- registration check: does the connector's rising end actually land point-
 # for-point on chimera's own disc pattern (mod the quadrant disc's 90-degree
 # symmetry)?  The fake stand-in discs use the identical pattern/params as the
@@ -936,9 +950,11 @@ else:
     chi_out_cap = hexmesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
     mesh_out = hexmesh.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
 
-print("mesh_out:", mesh_out.n_hexes, "hexes, watertight", hexmesh.is_watertight(mesh_out),
-      "conforming", hexmesh.is_conforming(mesh_out))
-print(hexmesh.topology_report(mesh_out))
+_rep_out = hexmesh.topology_report(mesh_out)
+print("mesh_out:", mesh_out.n_hexes, "hexes, watertight",
+      _rep_out.watertight and _rep_out.n_components == 1,
+      "conforming", _rep_out.conformal)
+print(_rep_out)
 
 mesh = mesh_out
 OUT_NAME = "chimera_full"
