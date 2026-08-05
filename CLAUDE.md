@@ -27,7 +27,8 @@ settles; a local pass is not the gate.
 valid `mesh` — non-empty, watertight, conforming, no inverted element. It *discovers*
 the scripts rather than listing them, so a new example is covered the moment it lands;
 this exists because five examples had no coverage at all and a refactor left four of
-them broken with CI green. The two large chimera meshers carry `@pytest.mark.slow`
+them broken with CI green. `LIBRARY_ONLY` (`tjunction_lib.py`, `coil_lib.py`) names the scripts that build no
+mesh of their own and are imported by ones that do. The two large chimera meshers carry `@pytest.mark.slow`
 and are deselected by `addopts`, so a bare `pytest` shows them as *deselected*, not
 passed — the `Slow examples` job is what actually runs them. `KNOWN_INVERTED` records any example that ships an
 inverted element as a **strict** xfail, so fixing one fails the suite until its entry
@@ -105,31 +106,60 @@ hex ladder the op moves):
 | module | arity | Δ | contents |
 |---|---|---|---|
 | `assemble.py` | n-ary | +1 / 0 | `loft`, `loft_fn`, `merge` |
-| `lift.py` | fixed | +1 | `extrude` / `sweep` / `annulus` / `from_grid` → `loft` |
-| `morph.py` | fixed | 0 | `blend`; unary `translate`/`rotate`/`scale`/`transform` |
+| `lift.py` | fixed | +1 | `extrude` / `sweep` / `sweep_path` / `annulus` / `from_grid` / `adapter` / `bridge` → `loft` |
+| `lower.py` | fixed | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
+| `morph.py` | fixed | 0 | `blend`, `reindex`, `place_on_path`; unary `translate`/`rotate`/`scale`/`transform` |
 | `query.py` | fixed | exit | read-only queries; hex also topology / `report` / `weld` |
 | `shape.py` | fixed | +1 | shape factories — own a *shape model*, unlike `lift` |
 
-`assemble` is load-bearing: **`loft` and `merge` are the only operations that
-manufacture a global index space.** Everything fixed-arity either reuses an existing
-numbering (`blend` keeps `a`'s verbatim) or delegates here. To place a new operation
-ask: *does it invent a numbering?* → `assemble`; *does it change rung?* → `lift`;
-*neither?* → `morph`. Δ = −1 (a block's boundary **as** a `QuadMesh`) is empty at every
-rung — `boundary_faces` returns `[element, face]` pairs, not a mesh.
+`assemble` is load-bearing: **`loft`, `merge` and `lower`'s `boundary_mesh` are the only
+operations that manufacture a global index space.** Everything else fixed-arity either
+reuses an existing numbering (`blend` keeps `a`'s verbatim, `reindex` relabels onto it)
+or delegates to `loft`. To place a new operation ask: *does it invent a numbering?* →
+`assemble`, unless it is the boundary extraction, which is `lower`; *does it change
+rung?* → `lift` (up) or `lower` (down); *neither?* → `morph`.
 
-Namespaces, one public module per group — `assemble`, `lift`, `morph`, `query`, plus
-`shape`. These modules **are** the code — there is no private `_assemble.py` behind
-`assemble.py`, and no facade layer. `shape` holds both the open and the closed shape
-factories: that split was storage-side, not caller-facing.
+Δ = −1 was empty for a long time on the reasoning that a caller wanting the boundary
+wants to *index* it (`boundary_faces` returns `[element, face]` pairs) rather than mesh
+it. Building **onto** a finished block is what overturned that: a connector swept off a
+port must start from that port's own nodes, and re-deriving them from the recipe that
+built the block lands close rather than exact — which `merge` rejects at order > 1.
+`boundary_mesh` reads them straight out instead, and its `template=` form reuses a
+caller-supplied section's numbering for when the result has to pair index-for-index
+with a section already in hand (`adapter` / `bridge` / `blend` all require that).
+
+Namespaces, one public module per group — `assemble`, `lift`, `lower`, `morph`,
+`query`, plus `shape`. These modules **are** the code — there is no private
+`_assemble.py` behind `assemble.py`, and no facade layer. `shape` holds both the open
+and the closed shape factories: that split was storage-side, not caller-facing.
 
 Only genuinely internal helpers stay underscored: `linemesh/_plane.py` and
 `quadmesh/_helpers.py`.
 
+`quadmesh/ports.py` holds `Port` — a section plus the two facts it cannot state about
+itself, the **outward** direction and the **axis point** (an O-grid's centroid is near
+its centre, not on it). `hexmesh.bridge` / `adapter` take `QuadMesh | Port`: a bare
+section keeps the old behaviour of *inferring* the outward direction from the line
+between the two centroids, which is right whenever the two really face each other and
+silently folds the connector when they do not. A `Port` states it instead, which is
+what lets those two check rather than guess — that the ports face each other, and that
+their radii agree. The checks are skipped unless *both* sides stated a direction, since
+a guess is derived from the very geometry a check would test.
+
 `linemesh.shape` and `quadmesh.shape` also carry the samplings —
-`arclength_fractions`, `sweep_fractions`, `spine_fractions`,
+`arclength_fractions`, `sweep_fractions`, `path_fractions`, `spine_fractions`,
 `quadrant_seam_fractions`, `quadrant_core` — which return a plain array rather than a
 mesh. These exist because **no factory resamples its input**: a factory meshes exactly
-at the points it is given and the caller proves the sampling.
+at the points it is given and the caller proves the sampling. (`path_fractions` is the
+one that resolves a `SpacePath` plus a target element length into stations; it is what
+`sweep_path` calls, and is spelled out here so the three-way `target_length` / `layers`
+/ `fractions` choice is validated in one place.)
+
+Paths and surface curves are model-level, not per-rung, because neither is a mesh:
+`model/paths.py` holds the 2-D turtle walk and `embed`, which lifts it onto a plane in
+space; `model/surfaces.py` holds `SurfaceCurve` and its combinators. Both import **no
+container**. The rung-level entry points that consume them are `linemesh.on_surface`,
+`quadmesh.tri_patch`, and `sweep_path` at the quad and hex rungs.
 
 `TriMesh` is the exception: it keeps its own small query methods in `trimesh.py` and
 exposes the rest as `trimesh.ops.*`.

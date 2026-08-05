@@ -37,8 +37,10 @@ from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
 from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
+from ..linemesh.shape import path_fractions
 from ..model import frames
 from ..model.fields import reject_loop_caps, validate_layers
+from ..model.paths import SpacePath
 from ..model.tags import PointTags, TagBuilder
 from ._helpers import _apply_smoothing, _check_boundary
 from .assemble import _loft_evaluated, loft
@@ -336,9 +338,45 @@ def sweep(
     return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="sweep")
 
+
+def sweep_path(
+    profile: LineMesh,
+    path: SpacePath,
+    *,
+    origin: Point | Sequence[float],
+    target_length: float | None = None,
+    layers: int | None = None,
+    fractions: FloatArray | Sequence[float] | None = None,
+    orientation: Literal["transport", "fixed", "frenet"] = "transport",
+    up: Vec3 | Sequence[float] | PointArray | None = None,
+    twist: float = 0.0,
+    close_twist: bool = True,
+    normal: Vec3 | Sequence[float] | None = None,
+    loop: bool = False,
+    element_tags: StrArray | Sequence[str] | None = None,
+    first_tag: str | Sequence[str] | StrArray = "",
+    last_tag: str | Sequence[str] | StrArray = "",
+) -> QuadMesh:
+    """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a
+    :class:`SpacePath <nekmeshpy.model.paths.SpacePath>`, which carries its own analytic
+    tangent and junction table -- so this asks for an element length along the sweep
+    instead of a station array.
+
+    The 2-D rung of :func:`HexMesh.sweep_path <nekmeshpy.hexmesh.lift.sweep_path>`; see
+    it for why ``orientation`` / ``up`` keep ``sweep``'s own defaults rather than being
+    inferred from the path's plane."""
+    fr = path_fractions(path, target_length=target_length, layers=layers,
+                        fractions=fractions)
+    return sweep(profile, path.centerline, fr, origin=origin, tangent=path.tangent,
+                 orientation=orientation, up=up, twist=twist, close_twist=close_twist,
+                 normal=normal, loop=loop, element_tags=element_tags,
+                 first_tag=first_tag, last_tag=last_tag)
+
+
 __all__ = [
     "annulus",
     "extrude",
     "from_grid",
     "sweep",
+    "sweep_path",
 ]

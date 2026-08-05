@@ -14,8 +14,10 @@ from collections.abc import Callable, Mapping, Sequence
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
+from ..model.paths import SpacePath
+from ..model.surfaces import SurfaceCurve, SurfaceMap
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
-from .assemble import _eval_curve, loft
+from .assemble import _eval_curve, loft, loft_fn
 from .linemesh import LineMesh
 
 
@@ -201,6 +203,57 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     return out
 
 
+def path_fractions(path: SpacePath, *, target_length: float | None = None,
+                   layers: int | None = None,
+                   fractions: FloatArray | Sequence[float] | None = None) -> FloatArray:
+    """Resolve a :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` and exactly one of
+    ``target_length`` / ``layers`` / ``fractions`` into the sweep stations themselves.
+
+    ``target_length`` and ``layers`` both go through
+    :func:`sweep_fractions <nekmeshpy.linemesh.shape.sweep_fractions>` on the path's own
+    ``break_fractions``, so every straight<->arc junction still carries a station;
+    ``layers`` is just ``target_length = total_length / layers``, which is the *average*
+    element length, not a guaranteed count -- each piece is rounded on its own.
+    ``fractions`` hands stations in verbatim, for a path graded piece by piece rather
+    than to one length (a U-turn given its own layer count, say).
+
+    Factored out of the ``sweep_path`` at each rung so the three-way choice is
+    spelled and validated once."""
+    given = [n for n, x in (("target_length", target_length), ("layers", layers),
+                            ("fractions", fractions)) if x is not None]
+    if len(given) != 1:
+        raise ValueError(
+            "path_fractions: give exactly one of target_length / layers / fractions, "
+            "got %s" % (", ".join(given) if given else "none"))
+    if fractions is not None:
+        return np.asarray(fractions, dtype=float).ravel()
+    L = float(path.total_length)
+    if layers is not None:
+        n = int(layers)
+        if n < 1:
+            raise ValueError("path_fractions: layers must be >= 1, got %d" % n)
+        target_length = L / n
+    return sweep_fractions(np.asarray(path.break_fractions, dtype=float) * L, L,
+                           float(target_length))   # type: ignore[arg-type]
+
+
+def on_surface(curve: SurfaceCurve, surface: SurfaceMap, *, order: int = 1,
+               element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
+    """Mesh a :class:`SurfaceCurve <nekmeshpy.model.surfaces.SurfaceCurve>` by
+    evaluating ``surface`` on it -- one element between consecutive nodes of
+    ``curve.fr``, exact on the surface at **every** node.
+
+    The surface map reaches the private GLL interiors as well as the corners, because
+    this is a :func:`loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` and not a
+    ``loft`` of sampled points: sampling the curve into an array first would
+    straight-subdivide between the samples and put the interior nodes off the surface
+    at ``order > 1``.
+
+    ``curve.fr`` may descend, which traverses the curve backwards."""
+    return loft_fn(lambda x: surface(curve.g(x)), curve.fr, order=order,
+                   element_tags=element_tags)
+
+
 def circle(radius: float, n: int, *,
            center: Point = (0.0, 0.0, 0.0),
            normal: Vec3 = (0.0, 0.0, 1.0),
@@ -310,6 +363,8 @@ __all__ = [
     "arclength_fractions",
     "circle",
     "line",
+    "on_surface",
+    "path_fractions",
     "rectangle",
     "sweep_fractions",
 ]

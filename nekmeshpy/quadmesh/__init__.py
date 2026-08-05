@@ -45,15 +45,26 @@ unambiguous; across rungs they deliberately collide (each rung has its own ``lof
 ``merge``), which is why there is no flat namespace above this one.
 """
 
-from . import assemble, lift, morph, query, shape
+from . import assemble, lift, lower, morph, query, shape
 from .assemble import loft, loft_fn, merge
-from .lift import annulus, extrude, from_grid, sweep
-from .morph import blend, rotate, scale, transform, translate
+from .lift import annulus, extrude, from_grid, sweep, sweep_path
+from .lower import boundary_mesh
+from .morph import (
+    blend,
+    place_on_path,
+    reindex,
+    rotate,
+    scale,
+    transform,
+    translate,
+)
+from .ports import Port, port
 from .quadmesh import NO_TAG, QuadMesh
 from .query import (
     boundary_edges,
     boundary_elements,
     boundary_points,
+    plane_normal,
     quality_summary,
     scaled_jacobian,
 )
@@ -72,16 +83,20 @@ from .shape import (
     spine_fractions,
     spined_ogrid,
     structured,
+    tri_patch,
+    tri_patch_tip,
 )
 
 __all__ = [
     "NO_TAG",
+    "Port",
     "QuadMesh",
     "annulus",
     "assemble",
     "blend",
     "boundary_edges",
     "boundary_elements",
+    "boundary_mesh",
     "boundary_points",
     "box",
     "extrude",
@@ -92,9 +107,13 @@ __all__ = [
     "lift",
     "loft",
     "loft_fn",
+    "lower",
     "merge",
     "morph",
     "ogrid",
+    "place_on_path",
+    "plane_normal",
+    "port",
     "quadrant_core",
     "quadrant_disc",
     "quadrant_ogrid",
@@ -102,6 +121,7 @@ __all__ = [
     "quality_summary",
     "query",
     "rectangle",
+    "reindex",
     "rotate",
     "scale",
     "scaled_jacobian",
@@ -111,6 +131,9 @@ __all__ = [
     "spined_ogrid",
     "structured",
     "sweep",
+    "sweep_path",
     "transform",
     "translate",
+    "tri_patch",
+    "tri_patch_tip",
 ]

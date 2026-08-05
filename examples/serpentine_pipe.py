@@ -37,29 +37,25 @@ Produces ``serpentine_pipe.re2`` and ``serpentine_pipe.vtu``.
 """
 
 import logging
+import os
+import sys
 import time
 
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
+from nekmeshpy.model import paths
 from nekmeshpy.model.fields import uniform_spacing
 from nekmeshpy.model.paths import turtle_path
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # -- path parameters ---------------------------------------------------------
-# These are ``chimera_full.py``'s own ``COIL_MOVES`` numbers verbatim: that
-# script sweeps this exact coil between its two T2 branches, so the two stay
-# the same physical part.  Change them here and there together.
-R_PIPE = 0.5                  # pipe (tube) radius -- the swept cross-section
-PASS_LEN = 136.0              # length of a full vertical pass
-U_R = 2.5                     # tight U-turn radius: bottom turns + top hairpins
-U_R_MID = 4.0                 # wider radius of the raised middle bridge
-R_HOOK = U_R_MID              # the two end hooks turn at the same radius
-HOOK_JOG = 5.0                # the hook's short sideways step
-HOOK_DROP = 20.0              # the hook's straight run out to the inlet / outlet
-RAISE = 4.0                   # extra length on passes 1/4/5/8 -- what lifts the
-                              # middle bridge above the two flanking hairpins
+# The coil's shape lives in coil_lib because chimera_full.py sweeps a copy of this
+# exact part between each of its T2 branch pairs. One part, one move table.
+from coil_lib import MOVES, R_PIPE, TARGET_LEN  # noqa: E402  (needs the path above)
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # The turtle walks in its own ``(u, v)``: ``u`` is the pass direction, ``v`` the
 # pass-to-pass stacking.  Mapping u -> world +z and v -> world -x reproduces
@@ -74,15 +70,8 @@ PLANE_NORMAL = (0.0, 1.0, 0.0)       # the coil is planar: y is the plane normal
 N_SIDE = 5                   # central square block cells per side (loop = 4*N_SIDE pts)
 N_RADIAL = 3                 # O-ring layers out to the wall
 CENTER_SCALE = 0.5
-TARGET_LEN = 2.0             # target hex length along the sweep. NOT cubic here: this
-                             # coil is slender (a pass is 272 tube radii long), so
-                             # ~1.6*R_PIPE would cost ~100k hexes. The real floor is
-                             # the tightest turn -- sweep_fractions rounds a segment's
-                             # length/target to the NEAREST station count, so a target
-                             # near a U-turn's own arc length (pi*U_R = 7.85) rounds
-                             # down to ONE station spanning the whole 180 deg: two
-                             # opposed sections lerped into a near-zero-volume hex.
-                             # 2.0 puts 4 stations in that turn; 8.0 would put 1.
+# TARGET_LEN comes from coil_lib too: it is a property of this coil's own
+# geometry (the tightest turn), not of how any one script meshes it.
 ORDER = 2                    # polynomial order; 1 = linear. Both smoothers stay off:
                              # a repositioning smoother moves corner nodes only and
                              # rejects order > 1. sweep evaluates the path at the
@@ -95,79 +84,41 @@ OUT_NAME = "serpentine_pipe"
 # boundary name -> Nek BC code, applied only at export
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
-# -- the move table: ("line", length, 0.0) or ("arc", radius, signed turn in deg) --
-# a positive turn is counter-clockwise in the (u, v) plane.  The two hooks are
-# each other's time reversal (reverse the order, negate every turn), which is
-# what lands both openings on the same v facing the same way.
-HOOK_IN = [("line", HOOK_DROP, 0.0), ("arc", R_HOOK, +90.0),
-           ("line", HOOK_JOG, 0.0), ("arc", R_HOOK, -90.0)]
-HOOK_OUT = [("arc", R_HOOK, -90.0), ("line", HOOK_JOG, 0.0),
-            ("arc", R_HOOK, +90.0), ("line", HOOK_DROP, 0.0)]
-
-MOVES = (HOOK_IN
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]   # pass 1 -> bottom
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, +180.0)]           # pass 2 -> top hairpin
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]           # pass 3 -> bottom
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R_MID, +180.0)]  # 4 -> RAISED bridge
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]   # pass 5 -> bottom
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, +180.0)]           # pass 6 -> top hairpin
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]           # pass 7 -> bottom
-    + [("line", PASS_LEN + RAISE, 0.0)]                         # pass 8
-    + HOOK_OUT)
-
-# -- turtle-walk the move table into a path ----------------------------------
-_PATH = turtle_path(MOVES, start=(0.0, 0.0), heading=0.0)
-S_BREAKS = _PATH.break_fractions
-TOTAL = _PATH.total_length
-
-
-def in_plane(uv):
-    """``(K,2)`` in-plane components to ``(K,3)``, on the coil's own plane axes."""
-    return uv[:, 0, None] * AXIS_U + uv[:, 1, None] * AXIS_V
-
-
-def centerline(s):
-    """Points on the serpentine centerline at normalized arc length ``s``, lifted
-    from :attr:`_PATH.centerline <nekmeshpy.model.paths.TurtlePath.centerline>`'s
-    ``(K,2)`` onto the coil's own plane -- ``(K,)`` in ``[0, 1]`` -> ``(K,3)``,
-    vectorized because that is what :meth:`HexMesh.sweep` wants: it samples the
-    whole node lattice in one call so a moving frame can be built along it."""
-    return ORIGIN + in_plane(_PATH.centerline(s))
-
-
-def tangent(s):
-    """Unit tangents of the centerline at normalized arc length ``s``, lifted from
-    :attr:`_PATH.tangent <nekmeshpy.model.paths.TurtlePath.tangent>`.
-
-    The **analytic** derivative, and worth the twenty lines it costs
-    ``turtle_path``: without it :meth:`HexMesh.sweep` differences the sampled
-    path, which is only ``O(h**2)`` and -- because this path's curvature jumps at
-    every junction -- worst exactly where a straight meets an arc.  Each frame
-    inherits that tilt and the section stops being perpendicular to the path.
-    Measured on this coil: the wall drifts ``1.1e-4`` inside ``R_PIPE`` (0.2% of
-    the tube radius) with differenced tangents, and with these it lands on the
-    true tube to ``4e-11`` -- which is the measurement floor of the dense
-    nearest-point probe, not a residual of the mesh."""
-    # a direction, not a point -- ORIGIN deliberately does not enter here
-    return in_plane(_PATH.tangent(s))
-
+# -- turtle-walk the move table, then lift it onto the coil's own plane -------
+# paths.embed maps the walk's own (u, v) to origin + u*AXIS_U + v*AXIS_V, and gives
+# back the vectorized centerline/tangent pair HexMesh.sweep wants: it samples the
+# whole node lattice in one call so a moving frame can be built along it.
+#
+# The tangent is the **analytic** derivative, and worth the twenty lines it costs
+# turtle_path: without it sweep differences the sampled path, which is only O(h**2)
+# and -- because this path's curvature jumps at every junction -- worst exactly where
+# a straight meets an arc.  Each frame inherits that tilt and the section stops being
+# perpendicular to the path.  Measured on this coil: the wall drifts 1.1e-4 inside
+# R_PIPE (0.2% of the tube radius) with differenced tangents, and with these it lands
+# on the true tube to 4e-11 -- the measurement floor of the dense nearest-point probe,
+# not a residual of the mesh.  (embed is also what keeps ORIGIN out of the tangent: a
+# tangent is a direction, and translating it would tilt every frame.)
+_WALK = turtle_path(MOVES, start=(0.0, 0.0), heading=0.0)
+PATH = paths.embed(_WALK, u=AXIS_U, v=AXIS_V, origin=ORIGIN)
+S_BREAKS = PATH.break_fractions
+TOTAL = PATH.total_length
 
 # -- sweep stations: a node exactly on every junction ------------------------
 # The path's curvature is piecewise constant and jumps at every straight<->arc
 # junction, so an element that straddled one would be fitted across two different
-# geometries. sweep_fractions subdivides each piece on its own at ~TARGET_LEN, so
+# geometries. target_length subdivides each piece on its own at ~TARGET_LEN, so
 # every junction is reproduced exactly rather than approached by a global linspace.
-FRACTIONS = linemesh.sweep_fractions(S_BREAKS * TOTAL, TOTAL, TARGET_LEN)
+FRACTIONS = linemesh.path_fractions(PATH, target_length=TARGET_LEN)
 
 assert np.all(np.diff(FRACTIONS) > 0.0), "sweep stations must be strictly increasing"
 assert np.isin(S_BREAKS, FRACTIONS).all(), "every junction must carry a sweep station"
 
 # -- the cross-section: an O-grid disc normal to the path's start tangent -----
-START = centerline(np.array([0.0]))[0]
+START = PATH.centerline(np.array([0.0]))[0]
 # read the opening's own heading off the path rather than restating it: the
 # hook decides which way the inlet points, and a stale literal here would tilt
 # the whole cross-section without failing any assertion.
-START_TANGENT = tuple(tangent(np.array([0.0]))[0])
+START_TANGENT = tuple(PATH.tangent(np.array([0.0]))[0])
 # tag the wall at the lowest level (the boundary loop); ogrid copies it onto the
 # outer ring and the sweep carries it onto the side faces. ogrid has no order=
 # kwarg -- the order is inherited from the loop, which must carry exactly 4*N_SIDE
@@ -186,9 +137,9 @@ section = quadmesh.ogrid(
 # circle's centre, because the O-grid's centroid misses it slightly. tangent= hands
 # in the analytic derivative so the sections stay exactly perpendicular (see above).
 _t0 = time.perf_counter()
-mesh = hexmesh.sweep(section, centerline, FRACTIONS, tangent=tangent,
-                     orientation="fixed", up=PLANE_NORMAL, origin=START,
-                     first_tag="inlet", last_tag="outlet")
+mesh = hexmesh.sweep_path(section, PATH, fractions=FRACTIONS,
+                          orientation="fixed", up=PLANE_NORMAL, origin=START,
+                          first_tag="inlet", last_tag="outlet")
 BUILD_SECONDS = time.perf_counter() - _t0
 
 # -- checks -------------------------------------------------------------------

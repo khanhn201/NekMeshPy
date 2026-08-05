@@ -48,6 +48,31 @@ behind the B-rep) — is internal; see
    :members:
 ```
 
+## `model.paths`
+
+`Move` — one row of a move table, `("line", length, 0.0)` or `("arc", radius,
+signed_degrees)` — is excluded below: it is a `typing.Tuple` alias, and autodoc
+renders those through `typing`'s own docstring, which does not survive `-n`. The
+module docstring describes the two forms.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.paths
+   :members:
+   :exclude-members: Move
+```
+
+## `model.surfaces`
+
+`SurfaceMap` — a `(K,2) -> (K,3)` callable — is excluded below for the same
+reason as `paths.Move`: it is a `typing` alias, and autodoc renders those through
+`typing`'s own docstring, which does not survive `-n`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.model.surfaces
+   :members:
+   :exclude-members: SurfaceMap
+```
+
 ## `model.fields`
 
 ```{eval-rst}

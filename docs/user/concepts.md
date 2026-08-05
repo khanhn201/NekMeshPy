@@ -162,6 +162,14 @@ On `extrude`, line end-point tags become quad **edge** tags, then hex **face** t
 `point_group_tags` / `edge_group_tags` / `face_group_tags` are the sorted unique
 sets. See `examples/flow_past_cylinder.py`.
 
+To get either one *as a mesh* rather than as index pairs, use
+{func}`hexmesh.boundary_mesh <nekmeshpy.hexmesh.lower.boundary_mesh>` (or its
+`quadmesh` sibling, which returns a `LineMesh`): with a `tag` it extracts that named
+group, without one the whole topological boundary. The extracted surface carries the
+parent's **own** nodes, bit for bit at any order — which is the point, since a piece
+built off a port has to weld back onto it, and at `order > 1` `merge` verifies shared
+high-order nodes far more tightly than any coordinate weld.
+
 Row order is meaningful and never changes implicitly — `ordered()` is the one
 explicit canonical sort. The `.re2` boundary block is written in stored order, and
 the `.vtu` writer resolves a node touched by several rows to the **last** of them.
@@ -380,9 +388,19 @@ Things worth knowing:
 - **`fractions` are the path parameter values themselves**, as everywhere else; the
   intermediate GLL levels are evaluated for you. For a path assembled from pieces of
   different curvature — a coil of straights and U-bends — put a station **exactly on
-  every junction** with {meth}`linemesh.sweep_fractions
+  every junction** with {func}`linemesh.sweep_fractions
   <nekmeshpy.linemesh.shape.sweep_fractions>`: an element straddling one would be
   fitted across two different geometries, visible as a kink in the wall.
+- **For a turtle-walked path, reach for `sweep_path` instead.**
+  {func}`paths.embed <nekmeshpy.model.paths.embed>` lifts a 2-D
+  {func}`turtle_path <nekmeshpy.model.paths.turtle_path>` onto a plane in space,
+  giving a {class}`SpacePath <nekmeshpy.model.paths.SpacePath>` that already carries
+  its own analytic tangent and junction table; {func}`hexmesh.sweep_path
+  <nekmeshpy.hexmesh.lift.sweep_path>` then takes a `target_length` (or `layers`)
+  rather than a station array and does the `sweep_fractions` call for you. The one
+  thing `embed` exists to get right is that the origin enters the centerline and
+  **not** the tangent — a tangent is a direction, and translating it tilts every
+  frame along the sweep, so the section stops being perpendicular to the path.
 - **`orientation`** picks the frame field, and names a *mode* and nothing else:
   `"transport"` (default; a rotation-minimizing frame, right for genuinely non-planar
   paths), `"fixed"` with `up=` (exact and zero-twist, right for a planar path — it

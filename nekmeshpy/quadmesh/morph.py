@@ -18,18 +18,22 @@ the bound ``QuadMesh.<name>`` sugar.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 import numpy as np
 
 from .._typing import (
     FloatArray,
+    IntArray,
     Point,
     PointArray,
     Vec3,
 )
+from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
-from ..model import affine
+from ..model import affine, conform, frames
+from ..model.paths import SpacePath
 from .quadmesh import QuadMesh
 
 
@@ -126,8 +130,120 @@ def scale(mesh: QuadMesh, factor: float | Vec3 | Sequence[float],
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
 
+
+def reindex(structure: QuadMesh, target: QuadMesh,
+            sigma: IntArray | Sequence[int]) -> QuadMesh:
+    """``target``'s own geometry, reached through ``structure``'s own index labels:
+    point ``i`` takes ``target``'s point ``sigma[i]``, and every shared-edge and
+    per-quad interior node follows its relabelled corners.
+
+    A pure **relabelling**, not a geometric transform.  The returned mesh's point,
+    edge and quad coordinate *set* is exactly ``target``'s, bit for bit -- so it still
+    welds exactly wherever ``target``'s own pattern turns up later -- but it is
+    numbered the way ``structure`` is.
+
+    This is what makes :func:`blend <nekmeshpy.quadmesh.morph.blend>` usable across two
+    independently built sections.  ``blend`` requires identical connectivity paired by
+    index, and two sections built by different recipes satisfy that only after one is
+    relabelled onto the other.  Rotating one section's *coordinates* into place instead
+    is the tempting alternative and is wrong at ``order > 1``: a rotated copy is close
+    to, not identical to, whatever the original was bonded to, and
+    :func:`HexMesh.merge <nekmeshpy.hexmesh.assemble.merge>` verifies shared high-order
+    edge and face nodes against ``conform.entity_tol`` (~1e-9 of the model extent).
+    A permutation has zero residual by construction.
+
+    ``sigma`` is a permutation of ``structure``'s point ids, typically from a
+    nearest-neighbour match of the two centred point clouds.  ``structure`` and
+    ``target`` must already share identical ``quad`` / ``flip`` / ``lines.lines`` --
+    the same precondition ``blend`` has, and satisfied whenever both come from one
+    recipe at different parameters."""
+    if not (np.array_equal(structure.quad, target.quad)
+            and np.array_equal(structure.flip, target.flip)):
+        raise ValueError(
+            "reindex: structure and target must share identical quad/flip incidence; "
+            "they are two samplings of one recipe, not two different meshes")
+    if not np.array_equal(structure.lines.lines, target.lines.lines):
+        raise ValueError(
+            "reindex: structure and target must share identical edge connectivity")
+    s: IntArray = np.asarray(sigma, dtype=np.int64).ravel()
+    n = structure.points.shape[0]
+    if s.shape != (n,):
+        raise ValueError("reindex: sigma must have one entry per point (%d), got %s"
+                         % (n, s.shape))
+    if not np.array_equal(np.sort(s), np.arange(n, dtype=np.int64)):
+        raise ValueError(
+            "reindex: sigma is not a permutation of the point ids -- the two patterns "
+            "do not pair one-for-one, so relabelling would drop or duplicate a node")
+
+    # Edges: structure's edge e runs sigma[u] -> sigma[v]; find target's edge on that
+    # same unordered pair and copy its interior, reversed when the two traverse it the
+    # other way.  Both sides are lexsorted on the sorted pair and paired positionally,
+    # which needs no packed key -- and so has no bound on the point count.
+    te: IntArray = np.asarray(target.lines.lines, dtype=np.int64)
+    se: IntArray = s[np.asarray(structure.lines.lines, dtype=np.int64)]
+    tidx = conform.locate_rows(te, se, who="reindex", what="edge")
+    rev = te[tidx, 0] != se[:, 0]
+    new_ei: PointArray = np.asarray(target.lines.interior, dtype=float)[tidx].copy()
+    new_ei[rev] = new_ei[rev][:, ::-1]
+    new_lines = LineMesh(target.points[s], structure.lines.lines, new_ei,
+                         target.lines.point_tags, target.lines.element_tags,
+                         order=target.lines.order)
+
+    # Quads: match on the relabelled corner *set*, which is orientation-free, so the
+    # two pair however each happens to be wound.
+    qidx = conform.locate_rows(np.asarray(target.quads, dtype=np.int64),
+                                s[np.asarray(structure.quads, dtype=np.int64)],
+                                who="reindex", what="quad")
+    new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
+
+    return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,
+                    target.edge_tags, target.element_tags, order=target.order)
+
+
+def place_on_path(section: QuadMesh, path: SpacePath,
+                  fractions: FloatArray | Sequence[float], *,
+                  origin: Point | Sequence[float] | None = None,
+                  orientation: Literal["transport", "fixed", "frenet"] = "transport",
+                  up: Vec3 | Sequence[float] | PointArray | None = None,
+                  twist: float = 0.0,
+                  close_twist: bool = True,
+                  normal: Vec3 | Sequence[float] | None = None,
+                  loop: bool = False) -> list[QuadMesh]:
+    """Where :func:`sweep <nekmeshpy.hexmesh.lift.sweep_path>` **would** put ``section``
+    at each of ``fractions``, without building the block: one rigidly placed copy per
+    station, through the same
+    :func:`frames.sweep_placements <nekmeshpy.model.frames.sweep_placements>` the sweep
+    itself uses.
+
+    For continuing a build from a swept tube's own terminal cross-section, or for
+    stubbing a few rigid sections off a disc.  Going through the sweep's own machinery
+    rather than re-deriving the placement is the point: re-deriving lands *close*, and
+    at ``order > 1`` :func:`HexMesh.merge <nekmeshpy.hexmesh.assemble.merge>` verifies
+    shared high-order edge nodes against ``conform.entity_tol`` (~1e-9 of the model
+    extent), which close does not meet.
+
+    Takes the **whole** ``fractions`` array rather than a single station, because under
+    ``orientation="transport"`` the frame at a station is a sequential integration along
+    everything before it -- a one-station signature would silently return a different
+    placement than the sweep's.  Pass the same fractions the sweep will use.  Under
+    ``"fixed"`` each frame is pointwise and the sampling does not matter.
+
+    ``origin`` defaults to the section's centroid, exactly as ``sweep_placements`` does;
+    an O-grid disc's centroid misses its true centre slightly, so name the centre the
+    boundary loop was built about when there is one."""
+    P: PointArray = path.centerline(np.asarray(fractions, dtype=float).ravel())
+    T: PointArray = path.tangent(np.asarray(fractions, dtype=float).ravel())
+    places = frames.sweep_placements(
+        section.points, P, orientation=orientation, up=up, twist=twist,
+        close_twist=close_twist, loop=loop, origin=origin, normal=normal,
+        path_tangents=T)
+    return [transform(section, M, o) for M, o in places]
+
+
 __all__ = [
     "blend",
+    "place_on_path",
+    "reindex",
     "rotate",
     "scale",
     "transform",

@@ -46,7 +46,16 @@ from .assemble import loft, loft_fn, merge
 from .linemesh import LineMesh
 from .morph import blend, reverse, rotate, scale, transform, translate
 from .query import boundary_elements, boundary_points
-from .shape import arc, arclength_fractions, circle, line, rectangle, sweep_fractions
+from .shape import (
+    arc,
+    arclength_fractions,
+    circle,
+    line,
+    on_surface,
+    path_fractions,
+    rectangle,
+    sweep_fractions,
+)
 
 __all__ = [
     "LineMesh",
@@ -62,6 +71,8 @@ __all__ = [
     "loft_fn",
     "merge",
     "morph",
+    "on_surface",
+    "path_fractions",
     "query",
     "rectangle",
     "reverse",

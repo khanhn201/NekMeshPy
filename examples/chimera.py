@@ -63,13 +63,18 @@ pipe B's minus end on the first -- are capped ``"wall"`` at the same full
 """
 
 import logging
-from collections import namedtuple
+import os
+import sys
 
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.interp import coons_grid_fn as coons_fn
+from nekmeshpy.model import paths, surfaces
 from nekmeshpy.model.paths import turtle_path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from tjunction_lib import auto_params  # noqa: E402  (needs the path above)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -85,9 +90,7 @@ CENTER_SCALE = 0.7           # core corner at CENTER_SCALE * R along the arc mid
 
 #: Weight of the branch-facing arc when locating each crotch's wall-triangle "tip" --
 #: see ``quadrant_pipe_tjunction.py``'s own ``CAP_TIP_BIAS``.
-CAP_TIP_BIAS = 1.0 / 3.0
 
-PHI_W = np.deg2rad(100.0)     # bypass edge: the two z = 0 wall corners, at +-PHI_W
 
 N_TRANS = 5                   # layers from a leg's composite face to its plain disc
 N_LEG = 6                     # reference layer count -- sets the axial cell target
@@ -124,7 +127,13 @@ OUT_NAME = "chimera"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
 N = N_QUAD
-ORIGIN = np.zeros(3)
+#: The three shape parameters of the quadrant construction, chosen for this
+#: junction's own radius ratio rather than fixed -- see
+#: ``tjunction_lib.auto_params``. ``PHI_W`` is the bypass edge (the two z = 0
+#: wall corners sit at +-PHI_W); ``CAP_TIP_BIAS`` weights the branch arc when
+#: locating each crotch's wall-triangle tip; ``ORIGIN`` is the junction hub every
+#: quadrant seam radiates from.
+PHI_W, CAP_TIP_BIAS, ORIGIN = auto_params(R_MAIN, R_BRANCH)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
@@ -174,66 +183,43 @@ def cyl_params(p):
     return np.stack([np.arctan2(p[..., 1], p[..., 0]), p[..., 2]], axis=-1)
 
 
-#: A wall curve, carried as its **surface parametrization** rather than as points:
-#: ``g`` maps a ``(K,)`` array of curve parameters to the ``(K, 2)`` ``(phi, z)`` it
-#: passes through, and ``fr`` is the ``2*N_QUAD+1`` parameter values of its nodes.
-Wall = namedtuple("Wall", "g fr")
+#: A wall curve is a :class:`~nekmeshpy.model.surfaces.SurfaceCurve`: its ``g`` maps a
+#: ``(K,)`` array of curve parameters to the ``(K, 2)`` ``(phi, z)`` it passes through,
+#: and its ``fr`` holds the ``2*N_QUAD+1`` parameter values of its nodes.  Carrying the
+#: curve as a parametrization rather than as points is what keeps every derived curve
+#: exactly *on* the cylinder -- see ``model.surfaces``.
 
 
 def cyl_pts(u):
-    """``(K, 2)`` wall parameters to ``(K, 3)`` points."""
+    """``(K, 2)`` wall parameters to ``(K, 3)`` points -- this junction's surface map."""
     return cyl(u[:, 0], u[:, 1])
 
 
 def wall_mesh(w):
-    """A :class:`Wall` as a ``LineMesh`` on the cylinder, exact at every node."""
-    return linemesh.loft_fn(lambda x: cyl_pts(w.g(x)), w.fr, order=ORDER)
+    """A wall curve as a ``LineMesh`` on the cylinder, exact at every node."""
+    return linemesh.on_surface(w, cyl_pts, order=ORDER)
 
 
 def ruled_wall(pa, pb):
     """The straight ``(phi, z)`` segment between two stations, on ``[0, 1]``."""
-    pa, pb = np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)
-
-    def g(x):
-        xi = np.asarray(x, dtype=float)[:, None]
-        return (1.0 - xi) * pa + xi * pb
-
-    return Wall(g, np.linspace(0.0, 1.0, 2 * N_QUAD + 1))
+    return surfaces.ruled(pa, pb, 2 * N_QUAD)
 
 
 def foot_wall(fr):
     """A footprint quadrant, in the branch angle it is analytic in."""
-    return Wall(lambda t: cyl_params(footprint(t)), np.asarray(fr, dtype=float))
+    return surfaces.curve(lambda t: cyl_params(footprint(t)), fr)
 
 
 def plain_wall(w, phi0, phi1, z):
     """The plain-disc arc ``phi0 -> phi1`` at height ``z``, reparametrized onto
     ``w``'s domain so the two can be blended station by station (see :func:`leg`)."""
-    t0, t1 = float(w.fr[0]), float(w.fr[-1])
-
-    def g(x):
-        xi = (np.asarray(x, dtype=float) - t0) / (t1 - t0)
-        return np.stack([phi0 + xi * (phi1 - phi0), np.full(xi.shape, z)], axis=1)
-
-    return Wall(g, w.fr)
-
-
-def blend_wall(w0, w1, lam):
-    """The two curves interpolated **in parameter space**, hence still on the wall."""
-    return Wall(lambda x: (1.0 - lam) * w0.g(x) + lam * w1.g(x), w0.fr)
-
-
-def reverse_wall(w):
-    """The same curve traversed the other way: ``loft_fn`` takes a descending
-    parameter sequence for exactly this."""
-    return Wall(w.g, w.fr[::-1])
+    return surfaces.reparam(w, (phi0, z), (phi1, z))
 
 
 def shift_wall(w, turns):
     """The same curve with ``phi`` shifted by whole turns -- the identical points,
     rebranched so that curves meeting at a corner can be blended in ``phi``."""
-    d = np.array([2.0 * np.pi * turns, 0.0])
-    return Wall(lambda x: w.g(x) + d, w.fr)
+    return surfaces.shift(w, (2.0 * np.pi * turns, 0.0))
 
 
 def seam(target, center=ORIGIN):
@@ -317,49 +303,7 @@ def arc_mids(walls):
     """The ``(phi, z)`` mid-node of each of a crotch's three arcs -- the nodes the
     wall triangle splits at, taken from the arcs' own sampling rather than at the
     midpoint of the parameter range, which is not the same point on a graded arc."""
-    return [w.g(w.fr[N:N + 1])[0] for w in walls]
-
-
-def wall_patch(fn, tag):
-    """One patch of the wall triangle, evaluated on the cylinder at every node."""
-    fr = np.linspace(0.0, 1.0, N + 1)
-    return quadmesh.loft_fn(
-        lambda y: linemesh.loft_fn(
-            lambda x: cyl_pts(fn(x, np.full(np.shape(x), y))), fr, order=ORDER),
-        fr, order=ORDER, element_tags=[tag] * N)
-
-
-def wall_triangle(w_ab, w_bc, w_ca, tag="wall", mids=None, tip_bias=CAP_TIP_BIAS):
-    """The curved wall triangle between three arcs, as the three patches about its
-    tip that :meth:`HexMesh.tetra <nekmeshpy.hexmesh.HexMesh.tetra>` wants.
-    ``tip_bias`` is :data:`CAP_TIP_BIAS`'s weight on ``w_ab`` (always the branch arc,
-    by this file's calling convention)."""
-    u_ab, u_bc, u_ca = arc_mids((w_ab, w_bc, w_ca)) if mids is None else mids
-    wc = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
-
-    def half(w, i0, i1):
-        """Half an arc on ``[0, 1]``, remapped **through its own node values**."""
-        step = 1 if i1 > i0 else -1
-        idx = np.arange(i0, i1 + step, step)
-        fr, m = w.fr[idx], idx.size - 1
-
-        def rep(s):
-            s = np.clip(np.asarray(s, dtype=float), 0.0, 1.0) * m
-            i = np.clip(np.floor(s).astype(int), 0, m - 1)
-            return (1.0 - (s - i)) * fr[i] + (s - i) * fr[i + 1]
-
-        return lambda s: w.g(rep(s))
-
-    def spoke(mid):
-        return lambda s: mid + np.asarray(s, dtype=float)[:, None] * (wc - mid)
-
-    return quadmesh.merge([
-        wall_patch(coons_fn(half(w_ab, 0, N), spoke(u_ca),
-                            half(w_ca, 2 * N, N), spoke(u_ab)), tag),
-        wall_patch(coons_fn(half(w_ab, 2 * N, N), spoke(u_bc),
-                            half(w_bc, 0, N), spoke(u_ab)), tag),
-        wall_patch(coons_fn(half(w_ca, 0, N), spoke(u_bc),
-                            half(w_bc, 2 * N, N), spoke(u_ca)), tag)])
+    return [surfaces.node(w, N) for w in walls]
 
 
 def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
@@ -369,13 +313,15 @@ def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
     (:data:`CAP_TIP_BIAS`) pull the wall triangle's tip toward it."""
     (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
     mids = arc_mids((w_ab, w_bc, w_ca))
-    u_ab, u_bc, u_ca = mids
-    wc_param = tip_bias * u_ab + (1.0 - tip_bias) * 0.5 * (u_bc + u_ca)
+    # the solid apex is placed against the patch's own tip, read from the same helper
+    # tri_patch uses, so the two cannot drift apart
+    wc_param = quadmesh.tri_patch_tip(*mids, tip_bias=tip_bias)
     wc = cyl_pts(wc_param[None, :])[0]
     return hexmesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
                           quadrant(m_ca, sc, sa),
-                          wall_triangle(w_ab, w_bc, w_ca, mids=mids,
-                                       tip_bias=tip_bias)],
+                          quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca, order=ORDER,
+                                             tip_bias=tip_bias, mids=mids,
+                                             element_tag="wall")],
                          center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN))
 
 
@@ -393,8 +339,9 @@ def leg(composite, walls, sign, run):
 
     def station(s):
         return quadmesh.quadrant_disc(
-            [wall_mesh(blend_wall(walls[q], w_plain[q], s)) for q in range(4)],
-            np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
+            [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
+            (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]),
+            RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
     transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
@@ -438,25 +385,19 @@ def outlet_return():
     :func:`end_disc` itself, and carried onto pipe B by the caller's :func:`to_b`."""
     z0 = Z_J[-1] + Z_NEAR
     run = (Z_J[-1] - Z_J[0]) + Z_NEAR + END_MARGIN + 2.0 * L_HALF * (N_COPIES - 1)
-    path = turtle_path([("arc", RETURN_BEND_R, -180.0), ("line", run, 0.0)],
+    # the walk's own +u is world +z (down the chain) and its +v world +y (the fold),
+    # so it starts at u = z0 and paths.embed places it with no origin offset.
+    walk = turtle_path([("arc", RETURN_BEND_R, -180.0), ("line", run, 0.0)],
                        start=(z0, 0.0), heading=0.0)
+    path = paths.embed(walk, u=(0.0, 0.0, 1.0), v=(0.0, 1.0, 0.0))
     n_bend = max(1, round(RETURN_BEND_R * np.pi / BEND_CELL))
     n_run = max(1, round(run / AXIAL_CELL))
     breaks = path.break_fractions
     station_fr = np.concatenate([np.linspace(0.0, breaks[0], n_bend + 1),
                                  np.linspace(breaks[0], 1.0, n_run + 1)[1:]])
-
-    def centerline(s):
-        pq = path.centerline(s)
-        return np.stack([np.zeros(pq.shape[0]), pq[:, 1], pq[:, 0]], axis=1)
-
-    def tangent(s):
-        pq = path.tangent(s)
-        return np.stack([np.zeros(pq.shape[0]), pq[:, 1], pq[:, 0]], axis=1)
-
-    return hexmesh.sweep(end_disc(1), centerline, station_fr, tangent=tangent,
-                         orientation="fixed", up=(1.0, 0.0, 0.0),
-                         origin=(0.0, 0.0, z0), last_tag="outlet")
+    return hexmesh.sweep_path(end_disc(1), path, fractions=station_fr,
+                              orientation="fixed", up=(1.0, 0.0, 0.0),
+                              origin=(0.0, 0.0, z0), last_tag="outlet")
 
 
 def to_b(m):
@@ -480,7 +421,8 @@ def branch():
     is tagged -- both become interior faces once the bend welds onto the far one."""
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
-    sections = [quadmesh.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
+    sections = [quadmesh.quadrant_disc([w[i] for w in walls],
+                                       (1.0 - t[i]) * ORIGIN + t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
     return [hexmesh.loft(sections),
@@ -500,12 +442,12 @@ def build_junction(z0, run_minus, run_plus):
               # are shifted back.
               cap(SP[0], SP[3], SWP,                    # +y crotch: P1, P2, W+
                   (linemesh.reverse(FQ[3]), foot_wall(FQ_FR[3][::-1])),
-                  (linemesh.reverse(SIDE_LP), shift_wall(reverse_wall(W_L[3]), 1)),
-                  (linemesh.reverse(SIDE_RP), reverse_wall(W_R[1]))),
+                  (linemesh.reverse(SIDE_LP), shift_wall(surfaces.reverse(W_L[3]), 1)),
+                  (linemesh.reverse(SIDE_RP), surfaces.reverse(W_R[1]))),
               cap(SP[2], SP[1], SWM,                    # -y crotch: P3, P4, W-
                   (linemesh.reverse(FQ[1]), foot_wall(FQ_FR[1][::-1])),
-                  (linemesh.reverse(SIDE_RM), shift_wall(reverse_wall(W_R[3]), -1)),
-                  (linemesh.reverse(SIDE_LM), reverse_wall(W_L[1])))]
+                  (linemesh.reverse(SIDE_RM), shift_wall(surfaces.reverse(W_R[3]), -1)),
+                  (linemesh.reverse(SIDE_LM), surfaces.reverse(W_L[1])))]
     return hexmesh.translate(hexmesh.merge(blocks), (0.0, 0.0, z0))
 
 
@@ -517,9 +459,9 @@ def build_junction(z0, run_minus, run_plus):
 #: pipe B ends up offset purely along ``-x``, not diagonally, with its arm facing
 #: ``-x`` to meet it. Every move keeps the previous move's heading, so the path is C1
 #: by construction.
-_PATH = turtle_path([("arc", R_BEND, 180.0), ("line", LOOP_LEN, 0.0),
+_WALK = turtle_path([("arc", R_BEND, 180.0), ("line", LOOP_LEN, 0.0),
                     ("arc", R_BEND, 180.0)], start=(X_MID, 0.0), heading=0.0)
-_BREAKS = _PATH.break_fractions
+_BREAKS = _WALK.break_fractions
 
 #: Sweep stations, one exactly on every straight<->arc junction, each of the three
 #: pieces graded at its own layer count rather than one global linspace.
@@ -535,20 +477,14 @@ BEND_CENTER_X = -D_PIPES / 2.0
 
 def bend(z0):
     """One junction's hairpin, at height ``z0``: the arm's ending disc carried along
-    ``_PATH.centerline``/``.tangent``, landing on pipe B's own (rotated) arm end by
-    construction -- no separate return arm is built."""
-    def centerline(s):
-        xy = _PATH.centerline(s)
-        return np.concatenate([xy, np.full((xy.shape[0], 1), z0)], axis=1)
-
-    def tangent(s):
-        xy = _PATH.tangent(s)
-        return np.concatenate([xy, np.zeros((xy.shape[0], 1))], axis=1)
-
+    ``_WALK`` lifted into the plane ``z = z0``, landing on pipe B's own (rotated) arm
+    end by construction -- no separate return arm is built."""
+    path = paths.embed(_WALK, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0),
+                       origin=(0.0, 0.0, z0))
     section = quadmesh.translate(OPENING_DISC, (ARM_LEN, 0.0, z0))
-    return hexmesh.sweep(section, centerline, _STATION_FR,
-                         tangent=tangent, orientation="fixed", up=(0.0, 0.0, 1.0),
-                         origin=(X_MID, 0.0, z0))
+    return hexmesh.sweep_path(section, path, fractions=_STATION_FR,
+                              orientation="fixed", up=(0.0, 0.0, 1.0),
+                              origin=(X_MID, 0.0, z0))
 
 
 #: Junction centres within one unit, evenly spaced and centred on ``z = 0``.
