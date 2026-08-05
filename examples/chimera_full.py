@@ -35,15 +35,19 @@ built by *different* constructions have to meet exactly, and at ``order > 1``
 ``conform.entity_tol`` (~1e-9 x the model extent), far tighter than any
 coordinate weld:
 
-* ``_reindex_geometry`` -- re-express one section's geometry through another's
+* ``quadmesh.reindex`` -- re-express one section's geometry through another's
   index labels.  A pure permutation, so it is exact by construction where a
   coordinate rotation is only approximate.
-* ``pattern_adapter`` -- blend across a *small* pattern difference (the ~0.03
+* ``hexmesh.adapter`` -- blend across a *small* pattern difference (the ~0.03
   between T1's own leg and chimera's), first slice and last slice both exact.
-* ``weld_bridge`` -- span a *large* one (the ~0.94 median between T1's
+* ``hexmesh.bridge`` -- span a *large* one (the ~0.94 median between T1's
   arc-length-stationed branch disc and T2's uniform-angle main leg) as a
   single ``HexMesh.loft``: rigid stubs off each side, a blend across the gap
   between them, no internal merge to fail.
+
+All three were written here first and now live in the toolkit; this file keeps
+only the choice of which to use at each seam, which is the part that is about
+this manifold rather than about meshes in general.
 
 And where a seam can be removed rather than made exact, it is: the inbound
 connector and the coil sweep as ONE turtle walk (see ``build_coil``).  They
@@ -61,137 +65,12 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from nekmeshpy import LineMesh, QuadMesh, export, hexmesh, quadmesh
-from nekmeshpy.model import frames, paths
+from nekmeshpy.model import paths
 from nekmeshpy.model.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tjunction_lib import build_tjunction  # noqa: E402  (needs the path above)
-
-
-def _find_roll(sec_a, sec_b, axis):
-    """The 90-degree roll k minimizing index-wise deviation between sec_a and
-    sec_b about their own centres."""
-    ca, cb = sec_a.points.mean(axis=0), sec_b.points.mean(axis=0)
-    best_k, best_d = None, np.inf
-    for k in range(4):
-        cand = quadmesh.rotate(sec_a, k * np.pi / 2.0, axis=axis, center=ca)
-        d = np.linalg.norm((cand.points - ca) - (sec_b.points - cb), axis=1).max()
-        if d < best_d:
-            best_k, best_d = k, d
-    return best_k
-
-
-def _reindex_geometry(sec_a, tgt, sigma):
-    """Re-express tgt's own geometry through sec_a's own (shared) structural
-    B-rep arrays: point i's coordinate becomes tgt's own point sigma[i], an
-    edge's interior node becomes whichever of tgt's own edges connects the
-    sigma-mapped endpoint pair (matching orientation), and a quad's private
-    interior node similarly by its 4 sigma-mapped corners.
-
-    This is a pure relabeling, not a geometric transform: the returned mesh's
-    point/edge/quad SET is exactly tgt's own (bit-identical coordinates), just
-    reached through sec_a's own index labels -- so a HexMesh.merge against
-    the *actual* tgt-patterned mesh later (which is coordinate-proximity
-    based, not index based) welds exactly regardless of this relabeling.
-    Requires sec_a and tgt to already share identical quad/flip/lines.lines
-    (the existing precondition for QuadMesh.blend, satisfied by construction
-    since both come from the same quadrant-disc recipe)."""
-    assert np.array_equal(sec_a.quad, tgt.quad) and np.array_equal(sec_a.flip, tgt.flip)
-    assert np.array_equal(sec_a.lines.lines, tgt.lines.lines), (
-        "_reindex_geometry: sec_a and tgt must share identical edge connectivity")
-    sigma = np.asarray(sigma, dtype=np.int64)
-    new_points = tgt.points[sigma]
-
-    tgt_edges = tgt.lines.lines
-    edge_lookup: dict[tuple[int, int], tuple[int, bool]] = {}
-    for e in range(tgt_edges.shape[0]):
-        u, v = int(tgt_edges[e, 0]), int(tgt_edges[e, 1])
-        edge_lookup[(u, v)] = (e, False)
-        edge_lookup[(v, u)] = (e, True)
-    struct_edges = sec_a.lines.lines
-    new_interior = np.empty_like(tgt.lines.interior)
-    for e in range(struct_edges.shape[0]):
-        u, v = int(struct_edges[e, 0]), int(struct_edges[e, 1])
-        te, rev = edge_lookup[(int(sigma[u]), int(sigma[v]))]
-        vals = tgt.lines.interior[te]
-        new_interior[e] = vals[::-1] if rev else vals
-    new_lines = LineMesh(new_points, struct_edges, new_interior,
-                         tgt.lines.point_tags, tgt.lines.element_tags,
-                         order=tgt.lines.order)
-
-    quad_lookup: dict[frozenset[int], int] = {}
-    tgt_quads = tgt.quads
-    for q in range(tgt_quads.shape[0]):
-        quad_lookup[frozenset(int(x) for x in tgt_quads[q])] = q
-    struct_quads = sec_a.quads
-    new_qinterior = np.empty_like(tgt.interior)
-    for q in range(struct_quads.shape[0]):
-        corners = frozenset(int(sigma[c]) for c in struct_quads[q])
-        new_qinterior[q] = tgt.interior[quad_lookup[corners]]
-
-    return QuadMesh(new_lines, sec_a.quad, sec_a.flip, new_qinterior,
-                    tgt.edge_tags, tgt.element_tags,
-                    order=tgt.order)
-
-
-def pattern_adapter(sec_a, sec_b, axis, n_layers=2, name=""):
-    """One short loft that morphs between two same-connectivity quadrant discs
-    whose *node patterns* differ slightly (different quadrant-junction params
-    put one quadrant's wall nodes ~2% off between the two) -- a plain
-    coordinate weld can therefore never be exact across such a seam, but a
-    blend is: its first slice IS sec_a's exact points and its last is sec_b's
-    own geometry reached through sec_a's own labeling (see
-    _reindex_geometry), so both end welds are bit-EXACT (not merely close
-    within a coordinate tolerance) while the mismatch is absorbed smoothly
-    inside the adapter. The index pairing between the two discs may be rolled
-    by a multiple of 90 degrees (both patterns' seams live on the 45-degree
-    family, but each disc arrives via its own chain of axis-permuting
-    rotations); blending across a rolled pairing twists the adapter into
-    inverted elements, so the roll is *measured* -- the k minimizing the
-    index-wise deviation about each disc's own centre -- not assumed.
-
-    An earlier version rotated sec_a's own *coordinates* by that roll to
-    build the blend's first slice -- exact enough for a coordinate-tolerance
-    weld at order 1, but at order > 1 HexMesh.merge also verifies high-order
-    edge/face interior nodes to a strict, scale-relative tolerance
-    (conform.entity_tol, ~1e-9 x scale) that a rotated *copy* of sec_a's
-    corners -- close, not identical, to sec_a's own literal end -- cannot
-    satisfy. Relabeling sec_b instead (a pure index permutation, zero
-    residual by construction) keeps sec_a completely untouched, so whatever
-    it is bit-identical to (e.g. a swept connector's own terminal section)
-    stays bit-identical, and the reindexed sec_b's own coordinate SET is
-    still exactly sec_b's, so it also welds exactly wherever sec_b's real
-    pattern shows up later."""
-    ca, cb = sec_a.points.mean(axis=0), sec_b.points.mean(axis=0)
-    best_k = _find_roll(sec_a, sec_b, axis)
-    cand = quadmesh.rotate(sec_a, best_k * np.pi / 2.0, axis=axis, center=ca)
-    # sigma: sec_a's own near-4-fold self-map under the discovered roll (which
-    # of sec_a's *own* corners does corner i land closest to, rotated) --
-    # entirely about sec_a's own geometry, nothing to do with sec_b yet.
-    _, sigma = cKDTree(cand.points).query(sec_a.points)
-    sec_b_aligned = _reindex_geometry(sec_a, sec_b, sigma)
-    best_d = np.linalg.norm((sec_b_aligned.points - cb) - (sec_a.points - ca), axis=1).max()
-    print("pattern_adapter[%s]: roll k=%d, residual index-wise dev %.3e" %
-          (name, best_k, best_d))
-    assert best_d < 0.2, "no 90-degree roll aligns these two disc patterns"
-    if name:
-        d_per = np.linalg.norm((sec_b_aligned.points - cb) - (sec_a.points - ca), axis=1)
-        worst = np.argsort(-d_per)[:6]
-        for i in worst:
-            print("  worst[%d] d=%.4f a=%s b=%s" % (
-                i, d_per[i], np.round(sec_a.points[i] - ca, 3),
-                np.round(sec_b_aligned.points[i] - cb, 3)))
-    result = hexmesh.loft(quadmesh.blend(sec_a, sec_b_aligned,
-                                         np.linspace(0.0, 1.0, n_layers + 1)))
-    if name:
-        sj = hexmesh.scaled_jacobian(result)
-        worst_hex = int(np.argmin(sj))
-        print("  adapter min sj=%.4e at hex %d / %d" % (sj.min(), worst_hex, result.n_hexes))
-        hc = result.hexes[worst_hex]
-        print("  hex corner ids:", hc)
-        print("  hex corner pts (abs):\n%s" % np.round(result.points[hc], 4))
-    return result, best_k
 
 FAST = False
 ORDER = 2
@@ -384,7 +263,7 @@ def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, las
 
 BEND_R1 = 2.0 * R_MAIN
 VERTICAL_DROP = 14.0   # matches VERTICAL_RISE -- the two legs read as comparable
-ADAPT = 1.0            # length of each pattern-adapter layer (see pattern_adapter)
+ADAPT = 1.0            # length of each pattern-adapter layer (see hexmesh.adapter)
 RUN_TO_RISER = 8.0
 VERTICAL_RISE = 14.0
 
@@ -413,7 +292,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # onto it (-1, as before the real-chimera flip) would put two -z-facing
     # faces back to back, which cannot weld.
     # the swept tube stops ADAPT short of the chimera plane; the last ADAPT is
-    # a pattern_adapter morphing T1's own disc pattern into chimera's own
+    # a hexmesh.adapter morphing T1's own disc pattern into chimera's own
     # (they differ ~2% in one quadrant's wall spacing -- different
     # branch-radius params -- so no plain weld across that seam can be exact).
     # NOTE: elbow_backward always lands exactly *at* the target point it is
@@ -455,8 +334,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
          (tag, end_sec.points.mean(axis=0), quadmesh.plane_normal(end_sec, check=False)))
     print("  [%s] tgt center=%s normal=%s"
          % (tag, chi_disc.points.mean(axis=0), quadmesh.plane_normal(chi_disc, check=False)))
-    adapter, _ = pattern_adapter(end_sec, chi_disc, (0.0, 0.0, 1.0), n_layers=2,
-                                 name="chi_" + tag)
+    adapter = hexmesh.adapter(end_sec, chi_disc, axis=(0.0, 0.0, 1.0), layers=2)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
     # The inlet/outlet risers themselves bend to z- (away from chimera, which
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
@@ -471,7 +349,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
                             da_c[1], n_slices*8, last_tag=tag)
     # conn_chi's own end and the adapter's own start are the *same* physical
     # points (both derived from db via the same sweep_placements machinery),
-    # but the adapter's internal 90-degree roll search (see pattern_adapter)
+    # but the adapter's internal 90-degree roll search (see hexmesh.adapter)
     # rotates them, and T1's own disc is only *near*-exactly 4-fold symmetric
     # (a ~0.03-unit residual, well under merge()'s global tol=0.005 default)
     # -- so weld *this one seam* locally, at a tolerance sized to that
@@ -570,96 +448,6 @@ def build_t2(mirror=False):
 RUN_T1_T2 = 10.0 - H1
 
 
-def _stub_sections(disc, c, n_dir, dist, n_sec):
-    """n_sec sections of disc's own exact pattern, rigidly swept a total
-    distance dist along n_dir from centre c (n_sec<2 or dist<=0 -> just
-    [disc], unchanged) -- the building block weld_bridge uses on both a's and
-    b's own side of its gap, each stub staying bit-exact to its own source
-    disc throughout (a pure rigid transform, no shape change).
-
-    n_dir is the disc's OWN true normal at both call sites, not the raw
-    centroid-to-centroid direction: the two differ by a tiny angle (neither
-    disc is perfectly centred on its own nominal translate target), and
-    sweep's "fixed" orientation makes the section exactly perpendicular to
-    whatever tangent it is handed -- even at s=0 -- so a tangent a hair off
-    the disc's own normal makes the first station a hair off the disc itself
-    (measured: 7e-6 with the centroid direction, exactly 0.0 with the
-    normal)."""
-    if n_sec < 2 or dist <= 0.0:
-        return [disc]
-    up = (0.0, 0.0, 1.0) if abs(n_dir[2]) < 0.9 else (1.0, 0.0, 0.0)
-    s_all = np.linspace(0.0, 1.0, n_sec)
-
-    def path(s):
-        s = np.asarray(s, dtype=float)[:, None]
-        return c + s * dist * n_dir
-
-    def tang(s):
-        return np.tile(n_dir, (np.asarray(s).size, 1))
-
-    placements = frames.sweep_placements(disc.points, path(s_all), orientation="fixed",
-                                         up=up, origin=c, path_tangents=tang(s_all))
-    return [quadmesh.transform(disc, m, o) for m, o in placements]
-
-
-def weld_bridge(a, b, n=4, stub_frac=0.3, stub_max=1.5, n_blend=6):
-    """Connector between two same-radius, possibly very differently
-    *patterned* discs (a T-junction's own leg vs. another T-junction's own
-    leg, built by different algorithms -- or, at the T1-branch/T2-main joint,
-    by different *functions* entirely).  A short rigid stub is extruded from
-    **each** side along its own true normal (bit-exact to its own source
-    disc, so both near ends stay exactly bonded to whatever a and b are
-    themselves exactly bonded to), and the remaining gap is spanned by a
-    straight ``QuadMesh.blend`` -- with the stubs and the blend lofted
-    together as **one** ``HexMesh.loft``.
-
-    Building the whole bridge as a single loft is what makes this exact at
-    order > 1.  The old version built a rigid sweep and left the far seam to
-    ``HexMesh.merge``'s tolerance weld: fine at order 1, but order > 1 also
-    verifies shared high-order edge nodes against ``conform.entity_tol``
-    (~1e-9 x scale), which an approximate weld cannot meet -- the original
-    "non-conforming high-order edge" failure.  One loft has no internal seam
-    to verify, so it comes out conformal by construction.
-
-    The blend needs an honest point correspondence, and here the two patterns
-    are genuinely far apart: T1's branch disc (``branch()``, stations spaced
-    by arc length along the near-degenerate branch/main intersection curve)
-    against T2's main leg (``leg()``, uniform angular stations) differ by a
-    *median* 0.94 -- comparable to the disc radius itself, not the ~0.03
-    ``pattern_adapter`` absorbs at the chimera seam -- and no 90-degree
-    rotation improves it, because the mismatch is a difference in station
-    *distribution*, not orientation.  Nearest-neighbour matching of the two
-    centred point clouds cuts that to a median of 0.001.  Every section on
-    b's side is then reindexed through that correspondence (see
-    ``_reindex_geometry``), not just the one touching the blend: reindexing
-    only the tip leaves the blend's last slice and b's own naturally-labelled
-    stub disagreeing, which twists that seam into 96/480 inverted hexes.
-    Reindexing the whole stub gives 0/480 inverted, min scaled Jacobian
-    0.707."""
-    ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
-    length = np.linalg.norm(cb - ca)
-    na = quadmesh.plane_normal(a, check=False)
-    na = na if np.dot(na, cb - ca) > 0 else -na
-    nb = quadmesh.plane_normal(b, check=False)
-    nb = nb if np.dot(nb, ca - cb) > 0 else -nb
-    stub = min(stub_max, stub_frac * length)
-
-    n_stub_sec = max(2, n // 2)
-    a_secs = _stub_sections(a, ca, na, stub, n_stub_sec)
-    b_secs_raw = _stub_sections(b, cb, nb, stub, n_stub_sec)[::-1]
-
-    a_end, b_end = a_secs[-1], b_secs_raw[0]
-    ca_end, cb_end = a_end.points.mean(axis=0), b_end.points.mean(axis=0)
-    _, sigma = cKDTree(b_end.points - cb_end).query(a_end.points - ca_end)
-    assert len(set(sigma.tolist())) == sigma.size, (
-        "weld_bridge: nearest-neighbour matching is not a permutation -- the "
-        "two disc patterns are too dissimilar to pair one-for-one")
-    b_secs = [_reindex_geometry(a_end, s, sigma) for s in b_secs_raw]
-
-    blend_secs = quadmesh.blend(a_end, b_secs[0], np.linspace(0.0, 1.0, n_blend + 1))
-    return hexmesh.loft(a_secs[:-1] + blend_secs + b_secs[1:])
-
-
 def place_t2(source_disc, t2_y, mirror=False):
     """One T2 at ``t2_y``, its ``+y`` leg bridged back to ``source_disc`` --
     T1's own branch for the first of a chain, the previous T2's ``-y`` leg for
@@ -671,7 +459,7 @@ def place_t2(source_disc, t2_y, mirror=False):
     different y (they follow chimera's own inlet/outlet).  A fixed run length
     instead would leave the two sides at different y -- which the coil build
     downstream cannot express, since it spans one shared x-z plane.  Pure -y
-    also keeps the weld_bridge sweep aligned with both discs' own normal,
+    also keeps the hexmesh.bridge stubs aligned with both discs' own normal,
     avoiding the large-rotation mismatch a diagonal offset causes."""
     t2 = build_t2(mirror=mirror)
     br_pos = source_disc.points.mean(axis=0)
@@ -682,7 +470,7 @@ def place_t2(source_disc, t2_y, mirror=False):
     da = quadmesh.translate(t2.disc_minus, t2_center)   # -y, on to the next T2 (or capped)
     db = quadmesh.translate(t2.disc_plus, t2_center)    # +y, faces back upstream
     dbr = quadmesh.translate(t2.disc_branch, t2_center)  # +/-x (mirror), out to a serpentine
-    conn = weld_bridge(source_disc, db)
+    conn = hexmesh.bridge(source_disc, db)
     return core, conn, da, dbr, t2_center
 
 
@@ -744,7 +532,7 @@ print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
 # side as T2_out's own core, piercing straight through it. Bridging inward
 # and bending to z+ instead approaches each T2 from its own free side, and
 # the small pattern mismatch where the coil's own (continued) end meets
-# T2_out's bridge is absorbed by weld_bridge (same tool already used for the
+# T2_out's bridge is absorbed by hexmesh.bridge (same tool already used for the
 # T1-to-T2 joins above), not by forcing an exact but colliding registration.
 # -----------------------------------------------------------------------------
 
@@ -780,8 +568,8 @@ COIL_DV = _coil_end_uv[1]   # local (u, v) end offset is (0, COIL_DV) exactly
 
 BEND_R_CONN = 3.0
 VERTICAL_RUN = 16.0
-#: How much of the outbound leg is left for weld_bridge to span.  It has to be
-#: generous: weld_bridge spends a rigid stub (up to stub_max) at each end and
+#: How much of the outbound leg is left for hexmesh.bridge to span.  It has to be
+#: generous: bridge spends a rigid stub (up to stub_max) at each end and
 #: fits n_blend layers into whatever remains, so a token gap makes those layers
 #: absurdly thin -- at GAP_Z = 1.0 the two stubs ate 0.6 of it and the six
 #: blend layers were 0.067 each, about a seventh of the tube radius.  Must stay
@@ -877,11 +665,11 @@ def build_coil(dbr_i, dbr_o):
 
     # conn_o's own end (dbr_o's pattern, through its own bend) and the coil's
     # own end (dbr_i's pattern, carried the whole way) are different patterns
-    # landing GAP_Z apart by construction -- weld_bridge (same tool as the
+    # landing GAP_Z apart by construction -- hexmesh.bridge (same tool as the
     # T1-to-T2 joins above) closes that last short gap.
-    bridge = weld_bridge(_end_section(dbr_o, moves_out, np.pi, co[1]),
-                         _end_section(dbr_i, inflow_moves, 0.0, ci[1]), n=3)
-    return [inflow, conn_o, bridge]
+    joint = hexmesh.bridge(_end_section(dbr_o, moves_out, np.pi, co[1]),
+                           _end_section(dbr_i, inflow_moves, 0.0, ci[1]), layers=3)
+    return [inflow, conn_o, joint]
 
 
 coils = [p for lv_i, lv_o in zip(chain_in, chain_out)

@@ -48,7 +48,15 @@ unambiguous; across rungs they deliberately collide (each rung has its own ``lof
 from . import assemble, lift, morph, query, shape
 from .assemble import loft, loft_fn, merge
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
-from .morph import blend, place_on_path, rotate, scale, transform, translate
+from .morph import (
+    blend,
+    place_on_path,
+    reindex,
+    rotate,
+    scale,
+    transform,
+    translate,
+)
 from .quadmesh import NO_TAG, QuadMesh
 from .query import (
     boundary_edges,
@@ -105,6 +113,7 @@ __all__ = [
     "quality_summary",
     "query",
     "rectangle",
+    "reindex",
     "rotate",
     "scale",
     "scaled_jacobian",

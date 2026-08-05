@@ -13,13 +13,16 @@ internal toolkit code imports them from here directly rather than through the bo
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Callable, Literal
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from .._typing import (
     FloatArray,
+    IntArray,
     Point,
     PointArray,
     StrArray,
@@ -33,10 +36,15 @@ from ..model.paths import SpacePath
 from ..quadmesh import QuadMesh
 from ..quadmesh.lift import from_grid as quad_from_grid
 from ..quadmesh.morph import blend as quad_blend
+from ..quadmesh.morph import reindex as quad_reindex
+from ..quadmesh.morph import rotate as quad_rotate
 from ..quadmesh.morph import transform as quad_transform
 from ..quadmesh.morph import translate
+from ..quadmesh.query import plane_normal as quad_plane_normal
 from .assemble import _loft_evaluated, loft
 from .hexmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, HexMesh
+
+_log = logging.getLogger(__name__)
 
 
 def extrude(
@@ -332,8 +340,154 @@ def sweep_path(
                  first_tag=first_tag, last_tag=last_tag)
 
 
+def _find_roll(a: QuadMesh, b: QuadMesh, axis: Vec3 | Sequence[float]) -> int:
+    """The quarter turn ``k`` about ``axis`` that minimizes the index-wise deviation
+    between ``a`` and ``b`` about their own centres.
+
+    Two discs off the same quadrant recipe carry their seams on the same 45-degree
+    family, but each arrives through its own chain of axis-permuting rotations, so the
+    index pairing between them may be rolled by a multiple of 90 degrees.  Blending
+    across a rolled pairing twists the result into inverted elements, so the roll is
+    *measured* rather than assumed."""
+    ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
+    best_k, best_d = 0, np.inf
+    for k in range(4):
+        cand = quad_rotate(a, k * np.pi / 2.0, axis=axis, center=ca)
+        d = float(np.linalg.norm((cand.points - ca) - (b.points - cb), axis=1).max())
+        if d < best_d:
+            best_k, best_d = k, d
+    return best_k
+
+
+def _self_map(a: QuadMesh, k: int, axis: Vec3 | Sequence[float]) -> IntArray:
+    """``a``'s own near-4-fold self-map under ``k`` quarter turns: which of ``a``'s own
+    points does point ``i`` land closest to, rotated.  Entirely about ``a``'s own
+    geometry -- nothing to do with the section it is about to be paired against."""
+    ca = a.points.mean(axis=0)
+    cand = quad_rotate(a, k * np.pi / 2.0, axis=axis, center=ca)
+    _, sigma = cKDTree(cand.points).query(a.points)
+    return np.asarray(sigma, dtype=np.int64)
+
+
+def adapter(a: QuadMesh, b: QuadMesh, *, axis: Vec3 | Sequence[float],
+            layers: int = 2, max_deviation: float = 0.2) -> HexMesh:
+    """A short block morphing between two same-connectivity sections whose *node
+    patterns* differ slightly -- and whose **both** end faces are bit-exact.
+
+    For a seam between two pieces built by nearly, but not quite, the same recipe: a
+    couple of percent between one quadrant's wall spacing and another's, say.  A plain
+    coordinate weld across such a seam can never be exact, and at ``order > 1``
+    :func:`merge <nekmeshpy.hexmesh.assemble.merge>` verifies shared high-order edge
+    and face nodes against ``conform.entity_tol`` (~1e-9 of the model extent), so
+    "close" fails.  A blend is exact instead: its first slice **is** ``a``'s own
+    points, and its last is ``b``'s own geometry reached through ``a``'s labelling
+    (:func:`quadmesh.reindex <nekmeshpy.quadmesh.morph.reindex>`), so both end welds
+    are bit-exact while the mismatch is absorbed smoothly inside.
+
+    ``a`` is left completely untouched -- whatever it is already bit-identical to (a
+    swept connector's own terminal section, say) stays so.  Relabelling ``b`` is what
+    buys that: rotating ``a``'s *coordinates* into the pairing instead would make the
+    blend's first slice a rotated copy of ``a``, close to but not identical with
+    ``a``'s own literal end.
+
+    The 90-degree roll between the two index patterns is measured, not assumed (see
+    ``_find_roll``); ``axis`` is the axis it is measured about, normally the seam
+    normal.  A residual deviation above ``max_deviation`` means no quarter turn aligns
+    the two at all, which is a ``ValueError`` rather than a twisted block."""
+    if layers < 1:
+        raise ValueError("adapter: layers must be >= 1, got %d" % layers)
+    ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
+    k = _find_roll(a, b, axis)
+    b_aligned = quad_reindex(a, b, _self_map(a, k, axis))
+    dev = float(np.linalg.norm((b_aligned.points - cb) - (a.points - ca), axis=1).max())
+    _log.debug("adapter: roll k=%d, residual index-wise deviation %.3e", k, dev)
+    if dev > max_deviation:
+        raise ValueError(
+            "adapter: no 90-degree roll aligns these two node patterns -- the best of "
+            "the four leaves an index-wise deviation of %.3g about each section's own "
+            "centre (max_deviation %.3g). Blending across it would twist the block "
+            "into inverted elements; use bridge() for patterns this far apart."
+            % (dev, max_deviation))
+    return loft(quad_blend(a, b_aligned, np.linspace(0.0, 1.0, layers + 1)))
+
+
+def _stub_sections(disc: QuadMesh, direction: Vec3, distance: float,
+                   count: int) -> list[QuadMesh]:
+    """``count`` copies of ``disc``'s own exact pattern, rigidly carried a total
+    ``distance`` along ``direction`` from its own centroid.
+
+    ``direction`` is the disc's **own** true normal at both call sites, not the raw
+    centroid-to-centroid direction: the two differ by a small angle whenever a disc is
+    not perfectly centred on its nominal position, and a rigid placement is exactly
+    perpendicular to whatever tangent it is handed -- even at station 0 -- so a tangent
+    a hair off the disc's own normal makes the first section a hair off the disc
+    itself."""
+    c = disc.points.mean(axis=0)
+    if count < 2 or distance <= 0.0:
+        return [disc]
+    up = (0.0, 0.0, 1.0) if abs(direction[2]) < 0.9 else (1.0, 0.0, 0.0)
+    s = np.linspace(0.0, 1.0, count)
+    P: PointArray = c + s[:, None] * distance * direction
+    T: PointArray = np.tile(direction, (count, 1))
+    places = frames.sweep_placements(disc.points, P, orientation="fixed", up=up,
+                                     origin=c, path_tangents=T)
+    return [quad_transform(disc, M, o) for M, o in places]
+
+
+def bridge(a: QuadMesh, b: QuadMesh, *, layers: int = 4, stub_fraction: float = 0.3,
+           stub_max: float = 1.5, blend_layers: int = 6) -> HexMesh:
+    """A connector between two same-radius sections whose node patterns are too far
+    apart for :func:`adapter <nekmeshpy.hexmesh.lift.adapter>` -- two legs of different
+    T-junctions, built by different algorithms.
+
+    A short rigid stub is carried off **each** side along its own true normal, so both
+    near ends stay bit-exact to whatever ``a`` and ``b`` are themselves bonded to, and
+    the remaining gap is spanned by a straight blend -- with the stubs and the blend
+    lofted together as **one** block.  That single loft is what makes this exact at
+    ``order > 1``: leaving the far seam to :func:`merge
+    <nekmeshpy.hexmesh.assemble.merge>`'s tolerance weld is fine at order 1, but order
+    > 1 also verifies shared high-order edge nodes against ``conform.entity_tol``,
+    which an approximate weld cannot meet.  One loft has no internal seam to verify.
+
+    The blend needs an honest point correspondence, and here the two patterns are
+    genuinely far apart -- stations spaced by arc length against uniform angular ones
+    can differ by a *median* comparable to the section radius, and no rotation improves
+    it, because the mismatch is a difference in station *distribution* rather than
+    orientation.  Nearest-neighbour matching of the two centred point clouds fixes
+    that, and **every** section on ``b``'s side is then relabelled through it, not just
+    the one touching the blend: relabelling only the tip leaves the blend's last slice
+    and ``b``'s own naturally-labelled stub disagreeing, which twists that seam into
+    inverted elements."""
+    if blend_layers < 1:
+        raise ValueError("bridge: blend_layers must be >= 1, got %d" % blend_layers)
+    ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
+    length = float(np.linalg.norm(cb - ca))
+    na = quad_plane_normal(a, check=False)
+    na = na if float(na @ (cb - ca)) > 0.0 else -na
+    nb = quad_plane_normal(b, check=False)
+    nb = nb if float(nb @ (ca - cb)) > 0.0 else -nb
+    stub = min(stub_max, stub_fraction * length)
+    n_stub = max(2, layers // 2)
+    a_secs = _stub_sections(a, na, stub, n_stub)
+    b_secs_raw = _stub_sections(b, nb, stub, n_stub)[::-1]
+
+    a_end, b_end = a_secs[-1], b_secs_raw[0]
+    _, sigma = cKDTree(b_end.points - b_end.points.mean(axis=0)).query(
+        a_end.points - a_end.points.mean(axis=0))
+    if len(set(sigma.tolist())) != sigma.size:
+        raise ValueError(
+            "bridge: nearest-neighbour matching of the two node patterns is not a "
+            "permutation -- they are too dissimilar to pair one-for-one, so the blend "
+            "would collapse several of one section's nodes onto one of the other's")
+    b_secs = [quad_reindex(a_end, s, sigma) for s in b_secs_raw]
+    blend_secs = quad_blend(a_end, b_secs[0], np.linspace(0.0, 1.0, blend_layers + 1))
+    return loft(a_secs[:-1] + blend_secs + b_secs[1:])
+
+
 __all__ = [
+    "adapter",
     "annulus",
+    "bridge",
     "extrude",
     "from_grid",
     "sweep",

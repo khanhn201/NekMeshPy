@@ -24,10 +24,12 @@ import numpy as np
 
 from .._typing import (
     FloatArray,
+    IntArray,
     Point,
     PointArray,
     Vec3,
 )
+from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
 from ..model import affine, frames
@@ -129,6 +131,100 @@ def scale(mesh: QuadMesh, factor: float | Vec3 | Sequence[float],
     return _affine(mesh, *affine.scaling(factor, center))
 
 
+def _pair_by_sorted_rows(target_rows: IntArray, mapped_rows: IntArray,
+                         what: str) -> IntArray:
+    """``idx`` such that ``target_rows[idx[i]]`` is the row holding the same *set* of
+    ids as ``mapped_rows[i]``.
+
+    Both sides are lexsorted on their sorted-id rows and paired positionally: if the
+    two describe the same connectivity they sort into the same sequence, and if they
+    do not the equality check below says so.  Positional pairing rather than a packed
+    ``searchsorted`` key so nothing bounds the point count."""
+    a = np.sort(target_rows, axis=1)
+    b = np.sort(mapped_rows, axis=1)
+    if a.shape != b.shape:
+        raise ValueError("reindex: structure and target disagree on the %s count "
+                         "(%d vs %d)" % (what, b.shape[0], a.shape[0]))
+    k = a.shape[1]
+    ia = np.lexsort(tuple(a[:, c] for c in range(k - 1, -1, -1)))
+    ib = np.lexsort(tuple(b[:, c] for c in range(k - 1, -1, -1)))
+    if not np.array_equal(a[ia], b[ib]):
+        raise ValueError(
+            "reindex: a relabelled %s has no counterpart in target -- structure and "
+            "target do not describe the same connectivity under sigma" % what)
+    idx: IntArray = np.empty(a.shape[0], dtype=np.int64)
+    idx[ib] = ia
+    return idx
+
+
+def reindex(structure: QuadMesh, target: QuadMesh,
+            sigma: IntArray | Sequence[int]) -> QuadMesh:
+    """``target``'s own geometry, reached through ``structure``'s own index labels:
+    point ``i`` takes ``target``'s point ``sigma[i]``, and every shared-edge and
+    per-quad interior node follows its relabelled corners.
+
+    A pure **relabelling**, not a geometric transform.  The returned mesh's point,
+    edge and quad coordinate *set* is exactly ``target``'s, bit for bit -- so it still
+    welds exactly wherever ``target``'s own pattern turns up later -- but it is
+    numbered the way ``structure`` is.
+
+    This is what makes :func:`blend <nekmeshpy.quadmesh.morph.blend>` usable across two
+    independently built sections.  ``blend`` requires identical connectivity paired by
+    index, and two sections built by different recipes satisfy that only after one is
+    relabelled onto the other.  Rotating one section's *coordinates* into place instead
+    is the tempting alternative and is wrong at ``order > 1``: a rotated copy is close
+    to, not identical to, whatever the original was bonded to, and
+    :func:`HexMesh.merge <nekmeshpy.hexmesh.assemble.merge>` verifies shared high-order
+    edge and face nodes against ``conform.entity_tol`` (~1e-9 of the model extent).
+    A permutation has zero residual by construction.
+
+    ``sigma`` is a permutation of ``structure``'s point ids, typically from a
+    nearest-neighbour match of the two centred point clouds.  ``structure`` and
+    ``target`` must already share identical ``quad`` / ``flip`` / ``lines.lines`` --
+    the same precondition ``blend`` has, and satisfied whenever both come from one
+    recipe at different parameters."""
+    if not (np.array_equal(structure.quad, target.quad)
+            and np.array_equal(structure.flip, target.flip)):
+        raise ValueError(
+            "reindex: structure and target must share identical quad/flip incidence; "
+            "they are two samplings of one recipe, not two different meshes")
+    if not np.array_equal(structure.lines.lines, target.lines.lines):
+        raise ValueError(
+            "reindex: structure and target must share identical edge connectivity")
+    s: IntArray = np.asarray(sigma, dtype=np.int64).ravel()
+    n = structure.points.shape[0]
+    if s.shape != (n,):
+        raise ValueError("reindex: sigma must have one entry per point (%d), got %s"
+                         % (n, s.shape))
+    if not np.array_equal(np.sort(s), np.arange(n, dtype=np.int64)):
+        raise ValueError(
+            "reindex: sigma is not a permutation of the point ids -- the two patterns "
+            "do not pair one-for-one, so relabelling would drop or duplicate a node")
+
+    # Edges: structure's edge e runs sigma[u] -> sigma[v]; find target's edge on that
+    # same unordered pair and copy its interior, reversed when the two traverse it the
+    # other way.  Both sides are lexsorted on the sorted pair and paired positionally,
+    # which needs no packed key -- and so has no bound on the point count.
+    te: IntArray = np.asarray(target.lines.lines, dtype=np.int64)
+    se: IntArray = s[np.asarray(structure.lines.lines, dtype=np.int64)]
+    tidx = _pair_by_sorted_rows(te, se, "edge")
+    rev = te[tidx, 0] != se[:, 0]
+    new_ei: PointArray = np.asarray(target.lines.interior, dtype=float)[tidx].copy()
+    new_ei[rev] = new_ei[rev][:, ::-1]
+    new_lines = LineMesh(target.points[s], structure.lines.lines, new_ei,
+                         target.lines.point_tags, target.lines.element_tags,
+                         order=target.lines.order)
+
+    # Quads: match on the relabelled corner *set*, which is orientation-free, so the
+    # two pair however each happens to be wound.
+    qidx = _pair_by_sorted_rows(np.asarray(target.quads, dtype=np.int64),
+                                s[np.asarray(structure.quads, dtype=np.int64)], "quad")
+    new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
+
+    return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,
+                    target.edge_tags, target.element_tags, order=target.order)
+
+
 def place_on_path(section: QuadMesh, path: SpacePath,
                   fractions: FloatArray | Sequence[float], *,
                   origin: Point | Sequence[float] | None = None,
@@ -172,6 +268,7 @@ def place_on_path(section: QuadMesh, path: SpacePath,
 __all__ = [
     "blend",
     "place_on_path",
+    "reindex",
     "rotate",
     "scale",
     "transform",
