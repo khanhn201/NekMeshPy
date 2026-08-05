@@ -27,7 +27,8 @@ settles; a local pass is not the gate.
 valid `mesh` — non-empty, watertight, conforming, no inverted element. It *discovers*
 the scripts rather than listing them, so a new example is covered the moment it lands;
 this exists because five examples had no coverage at all and a refactor left four of
-them broken with CI green. The two large chimera meshers carry `@pytest.mark.slow`
+them broken with CI green. `LIBRARY_ONLY` (`tjunction_lib.py`, `coil_lib.py`) names the scripts that build no
+mesh of their own and are imported by ones that do. The two large chimera meshers carry `@pytest.mark.slow`
 and are deselected by `addopts`, so a bare `pytest` shows them as *deselected*, not
 passed — the `Slow examples` job is what actually runs them. `KNOWN_INVERTED` records any example that ships an
 inverted element as a **strict** xfail, so fixing one fails the suite until its entry
@@ -136,10 +137,19 @@ Only genuinely internal helpers stay underscored: `linemesh/_plane.py` and
 `quadmesh/_helpers.py`.
 
 `linemesh.shape` and `quadmesh.shape` also carry the samplings —
-`arclength_fractions`, `sweep_fractions`, `spine_fractions`,
+`arclength_fractions`, `sweep_fractions`, `path_fractions`, `spine_fractions`,
 `quadrant_seam_fractions`, `quadrant_core` — which return a plain array rather than a
 mesh. These exist because **no factory resamples its input**: a factory meshes exactly
-at the points it is given and the caller proves the sampling.
+at the points it is given and the caller proves the sampling. (`path_fractions` is the
+one that resolves a `SpacePath` plus a target element length into stations; it is what
+`sweep_path` calls, and is spelled out here so the three-way `target_length` / `layers`
+/ `fractions` choice is validated in one place.)
+
+Paths and surface curves are model-level, not per-rung, because neither is a mesh:
+`model/paths.py` holds the 2-D turtle walk and `embed`, which lifts it onto a plane in
+space; `model/surfaces.py` holds `SurfaceCurve` and its combinators. Both import **no
+container**. The rung-level entry points that consume them are `linemesh.on_surface`,
+`quadmesh.tri_patch`, and `sweep_path` at the quad and hex rungs.
 
 `TriMesh` is the exception: it keeps its own small query methods in `trimesh.py` and
 exposes the rest as `trimesh.ops.*`.
