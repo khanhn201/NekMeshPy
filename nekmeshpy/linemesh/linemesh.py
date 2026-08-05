@@ -43,6 +43,7 @@ from .._typing import (
     StrArray,
 )
 from ..model.tags import ElementTags, PointTags
+from . import _assemble, _closed, _morph, _open, _query
 
 
 def _as_points(points: PointArray) -> PointArray:
@@ -81,6 +82,37 @@ class LineMesh:
 
     # local line "edges": row s-1 is side s -> the single local vertex it names.
     EDGE_POINTS = np.array([[0], [1]], dtype=np.int64)
+
+    # -- operations ------------------------------------------------------
+    # The operations live in the sibling modules, split by arity and rung delta, and
+    # are assigned in here rather than defined here: the container stays pure data and
+    # adding an operation still touches one sibling file plus one line of manifest.
+    # Plain assignment (not ``setattr`` in the package ``__init__``) is what lets mypy
+    # resolve ``LineMesh.blend`` to its real signature -- so internal toolkit code can
+    # call through the class, and a wrong argument is a type error rather than
+    # ``Any``.  A function taking the mesh first becomes an instance method by being
+    # assigned bare; one that does not takes an explicit ``staticmethod``.
+    loft = staticmethod(_assemble.loft)
+    loft_fn = staticmethod(_assemble.loft_fn)
+    merge = staticmethod(_assemble.merge)
+    blend = staticmethod(_morph.blend)
+    line = staticmethod(_open.line)
+    arc = staticmethod(_open.arc)
+    circle = staticmethod(_closed.circle)
+    rectangle = staticmethod(_closed.rectangle)
+    # helpers: they answer a question *about* a factory's input contract and return a
+    # plain array rather than a mesh, which is what keeps them out of the group above.
+    arclength_fractions = staticmethod(_open.arclength_fractions)
+    sweep_fractions = staticmethod(_open.sweep_fractions)
+    # unary placements and reads -- these take the mesh, so ``lm.translate(v)`` reads
+    # as it should.
+    reverse = _morph.reverse
+    transform = _morph.transform
+    translate = _morph.translate
+    rotate = _morph.rotate
+    scale = _morph.scale
+    boundary_points = _query.boundary_points
+    boundary_elements = _query.boundary_elements
 
     def __init__(
         self,

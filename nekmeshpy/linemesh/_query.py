@@ -3,14 +3,14 @@
 They take the mesh and return plain arrays, never another mesh, so they are bound as
 instance methods rather than ``staticmethod`` factories.
 
-Free functions bound onto :class:`~nekmeshpy.LineMesh` by ``linemesh/__init__.py``;
-internal toolkit code imports them from here directly rather than through the bound
-``LineMesh.<name>`` sugar.
+Free functions assigned into the :class:`~nekmeshpy.LineMesh` class body (see
+``linemesh.py``), which is what makes them methods; internal toolkit code imports them
+from here directly.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -18,7 +18,9 @@ from .._typing import (
     BoolArray,
     IntArray,
 )
-from .linemesh import LineMesh
+
+if TYPE_CHECKING:                    # the container imports us, so this cannot be
+    from .linemesh import LineMesh  # a runtime import -- annotations only
 
 
 def boundary_points(mesh: LineMesh) -> IntArray:
@@ -39,10 +41,3 @@ def boundary_elements(mesh: LineMesh) -> IntArray:
     is_end: BoolArray = np.zeros(mesh.points.shape[0], dtype=bool)
     is_end[ends] = True
     return np.flatnonzero(is_end[mesh.lines].any(axis=1)).astype(np.int64)
-
-
-#: Read-only queries bound onto ``LineMesh`` as instance methods.
-METHODS: dict[str, Any] = {
-    "boundary_points": boundary_points,
-    "boundary_elements": boundary_elements,
-}

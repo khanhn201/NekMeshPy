@@ -19,7 +19,6 @@ from ._assemble import loft
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
 
     from .linemesh import LineMesh
 
@@ -127,10 +126,3 @@ def rectangle(width: float, height: float, n: int, *,
         tags = [t for side in sides for t in [side_tags.get(side, "")] * m]
     # every side is straight, so ``loft``'s default straight GLL interior is exact
     return loft(pts, loop=True, element_tags=tags, order=order)
-
-
-#: Closed-loop shape factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., LineMesh]] = {
-    "circle": circle,
-    "rectangle": rectangle,
-}

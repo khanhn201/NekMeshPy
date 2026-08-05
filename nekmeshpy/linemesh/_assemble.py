@@ -14,15 +14,17 @@ from a parametrization instead of handed in -- and so takes the same ``loop`` fl
 Being open or closed is therefore not a property of the function: the same ``f`` meshes
 either way.
 
-Free functions bound onto :class:`~nekmeshpy.LineMesh` by ``linemesh/__init__.py``;
-internal toolkit code imports them from here directly rather than through the bound
-``LineMesh.<name>`` sugar.
+Free functions assigned into the :class:`~nekmeshpy.LineMesh` class body (see
+``linemesh.py``) as ``staticmethod``; internal toolkit code imports them from here
+directly.  These are *pure* factories with no mesh in hand to take ``type()`` of, so
+the two that construct one import the container inside the function body -- the
+container imports this module, so a module-level import would be a cycle.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -37,7 +39,9 @@ from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ..model.tags import ElementTags, PointTags, TagBuilder
 from ._query import boundary_points
-from .linemesh import LineMesh, _as_points
+
+if TYPE_CHECKING:                    # the container imports us, so this cannot be
+    from .linemesh import LineMesh  # a runtime import -- annotations only
 
 
 def loft(
@@ -81,6 +85,8 @@ def loft(
     (that is how ``circle`` stamps true-arc nodes); when it is omitted each line's
     private interior is built here as the **straight GLL blend** between its two
     endpoints, which is exactly what a straight-sided curve wants."""
+    from .linemesh import LineMesh, _as_points  # deferred: see module docstring
+
     pts = _as_points(points)
     n = pts.shape[0]
     if loop:
@@ -409,12 +415,6 @@ def merge(meshes: Sequence[LineMesh], *,
     if meshes:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
 
+    from .linemesh import LineMesh  # deferred: see module docstring
+
     return LineMesh(points, lines, interior, bnd, etags, order=order)
-
-
-#: Variable-arity combinators bound onto ``LineMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "loft": loft,
-    "loft_fn": loft_fn,
-    "merge": merge,
-}

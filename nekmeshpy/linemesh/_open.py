@@ -209,18 +209,3 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
         pieces.append(np.linspace(a, b, n + 1)[:-1])   # drop the shared end station
     out: FloatArray = np.concatenate(pieces + [np.array([1.0])])
     return out
-
-
-#: Open-curve factories bound onto ``LineMesh`` by ``linemesh/__init__.py``.
-FACTORIES: dict[str, Callable[..., LineMesh]] = {
-    "line": line,
-    "arc": arc,
-}
-
-#: Open-curve helpers bound onto ``LineMesh`` as ``staticmethod``s.  These answer a
-#: question *about* a factory's input contract and return plain arrays rather than a
-#: mesh, which is what keeps them out of ``FACTORIES``.
-HELPERS: dict[str, Callable[..., FloatArray]] = {
-    "arclength_fractions": arclength_fractions,
-    "sweep_fractions": sweep_fractions,
-}

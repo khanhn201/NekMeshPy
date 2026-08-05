@@ -10,16 +10,18 @@ them for the consuming factory).  ``reverse`` is the mirror image: it moves no
 coordinate and instead relabels the index space with the bijection ``i -> N-1-i``,
 which is still rung-preserving and still invents no numbering.
 
-Free functions bound onto :class:`~nekmeshpy.LineMesh` by ``linemesh/__init__.py``
-(the binary ``blend`` as a ``staticmethod``, the unary placements as instance
-methods, so ``lm.translate(v)`` reads as it should); internal toolkit code imports
-them from here directly rather than through the bound ``LineMesh.<name>`` sugar.
+Free functions assigned into the :class:`~nekmeshpy.LineMesh` class body (see
+``linemesh.py``) -- the binary ``blend`` wrapped in ``staticmethod``, the unary
+placements bare, so ``lm.translate(v)`` reads as it should.  Internal toolkit code
+imports them from here directly.  Each builds its result with ``type(mesh)`` rather
+than naming ``LineMesh``: the container imports this module, so a runtime import of
+it here would be a cycle.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -32,7 +34,9 @@ from .._typing import (
 )
 from ..model import affine
 from ..model.tags import PointTags
-from .linemesh import LineMesh
+
+if TYPE_CHECKING:                    # the container imports us, so this cannot be
+    from .linemesh import LineMesh  # a runtime import -- annotations only
 
 
 def blend(a: LineMesh, b: LineMesh,
@@ -73,8 +77,8 @@ def blend(a: LineMesh, b: LineMesh,
         # the blended points); at order 1 both interiors are empty, so this is a
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
-        out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
-                       point_tags=a.point_tags, order=a.order))
+        out.append(type(a)((1.0 - t) * A + t * B, a.lines, ia,
+                           point_tags=a.point_tags, order=a.order))
     return out
 
 
@@ -106,13 +110,13 @@ def reverse(mesh: LineMesh) -> LineMesh:
     lines: IntArray = (n - 1 - mesh.lines)[::-1, ::-1]
     b = mesh.point_tags
     bnd = PointTags(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
-    return LineMesh(np.ascontiguousarray(mesh.points[::-1]),
-                    np.ascontiguousarray(lines),
-                    np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
-                    bnd,
-                    mesh.element_tags.renumber(
-                        (L - 1 - np.arange(L, dtype=np.int64))),
-                    order=mesh.order)
+    return type(mesh)(np.ascontiguousarray(mesh.points[::-1]),
+                      np.ascontiguousarray(lines),
+                      np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
+                      bnd,
+                      mesh.element_tags.renumber(
+                          (L - 1 - np.arange(L, dtype=np.int64))),
+                      order=mesh.order)
 
 
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
@@ -122,10 +126,10 @@ def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh
     per-line private ``interior`` -- and both take the *same* map, so a curved
     element keeps its shape and its endpoints stay its corners.  Everything else
     (connectivity, element and point tags) is topology and rides through untouched."""
-    return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
-                    affine.apply(mesh.interior, matrix, offset),
-                    point_tags=mesh.point_tags,
-                    element_tags=mesh.element_tags, order=mesh.order)
+    return type(mesh)(affine.apply(mesh.points, matrix, offset), mesh.lines,
+                      affine.apply(mesh.interior, matrix, offset),
+                      point_tags=mesh.point_tags,
+                      element_tags=mesh.element_tags, order=mesh.order)
 
 
 def transform(mesh: LineMesh, matrix: FloatArray,
@@ -159,19 +163,3 @@ def scale(mesh: LineMesh, factor: float | Vec3 | Sequence[float],
     """A new curve scaled about ``center`` by ``factor`` -- a scalar (uniform) or a
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
-
-
-#: Rung-preserving combinators bound onto ``LineMesh`` as ``staticmethod``.
-FACTORIES: dict[str, Any] = {
-    "blend": blend,
-}
-
-#: Unary placements bound onto ``LineMesh`` as instance methods -- they take the mesh
-#: they act on, so ``lm.translate(v)`` is the natural spelling.
-METHODS: dict[str, Any] = {
-    "reverse": reverse,
-    "transform": transform,
-    "translate": translate,
-    "rotate": rotate,
-    "scale": scale,
-}

@@ -15,37 +15,21 @@ module         arity    delta contents
 ``_closed``    fixed    +1    closed-loop shape factories (``circle`` / ...)
 ============== ======== ===== ===============================================
 
-Each module ends in a registry -- ``FACTORIES`` for the ``staticmethod``-bound
-combinators, ``METHODS`` for the instance-method-bound queries -- and this package
-binds them onto the class below.  ``_open`` carries a third one, ``HELPERS``: also
-``staticmethod``-bound, but for functions that answer a question *about* a factory's
-input contract and return a plain array rather than a mesh, which is what keeps them
-out of ``FACTORIES`` (``LineMesh.arclength_fractions``, the ``loft_fn`` grading that
-spaces nodes evenly by arc length -- the inversion is an explicit caller step, since
-``loft_fn`` meshes exactly at the fractions given).  So callers write ``LineMesh.circle(...)`` /
-``lm.boundary_points()`` while adding an operation touches only the sibling module
-(the function plus one registry entry), never the container or this file.
+Each sibling holds plain free functions taking the mesh first, and ``linemesh.py``
+assigns them into the ``LineMesh`` class body -- one manifest line per operation,
+grouped there by how each binds.  A function taking the mesh first is assigned bare
+and becomes an instance method; a pure factory takes an explicit ``staticmethod``.
+That keeps the container pure data while leaving ``LineMesh.circle(...)`` /
+``lm.boundary_points()`` reachable, and adding an operation still touches only the
+sibling module plus that one manifest line.
+
+Assignment rather than ``setattr`` is the load-bearing detail: mypy resolves a
+class-body assignment to the function's real signature, so internal toolkit code may
+call ``LineMesh.loft(...)`` and still have its arguments checked.  (Neither
+``setattr`` nor a class-scoped ``import`` works -- mypy rejects the latter outright
+with ``Unsupported class scoped import`` and types every name ``Any``.)
 """
 
-from ._assemble import FACTORIES as _ASSEMBLE_FACTORIES
-from ._closed import FACTORIES as _CLOSED_FACTORIES
-from ._morph import FACTORIES as _MORPH_FACTORIES
-from ._morph import METHODS as _MORPH_METHODS
-from ._open import FACTORIES as _OPEN_FACTORIES
-from ._open import HELPERS as _OPEN_HELPERS
-from ._query import METHODS as _QUERY_METHODS
 from .linemesh import LineMesh
-
-# The combinators are plain free functions (no ``cls``); bind as ``staticmethod`` so
-# ``LineMesh.circle(radius, n)`` passes no implicit first argument.
-for _name, _fn in {**_CLOSED_FACTORIES, **_OPEN_FACTORIES,
-                   **_ASSEMBLE_FACTORIES, **_MORPH_FACTORIES,
-                   **_OPEN_HELPERS}.items():
-    setattr(LineMesh, _name, staticmethod(_fn))
-
-# The queries and the unary placements take the mesh they act on first, so a plain
-# function binding makes them methods.
-for _name, _fn in {**_QUERY_METHODS, **_MORPH_METHODS}.items():
-    setattr(LineMesh, _name, _fn)
 
 __all__ = ["LineMesh"]
