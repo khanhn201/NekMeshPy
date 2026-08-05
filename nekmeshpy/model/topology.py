@@ -10,6 +10,8 @@ from __future__ import annotations
 from typing import Any, NamedTuple, Union
 
 import numpy as np
+import scipy.sparse as sp
+from scipy.sparse.csgraph import connected_components
 
 from .._typing import IntArray, PointArray
 
@@ -52,22 +54,17 @@ class TopologyReport(NamedTuple):
 
 # -- shared helpers -----------------------------------------------------
 def _count_components(n: int, edges: IntArray) -> int:
-    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges."""
-    parent: IntArray = np.arange(n, dtype=np.int64)
+    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges.
 
-    def find(x: int) -> int:
-        root = x
-        while parent[root] != root:
-            root = int(parent[root])
-        while parent[x] != root:
-            parent[x], x = root, int(parent[x])
-        return root
-
-    for a, b in np.asarray(edges, dtype=np.int64).reshape(-1, 2):
-        ra, rb = find(int(a)), find(int(b))
-        if ra != rb:
-            parent[ra] = rb
-    return int(np.unique([find(i) for i in range(n)]).size) if n else 0
+    SciPy's union-find rather than a hand-rolled one: the Python version walked the
+    parent array one element at a time and cost ~18 s on a 490k-hex build (17.4M calls
+    to its inner ``find``), against ~0.1 s here for the same answer."""
+    if n == 0:
+        return 0
+    e = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
+    graph = sp.coo_matrix(
+        (np.ones(e.shape[0], dtype=np.int8), (e[:, 0], e[:, 1])), shape=(n, n))
+    return int(connected_components(graph, directed=False, return_labels=False))
 
 
 def _adjacency_edges(inverse: IntArray, counts: IntArray,
@@ -79,9 +76,14 @@ def _adjacency_edges(inverse: IntArray, counts: IntArray,
     owner_s = owner[order]
     if inv_s.size == 0:
         return np.zeros((0, 2), dtype=np.int64)
-    groups = np.split(owner_s, np.flatnonzero(np.diff(inv_s)) + 1)
-    pairs = [g for g in groups if g.size == 2]
-    return np.array(pairs, dtype=np.int64) if pairs else np.zeros((0, 2), np.int64)
+    # group boundaries, then take the runs of length two without materializing a
+    # Python list of ~2M single-facet subarrays (``np.split`` was 5 s of the build)
+    starts = np.concatenate(([0], np.flatnonzero(np.diff(inv_s)) + 1))
+    sizes = np.diff(np.concatenate((starts, [inv_s.size])))
+    two = starts[sizes == 2]
+    if two.size == 0:
+        return np.zeros((0, 2), dtype=np.int64)
+    return np.stack([owner_s[two], owner_s[two + 1]], axis=1).astype(np.int64)
 
 
 def _count_hanging_points(points: PointArray, edges: IntArray,

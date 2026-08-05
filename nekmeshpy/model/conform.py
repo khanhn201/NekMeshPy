@@ -229,7 +229,18 @@ def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     e = hexes.shape[0]
     ids = hexes[:, _LOCAL_FACES]                            # (E,6,4)
     key = np.sort(ids, axis=2).reshape(e * 6, 4)
-    uniq, inv = np.unique(key, axis=0, return_inverse=True)
+    # Same argument as ``unique_edges``, but four ids will not pack into an int64, so
+    # this sorts the columns directly instead: ``lexsort`` takes its last key as the
+    # primary one, so listing them reversed reproduces ``np.unique(axis=0)``'s
+    # lexicographic row order exactly.
+    order = np.lexsort((key[:, 3], key[:, 2], key[:, 1], key[:, 0]))
+    ks = key[order]
+    first = np.empty(ks.shape[0], dtype=bool)
+    first[0] = True
+    np.any(ks[1:] != ks[:-1], axis=1, out=first[1:])
+    uniq = ks[first]
+    inv = np.empty(ks.shape[0], dtype=np.int64)
+    inv[order] = np.cumsum(first) - 1
     elem_faces = inv.reshape(e, 6).astype(np.int64)
     # origin = slot of the minimum id; column = which of its two edge-neighbours
     # (ascending slot order) carries the larger id.
@@ -328,8 +339,19 @@ def unique_edges(conn: IntArray, dim: int) -> tuple[IntArray, IntArray, BoolArra
     b = conn[:, le[:, 1]]
     lo = np.minimum(a, b)
     hi = np.maximum(a, b)
-    pairs = np.stack([lo.ravel(), hi.ravel()], axis=1)      # (E*ne,2) canonical
-    uniq, inv = np.unique(pairs, axis=0, return_inverse=True)
+    lo_f, hi_f = lo.ravel(), hi.ravel()
+    # ``np.unique(axis=0)`` views each row as a void scalar and argsorts that, which is
+    # far slower than sorting an integer.  Two ids pack into one int64 as ``lo*n + hi``
+    # -- a positional numeral system, so ascending key order *is* lexicographic row
+    # order and the result is identical, not merely equivalent.  ``n*n`` is the only
+    # thing that can overflow, so fall back when it would.
+    n = int(conn.max()) + 1 if conn.size else 1
+    if n * n > (1 << 62):
+        pairs = np.stack([lo_f, hi_f], axis=1)              # (E*ne,2) canonical
+        uniq, inv = np.unique(pairs, axis=0, return_inverse=True)
+    else:
+        ukey, inv = np.unique(lo_f * n + hi_f, return_inverse=True)
+        uniq = np.stack([ukey // n, ukey % n], axis=1)
     elem_edges = inv.reshape(e, ne).astype(np.int64)
     edge_flip: BoolArray = (a > b)
     return uniq.astype(np.int64), elem_edges, edge_flip
