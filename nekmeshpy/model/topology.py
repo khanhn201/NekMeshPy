@@ -14,6 +14,7 @@ import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
 
 from .._typing import IntArray, PointArray
+from . import conform
 
 # Nek face -> the 4 corner point positions (0-based), cyclic order.
 _FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
@@ -146,9 +147,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
     N = HC.shape[0]
     faces = HC[:, _FACE_POINTS].reshape(N * 6, 4)          # cyclic-order faces
     keys = np.sort(faces, axis=1)                         # orientation-free key
-    _, inverse, counts = np.unique(keys, axis=0, return_inverse=True,
-                                   return_counts=True)
-    inverse = inverse.ravel()
+    _, inverse, counts = conform.unique_rows(keys, return_counts=True)
 
     n_boundary = int(np.sum(counts == 1))
     n_internal = int(np.sum(counts == 2))
@@ -161,7 +160,7 @@ def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
                          bfaces[:, [2, 3]], bfaces[:, [3, 0]]], axis=0)
     be = np.sort(be, axis=1)
     if be.size:
-        ube, bec = np.unique(be, axis=0, return_counts=True)
+        ube, _, bec = conform.unique_rows(be, return_counts=True)
     else:
         ube, bec = be.reshape(0, 2), np.zeros(0, np.int64)
     n_open_edges = int(np.sum(bec != 2))
