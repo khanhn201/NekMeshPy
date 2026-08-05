@@ -60,8 +60,8 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import LineMesh, QuadMesh, export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import frames
+from nekmeshpy import LineMesh, QuadMesh, export, hexmesh, quadmesh
+from nekmeshpy.model import frames, paths
 from nekmeshpy.model.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -373,21 +373,20 @@ def elbow_backward(target_pt, target_dir_sign, start_heading_sign, bend_r, run_l
                        ("line", vertical_run, 0.0)], fwd_heading)
 
 
+def xz_path(moves, start_xz, heading, y_fixed):
+    """A turtle walk lifted into the world ``(x, z)`` plane at fixed ``y`` -- every
+    connector in this file lives in such a plane, so the walk's own ``+u`` is world
+    ``+x`` and its ``+v`` world ``+z``.  ``paths.embed`` is what keeps ``y_fixed`` out
+    of the tangent (a direction, not a point)."""
+    return paths.embed(turtle_path(moves, start=start_xz, heading=heading),
+                       u=(1.0, 0.0, 0.0), v=(0.0, 0.0, 1.0),
+                       origin=(0.0, y_fixed, 0.0))
+
+
 def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, last_tag=""):
-    path = turtle_path(moves, start=(start_pt3[0], start_pt3[2]), heading=heading2d)
-    total = path.total_length
-
-    def centerline(s):
-        xz = path.centerline(s)
-        return np.stack([xz[:, 0], np.full(xz.shape[0], y_fixed), xz[:, 1]], axis=1)
-
-    def tangent(s):
-        xz = path.tangent(s)
-        return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
-
-    fr = linemesh.sweep_fractions(path.break_fractions * total, total, total / n_layers)
-    return hexmesh.sweep(section, centerline, fr, tangent=tangent, orientation="fixed",
-                         up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag)
+    path = xz_path(moves, (start_pt3[0], start_pt3[2]), heading2d, y_fixed)
+    return hexmesh.sweep_path(section, path, layers=n_layers, orientation="fixed",
+                              up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag)
 
 
 BEND_R1 = 2.0 * R_MAIN
@@ -453,14 +452,11 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
         reproducer: it reproduces its input to machine precision when origin
         and the path's own start agree, and by exactly this residual when
         they don't)."""
-        p = turtle_path(moves, start=(db_c[0], db_c[2]), heading=heading)
+        p = xz_path(moves, (db_c[0], db_c[2]), heading, db_c[1])
         s = np.array([0.0, 1.0])
-        P, T = p.centerline(s), p.tangent(s)
-        P3 = np.stack([P[:, 0], np.full(2, db_c[1]), P[:, 1]], axis=1)
-        T3 = np.stack([T[:, 0], np.zeros(2), T[:, 1]], axis=1)
-        m, o = frames.sweep_placements(disc.points, P3, orientation="fixed",
-                                       up=(0.0, 1.0, 0.0), origin=db_c,
-                                       path_tangents=T3)[1]
+        m, o = frames.sweep_placements(disc.points, p.centerline(s),
+                                       orientation="fixed", up=(0.0, 1.0, 0.0),
+                                       origin=db_c, path_tangents=p.tangent(s))[1]
         return quadmesh.transform(disc, m, o)
 
     conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
@@ -827,14 +823,11 @@ def _end_section(section, moves, heading, y_fixed):
     frames.sweep_placements machinery sweep() uses internally (not
     re-derived) -- so a piece built to continue from it lands seamlessly."""
     c = section.points.mean(axis=0)
-    p = turtle_path(moves, start=(c[0], c[2]), heading=heading)
+    p = xz_path(moves, (c[0], c[2]), heading, y_fixed)
     s = np.array([0.0, 1.0])
-    P = p.centerline(s)
-    T = p.tangent(s)
-    P3 = np.stack([P[:, 0], np.full(2, y_fixed), P[:, 1]], axis=1)
-    T3 = np.stack([T[:, 0], np.zeros(2), T[:, 1]], axis=1)
-    m, o = frames.sweep_placements(section.points, P3, orientation="fixed",
-                                   up=(0.0, 1.0, 0.0), origin=c, path_tangents=T3)[1]
+    m, o = frames.sweep_placements(section.points, p.centerline(s), orientation="fixed",
+                                   up=(0.0, 1.0, 0.0), origin=c,
+                                   path_tangents=p.tangent(s))[1]
     return quadmesh.transform(section, m, o)
 
 
@@ -889,20 +882,9 @@ def build_coil(dbr_i, dbr_o):
     # T2 level 1) and a 1.78e-15 disagreement then fails to weld, pinching the
     # surface into one open edge.  One sweep has no such seam at all.
     inflow_moves = moves_in + COIL_MOVES
-    path = turtle_path(inflow_moves, start=(ci[0], ci[2]), heading=0.0)
-    total = path.total_length
-    fr = linemesh.sweep_fractions(path.break_fractions * total, total, COIL_TARGET_LEN)
-
-    def centerline(s):
-        xz = path.centerline(s)
-        return np.stack([xz[:, 0], np.full(xz.shape[0], ci[1]), xz[:, 1]], axis=1)
-
-    def tangent(s):
-        xz = path.tangent(s)
-        return np.stack([xz[:, 0], np.zeros(xz.shape[0]), xz[:, 1]], axis=1)
-
-    inflow = hexmesh.sweep(dbr_i, centerline, fr, tangent=tangent,
-                           orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci)
+    path = xz_path(inflow_moves, (ci[0], ci[2]), 0.0, ci[1])
+    inflow = hexmesh.sweep_path(dbr_i, path, target_length=COIL_TARGET_LEN,
+                                orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci)
     assert hexmesh.is_conforming(inflow), "coil sweep produced a non-conforming mesh"
     conn_o = build_bend_mesh(dbr_o, co, moves_out, np.pi, co[1], n_slices)
 

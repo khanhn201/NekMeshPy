@@ -68,6 +68,7 @@ from collections import namedtuple
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
+from nekmeshpy.model import paths
 from nekmeshpy.model.interp import coons_grid_fn as coons_fn
 from nekmeshpy.model.paths import turtle_path
 
@@ -438,25 +439,19 @@ def outlet_return():
     :func:`end_disc` itself, and carried onto pipe B by the caller's :func:`to_b`."""
     z0 = Z_J[-1] + Z_NEAR
     run = (Z_J[-1] - Z_J[0]) + Z_NEAR + END_MARGIN + 2.0 * L_HALF * (N_COPIES - 1)
-    path = turtle_path([("arc", RETURN_BEND_R, -180.0), ("line", run, 0.0)],
+    # the walk's own +u is world +z (down the chain) and its +v world +y (the fold),
+    # so it starts at u = z0 and paths.embed places it with no origin offset.
+    walk = turtle_path([("arc", RETURN_BEND_R, -180.0), ("line", run, 0.0)],
                        start=(z0, 0.0), heading=0.0)
+    path = paths.embed(walk, u=(0.0, 0.0, 1.0), v=(0.0, 1.0, 0.0))
     n_bend = max(1, round(RETURN_BEND_R * np.pi / BEND_CELL))
     n_run = max(1, round(run / AXIAL_CELL))
     breaks = path.break_fractions
     station_fr = np.concatenate([np.linspace(0.0, breaks[0], n_bend + 1),
                                  np.linspace(breaks[0], 1.0, n_run + 1)[1:]])
-
-    def centerline(s):
-        pq = path.centerline(s)
-        return np.stack([np.zeros(pq.shape[0]), pq[:, 1], pq[:, 0]], axis=1)
-
-    def tangent(s):
-        pq = path.tangent(s)
-        return np.stack([np.zeros(pq.shape[0]), pq[:, 1], pq[:, 0]], axis=1)
-
-    return hexmesh.sweep(end_disc(1), centerline, station_fr, tangent=tangent,
-                         orientation="fixed", up=(1.0, 0.0, 0.0),
-                         origin=(0.0, 0.0, z0), last_tag="outlet")
+    return hexmesh.sweep_path(end_disc(1), path, fractions=station_fr,
+                              orientation="fixed", up=(1.0, 0.0, 0.0),
+                              origin=(0.0, 0.0, z0), last_tag="outlet")
 
 
 def to_b(m):
@@ -517,9 +512,9 @@ def build_junction(z0, run_minus, run_plus):
 #: pipe B ends up offset purely along ``-x``, not diagonally, with its arm facing
 #: ``-x`` to meet it. Every move keeps the previous move's heading, so the path is C1
 #: by construction.
-_PATH = turtle_path([("arc", R_BEND, 180.0), ("line", LOOP_LEN, 0.0),
+_WALK = turtle_path([("arc", R_BEND, 180.0), ("line", LOOP_LEN, 0.0),
                     ("arc", R_BEND, 180.0)], start=(X_MID, 0.0), heading=0.0)
-_BREAKS = _PATH.break_fractions
+_BREAKS = _WALK.break_fractions
 
 #: Sweep stations, one exactly on every straight<->arc junction, each of the three
 #: pieces graded at its own layer count rather than one global linspace.
@@ -535,20 +530,14 @@ BEND_CENTER_X = -D_PIPES / 2.0
 
 def bend(z0):
     """One junction's hairpin, at height ``z0``: the arm's ending disc carried along
-    ``_PATH.centerline``/``.tangent``, landing on pipe B's own (rotated) arm end by
-    construction -- no separate return arm is built."""
-    def centerline(s):
-        xy = _PATH.centerline(s)
-        return np.concatenate([xy, np.full((xy.shape[0], 1), z0)], axis=1)
-
-    def tangent(s):
-        xy = _PATH.tangent(s)
-        return np.concatenate([xy, np.zeros((xy.shape[0], 1))], axis=1)
-
+    ``_WALK`` lifted into the plane ``z = z0``, landing on pipe B's own (rotated) arm
+    end by construction -- no separate return arm is built."""
+    path = paths.embed(_WALK, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0),
+                       origin=(0.0, 0.0, z0))
     section = quadmesh.translate(OPENING_DISC, (ARM_LEN, 0.0, z0))
-    return hexmesh.sweep(section, centerline, _STATION_FR,
-                         tangent=tangent, orientation="fixed", up=(0.0, 0.0, 1.0),
-                         origin=(X_MID, 0.0, z0))
+    return hexmesh.sweep_path(section, path, fractions=_STATION_FR,
+                              orientation="fixed", up=(0.0, 0.0, 1.0),
+                              origin=(X_MID, 0.0, z0))
 
 
 #: Junction centres within one unit, evenly spaced and centred on ``z = 0``.

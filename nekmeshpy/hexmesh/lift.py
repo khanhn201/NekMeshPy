@@ -26,8 +26,10 @@ from .._typing import (
     Vec3,
 )
 from ..linemesh.assemble import _sweep_lattice, _sweep_path
+from ..linemesh.shape import path_fractions
 from ..model import frames
 from ..model.fields import reject_loop_caps, validate_layers
+from ..model.paths import SpacePath
 from ..quadmesh import QuadMesh
 from ..quadmesh.lift import from_grid as quad_from_grid
 from ..quadmesh.morph import blend as quad_blend
@@ -285,9 +287,55 @@ def sweep(
     return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="sweep")
 
+
+def sweep_path(
+    section: QuadMesh,
+    path: SpacePath,
+    *,
+    origin: Point | Sequence[float],
+    target_length: float | None = None,
+    layers: int | None = None,
+    fractions: FloatArray | Sequence[float] | None = None,
+    orientation: Literal["transport", "fixed", "frenet"] = "transport",
+    up: Vec3 | Sequence[float] | PointArray | None = None,
+    twist: float = 0.0,
+    close_twist: bool = True,
+    normal: Vec3 | Sequence[float] | None = None,
+    loop: bool = False,
+    element_tags: StrArray | Sequence[str] | None = None,
+    first_tag: str | Sequence[str] | StrArray = "",
+    last_tag: str | Sequence[str] | StrArray = "",
+) -> HexMesh:
+    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a
+    :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` rather than by a loose
+    ``(centerline, tangent, fractions)`` triple.
+
+    The path object already carries its own analytic tangent and its own junction
+    table, so this asks for an element length instead of a station array: give exactly
+    one of ``target_length`` (the desired hex length along the sweep), ``layers`` (that
+    many on average), or ``fractions`` (the stations verbatim, for a path graded piece
+    by piece).  See
+    :func:`path_fractions <nekmeshpy.linemesh.shape.path_fractions>` for the resolution.
+
+    Everything else is ``sweep``'s, unchanged and with ``sweep``'s own defaults --
+    including ``orientation="transport"``.  A planar walk out of
+    :func:`paths.embed <nekmeshpy.model.paths.embed>` almost always wants
+    ``orientation="fixed"`` with ``up=`` the plane normal, but that is not defaulted
+    here: ``up``'s **sign** picks which of two frames rolled 180 degrees apart carries
+    the section, and a normal derived from the embedding's axis order would be a guess
+    at the caller's intent rather than a reading of it."""
+    fr = path_fractions(path, target_length=target_length, layers=layers,
+                        fractions=fractions)
+    return sweep(section, path.centerline, fr, origin=origin, tangent=path.tangent,
+                 orientation=orientation, up=up, twist=twist, close_twist=close_twist,
+                 normal=normal, loop=loop, element_tags=element_tags,
+                 first_tag=first_tag, last_tag=last_tag)
+
+
 __all__ = [
     "annulus",
     "extrude",
     "from_grid",
     "sweep",
+    "sweep_path",
 ]

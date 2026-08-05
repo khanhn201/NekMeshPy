@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
+from ..model.paths import SpacePath
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 from .assemble import _eval_curve, loft
 from .linemesh import LineMesh
@@ -201,6 +202,40 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     return out
 
 
+def path_fractions(path: SpacePath, *, target_length: float | None = None,
+                   layers: int | None = None,
+                   fractions: FloatArray | Sequence[float] | None = None) -> FloatArray:
+    """Resolve a :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` and exactly one of
+    ``target_length`` / ``layers`` / ``fractions`` into the sweep stations themselves.
+
+    ``target_length`` and ``layers`` both go through
+    :func:`sweep_fractions <nekmeshpy.linemesh.shape.sweep_fractions>` on the path's own
+    ``break_fractions``, so every straight<->arc junction still carries a station;
+    ``layers`` is just ``target_length = total_length / layers``, which is the *average*
+    element length, not a guaranteed count -- each piece is rounded on its own.
+    ``fractions`` hands stations in verbatim, for a path graded piece by piece rather
+    than to one length (a U-turn given its own layer count, say).
+
+    Factored out of the ``sweep_path`` at each rung so the three-way choice is
+    spelled and validated once."""
+    given = [n for n, x in (("target_length", target_length), ("layers", layers),
+                            ("fractions", fractions)) if x is not None]
+    if len(given) != 1:
+        raise ValueError(
+            "path_fractions: give exactly one of target_length / layers / fractions, "
+            "got %s" % (", ".join(given) if given else "none"))
+    if fractions is not None:
+        return np.asarray(fractions, dtype=float).ravel()
+    L = float(path.total_length)
+    if layers is not None:
+        n = int(layers)
+        if n < 1:
+            raise ValueError("path_fractions: layers must be >= 1, got %d" % n)
+        target_length = L / n
+    return sweep_fractions(np.asarray(path.break_fractions, dtype=float) * L, L,
+                           float(target_length))   # type: ignore[arg-type]
+
+
 def circle(radius: float, n: int, *,
            center: Point = (0.0, 0.0, 0.0),
            normal: Vec3 = (0.0, 0.0, 1.0),
@@ -310,6 +345,7 @@ __all__ = [
     "arclength_fractions",
     "circle",
     "line",
+    "path_fractions",
     "rectangle",
     "sweep_fractions",
 ]

@@ -9,10 +9,14 @@ arc-length parametrization ``s in [0, 1]`` exact to machine precision, and the
 keeps a :func:`hexmesh.lift.sweep <nekmeshpy.hexmesh.lift.sweep>` frame from tilting at every
 straight/arc junction, where the path's curvature jumps.
 
-This is pure 2-D turn-and-heading algebra with no notion of a 3-D embedding: a
-caller lifts the ``(x, y)`` output onto its own plane (in-plane axes + origin, or a
-separately supplied height), which is what keeps this module free of any
-geometry-specific meshing content.
+The walk itself is pure 2-D turn-and-heading algebra.  :func:`embed` then lifts it
+onto a plane in space -- in-plane axes plus an origin -- yielding a :class:`SpacePath`
+whose callables are what a sweep actually consumes.  That lift is linear algebra and
+nothing else, so this module still carries no geometry-specific meshing content; it
+lives here rather than in each caller because the one thing every hand-written copy
+of it has to get right is that the origin enters :attr:`~SpacePath.centerline` and
+**not** :attr:`~SpacePath.tangent` -- a tangent is a direction, and translating it
+tilts every frame along the sweep.
 """
 
 from __future__ import annotations
@@ -22,7 +26,11 @@ from typing import Callable, NamedTuple, Tuple
 
 import numpy as np
 
-from .._typing import BoolArray, FloatArray
+from .._typing import BoolArray, FloatArray, Point, PointArray, Vec3
+
+#: How far ``embed``'s two in-plane axes may stray from unit length and mutual
+#: orthogonality before it refuses to build a frame from them.
+AXIS_TOL = 1e-12
 
 #: One move: ``("line", length, 0.0)`` or ``("arc", radius, signed_degrees)`` -- a
 #: line's third slot is unused, kept only so every move is a uniform 3-tuple.
@@ -140,4 +148,78 @@ def turtle_path(moves: Sequence[Move], start: Sequence[float] = (0.0, 0.0),
     return TurtlePath(centerline, tangent, total, breaks)
 
 
-__all__ = ["Move", "TurtlePath", "turtle_path"]
+class SpacePath(NamedTuple):
+    """A path **in space**, exposed as continuous callables of normalized arc length
+    ``s in [0, 1]`` -- the 3-D counterpart of :class:`TurtlePath` and what
+    :func:`hexmesh.lift.sweep_path <nekmeshpy.hexmesh.lift.sweep_path>` consumes.
+
+    Built by :func:`embed` from a planar walk, but nothing here assumes planarity: any
+    pair of vectorized ``(K,) -> (K,3)`` callables plus a length and a break table is a
+    valid ``SpacePath``."""
+
+    #: ``(K,)`` in ``[0, 1]`` -> ``(K, 3)`` points.
+    centerline: Callable[[FloatArray], PointArray]
+    #: ``(K,)`` in ``[0, 1]`` -> ``(K, 3)`` unit tangents, the analytic derivative of
+    #: :attr:`centerline`.  A **direction**: no origin enters it.
+    tangent: Callable[[FloatArray], PointArray]
+    #: The exact total arc length.
+    total_length: float
+    #: Normalized ``s`` of every straight<->arc junction, strictly increasing.
+    break_fractions: FloatArray
+
+
+def _plane_axis(vector: Vec3 | Sequence[float], name: str) -> Vec3:
+    a: FloatArray = np.asarray(vector, dtype=float).reshape(-1)
+    if a.shape != (3,):
+        raise ValueError("embed: %s must be a (3,) vector, got %s"
+                         % (name, np.shape(vector)))
+    off = abs(float(a @ a) - 1.0)
+    if off > AXIS_TOL:
+        raise ValueError(
+            "embed: %s = %s is not a unit vector (|%s|^2 is %.17g off 1). The in-plane "
+            "axes are used verbatim, so a non-unit one silently rescales the path "
+            "rather than just naming its plane." % (name, np.array2string(a), name, off))
+    return a
+
+
+def embed(path: TurtlePath, *, u: Vec3 | Sequence[float], v: Vec3 | Sequence[float],
+          origin: Point | Sequence[float] = (0.0, 0.0, 0.0)) -> SpacePath:
+    """Lift a 2-D :class:`TurtlePath` onto the plane spanned by ``u`` and ``v`` through
+    ``origin``: the walk's own ``(x, y)`` becomes ``origin + x*u + y*v``.
+
+    ``u`` and ``v`` must be orthonormal.  They are applied verbatim rather than
+    normalized, because a non-unit axis would rescale the walk -- silently making the
+    arc lengths in :attr:`~SpacePath.total_length` and
+    :attr:`~SpacePath.break_fractions` disagree with the curve they now describe, which
+    is exactly the sort of error a sweep turns into a mesh instead of an exception.
+
+    ``origin`` enters :attr:`~SpacePath.centerline` and **not**
+    :attr:`~SpacePath.tangent`.  That asymmetry is the whole reason this is a shared
+    function: a tangent is a direction, so translating it would tilt it, and every
+    frame built along the sweep inherits the tilt -- the section stops being
+    perpendicular to the path and the wall drifts off the true surface."""
+    U = _plane_axis(u, "u")
+    V = _plane_axis(v, "v")
+    dot = float(U @ V)
+    if abs(dot) > AXIS_TOL:
+        raise ValueError(
+            "embed: u and v are not orthogonal (u.v = %.17g); they span a sheared "
+            "plane, so the lifted path would not preserve the walk's own lengths."
+            % dot)
+    O: Point = np.asarray(origin, dtype=float).reshape(-1)
+    if O.shape != (3,):
+        raise ValueError("embed: origin must be a (3,) point, got %s"
+                         % (np.shape(origin),))
+
+    def centerline(s: FloatArray) -> PointArray:
+        xy = path.centerline(s)
+        return O + (xy[:, 0, None] * U + xy[:, 1, None] * V)
+
+    def tangent(s: FloatArray) -> PointArray:
+        xy = path.tangent(s)
+        return xy[:, 0, None] * U + xy[:, 1, None] * V
+
+    return SpacePath(centerline, tangent, path.total_length, path.break_fractions)
+
+
+__all__ = ["AXIS_TOL", "Move", "SpacePath", "TurtlePath", "embed", "turtle_path"]

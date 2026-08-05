@@ -47,7 +47,7 @@ unambiguous; across rungs they deliberately collide (each rung has its own ``lof
 
 from . import assemble, lift, morph, query, shape
 from .assemble import loft, loft_fn, merge
-from .lift import annulus, extrude, from_grid, sweep
+from .lift import annulus, extrude, from_grid, sweep, sweep_path
 from .morph import blend, rotate, scale, transform, translate
 from .quadmesh import NO_TAG, QuadMesh
 from .query import (
@@ -111,6 +111,7 @@ __all__ = [
     "spined_ogrid",
     "structured",
     "sweep",
+    "sweep_path",
     "transform",
     "translate",
 ]

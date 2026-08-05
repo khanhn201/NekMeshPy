@@ -46,7 +46,7 @@ unambiguous; across rungs they deliberately collide (each rung has its own ``lof
 from . import assemble, lift, morph, query, shape
 from .assemble import loft, loft_fn, merge
 from .hexmesh import HexMesh
-from .lift import annulus, extrude, from_grid, sweep
+from .lift import annulus, extrude, from_grid, sweep, sweep_path
 from .morph import blend, rotate, scale, transform, translate
 from .query import (
     boundary_elements,
@@ -89,6 +89,7 @@ __all__ = [
     "scaled_jacobian",
     "shape",
     "sweep",
+    "sweep_path",
     "tetra",
     "topology_report",
     "transform",
