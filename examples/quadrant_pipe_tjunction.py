@@ -99,11 +99,17 @@ all of them.
 """
 
 import logging
+import os
+import sys
 
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model import surfaces
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from tjunction_lib import auto_params  # noqa: E402  (needs the path above)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -126,9 +132,7 @@ CENTER_SCALE = 0.55          # core corner at CENTER_SCALE * R along the arc mid
 #: tip closer to the branch, lower it toward ``0.0`` to push it toward the bypass wall.
 #: Keep it inside ``(0, 1)`` -- either endpoint collapses one patch's spoke to zero
 #: length.
-CAP_TIP_BIAS = 1.0 / 3.0
 
-PHI_W = np.deg2rad(112.5)    # bypass edge: the two z = 0 wall corners, at +-PHI_W
 
 N_TRANS = 5                  # layers from a leg's composite face to its plain disc
 N_LEG = 6                    # layers from the plain disc to the end plane
@@ -140,7 +144,13 @@ OUT_NAME = "quadrant_pipe_tjunction"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  "}
 
 N = N_QUAD
-ORIGIN = np.zeros(3)
+#: The three shape parameters of the quadrant construction, chosen for this
+#: junction's own radius ratio rather than fixed -- see
+#: ``tjunction_lib.auto_params``. ``PHI_W`` is the bypass edge (the two z = 0
+#: wall corners sit at +-PHI_W); ``CAP_TIP_BIAS`` weights the branch arc when
+#: locating each crotch's wall-triangle tip; ``ORIGIN`` is the junction hub every
+#: quadrant seam radiates from.
+PHI_W, CAP_TIP_BIAS, ORIGIN = auto_params(R_MAIN, R_BRANCH)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
@@ -383,7 +393,8 @@ def leg(composite, walls, sign, end_tag):
     def station(s):
         return quadmesh.quadrant_disc(
             [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
-            np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
+            (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]),
+            RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
     plain = station(1.0)
@@ -399,7 +410,8 @@ def branch():
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
     c_open = np.array([H_BRANCH, 0.0, 0.0])
-    sections = [quadmesh.quadrant_disc([w[i] for w in walls], t[i] * c_open, RADIAL,
+    sections = [quadmesh.quadrant_disc([w[i] for w in walls],
+                                       (1.0 - t[i]) * ORIGIN + t[i] * c_open, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
     return hexmesh.loft(sections, last_tag="branch")

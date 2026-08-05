@@ -63,12 +63,18 @@ pipe B's minus end on the first -- are capped ``"wall"`` at the same full
 """
 
 import logging
+import os
+import sys
 
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.model import paths, surfaces
 from nekmeshpy.model.paths import turtle_path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from tjunction_lib import auto_params  # noqa: E402  (needs the path above)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -84,9 +90,7 @@ CENTER_SCALE = 0.7           # core corner at CENTER_SCALE * R along the arc mid
 
 #: Weight of the branch-facing arc when locating each crotch's wall-triangle "tip" --
 #: see ``quadrant_pipe_tjunction.py``'s own ``CAP_TIP_BIAS``.
-CAP_TIP_BIAS = 1.0 / 3.0
 
-PHI_W = np.deg2rad(100.0)     # bypass edge: the two z = 0 wall corners, at +-PHI_W
 
 N_TRANS = 5                   # layers from a leg's composite face to its plain disc
 N_LEG = 6                     # reference layer count -- sets the axial cell target
@@ -123,7 +127,13 @@ OUT_NAME = "chimera"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
 N = N_QUAD
-ORIGIN = np.zeros(3)
+#: The three shape parameters of the quadrant construction, chosen for this
+#: junction's own radius ratio rather than fixed -- see
+#: ``tjunction_lib.auto_params``. ``PHI_W`` is the bypass edge (the two z = 0
+#: wall corners sit at +-PHI_W); ``CAP_TIP_BIAS`` weights the branch arc when
+#: locating each crotch's wall-triangle tip; ``ORIGIN`` is the junction hub every
+#: quadrant seam radiates from.
+PHI_W, CAP_TIP_BIAS, ORIGIN = auto_params(R_MAIN, R_BRANCH)
 
 #: The seam sampling ``quadrant_ogrid`` demands -- the same for every seam, because
 #: every block shares ``N_QUAD`` / ``RADIAL`` / ``CENTER_SCALE``.
@@ -330,7 +340,8 @@ def leg(composite, walls, sign, run):
     def station(s):
         return quadmesh.quadrant_disc(
             [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
-            np.array([0.0, 0.0, s * z]), RADIAL, center_scale=CENTER_SCALE,
+            (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]),
+            RADIAL, center_scale=CENTER_SCALE,
             wall_tag="wall")
 
     transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
@@ -410,7 +421,8 @@ def branch():
     is tagged -- both become interior faces once the bend welds onto the far one."""
     t = np.linspace(0.0, 1.0, N_BRANCH + 1)
     walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, OPEN_ARCS)]
-    sections = [quadmesh.quadrant_disc([w[i] for w in walls], t[i] * C_OPEN, RADIAL,
+    sections = [quadmesh.quadrant_disc([w[i] for w in walls],
+                                       (1.0 - t[i]) * ORIGIN + t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
     return [hexmesh.loft(sections),
