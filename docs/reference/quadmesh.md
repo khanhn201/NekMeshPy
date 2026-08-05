@@ -39,6 +39,9 @@ Every operation is a free function in one of these namespaces --
 .. automodule:: nekmeshpy.quadmesh.shape
    :members:
 
+.. automodule:: nekmeshpy.quadmesh.ports
+   :members:
+
 .. automodule:: nekmeshpy.quadmesh.lower
    :members:
 

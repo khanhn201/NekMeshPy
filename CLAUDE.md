@@ -136,6 +136,16 @@ and the closed shape factories: that split was storage-side, not caller-facing.
 Only genuinely internal helpers stay underscored: `linemesh/_plane.py` and
 `quadmesh/_helpers.py`.
 
+`quadmesh/ports.py` holds `Port` — a section plus the two facts it cannot state about
+itself, the **outward** direction and the **axis point** (an O-grid's centroid is near
+its centre, not on it). `hexmesh.bridge` / `adapter` take `QuadMesh | Port`: a bare
+section keeps the old behaviour of *inferring* the outward direction from the line
+between the two centroids, which is right whenever the two really face each other and
+silently folds the connector when they do not. A `Port` states it instead, which is
+what lets those two check rather than guess — that the ports face each other, and that
+their radii agree. The checks are skipped unless *both* sides stated a direction, since
+a guess is derived from the very geometry a check would test.
+
 `linemesh.shape` and `quadmesh.shape` also carry the samplings —
 `arclength_fractions`, `sweep_fractions`, `path_fractions`, `spine_fractions`,
 `quadrant_seam_fractions`, `quadrant_core` — which return a plain array rather than a

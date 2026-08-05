@@ -280,17 +280,20 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
         reproducer: it reproduces its input to machine precision when origin
         and the path's own start agree, and by exactly this residual when
         they don't)."""
-        return quadmesh.place_on_path(
-            disc, xz_path(moves, (db_c[0], db_c[2]), heading, db_c[1]), [0.0, 1.0],
-            orientation="fixed", up=(0.0, 1.0, 0.0), origin=db_c)[-1]
+        path = xz_path(moves, (db_c[0], db_c[2]), heading, db_c[1])
+        end = quadmesh.place_on_path(disc, path, [0.0, 1.0], orientation="fixed",
+                                     up=(0.0, 1.0, 0.0), origin=db_c)[-1]
+        return quadmesh.port(end, outward=path.tangent(np.array([1.0]))[0])
 
     conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
-    end_sec = _end_section(db)
-    print("  [%s] end_sec center=%s normal=%s" %
-         (tag, end_sec.points.mean(axis=0), quadmesh.plane_normal(end_sec, check=False)))
-    print("  [%s] tgt center=%s normal=%s"
-         % (tag, chi_disc.points.mean(axis=0), quadmesh.plane_normal(chi_disc, check=False)))
-    adapter = hexmesh.adapter(end_sec, chi_disc, axis=(0.0, 0.0, 1.0), layers=2)
+    end_port = _end_section(db)
+    # chimera's own openings face -z and this connector rises +z into them, so the two
+    # face each other; adapter takes its roll axis from end_port's own normal, which is
+    # what the explicit axis=(0,0,1) always was.
+    chi_port = quadmesh.port(chi_disc, outward=(0.0, 0.0, -1.0))
+    print("  [%s] end %s" % (tag, end_port))
+    print("  [%s] tgt %s" % (tag, chi_port))
+    adapter = hexmesh.adapter(end_port, chi_port, layers=2)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
     # The inlet/outlet risers themselves bend to z- (away from chimera, which
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
@@ -426,7 +429,12 @@ def place_t2(source_disc, t2_y, mirror=False):
     da = quadmesh.translate(t2.disc_minus, t2_center)   # -y, on to the next T2 (or capped)
     db = quadmesh.translate(t2.disc_plus, t2_center)    # +y, faces back upstream
     dbr = quadmesh.translate(t2.disc_branch, t2_center)  # +/-x (mirror), out to a serpentine
-    conn = hexmesh.bridge(source_disc, db)
+    # both legs run along y: the source faces -y (on down the chain) and this T2's
+    # +y leg faces back upstream at it.  Stating that rather than letting bridge infer
+    # it from the centroid line is what lets it check the two really do face each
+    # other, and that they are the same size.
+    conn = hexmesh.bridge(quadmesh.port(source_disc, outward=(0.0, -1.0, 0.0)),
+                          quadmesh.port(db, outward=(0.0, 1.0, 0.0)))
     return core, conn, da, dbr, t2_center
 
 
@@ -536,9 +544,12 @@ def _end_section(section, moves, heading, y_fixed):
     frames.sweep_placements machinery sweep() uses internally (not
     re-derived) -- so a piece built to continue from it lands seamlessly."""
     c = section.points.mean(axis=0)
-    return quadmesh.place_on_path(section, xz_path(moves, (c[0], c[2]), heading, y_fixed),
-                                  [0.0, 1.0], orientation="fixed", up=(0.0, 1.0, 0.0),
-                                  origin=c)[-1]
+    path = xz_path(moves, (c[0], c[2]), heading, y_fixed)
+    end = quadmesh.place_on_path(section, path, [0.0, 1.0], orientation="fixed",
+                                 up=(0.0, 1.0, 0.0), origin=c)[-1]
+    # the tube's own downstream tangent is the port's outward direction; port() takes
+    # it only as a sign hint and reads the precision off the section's fitted plane
+    return quadmesh.port(end, outward=path.tangent(np.array([1.0]))[0])
 
 
 TOTAL_COIL = _coil_local.total_length

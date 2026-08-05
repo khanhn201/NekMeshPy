@@ -40,6 +40,7 @@ from ..quadmesh.morph import reindex as quad_reindex
 from ..quadmesh.morph import rotate as quad_rotate
 from ..quadmesh.morph import transform as quad_transform
 from ..quadmesh.morph import translate
+from ..quadmesh.ports import Port
 from ..quadmesh.query import plane_normal as quad_plane_normal
 from .assemble import _loft_evaluated, loft
 from .hexmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, HexMesh
@@ -369,8 +370,9 @@ def _self_map(a: QuadMesh, k: int, axis: Vec3 | Sequence[float]) -> IntArray:
     return np.asarray(sigma, dtype=np.int64)
 
 
-def adapter(a: QuadMesh, b: QuadMesh, *, axis: Vec3 | Sequence[float],
-            layers: int = 2, max_deviation: float = 0.2) -> HexMesh:
+def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
+            axis: Vec3 | Sequence[float] | None = None, layers: int = 2,
+            max_deviation: float = 0.2, radius_tol: float = 0.05) -> HexMesh:
     """A short block morphing between two same-connectivity sections whose *node
     patterns* differ slightly -- and whose **both** end faces are bit-exact.
 
@@ -393,9 +395,27 @@ def adapter(a: QuadMesh, b: QuadMesh, *, axis: Vec3 | Sequence[float],
     The 90-degree roll between the two index patterns is measured, not assumed (see
     ``_find_roll``); ``axis`` is the axis it is measured about, normally the seam
     normal.  A residual deviation above ``max_deviation`` means no quarter turn aligns
-    the two at all, which is a ``ValueError`` rather than a twisted block."""
+    the two at all, which is a ``ValueError`` rather than a twisted block.
+
+    Passing :class:`Ports <nekmeshpy.quadmesh.ports.Port>` rather than bare sections
+    lets ``axis`` default to ``a``'s own stated normal -- which is what the seam normal
+    always was -- and adds the two checks a fitted plane cannot make on its own: that
+    the ports face each other, and that they are the same size."""
     if layers < 1:
         raise ValueError("adapter: layers must be >= 1, got %d" % layers)
+    sec_a = a.section if isinstance(a, Port) else a
+    sec_b = b.section if isinstance(b, Port) else b
+    pa, a_stated = _as_port(a, sec_b.points.mean(axis=0), "adapter")
+    pb, b_stated = _as_port(b, sec_a.points.mean(axis=0), "adapter")
+    _check_facing(pa, pb, a_stated and b_stated, "adapter", radius_tol)
+    if axis is None:
+        if not a_stated:
+            raise ValueError(
+                "adapter: give axis=, the direction the 90-degree roll between the two "
+                "index patterns is measured about (normally the seam normal). It "
+                "defaults to a's own normal only when a is a Port, which states one.")
+        axis = pa.normal
+    a, b = sec_a, sec_b
     ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
     k = _find_roll(a, b, axis)
     b_aligned = quad_reindex(a, b, _self_map(a, k, axis))
@@ -409,6 +429,50 @@ def adapter(a: QuadMesh, b: QuadMesh, *, axis: Vec3 | Sequence[float],
             "into inverted elements; use bridge() for patterns this far apart."
             % (dev, max_deviation))
     return loft(quad_blend(a, b_aligned, np.linspace(0.0, 1.0, layers + 1)))
+
+
+def _as_port(x: QuadMesh | Port, toward: Point, who: str) -> tuple[Port, bool]:
+    """``(port, was_stated)`` -- promote a bare ``QuadMesh`` by *guessing* its outward
+    direction as the one pointing at ``toward``, or take a ``Port``'s stated one.
+
+    The guess is what these joins have always done, and it is right whenever the two
+    sections really do face each other.  It cannot tell that they do: handed two ports
+    facing the same way it flips one and folds the connector, with nothing to catch it.
+    Passing a :class:`Port <nekmeshpy.quadmesh.ports.Port>` states the direction instead,
+    which is what lets the caller below check rather than assume."""
+    if isinstance(x, Port):
+        return x, True
+    n = quad_plane_normal(x, check=False)
+    c = x.points.mean(axis=0)
+    d = np.asarray(toward, dtype=float) - c
+    n = n if float(n @ d) > 0.0 else -n
+    r = float(np.linalg.norm(np.asarray(x.points, dtype=float) - c, axis=1).max())
+    return Port(x, n, c, r), False
+
+
+def _check_facing(pa: Port, pb: Port, both_stated: bool, who: str,
+                  radius_tol: float) -> None:
+    """The two checks a guessed direction cannot make.  Skipped unless *both* sides
+    stated theirs -- a guess is derived from the very geometry being checked, so
+    checking it would only ever confirm itself."""
+    if not both_stated:
+        return
+    if not pa.faces(pb):
+        raise ValueError(
+            "%s: the two ports do not face each other (normals %s and %s, cosine "
+            "%+.3f). A connector between them would have to fold back through one of "
+            "the components; reverse whichever port is stated the wrong way round."
+            % (who, np.array2string(pa.normal, precision=3),
+               np.array2string(pb.normal, precision=3),
+               float(pa.normal @ pb.normal)))
+    big = max(pa.radius, pb.radius)
+    if abs(pa.radius - pb.radius) > radius_tol * big:
+        raise ValueError(
+            "%s: the two ports are different sizes (radius %.6g and %.6g, %.1f%% "
+            "apart). This joins same-radius sections; blend or loft between them "
+            "instead if a taper is what you want."
+            % (who, pa.radius, pb.radius,
+               100.0 * abs(pa.radius - pb.radius) / big))
 
 
 def _stub_sections(disc: QuadMesh, direction: Vec3, distance: float,
@@ -434,8 +498,9 @@ def _stub_sections(disc: QuadMesh, direction: Vec3, distance: float,
     return [quad_transform(disc, M, o) for M, o in places]
 
 
-def bridge(a: QuadMesh, b: QuadMesh, *, layers: int = 4, stub_fraction: float = 0.3,
-           stub_max: float = 1.5, blend_layers: int = 6) -> HexMesh:
+def bridge(a: QuadMesh | Port, b: QuadMesh | Port, *, layers: int = 4,
+           stub_fraction: float = 0.3, stub_max: float = 1.5, blend_layers: int = 6,
+           radius_tol: float = 0.05) -> HexMesh:
     """A connector between two same-radius sections whose node patterns are too far
     apart for :func:`adapter <nekmeshpy.hexmesh.lift.adapter>` -- two legs of different
     T-junctions, built by different algorithms.
@@ -460,16 +525,17 @@ def bridge(a: QuadMesh, b: QuadMesh, *, layers: int = 4, stub_fraction: float = 
     inverted elements."""
     if blend_layers < 1:
         raise ValueError("bridge: blend_layers must be >= 1, got %d" % blend_layers)
-    ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
+    sec_a = a.section if isinstance(a, Port) else a
+    sec_b = b.section if isinstance(b, Port) else b
+    pa, a_stated = _as_port(a, sec_b.points.mean(axis=0), "bridge")
+    pb, b_stated = _as_port(b, sec_a.points.mean(axis=0), "bridge")
+    _check_facing(pa, pb, a_stated and b_stated, "bridge", radius_tol)
+    ca, cb = sec_a.points.mean(axis=0), sec_b.points.mean(axis=0)
     length = float(np.linalg.norm(cb - ca))
-    na = quad_plane_normal(a, check=False)
-    na = na if float(na @ (cb - ca)) > 0.0 else -na
-    nb = quad_plane_normal(b, check=False)
-    nb = nb if float(nb @ (ca - cb)) > 0.0 else -nb
     stub = min(stub_max, stub_fraction * length)
     n_stub = max(2, layers // 2)
-    a_secs = _stub_sections(a, na, stub, n_stub)
-    b_secs_raw = _stub_sections(b, nb, stub, n_stub)[::-1]
+    a_secs = _stub_sections(sec_a, pa.normal, stub, n_stub)
+    b_secs_raw = _stub_sections(sec_b, pb.normal, stub, n_stub)[::-1]
 
     a_end, b_end = a_secs[-1], b_secs_raw[0]
     _, sigma = cKDTree(b_end.points - b_end.points.mean(axis=0)).query(

@@ -58,6 +58,7 @@ from .morph import (
     transform,
     translate,
 )
+from .ports import Port, port
 from .quadmesh import NO_TAG, QuadMesh
 from .query import (
     boundary_edges,
@@ -88,6 +89,7 @@ from .shape import (
 
 __all__ = [
     "NO_TAG",
+    "Port",
     "QuadMesh",
     "annulus",
     "assemble",
@@ -111,6 +113,7 @@ __all__ = [
     "ogrid",
     "place_on_path",
     "plane_normal",
+    "port",
     "quadrant_core",
     "quadrant_disc",
     "quadrant_ogrid",
