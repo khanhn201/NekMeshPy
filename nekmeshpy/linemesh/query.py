@@ -1,12 +1,4 @@
-"""Read-only ``LineMesh`` queries -- the operations that leave the ladder.
-
-They take the mesh and return plain arrays, never another mesh, so they are bound as
-instance methods rather than ``staticmethod`` factories.
-
-Free functions assigned into the :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` class body (see
-``linemesh.py``), which is what makes them methods; internal toolkit code imports them
-from here directly.
-"""
+"""Read-only ``LineMesh`` queries -- the operations that leave the ladder."""
 
 from __future__ import annotations
 

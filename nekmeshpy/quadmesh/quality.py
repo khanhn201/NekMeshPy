@@ -1,11 +1,4 @@
-"""Quad-element quality metrics.
-
-Free functions on a shared-point representation ``(points, quads)`` with ``points``
-``(P,3)`` and ``quads`` ``(N,4)`` in CCW corner order.  The per-corner scaled
-Jacobian is the two-edge cross product normalized by the edge lengths (``1`` =
-perfect right angle, ``<= 0`` = degenerate / folded), signed against each quad's
-mean normal so folded corners read negative on non-planar quads.
-"""
+"""Quad-element quality metrics."""
 
 from __future__ import annotations
 
@@ -20,12 +13,7 @@ _CN = np.array([[0, 1, 3], [1, 2, 0], [2, 3, 1], [3, 0, 2]], dtype=np.int64)
 
 
 def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
-    """Per-quad minimum corner scaled Jacobian, shape ``(N,)``.
-
-    1 is a perfect square corner; <= 0 is degenerate / inverted.  Corner cross
-    products are signed against the quad's mean normal, so the metric detects
-    folded corners even for non-planar quads embedded in 3-D.
-    """
+    """Per-quad minimum corner scaled Jacobian, shape ``(N,)``."""
     X = np.asarray(points, dtype=float)
     QC = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     N = QC.shape[0]
@@ -51,12 +39,7 @@ def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
 
 
 def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
-    """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample.
-
-    The mesh's entity B-rep is walked
-    (:func:`~nekmeshpy.model.conform.conformal_quad`) and the block gathered
-    **transiently** as ``nodes[conn_ho]`` -- nothing is stored.
-    """
+    """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample."""
     from ..model import conform
     nodes, conn_ho = conform.conformal_quad(
         mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
@@ -68,16 +51,7 @@ def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
 def scaled_jacobian_ho(mesh: QuadMesh, order: int) -> FloatArray:
     """Per-quad minimum scaled Jacobian sampled at the ``(order+1)**2`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
-    :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>`.
-
-    ``mesh`` is a ``QuadMesh``; its high-order nodes are gathered from the entity B-rep
-    on the fly.
-
-    Uses the surface metric (each node's cross product signed against the quad's mean
-    normal), so it detects folds on non-planar quads.  This is the **opt-in** metric:
-    the default corner-based :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>` keeps the pinned linear numbers,
-    and at ``order == 1`` (GLL nodes == corners) this reduces to it.
-    """
+    :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>`."""
     from ..model.interp import scaled_jacobian_ho as _sj
     return _sj(_ho_block(mesh, order), order, dim=2)
 
@@ -114,12 +88,7 @@ def histogram(points: PointArray, quads: IntArray, bins: int = 10,
 
 def format_report(stats: QualitySummary,
                   hist: tuple[IntArray, FloatArray] | None = None) -> str:
-    """Human-readable multi-line quality report from :func:`summary` output.
-
-    The ``poor`` label is **derived** from ``POOR_THRESHOLD`` rather than spelling
-    the number again, so the text can never disagree with the count it labels; the
-    label is padded to the 13-column field the other rows use.
-    """
+    """Human-readable multi-line quality report from :func:`summary` output."""
     lines = [
         "elements     : %d" % stats.n_elements,
         "scaled Jac   : min=%.4f  mean=%.4f  median=%.4f  max=%.4f"

@@ -1,9 +1,5 @@
-"""Shared internals for the :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>` factory functions.
-
-``_apply_smoothing`` and ``_check_boundary`` are used by both the core container
-(``quadmesh.py``) and the split-out factory files (``shape.py``); they live here so
-those files can share them without an import cycle.
-"""
+"""Shared internals for the :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>`
+factory functions."""
 
 from __future__ import annotations
 
@@ -25,28 +21,7 @@ Overlay = tuple[IntArray, int, LineMesh]
 
 def _elevate(qm: QuadMesh, order: int,
              overlays: list[Overlay] | None = None) -> QuadMesh:
-    """Return the order-N form of a linear (post-smoothing) region ``qm``.
-
-    At ``order == 1`` returns ``qm`` unchanged (the golden no-op).  Otherwise the
-    high-order nodes are built **natively as B-rep entities** -- no
-    ``(Q,(order+1)**2,3)`` block is ever materialized:
-
-    * every quad's four element-local edge interiors start as the straight (bilinear)
-      subdivision of its CCW corners -- the same ``tensor_nodes(order, 2)`` weights a
-      full straight-sided block would use, evaluated only at the entity slots;
-    * each ``overlays`` entry then **overwrites** the element-local edge interior of the
-      named side with that curve's own private ``interior`` nodes (reversed where the
-      quad traverses the boundary line the other way), so the named sides follow the
-      exact input curve.  A caller may overlay any side, not just a region wall:
-      ``ogrid``/``half_ogrid`` pass one pair per O-ring so curvature reaches inward;
-    * the private quad ``interior`` is then the **transfinite (Coons) patch of the
-      element's own four edge curves**, taken *after* the overlays, so a curved side
-      bows the nodes inside it.  With four straight edges the patch is the bilinear
-      corner fill it replaces;
-    * the element-local edge copies are reconciled into the shared canonical table by
-      :func:`~nekmeshpy.model.conform.scatter_edge_nodes` (owner-wins + verify).
-
-    Corners are never stored -- they stay single-sourced by ``points[quads]``."""
+    """Return the order-N form of a linear (post-smoothing) region ``qm``."""
     if order == 1:
         return qm
     points: PointArray = qm.points
@@ -102,31 +77,21 @@ def _elevate(qm: QuadMesh, order: int,
     edge_nodes = conform.scatter_edge_nodes(
         local, elem_edges, flip, edges.shape[0],
         conform.entity_tol(points), "QuadMesh._elevate")
-    lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+    lm = LineMesh(points, edges, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior,
-                    qm.edge_tags, qm.element_tags, order=order)
+                    qm.edge_tags, qm.element_tags)
 
 
 def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray,
                          order: int, who: str) -> tuple[LineMesh, IntArray,
                                                         IntArray, PointArray]:
-    """Decompose per-element curved blocks into the B-rep tables.
-
-    ``blocks`` is ``(Q,(order+1)**2,3)`` in the lexicographic (``i`` fastest) frame --
-    the transient full-block form -- and is split into the shared-edge ``LineMesh``
-    (reconciled owner-wins by
-    :func:`~nekmeshpy.model.conform.scatter_edge_nodes`) plus the private per-quad
-    ``interior``.  Returns ``(edge LineMesh, elem_edges, flip, interior)``.
-
-    This is the inverse of the entity -> block gather, for a factory that can evaluate
-    its region's true geometry at every node at once (``structured``) rather than
-    subdividing a linear guess and stamping walls back on (``_elevate``)."""
+    """Decompose per-element curved blocks into the B-rep tables."""
     local: PointArray = blocks[:, _edge_interior_slots(order)]
     interior: PointArray = blocks[:, _quad_interior_slots(order)]
     edges, elem_edges, flip = conform.unique_edges(quads, 2)
     edge_nodes = conform.scatter_edge_nodes(
         local, elem_edges, flip, edges.shape[0], conform.entity_tol(points), who)
-    lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+    lm = LineMesh(points, edges, interior=edge_nodes)
     return lm, elem_edges, flip, interior
 
 
@@ -140,11 +105,7 @@ def _apply_smoothing(qm: QuadMesh, smoothing_method: str | None) -> QuadMesh:
 
 def _check_boundary(obj: LineMesh, name: str, min_pts: int) -> PointArray:
     """Validate a ``LineMesh`` factory argument (type, minimum point count, finite
-    coordinates), returning its ``(N,3)`` points.
-
-    Open-vs-closed is deliberately *not* checked here: it is a property of the
-    ``lines`` connectivity, stored nowhere, so each factory's own point-count and
-    connectivity requirements are what constrain the input."""
+    coordinates), returning its ``(N,3)`` points."""
     if not isinstance(obj, LineMesh):
         raise TypeError("%s must be a LineMesh, got %s"
                         % (name, type(obj).__name__))

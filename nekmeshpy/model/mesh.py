@@ -1,11 +1,4 @@
-"""Generic shared-point unstructured mesh -- the gmsh/meshio-style data model.
-
-``Mesh`` is the interchange representation the package converts to and from: a
-shared ``points`` array plus ``cells`` grouped by element type, with named
-``point_sets`` and ``cell_sets``.  A plain data container; algorithms live on the
-typed meshes.  Cell-type keys follow the meshio vocabulary (``"vertex"``,
-``"line"``, ``"triangle"``, ``"quad"``, ``"tetra"``, ``"hexahedron"``).
-"""
+"""Generic shared-point unstructured mesh -- the gmsh/meshio-style data model."""
 
 from __future__ import annotations
 

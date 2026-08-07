@@ -1,10 +1,4 @@
-"""Constrained hex-mesh smoothing.
-
-``smooth`` untangles and polishes the assembled hex mesh while keeping wall points
-on the triangulated ``surface`` and opening/cap points fixed. Two stages: a
-point-local untangle, then a back-tracked global Jacobi polish that never lowers
-the minimum scaled Jacobian.
-"""
+"""Constrained hex-mesh smoothing."""
 
 from __future__ import annotations
 
@@ -33,13 +27,8 @@ def smooth(
     untangle_iters: int = 40,
     quality_floor: float = 0.2,
 ) -> HexMesh:
-    """Constrained untangle + polish, keeping the ``wall``-named points on
-    ``surface`` and opening/cap points fixed. Runs up to ``untangle_iters``
-    point-local sweeps (stopping once every element clears ``quality_floor``), then
-    ``smooth_iters`` global polish sweeps (``<=0`` returns the mesh unchanged).
-
-    Operates on the corner graph only, so an ``order > 1`` mesh is rejected --
-    high-order smoothing is not implemented yet."""
+    """Constrained untangle + polish, keeping the ``wall``-named points on ``surface``
+    and opening/cap points fixed."""
     if mesh.order > 1:
         raise NotImplementedError(
             "hexmesh.smoothing.smooth: cannot smooth an order-%d mesh (operates on "

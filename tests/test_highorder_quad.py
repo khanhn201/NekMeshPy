@@ -197,7 +197,7 @@ def test_structured_rejects_a_non_chain_edge():
                            order=2),
              linemesh.line((0.0, 1.0, 0.0), (0.0, 0.0, 0.0), uniform_spacing(2),
                            order=2)]
-    scrambled = LineMesh(edges[0].points, [[0, 2], [2, 1], [1, 3]], order=2,
+    scrambled = LineMesh(edges[0].points, [[0, 2], [2, 1], [1, 3]],
                          interior=np.zeros((3, 1, 3)))
     with pytest.raises(ValueError, match="consecutive chain"):
         quadmesh.structured([scrambled, edges[1], edges[2], edges[3]])

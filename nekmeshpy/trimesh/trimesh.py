@@ -43,15 +43,7 @@ class TriMesh:
 
     # -- sizes -----------------------------------------------------------
     def __repr__(self) -> str:
-        """One-line REPL summary: element and point counts.  The same shape as the
-        ladder containers' reprs (:meth:`LineMesh.__repr__
-        <nekmeshpy.linemesh.LineMesh.__repr__>`) minus the fields a triangulated
-        surface does not have -- a ``TriMesh`` is a linear scanned/imported surface
-        carrying no polynomial order and no element or boundary tags, so those fields
-        are omitted rather than rendered empty and misleading.
-
-        Reads two stored array shapes; never raises, because a repr that throws on a
-        half-loaded surface makes debugging strictly worse."""
+        """One-line REPL summary: element and point counts."""
         try:
             return "<TriMesh %d points, %d tris>" % (
                 self.points.shape[0], self.tris.shape[0])

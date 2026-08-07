@@ -1,15 +1,4 @@
-"""NekMeshPy -- an all-hex meshing toolkit with Nek5000/NekRS export.
-
-A library of composable primitives, not geometry-specific meshers:
-
-* **geometry** -- ``LineMesh``, ``TriMesh``, ``QuadMesh``, ``HexMesh``, and the
-  shared-point ``Mesh``.  Each mesh type is its own subpackage, with quality
-  metrics, smoothing, and surface ops beside their container;
-* **model** -- physical groups, ``topology`` checks, and sizing ``fields``;
-* **io** -- ``export`` (``.re2`` / meshio) and ``viz``.
-
-Concrete meshers (bifurcation, pipes, transfinite block) live in ``examples/``.
-"""
+"""NekMeshPy -- an all-hex meshing toolkit with Nek5000/NekRS export."""
 
 from . import trimesh
 from .hexmesh import HexMesh, smoothing

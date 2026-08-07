@@ -1,19 +1,4 @@
-"""Fixed-arity, rung-preserving ``QuadMesh`` operations (delta 0).
-
-Two arities live here.  **Binary**: ``blend`` morphs between two index-paired
-sections.  **Unary**: ``translate`` / ``rotate`` / ``scale`` / ``transform`` place a
-finished section.  All of them change only coordinates -- ``a``'s ``quad`` / ``flip``
-incidence and ``edge_tags`` ride through verbatim, so the input's
-numbering *is* the output's and nothing is re-derived (the unary placements keep
-``element_tags`` too; ``blend`` leaves them for the consuming ``loft``).  Both
-delegate their corner and shared-edge half one rung down to
-:mod:`nekmeshpy.linemesh.morph`.
-
-Free functions bound onto :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>` by ``quadmesh/__init__.py``
-(the binary ``blend`` as a ``staticmethod``, the unary placements as instance
-methods); internal toolkit code imports them from here directly rather than through
-the bound ``QuadMesh.<name>`` sugar.
-"""
+"""Fixed-arity, rung-preserving ``QuadMesh`` operations (delta 0)."""
 
 from __future__ import annotations
 
@@ -40,19 +25,8 @@ from .quadmesh import QuadMesh
 def blend(a: QuadMesh, b: QuadMesh,
           fractions: FloatArray | Sequence[float]) -> list[QuadMesh]:
     """Linearly morph between two conformal sections ``a`` and ``b`` (identical
-    ``quads``, equal point count), one section per fraction ``t`` with points
-    ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
-    result carries ``a``'s ``quads`` and ``edge_tags``
-    (positional BC markers follow the morph); per-quad ``element_tags`` are left
-    for the consuming ``loft`` caps to assign, so a blended stack lofts directly.
-    This is the profile-positioning step behind ``HexMesh.annulus``.
-
-    The morph is delegated one rung **down the B-rep ladder**: the shared corners
-    and the shared edge-interior nodes are exactly the edge ``LineMesh``, so
-    :func:`linemesh.morph.blend <nekmeshpy.linemesh.morph.blend>` produces the blended
-    edge mesh and this method only lerps what a quad owns privately -- its
-    per-quad ``interior`` -- while keeping ``a``'s ``quad`` / ``flip`` incidence
-    verbatim."""
+    ``quads``, equal point count), one section per fraction ``t`` with points ``(1-t)*a
+    + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``."""
     A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
     if A.shape[0] != B.shape[0]:
@@ -79,30 +53,22 @@ def blend(a: QuadMesh, b: QuadMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [QuadMesh(lm, a.quad, a.flip,
                 (1.0 - t) * ai + t * bi if ho else None,
-                edge_tags=a.edge_tags, order=a.order)
+                edge_tags=a.edge_tags)
             for t, lm in zip(fr, line_blend(a.lines, b.lines, fr))]
 
 
 def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh:
-    """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``.
-
-    Composed downward like every other rung: the shared corners *are* the edge
-    ``LineMesh``'s points and the shared edge nodes *are* its ``interior``, so that
-    whole half is one ``LineMesh`` map, and only the per-quad private ``interior``
-    is mapped here.  ``quad`` / ``flip`` incidence rides through verbatim -- an
-    affine map is a pure point-space placement, so nothing is re-derived."""
+    """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
     return QuadMesh(line_affine(mesh.lines, matrix, offset), mesh.quad, mesh.flip,
                     affine.apply(mesh.interior, matrix, offset),
                     edge_tags=mesh.edge_tags,
-                    element_tags=mesh.element_tags, order=mesh.order)
+                    element_tags=mesh.element_tags)
 
 
 def transform(mesh: QuadMesh, matrix: FloatArray,
               offset: Vec3 | Sequence[float] = affine.ORIGIN) -> QuadMesh:
     """A new section with every node mapped through the affine ``p @ matrix.T +
-    offset``.  The general case behind :func:`translate <nekmeshpy.quadmesh.morph.translate>` / :func:`rotate <nekmeshpy.quadmesh.morph.rotate>` /
-    :func:`scale <nekmeshpy.quadmesh.morph.scale>`; reach for it for a map they do not name (a shear, a mirror, a
-    pre-composed matrix)."""
+    offset``."""
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
 
@@ -117,10 +83,8 @@ def translate(mesh: QuadMesh, vector: Vec3 | Sequence[float]) -> QuadMesh:
 def rotate(mesh: QuadMesh, angle: float,
            axis: Vec3 | Sequence[float] = affine.Z_AXIS,
            center: Point | Sequence[float] = affine.ORIGIN) -> QuadMesh:
-    """A new section rotated by ``angle`` **radians** about the line through
-    ``center`` along ``axis`` (right-handed, ``axis`` need not be normalized).  The
-    map is rigid, so element quality is unchanged -- this is how a stack of revolved
-    profiles is placed for a swept ``loft``."""
+    """A new section rotated by ``angle`` **radians** about the line through ``center``
+    along ``axis`` (right-handed, ``axis`` need not be normalized)."""
     return _affine(mesh, *affine.rotation(angle, axis, center))
 
 
@@ -135,28 +99,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
             sigma: IntArray | Sequence[int]) -> QuadMesh:
     """``target``'s own geometry, reached through ``structure``'s own index labels:
     point ``i`` takes ``target``'s point ``sigma[i]``, and every shared-edge and
-    per-quad interior node follows its relabelled corners.
-
-    A pure **relabelling**, not a geometric transform.  The returned mesh's point,
-    edge and quad coordinate *set* is exactly ``target``'s, bit for bit -- so it still
-    welds exactly wherever ``target``'s own pattern turns up later -- but it is
-    numbered the way ``structure`` is.
-
-    This is what makes :func:`blend <nekmeshpy.quadmesh.morph.blend>` usable across two
-    independently built sections.  ``blend`` requires identical connectivity paired by
-    index, and two sections built by different recipes satisfy that only after one is
-    relabelled onto the other.  Rotating one section's *coordinates* into place instead
-    is the tempting alternative and is wrong at ``order > 1``: a rotated copy is close
-    to, not identical to, whatever the original was bonded to, and
-    :func:`HexMesh.merge <nekmeshpy.hexmesh.assemble.merge>` verifies shared high-order
-    edge and face nodes against ``conform.entity_tol`` (~1e-9 of the model extent).
-    A permutation has zero residual by construction.
-
-    ``sigma`` is a permutation of ``structure``'s point ids, typically from a
-    nearest-neighbour match of the two centred point clouds.  ``structure`` and
-    ``target`` must already share identical ``quad`` / ``flip`` / ``lines.lines`` --
-    the same precondition ``blend`` has, and satisfied whenever both come from one
-    recipe at different parameters."""
+    per-quad interior node follows its relabelled corners."""
     if not (np.array_equal(structure.quad, target.quad)
             and np.array_equal(structure.flip, target.flip)):
         raise ValueError(
@@ -187,7 +130,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     new_ei[rev] = new_ei[rev][:, ::-1]
     new_lines = LineMesh(target.points[s], structure.lines.lines, new_ei,
                          target.lines.point_tags, target.lines.element_tags,
-                         order=target.lines.order)
+)
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.
@@ -197,7 +140,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
     return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,
-                    target.edge_tags, target.element_tags, order=target.order)
+                    target.edge_tags, target.element_tags)
 
 
 def place_on_path(section: QuadMesh, path: SpacePath,
@@ -211,26 +154,8 @@ def place_on_path(section: QuadMesh, path: SpacePath,
                   loop: bool = False) -> list[QuadMesh]:
     """Where :func:`sweep <nekmeshpy.hexmesh.lift.sweep_path>` **would** put ``section``
     at each of ``fractions``, without building the block: one rigidly placed copy per
-    station, through the same
-    :func:`frames.sweep_placements <nekmeshpy.model.frames.sweep_placements>` the sweep
-    itself uses.
-
-    For continuing a build from a swept tube's own terminal cross-section, or for
-    stubbing a few rigid sections off a disc.  Going through the sweep's own machinery
-    rather than re-deriving the placement is the point: re-deriving lands *close*, and
-    at ``order > 1`` :func:`HexMesh.merge <nekmeshpy.hexmesh.assemble.merge>` verifies
-    shared high-order edge nodes against ``conform.entity_tol`` (~1e-9 of the model
-    extent), which close does not meet.
-
-    Takes the **whole** ``fractions`` array rather than a single station, because under
-    ``orientation="transport"`` the frame at a station is a sequential integration along
-    everything before it -- a one-station signature would silently return a different
-    placement than the sweep's.  Pass the same fractions the sweep will use.  Under
-    ``"fixed"`` each frame is pointwise and the sampling does not matter.
-
-    ``origin`` defaults to the section's centroid, exactly as ``sweep_placements`` does;
-    an O-grid disc's centroid misses its true centre slightly, so name the centre the
-    boundary loop was built about when there is one."""
+    station, through the same :func:`frames.sweep_placements
+    <nekmeshpy.model.frames.sweep_placements>` the sweep itself uses."""
     P: PointArray = path.centerline(np.asarray(fractions, dtype=float).ravel())
     T: PointArray = path.tangent(np.asarray(fractions, dtype=float).ravel())
     places = frames.sweep_placements(

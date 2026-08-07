@@ -1,10 +1,4 @@
-"""Mesh-sizing fields (gmsh-style) and 1-D point distributions.
-
-A ``Field`` maps points in space to a target element size.  Fields compose
-(``MinField``) and drive graded edge distributions via
-``distribution_from_field``.  ``geometric_spacing`` gives a fixed grading when no
-field is supplied.
-"""
+"""Mesh-sizing fields (gmsh-style) and 1-D point distributions."""
 
 from __future__ import annotations
 
@@ -105,24 +99,8 @@ def symmetric_spacing(n: int, ratio: float = 1.0) -> FloatArray:
 
 def validate_layers(positions: int | FloatArray, who: str) -> FloatArray:
     """Normalize a layer *specification* to the flattened array of normalized layer
-    positions every sweep / fill factory consumes.  ``who`` labels the caller in errors.
-
-    Two spellings, one meaning:
-
-    * an ``int`` ``n`` -- ``n`` **uniform layers**, i.e. exactly
-      :func:`uniform_spacing(n) <uniform_spacing>`, the ``n+1`` positions
-      ``linspace(0, 1, n+1)``.  ``radial=3`` / ``layers=8`` is the first thing a caller
-      reaches for, and it counts *cells*, not positions -- the same convention
-      :func:`uniform_spacing` and :func:`geometric_spacing` already use, so there is
-      only one number to remember.  ``n >= 1``.
-    * an array of positions -- strictly increasing values in ``[0, 1]`` with an explicit
-      first position and a last position of ``1`` (the graded case: ``geometric_spacing``,
-      ``symmetric_spacing``, or a hand-authored distribution).  It is returned flattened
-      and otherwise **untouched**, bit-for-bit, which is what keeps the graded goldens
-      frozen.
-
-    Only a genuine scalar integer takes the first branch; an array of ints is a position
-    array like any other."""
+    positions every sweep / fill factory consumes. ``who`` labels the caller in errors.
+    """
     if isinstance(positions, (int, np.integer)) and not isinstance(positions, bool):
         n = int(positions)
         if n < 1:
@@ -144,12 +122,13 @@ def validate_layers(positions: int | FloatArray, who: str) -> FloatArray:
 
 
 def reject_loop_caps(who: str, *caps: object) -> None:
-    """Guard for the periodic (``loop=True``) branch of the ``loft`` sweep at every
-    rung of the ladder: a closed sweep has no near / far cap, so any non-empty
-    end-cap tag argument is necessarily a caller mistake and is rejected loudly
-    rather than silently dropped.  ``caps`` are the ``first_tag`` / ``last_tag``
-    values (each a scalar ``str`` or a per-element array-like)."""
+    """Guard for the periodic (``loop=True``) branch of the ``loft`` sweep at every rung
+    of the ladder: a closed sweep has no near / far cap, so any non-empty end-cap tag
+    argument is necessarily a caller mistake and is rejected loudly rather than silently
+    dropped."""
     for cap in caps:
+        if cap is None:
+            continue
         if isinstance(cap, str):
             named = bool(cap)
         else:
@@ -167,12 +146,7 @@ _GLL_CACHE: dict[int, FloatArray] = {}
 
 
 def gll_nodes(order: int) -> FloatArray:
-    """The ``order+1`` Gauss-Lobatto-Legendre nodes mapped to ``[0, 1]``, ascending.
-
-    GLL nodes are the two endpoints plus the roots of ``P'_order`` (the derivative
-    of the order-``order`` Legendre polynomial) -- the grid Nek5000's spectral
-    operators are defined on.  ``order == 1`` returns ``[0, 1]`` exactly (so the
-    high-order paths reduce to the linear corners).  Cached per order."""
+    """The ``order+1`` Gauss-Lobatto-Legendre nodes mapped to ``[0, 1]``, ascending."""
     if order < 1:
         raise ValueError("gll_nodes needs order >= 1")
     cached = _GLL_CACHE.get(order)
@@ -220,10 +194,7 @@ def lagrange_matrix(nodes: FloatArray, eval_pts: FloatArray) -> FloatArray:
 
 def lagrange_derivative_matrix(nodes: FloatArray, eval_pts: FloatArray) -> FloatArray:
     """The ``(len(eval_pts), len(nodes))`` matrix of Lagrange basis derivatives: entry
-    ``(i, k)`` is ``L'_k(eval_pts[i])``.  ``M @ f`` gives the derivative of the
-    interpolant of nodal values ``f`` at ``eval_pts``; each row sums to 0 (derivative
-    of the partition of unity).  The companion of :func:`lagrange_matrix`, used by the
-    order-N scaled-Jacobian metric to form element tangents from a curved block."""
+    ``(i, k)`` is ``L'_k(eval_pts[i])``."""
     xn = np.asarray(nodes, dtype=float).ravel()
     xe = np.asarray(eval_pts, dtype=float).ravel()
     n = xn.size

@@ -1,33 +1,4 @@
-"""Shared order-N interpolation kernel (tensor-product Lagrange on GLL nodes).
-
-Order-N geometry is stored as an entity B-rep (see :mod:`nekmeshpy.model.conform`);
-where a *per-element* view is needed -- the ``(E,(N+1)**d,3)`` node block in
-**lexicographic (i,j,k) order with i fastest** at the
-:func:`~nekmeshpy.model.fields.gll_nodes` reference positions -- it is gathered
-transiently from that B-rep.  This module holds the dimension-general primitives that
-build and combine such blocks, so the order-N logic lives in one place and each
-factory contributes only its geometry map:
-
-* :func:`tensor_nodes` -- the ``(N+1)**d`` reference lattice.
-* :func:`corner_indices` -- the ``2**d`` corner slots in the element's connectivity
-  winding order (line ``[v0,v1]``, quad CCW, hex Nek).  Corners are owned by
-  ``points[conn]``; the non-corner nodes are decomposed into topological entities
-  (shared edges / faces + private interiors) by :mod:`nekmeshpy.model.conform`.
-* :func:`subdivide_element` -- straight multilinear subdivision through the corners
-  (the "elevate" atom for straight-sided factories).
-* :func:`quad_edge_indices` / :func:`hex_edge_indices` -- the block slots along a quad
-  side / hex edge, for overlaying a true boundary curve and for entity decomposition.
-* :func:`hex_face_indices` -- the block slots on a hex face, for tagging boundary nodes.
-* :func:`coons_grid` -- the transfinite (Coons) blend factored out of ``structured``.
-* :func:`coons_grid_fn` -- the continuous form of ``coons_grid``, for boundaries given
-  as functions rather than pre-sampled arrays.
-* :func:`blend_ho` -- ``(1-t)A + tB`` on blocks.
-* :func:`scaled_jacobian_ho` -- the order-N scaled-Jacobian quality metric, sampled at
-  a block's GLL nodes (reduces to the corner metric at order 1).
-
-At ``order == 1`` every primitive reduces to the linear corner data, which is what
-keeps the golden byte-identical.
-"""
+"""Shared order-N interpolation kernel (tensor-product Lagrange on GLL nodes)."""
 
 from __future__ import annotations
 
@@ -80,9 +51,8 @@ def corner_indices(order: int, dim: int) -> IntArray:
 
 def subdivide_element(corners: PointArray, order: int, dim: int) -> PointArray:
     """Straight-sided order-N block: multilinear map of the reference lattice through
-    the ``2**dim`` ``corners`` (given in connectivity winding order).  Returns
-    ``((order+1)**dim, 3)`` in lexicographic order.  At ``order == 1`` the block is
-    the corners re-expressed in lexicographic order."""
+    the ``2**dim`` ``corners`` (given in connectivity winding order). Returns
+    ``((order+1)**dim, 3)`` in lexicographic order."""
     c = np.asarray(corners, dtype=float).reshape(-1, 3)
     if c.shape[0] != 2 ** dim:
         raise ValueError("subdivide_element needs %d corners for dim %d, got %d"
@@ -127,12 +97,7 @@ _HEX_EDGES: list[tuple[int, int]] = [
 
 def hex_edge_indices(edge: int, order: int) -> IntArray:
     """Lexicographic (``i`` fastest) block indices of the ``order+1`` nodes along hex
-    ``edge`` (0-11, in :data:`_HEX_EDGES` order), ordered start-corner -> end-corner.
-
-    The dim-3 sibling of :func:`quad_edge_indices`: each edge varies one reference axis
-    with the other two pinned; the sequence runs from the first corner tuple to the
-    second (descending when the first corner sits at node ``n``), so overlaying an
-    ordered curve onto a shared edge is orientation-consistent."""
+    ``edge`` (0-11, in :data:`_HEX_EDGES` order), ordered start-corner -> end-corner."""
     if not 0 <= edge < 12:
         raise ValueError("hex edge must be 0-11, got %d" % edge)
     n = order
@@ -149,10 +114,9 @@ def hex_edge_indices(edge: int, order: int) -> IntArray:
 
 
 def quad_edge_indices(side: int, order: int) -> IntArray:
-    """Lexicographic (``i`` fastest) block indices of the ``order+1`` nodes along
-    quad ``side`` (1-4), ordered start-corner -> end-corner to match
-    ``QuadMesh.EDGE_POINTS`` (side 1 ``v0->v1``, 2 ``v1->v2``, 3 ``v2->v3``, 4
-    ``v3->v0``).  Used to overlay a true boundary curve onto a straight block."""
+    """Lexicographic (``i`` fastest) block indices of the ``order+1`` nodes along quad
+    ``side`` (1-4), ordered start-corner -> end-corner to match ``QuadMesh.EDGE_POINTS``
+    (side 1 ``v0->v1``, 2 ``v1->v2``, 3 ``v2->v3``, 4 ``v3->v0``)."""
     n = order
     row = n + 1
     if side == 1:
@@ -168,14 +132,7 @@ def quad_edge_indices(side: int, order: int) -> IntArray:
 
 def coons_grid(cb: PointArray, ct: PointArray, cl: PointArray, cr: PointArray,
                u: FloatArray, v: FloatArray) -> PointArray:
-    """Transfinite (Coons-patch) blend, factored out of ``QuadMesh.structured``.
-
-    ``cb``/``ct`` are the bottom (``c0->c1``) / top (``c3->c2``) edge points sampled
-    at parameters ``u``; ``cl``/``cr`` the left (``c0->c3``) / right (``c1->c2``)
-    edges sampled at ``v``.  Returns the ``(len(u), len(v), 3)`` interior.  The blend
-    weights ``u``/``v`` must be the parameters the edges were sampled at (uniform for
-    a linear grid, GLL-refined for order N) -- the current linear ``structured`` is
-    the ``u = v = linspace`` special case, so this reproduces it exactly."""
+    """Transfinite (Coons-patch) blend, factored out of ``QuadMesh.structured``."""
     uu = np.asarray(u, dtype=float).reshape(-1, 1, 1)
     vv = np.asarray(v, dtype=float).reshape(1, -1, 1)
     P00, P10, P01, P11 = cb[0], cb[-1], ct[0], ct[-1]
@@ -190,16 +147,8 @@ def coons_grid_fn(
     cl: Callable[[FloatArray], PointArray], cr: Callable[[FloatArray], PointArray],
 ) -> Callable[[FloatArray, FloatArray], PointArray]:
     """The continuous form of :func:`coons_grid`: ``cb``/``ct``/``cl``/``cr`` are
-    boundary *functions* rather than pre-sampled arrays, evaluable at any node
-    lattice rather than only where the boundaries happen to already be meshed.
-
-    Returns ``f(x, y)`` matching the row-wise contract
-    :func:`~nekmeshpy.quadmesh.loft_fn`'s callback wants: ``x`` the varying
-    row lattice, ``y`` a single value (repeated to ``x``'s shape by the caller).
-    That degenerate case -- one row of a grid, rather than the whole grid -- is
-    exactly what :func:`coons_grid` computes when handed a one-element ``v``, so
-    this samples the boundaries onto ``x``/that one ``y`` and calls it directly:
-    one Coons formula, not a second one reimplemented for the continuous case."""
+    boundary *functions* rather than pre-sampled arrays, evaluable at any node lattice
+    rather than only where the boundaries happen to already be meshed."""
     def f(x: FloatArray, y: FloatArray) -> PointArray:
         xa = np.asarray(x, dtype=float)
         y0 = np.array([float(np.ravel(np.asarray(y, dtype=float))[0])])
@@ -216,10 +165,7 @@ def blend_ho(a: PointArray, b: PointArray, t: float) -> PointArray:
 def _element_tangents(curved: PointArray, order: int,
                       dim: int) -> tuple[FloatArray, ...]:
     """The ``dim`` parametric tangent vectors of each element's mapping, evaluated at
-    every one of its ``(order+1)**dim`` GLL nodes.  Returns ``dim`` arrays of shape
-    ``(E, M, 3)`` (``M = (order+1)**dim``), one per reference axis, formed by
-    contracting the 1-D Lagrange derivative operator along that axis of the curved
-    block (a tensor-product interpolant differentiated node-by-node)."""
+    every one of its ``(order+1)**dim`` GLL nodes."""
     g = gll_nodes(order)
     d1 = lagrange_derivative_matrix(g, g)             # (row,row): d1[a,i]=L'_i(g[a])
     row = order + 1
@@ -240,16 +186,7 @@ def _element_tangents(curved: PointArray, order: int,
 
 def scaled_jacobian_ho(curved: PointArray, order: int, dim: int) -> FloatArray:
     """Per-element minimum scaled Jacobian sampled at the ``(order+1)**dim`` GLL nodes
-    of a ``curved`` block, shape ``(E,)``.
-
-    The scaled Jacobian at a node is ``det(J) / prod(|tangent|)`` from the mapping's
-    parametric tangents there: for ``dim == 3`` a true ``(ti x tj) . tk`` over the
-    tangent-length product; for ``dim == 2`` the surface form ``(ti x tj) . n_hat``
-    signed against the element's mean normal (so folded nodes read negative on
-    non-planar quads).  ``1`` is a perfect right-angled node, ``<= 0`` degenerate /
-    inverted.  At ``order == 1`` the GLL nodes are the corners and this reduces to the
-    corner metric in :func:`nekmeshpy.quadmesh.quality.scaled_jacobian` /
-    :func:`nekmeshpy.hexmesh.quality.scaled_jacobian`."""
+    of a ``curved`` block, shape ``(E,)``."""
     tang = _element_tangents(curved, order, dim)
     if dim == 3:
         ti, tj, tk = tang

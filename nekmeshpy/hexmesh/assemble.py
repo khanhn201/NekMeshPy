@@ -1,28 +1,4 @@
-"""Variable-arity ``HexMesh`` operations -- the only ones that build a numbering.
-
-``loft`` (``n`` quad sections -> a block, rung delta +1), ``loft_fn`` (the same, with
-the sections evaluated from a parametrization rather than handed in) and ``merge``
-(``n`` blocks -> one, rung delta 0) are the n-ary operations at this rung, and the only
-code here that manufactures a global point/element index space from scratch: ``loft``
-numbers the swept corner table (global id ``i*nn + v``), ``merge`` builds the ``remap`` /
-``survivors`` / ``point_id`` tables of the weld.  Every fixed-arity operation either
-reuses an existing numbering (``blend``) or delegates here (``extrude``, ``annulus``,
-``from_grid``).
-
-``loft_fn`` lives here rather than with the region fills for the same reason its
-line- and quad-rung twins do -- it *is* ``loft``, and it delegates the whole assembly to
-it through ``sweep_nodes``, contributing only the evaluation.
-
-Both ``loft`` and ``merge`` *rewrite* topology against a new corner numbering rather
-than merely generating it, which is why both must re-scatter the shared edge **and**
-face nodes owner-wins and verify every other incident copy -- unlike ``QuadMesh.loft``,
-which assembles its B-rep layer by layer and never duplicates a shared entity in the
-first place.
-
-Free functions bound onto :class:`HexMesh <nekmeshpy.hexmesh.hexmesh.HexMesh>` by ``hexmesh/__init__.py``;
-internal toolkit code imports them from here directly rather than through the bound
-``HexMesh.<name>`` sugar.
-"""
+"""Variable-arity ``HexMesh`` operations -- the only ones that build a numbering."""
 
 from __future__ import annotations
 
@@ -54,17 +30,25 @@ from .query import _boundary_points
 def _face_brep(points: PointArray, canonical_conn: IntArray,
                edge_nodes: PointArray | None, face_nodes: PointArray | None,
                order: int) -> QuadMesh:
-    """The shared-face ``QuadMesh`` of a hex block, from its canonical face table.
-
-    The hex edge table ``unique_edges(hexes, 3)`` and the shared-face table
-    ``unique_edges(canonical_conn, 2)`` are the same array -- both canonicalize
-    min-corner-id first over the same global corner ids -- so ``edge_nodes`` scattered
-    with the *hex* incidence indexes this ``QuadMesh``'s edge ``LineMesh`` directly and
-    needs no re-derivation.  Shared by :func:`loft <nekmeshpy.hexmesh.assemble.loft>` and :func:`merge <nekmeshpy.hexmesh.assemble.merge>`, the two
-    operations that rewrite topology against a new corner numbering."""
+    """The shared-face ``QuadMesh`` of a hex block, from its canonical face table."""
     q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
-    edge_lm = LineMesh(points, q_edges, order=order, interior=edge_nodes)
-    return QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
+    edge_lm = LineMesh(points, q_edges, interior=edge_nodes)
+    return QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes)
+
+
+def _cap_tags(cap: str | Sequence[str] | StrArray | None, M: int) -> list[str]:
+    """Normalize a cap tag to one tag per section quad (length ``M``): a scalar
+    ``str`` tags the whole cap, an array-like is per-quad, and ``None``
+    -- "no cap tag asked for" -- is ``NO_TAG`` on every quad."""
+    if cap is None:
+        return [NO_TAG] * M
+    if isinstance(cap, str):
+        return [cap] * M
+    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
+    if arr.shape[0] != M:
+        raise ValueError("cap tags length (%d) must match section quads (%d)"
+                         % (arr.shape[0], M))
+    return [str(x) for x in arr.tolist()]
 
 
 def loft(
@@ -73,51 +57,13 @@ def loft(
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[QuadMesh]] | None = None,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
-    """Loft a stack of conformal quad profiles into a hex block (the general
-    primitive behind ``extrude``, and the top rung of the uniform sweep shared
-    with :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
-    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>`).
-
-    ``slices`` is ``nz+1`` profiles sharing the same quad connectivity,
-    ``face_tags``, and ``element_tags``; consecutive profiles form ``nz`` hex
-    layers. ``first_tag`` names the first bottom cap (face 5), ``last_tag`` the
-    last top cap (face 6) -- each a scalar or a per-quad array. Side faces are
-    named from the section's ``edge_tags`` (unnamed or ``NO_TAG`` edges
-    stay untagged), and every hex inherits its quad's ``element_tags``. Points
-    are shared by construction.  ``element_tags`` is the orthogonal, **per-layer**
-    dense tag array (length ``nz``, ``""`` = untagged): where a layer's tag is
-    non-empty it *overrides* the section's per-quad tag on every hex of that
-    layer, following the toolkit's upper-overrides-lower rule.  Left ``None`` the
-    section tags stand alone, which is the historical behaviour.
-
-    **The sweep is straight unless you say otherwise.**  With only the corner-level
-    sections to go on, every high-order node between two of them is a plain GLL
-    lerp of their in-plane blocks, so at ``order > 1`` a swept curved solid is
-    high-order in storage and linear in geometry between consecutive slices --
-    exact input sections do not save it.  ``sweep_nodes`` is the escape hatch, and
-    the exact analogue of
-    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>`'s one rung down:
-    ``sweep_nodes[i]`` is the ``order-1`` sections lying strictly *between* slice
-    ``i`` and the slice it sweeps to, at that layer's interior GLL levels.
-    Supplied, they replace the lerp outright -- the vertical edge nodes, the side
-    and cap face nodes and the private cell interiors are then read straight out of
-    them, so every node is a genuine section point and nothing is blended along the
-    sweep.  :func:`loft_fn <nekmeshpy.hexmesh.assemble.loft_fn>` builds them by evaluating a parametrization on the
-    refined sweep lattice; that is the intended way in.
-
-    ``loop=True`` makes the sweep **periodic**: the last profile is joined back to
-    the *first*, so ``M`` profiles give ``M`` layers instead of ``M-1`` -- one
-    extra layer whose top corners are profile 0's own points.  No profile is
-    duplicated, so the seam faces are genuine shared entities (``unique_edges`` /
-    ``canonical_faces`` resolve them from the shared corner ids) and the closed
-    solid is watertight in the sweep direction, e.g. a solid torus lofted from
-    disc sections.  A closed sweep has no bottom/top cap, so ``first_tag`` /
-    ``last_tag`` with ``loop=True`` raise ``ValueError`` rather than being
-    silently dropped, and no cap boundary row is emitted; side faces from the
-    section's ``edge_tags`` are unaffected."""
+    """Loft a stack of conformal quad profiles into a hex block (the general primitive
+    behind ``extrude``, and the top rung of the uniform sweep shared with
+    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
+    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>`)."""
     slices = list(slices)
     if loop:
         reject_loop_caps("HexMesh.loft", first_tag, last_tag)
@@ -153,8 +99,8 @@ def loft(
 
     # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners); a
     # periodic sweep has no cap at all, so it emits none (and rejected the tags).
-    first_caps = ([""] * M if loop else HexMesh._cap_tags(first_tag, M))
-    last_caps = ([""] * M if loop else HexMesh._cap_tags(last_tag, M))
+    first_caps = ([NO_TAG] * M if loop else _cap_tags(first_tag, M))
+    last_caps = ([NO_TAG] * M if loop else _cap_tags(last_tag, M))
 
     hexes = np.empty((nz * M, 8), dtype=np.int64)
     # every layer repeats the section's per-quad tags (hex ``e = i*M + q``)
@@ -286,7 +232,7 @@ def loft(
             "HexMesh.loft")
     faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
-                   bb.build_ordered(), etags, order=order)
+                   bb.build_ordered(), etags)
 
 
 def _loft_evaluated(
@@ -296,25 +242,12 @@ def _loft_evaluated(
     *,
     loop: bool = False,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
     name: str = "loft_fn",
 ) -> HexMesh:
     """The shared tail of every sweep whose sections are **evaluated** on the refined
-    node lattice rather than handed in: validate, close the loop, split, delegate.
-
-    ``profs`` is one section per entry of the sweep lattice ``t`` (``nz*order + 1`` of
-    them, ``t`` in the caller's own parameter units, used only in error messages);
-    ``profs[i*order]`` are the corner-level slices and the ``order-1`` sections between
-    consecutive ones are that layer's :func:`loft <nekmeshpy.hexmesh.assemble.loft>` ``sweep_nodes``.  Every section must
-    be index-paired and conformal with the first, and with ``loop=True`` the trailing
-    wrap section must reproduce the first point-for-point (``model.conform.entity_tol``)
-    before it is dropped -- its layer's intermediates stay, since they are what curve
-    the seam.  ``name`` is the caller's name for the error messages.
-
-    Factored out of :func:`loft_fn <nekmeshpy.hexmesh.assemble.loft_fn>` so any future sweep that already *has* the
-    section list (rather than a callable to evaluate) reuses the same contract instead
-    of restating it."""
+    node lattice rather than handed in: validate, close the loop, split, delegate."""
     profs = list(profs)
     if len(profs) != t.shape[0]:
         raise ValueError(
@@ -369,68 +302,13 @@ def loft_fn(
     loop: bool = False,
     order: int | None = None,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
-    """Loft a block from a **parametrized family of sections** -- :func:`loft <nekmeshpy.hexmesh.assemble.loft>` with the
-    slices evaluated rather than handed in, so **every** node (the corners *and* the
-    sweep-direction high-order nodes) comes from calling ``f`` and nothing is blended
-    along the sweep.
-
-    This is the hex rung of
-    :func:`QuadMesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>`, and it exists
-    for the same reason: a plain :func:`loft <nekmeshpy.hexmesh.assemble.loft>` has only the corner-level sections to go
-    on, so at ``order > 1`` it subdivides the sweep straight and a swept curved solid
-    ends up high-order in storage and linear in geometry (a solid torus lofted from
-    *exact* disc sections puts its interior nodes tens of percent of the tube radius off
-    the true shape).  Evaluating the sections at the intermediate GLL levels too is what
-    closes that.
-
-    ``f`` maps a **single parameter value** to that section as a ``QuadMesh`` and is
-    called once per node level -- ``n*order + 1`` times, or ``n*order`` when looping.
-    Every section it returns must be index-paired and conformal with the first: same
-    ``quads``, same point count, same ``order``.  The robust idiom is to build one
-    section and *place* it with the affine ops (``disc.rotate(t, axis=...)
-    .translate(...)``), which move no index and are exact; re-deriving it from a factory
-    whose orientation depends on ``t`` can silently renumber it.
-
-    **Why ``f`` is scalar here and ``sweep``'s ``path`` is vectorized.**  ``f`` returns
-    a *mesh*, and a callable that hands back one mesh can only be given one parameter
-    value -- there is no array-of-meshes for a vectorized form to return (which is why
-    :func:`linemesh.assemble.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>`, whose ``f``
-    returns plain coordinates, *is* vectorized).  :func:`sweep <nekmeshpy.hexmesh.lift.sweep>`'s ``path`` is
-    vectorized for a different reason again: it returns coordinates *and* the default
-    frame generator is a sequential integration along the whole curve, so it cannot be
-    evaluated at one isolated parameter at all.
-
-    ``order`` defaults to ``None`` = **inferred**: ``f`` is called once at
-    ``fractions[0]`` purely to read ``.order`` off the section it returns, and the real
-    sweep then proceeds as usual -- so a ``None`` order costs exactly one extra
-    evaluation of ``f`` (the lattice the sections are sampled on depends on the order,
-    so it cannot be built before the order is known).  Pass an explicit ``int`` to
-    assert it instead: a section of a different order is then a ``ValueError`` naming
-    the mismatch, and no probe call is made.  There is no inference at the line rung --
-    ``LineMesh.loft_fn``'s ``f`` returns points, not a mesh, so its ``order`` is
-    constructive rather than inherited.
-
-    ``fractions`` are the **parameter values themselves**, passed to ``f`` with no
-    normalization and no remapping -- the same contract as at the rungs below -- so
-    ``len(fractions) - 1`` is the layer count and the grading is honored *per layer*:
-    layer ``i``'s sweep-direction nodes ride the GLL nodes of its own
-    ``fractions[i] .. fractions[i+1]`` span.
-
-    ``loop=True`` makes the sweep periodic and takes the **trailing wrap value**: pass
-    ``n+1`` fractions whose last maps back to the first section and the result has ``n``
-    layers with the seam faces genuine shared entities.  The wrap value stays in because
-    it is what gives the seam layer a far parameter to evaluate its interior levels at.
-    That ``f(fractions[-1])`` really does reproduce ``f(fractions[0])`` is checked, not
-    assumed (``ValueError`` otherwise, at the scale-relative coincidence tolerance
-    ``model.conform.entity_tol``).  A closed sweep has no bottom/top cap, so
-    ``first_tag`` / ``last_tag`` are rejected.
-
-    ``element_tags`` is the per-layer tag array and the caps the per-quad ones, exactly
-    as on :func:`loft <nekmeshpy.hexmesh.assemble.loft>`, which does all the assembly and whose numbering, tags,
-    face tags and B-rep are carried up unchanged."""
+    """Loft a block from a **parametrized family of sections** -- :func:`loft
+    <nekmeshpy.hexmesh.assemble.loft>` with the slices evaluated rather than handed in,
+    so **every** node (the corners *and* the sweep-direction high-order nodes) comes
+    from calling ``f`` and nothing is blended along the sweep."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
     _check_fraction_count(fr, loop=loop, name="loft_fn")
     if loop:
@@ -460,12 +338,9 @@ def merge(
     *,
     tol: float | None = None,
 ) -> HexMesh:
-    """Stitch several hex blocks into one, coordinate-welding coincident seam
-    points in a single pass.  ``tol`` is the absolute coincidence distance
-    (default ``1e-7`` x the merged bounding-box extent).
-
-    Only points on each block's domain boundary (faces carried by a single hex)
-    are weld candidates; interior points are always kept distinct."""
+    """Stitch several hex blocks into one, coordinate-welding coincident seam points in
+    a single pass. ``tol`` is the absolute coincidence distance (default ``1e-7`` x the
+    merged bounding-box extent)."""
     meshes = list(meshes)
     pos = [m.points for m in meshes]
     counts = [p.shape[0] for p in pos]
@@ -517,7 +392,7 @@ def merge(
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
     faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
     return HexMesh(faces, elem_faces, face_orient, interior,
-                   bnd, etags, order=order)
+                   bnd, etags)
 
 __all__ = [
     "loft",

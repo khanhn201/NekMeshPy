@@ -1,9 +1,4 @@
-"""Named physical groups (gmsh-style) and their Nek5000 boundary-condition codes.
-
-A ``PhysicalGroup`` binds a ``name`` to an integer ``tag``, a ``dim`` (2 =
-boundary/surface, 3 = volume) and a 3-char Nek BC ``code``.  ``PhysicalGroups``
-is the registry mapping between tag, name and code.
-"""
+"""Named physical groups (gmsh-style) and their Nek5000 boundary-condition codes."""
 
 from __future__ import annotations
 

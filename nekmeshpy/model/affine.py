@@ -1,23 +1,4 @@
-"""Affine maps behind the rung-preserving ``translate`` / ``rotate`` / ``scale``.
-
-An affine map is a pair ``(matrix, offset)`` sending a point ``p`` to
-``p @ matrix.T + offset``.  The builders here return that pair; :func:`apply` is the
-only place a coordinate table is actually touched, and it works on **any** array whose
-trailing axis is the 3 spatial components -- ``(P,3)`` ``points``, ``(L,order-1,3)``
-line interiors, ``(Q,(order-1)**2,3)`` quad interiors, ``(E,(order-1)**3,3)`` hex
-interiors.  That is what lets one definition of "rotate by this angle about this axis"
-serve all three rungs of the ladder: a rigid map moves every node of an element by the
-same rule, so the high-order state rides along with the corners and the element stays
-exactly as curved as it was.
-
-Like ``model/conform.py`` this module **imports no container** -- everything crosses as
-plain arrays.
-
-A pure translation carries ``matrix=None`` rather than the identity.  That is not an
-optimization: ``apply`` then adds the offset without a matmul, so translating by a
-vector is bit-exact (and translating by ``0`` is a strict no-op), which is what keeps
-``extrude`` byte-identical.
-"""
+"""Affine maps behind the rung-preserving ``translate`` / ``rotate`` / ``scale``."""
 
 from __future__ import annotations
 
@@ -82,9 +63,8 @@ def scaling(factor: float | Vec3 | Sequence[float],
 def rotation(angle: float, axis: Vec3 | Sequence[float] = Z_AXIS,
              center: Point | Sequence[float] = ORIGIN) -> Affine:
     """The affine map that rotates by ``angle`` **radians** about the line through
-    ``center`` with direction ``axis`` (right-handed; ``axis`` need not be
-    normalized).  Rodrigues' formula, so the matrix is orthogonal and the map is
-    rigid -- lengths, angles and element quality are preserved exactly."""
+    ``center`` with direction ``axis`` (right-handed; ``axis`` need not be normalized).
+    """
     k: Vec3 = np.asarray(axis, dtype=float).reshape(-1)
     if k.shape != (3,):
         raise ValueError("rotate: axis must be a (3,) direction, got %s" % (k.shape,))

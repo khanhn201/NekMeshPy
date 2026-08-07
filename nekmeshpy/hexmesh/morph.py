@@ -1,19 +1,4 @@
-"""Fixed-arity, rung-preserving ``HexMesh`` operations (delta 0).
-
-Two arities live here.  **Binary**: ``blend`` morphs between two index-paired blocks.
-**Unary**: ``translate`` / ``rotate`` / ``scale`` / ``transform`` place a finished
-block.  All of them change only coordinates -- ``a``'s ``hex`` / ``face_orient``
-incidence and ``face_tags`` ride through verbatim, so the input's
-numbering *is* the output's and nothing is re-derived (the unary placements keep
-``element_tags`` too; ``blend`` leaves them for the caller).  Both delegate their
-corner, shared-edge and shared-face part one rung down to
-:mod:`nekmeshpy.quadmesh.morph`.
-
-Free functions bound onto :class:`HexMesh <nekmeshpy.hexmesh.hexmesh.HexMesh>` by ``hexmesh/__init__.py`` (the
-binary ``blend`` as a ``staticmethod``, the unary placements as instance methods);
-internal toolkit code imports them from here directly rather than through the bound
-``HexMesh.<name>`` sugar.
-"""
+"""Fixed-arity, rung-preserving ``HexMesh`` operations (delta 0)."""
 
 from __future__ import annotations
 
@@ -35,22 +20,9 @@ from .hexmesh import HexMesh
 
 def blend(a: HexMesh, b: HexMesh,
           fractions: FloatArray | Sequence[float]) -> list[HexMesh]:
-    """Linearly morph between two conformal blocks ``a`` and ``b`` (identical
-    ``hexes``, equal point count), one block per fraction ``t`` with points
-    ``(1-t)*a + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each
-    result carries ``a``'s ``hexes`` and ``face_tags``
-    (positional BC markers follow the morph); per-hex ``element_tags`` are left
-    for the caller to assign.  The 3-D sibling of
-    :func:`QuadMesh.blend <nekmeshpy.quadmesh.morph.blend>`.
-
-    The morph is delegated one rung **down the B-rep ladder**: the shared corners,
-    shared edge nodes and shared face nodes are exactly the shared-face
-    ``QuadMesh`` (whose own corners and edge nodes are in turn its edge
-    ``LineMesh``), so
-    :func:`QuadMesh.blend <nekmeshpy.quadmesh.morph.blend>` produces the blended
-    face mesh and this method only lerps what a hex owns privately -- its per-hex
-    ``interior`` -- while keeping ``a``'s ``hex`` / ``face_orient`` incidence
-    verbatim."""
+    """Linearly morph between two conformal blocks ``a`` and ``b`` (identical ``hexes``,
+    equal point count), one block per fraction ``t`` with points ``(1-t)*a + t*b`` --
+    ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``."""
     A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
     if A.shape[0] != B.shape[0]:
@@ -79,32 +51,22 @@ def blend(a: HexMesh, b: HexMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [HexMesh(faces, a.hex, a.face_orient,
                 (1.0 - t) * ai + t * bi if ho else None,
-                a.face_tags, order=a.order)
+                a.face_tags)
             for t, faces in zip(fr, quad_blend(a.quads, b.quads, fr))]
 
 
 def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
-    """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``.
-
-    Composed downward like every other rung: the shared corners, shared edge nodes
-    and shared face nodes *are* the shared-face ``QuadMesh``, so that whole part is
-    one ``QuadMesh`` map (which in turn delegates to ``LineMesh``), and only the
-    per-hex private ``interior`` is mapped here.  ``hex`` / ``face_orient``
-    incidence rides through verbatim."""
+    """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
     return HexMesh(quad_affine(mesh.quads, matrix, offset), mesh.hex,
                    mesh.face_orient, affine.apply(mesh.interior, matrix, offset),
                    mesh.face_tags, mesh.element_tags,
-                   order=mesh.order)
+)
 
 
 def transform(mesh: HexMesh, matrix: FloatArray,
               offset: Vec3 | Sequence[float] = affine.ORIGIN) -> HexMesh:
-    """A new block with every node mapped through the affine ``p @ matrix.T +
-    offset``.  The general case behind :func:`translate <nekmeshpy.hexmesh.morph.translate>` / :func:`rotate <nekmeshpy.hexmesh.morph.rotate>` /
-    :func:`scale <nekmeshpy.hexmesh.morph.scale>`; reach for it for a map they do not name (a shear, a mirror, a
-    pre-composed matrix).  A matrix with negative determinant mirrors the block and
-    therefore inverts every element -- check
-    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` after one."""
+    """A new block with every node mapped through the affine ``p @ matrix.T + offset``.
+    """
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
 
@@ -120,9 +82,7 @@ def rotate(mesh: HexMesh, angle: float,
            axis: Vec3 | Sequence[float] = affine.Z_AXIS,
            center: Point | Sequence[float] = affine.ORIGIN) -> HexMesh:
     """A new block rotated by ``angle`` **radians** about the line through ``center``
-    along ``axis`` (right-handed, ``axis`` need not be normalized).  The map is
-    rigid, so element quality is unchanged -- place a block this way and
-    :func:`merge <nekmeshpy.hexmesh.assemble.merge>` it onto its neighbour."""
+    along ``axis`` (right-handed, ``axis`` need not be normalized)."""
     return _affine(mesh, *affine.rotation(angle, axis, center))
 
 

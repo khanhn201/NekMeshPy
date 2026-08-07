@@ -1,45 +1,4 @@
-"""Entity-based conformal high-order storage.
-
-The corner layer is already conformal: a shared corner is one node in ``points (P,3)``
-referenced by every incident element's connectivity.  This module gives the high-order
-(edge / face / interior) nodes the same property.  Rather than let each element carry
-its own copy of a shared edge's ``N-1`` interior nodes, the non-corner nodes are
-decomposed by **topology** into
-
-* **edges** -- unique undirected edges (canonical: min-corner-id first) with their
-  ``N-1`` shared interior nodes, plus a per-element incidence + a *flip* bit when an
-  element traverses an edge anti-canonically,
-* **faces** (hex only) -- unique faces with their ``(N-1)**2`` shared interior nodes,
-  plus a per-element incidence + a D4 orientation code,
-* **interior** -- the per-element private nodes (quad ``(N-1)**2``, hex ``(N-1)**3``,
-  line ``N-1``) that are never shared.
-
-The containers store that decomposition **natively** (``LineMesh.interior``;
-``QuadMesh.lines`` / ``quad`` / ``flip`` / ``interior``; ``HexMesh.quads`` / ``hex`` /
-``face_orient`` / ``interior``), so this module holds no storage value of its own and
-imports no container -- everything crosses the boundary as plain arrays:
-
-* :func:`unique_edges` / :func:`unique_faces` / :func:`canonical_faces` /
-  :func:`hex_corners_from_faces` -- the topology: dedupe an element's local edges /
-  faces into shared entities and walk back the other way.
-* :func:`entity_tol` -- the one scale-relative coincidence tolerance every
-  reconciliation step judges conformality with.
-* :func:`scatter_edge_nodes` / :func:`scatter_face_nodes` -- push element-local entity
-  nodes into the canonical shared tables (owner-wins, with every other incident copy
-  **verified** within tolerance, so a non-conforming input is a loud ``ValueError``
-  rather than a silent weld), and their exact inverses :func:`gather_edge_nodes` /
-  :func:`gather_face_nodes`.
-* :func:`conformal_line` / :func:`conformal_quad` / :func:`conformal_hex` -- the
-  conformal walk: number every node once into ``nodes (M,3)`` with dense
-  ``conn_ho (E,(N+1)^d)`` into it, the high-order analog of ``points`` + ``quads``.
-  This is the single node numbering both export and the order-N quality metrics read;
-  ``nodes[conn_ho]`` is the transient per-element block.
-
-Sharing is decided by corner ids (**structural / exact** conformality), never by a
-coordinate search.  At ``order == 1`` every entity table is empty and the conformal walk
-returns just ``(points, conn)`` in block order, so the order-1 path is byte-identical to
-the plain corner mesh.
-"""
+"""Entity-based conformal high-order storage."""
 
 from __future__ import annotations
 
@@ -157,8 +116,7 @@ def _perm_tables(order: int) -> tuple[IntArray, IntArray]:
 def _face_code(ids: IntArray, uv: IntArray) -> int:
     """D4 ``code`` taking an element-local face frame to the canonical frame defined by
     the four corner ``ids``: origin = min id -> ``(0,0)``, its smaller-id neighbour ->
-    ``(1,0)``, other neighbour -> ``(0,1)``, opposite -> ``(1,1)``.  Two hexes sharing a
-    face compute the same canonical frame (same ids), so their stored nodes coincide."""
+    ``(1,0)``, other neighbour -> ``(0,1)``, opposite -> ``(1,1)``."""
     origin = int(np.argmin(ids))
     o = uv[origin]
     nb = [i for i in range(4)
@@ -175,19 +133,7 @@ def _face_code(ids: IntArray, uv: IntArray) -> int:
 
 def _orient_tables() -> tuple[IntArray, IntArray, IntArray]:
     """``(NB (6,4,2), CODE (6,4,2))`` driving the vectorized D4 lookup in
-    :func:`unique_faces`, plus the face corner ``uv`` they were fitted against.
-
-    :func:`_face_code`'s answer depends on only three things: the local face
-    ``f`` (whose ``corner_uv`` is a compile-time constant), which of the four
-    slots holds the minimum corner id, and which of that slot's two
-    edge-neighbours holds the smaller id.  Four origins x two orderings is
-    exactly the eight D4 codes, so the whole function collapses to a
-    ``(6,4,2)`` table -- and the table is *fitted by calling ``_face_code``
-    itself* on ids realizing each case, so the two cannot drift apart.
-
-    ``NB[f,o]`` are that origin's two edge-neighbour slots in ascending slot
-    order (the order ``_face_code``'s own comprehension yields them), so the
-    runtime only has to compare their two ids to pick the column."""
+    :func:`unique_faces`, plus the face corner ``uv`` they were fitted against."""
     corner_uv = [m[4] for m in _face_axes()]
     nb_tab: IntArray = np.zeros((6, 4, 2), dtype=np.int64)
     code_tab: IntArray = np.zeros((6, 4, 2), dtype=np.int64)
@@ -212,19 +158,7 @@ _FACE_NB, _FACE_CODE_TAB, _FACE_CORNER_UV = _orient_tables()
 
 def unique_rows(rows: IntArray, *, return_counts: bool = False
                 ) -> tuple[IntArray, IntArray, IntArray]:
-    """``np.unique(rows, axis=0, return_inverse=True[, return_counts])``, but fast.
-
-    Returns ``(uniq, inverse[, counts])`` -- ``counts`` is an empty array unless
-    ``return_counts``.  Identical output to ``np.unique(axis=0)``, including the
-    lexicographic row order, not merely an equivalent labelling.
-
-    ``np.unique(axis=0)`` views each row as a void scalar and argsorts *that*, which is
-    far slower than sorting integers.  Two columns pack losslessly into one int64 as
-    ``a*n + b``; because that is a positional numeral system, ascending key order **is**
-    lexicographic row order.  Wider rows will not pack, so those go through ``lexsort``
-    -- whose last key is the primary one, hence the reversed column list.  This was 52 s
-    of `argsort` on a 490k-hex build.
-    """
+    """``np.unique(rows, axis=0, return_inverse=True[, return_counts])``, but fast."""
     a = np.ascontiguousarray(rows, dtype=np.int64)
     if a.ndim != 2:
         raise ValueError("unique_rows expects (M,k) rows, got %s" % (a.shape,))
@@ -258,21 +192,7 @@ def unique_rows(rows: IntArray, *, return_counts: bool = False
 
 
 def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
-    """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code.
-
-    Returns ``(faces (Nf,4), elem_faces (E,6), face_orient (E,6))`` where ``faces`` are
-    canonical (sorted corner ids), ``elem_faces[e,f]`` is the unique-face id of hex
-    ``e``'s local face ``f``, and ``face_orient[e,f]`` is the D4 code (:func:`_face_code`)
-    taking that hex's local face frame to the shared canonical frame.
-
-    The orientation half is a table lookup rather than a call to
-    :func:`_face_code` per (hex, face) -- see :func:`_orient_tables`.  That
-    loop was the single hottest thing in the toolkit on any sizeable build:
-    ``merge`` and ``loft`` are the only operations that manufacture a global
-    index space, so both come through here, and a merge tree re-derives every
-    element once per level it passes through.  Measured on a 352k-hex chain,
-    2.1M faces: 22.5 s of Python for the loop against 0.10 s vectorized, with
-    bit-identical output."""
+    """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code."""
     e = hexes.shape[0]
     ids = hexes[:, _LOCAL_FACES]                            # (E,6,4)
     key = np.sort(ids, axis=2).reshape(e * 6, 4)
@@ -300,8 +220,7 @@ _QIDX: dict[tuple[int, int], int] = {uv: i for i, uv in enumerate(_CANON_UV)}
 def _canon_qidx() -> IntArray:
     """``(6, 8, 4)`` table: for hex local face ``f``, D4 ``code``, and the face's local
     corner ``p``, the CCW slot (0-3) that corner occupies in the canonical face frame
-    (``_d4_apply`` of its element-local ``(u,v)``).  Precomputed so
-    :func:`canonical_faces` / :func:`hex_corners_from_faces` are pure array gathers."""
+    (``_d4_apply`` of its element-local ``(u,v)``)."""
     corner_uv = [m[4] for m in _face_axes()]                # per-face (4,2) in {0,1}
     out: IntArray = np.empty((6, 8, 4), dtype=np.int64)
     for f in range(6):
@@ -316,14 +235,7 @@ _CANON_QIDX: IntArray = _canon_qidx()
 
 
 def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
-    """CCW-connectivity sibling of :func:`unique_faces`.
-
-    Returns ``(canonical_conn (Nf,4), elem_faces (E,6), face_orient (E,6))`` where
-    ``canonical_conn`` is the **CCW corner connectivity** of each unique face in its
-    canonical D4 frame (corner order ``(0,0)->(1,0)->(1,1)->(0,1)``), suitable directly
-    as the ``quads`` of a shared-face :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>`; ``elem_faces`` and
-    ``face_orient`` are exactly as :func:`unique_faces` returns them.  The owner (lowest
-    incidence) hex of each unique face supplies its corner ids."""
+    """CCW-connectivity sibling of :func:`unique_faces`."""
     _, elem_faces, face_orient = unique_faces(hexes)
     flat = elem_faces.ravel()
     fids, first = np.unique(flat, return_index=True)         # owner = lowest flat index
@@ -346,12 +258,7 @@ def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
 
 def hex_corners_from_faces(face_conn: IntArray, elem_faces: IntArray,
                            face_orient: IntArray) -> IntArray:
-    """Recover ``hexes (E,8)`` (Nek corner order) from the shared-face connectivity.
-
-    Inverse of :func:`canonical_faces`: each hex's 8 corners are read off its two ``z``
-    faces (local faces 5/6 = corners ``[0,1,2,3]`` / ``[4,5,6,7]``) through the D4
-    ``face_orient`` code, so the shared faces are the single source of truth for the
-    corners (as ``points`` are for a linear mesh)."""
+    """Recover ``hexes (E,8)`` (Nek corner order) from the shared-face connectivity."""
     e = elem_faces.shape[0]
     hexes: IntArray = np.empty((e, 8), dtype=np.int64)
     for f in (4, 5):
@@ -362,13 +269,7 @@ def hex_corners_from_faces(face_conn: IntArray, elem_faces: IntArray,
 
 # -- topology -----------------------------------------------------------
 def unique_edges(conn: IntArray, dim: int) -> tuple[IntArray, IntArray, BoolArray]:
-    """Deduplicate the local edges of every element into unique undirected edges.
-
-    Returns ``(edges (Ne,2), elem_edges (E,ne), edge_flip (E,ne))`` where ``edges`` are
-    canonical (min-corner-id first), ``elem_edges[e,le]`` is the unique-edge id of
-    element ``e``'s local edge ``le``, and ``edge_flip[e,le]`` is True when that element
-    traverses the edge from the larger to the smaller corner id (i.e. anti-canonically).
-    dim 1 has no shared edges -> empty tables."""
+    """Deduplicate the local edges of every element into unique undirected edges."""
     e = conn.shape[0]
     if dim < 2:
         return (np.zeros((0, 2), np.int64), np.zeros((e, 0), np.int64),
@@ -395,17 +296,7 @@ def locate_rows(haystack: IntArray, needles: IntArray, *,
                 who: str, what: str) -> IntArray:
     """``idx`` such that ``haystack[idx[i]]`` holds the same *set* of ids as
     ``needles[i]`` -- the id-set lookup behind reading one mesh's entities out of
-    another's tables, for edges (2 columns), quads (4) or any width.
-
-    ``needles`` may be a strict subset of ``haystack`` (a port's few hundred faces among
-    a block's millions) or a permutation of it (relabelling one section onto another's
-    numbering); both are the same lookup.  A needle with no counterpart is a
-    ``ValueError`` naming ``who``, never a silently wrong index.
-
-    Both sides are deduplicated **together** through :func:`unique_rows`, which pairs
-    them by construction and costs one lexsort of the union -- rather than packing each
-    row into an int64 key, which would overflow above ~55000 points for a 4-column
-    row."""
+    another's tables, for edges (2 columns), quads (4) or any width."""
     a: IntArray = np.sort(np.asarray(haystack, dtype=np.int64), axis=1)
     b: IntArray = np.sort(np.asarray(needles, dtype=np.int64), axis=1)
     if a.shape[1] != b.shape[1]:
@@ -428,8 +319,7 @@ def locate_rows(haystack: IntArray, needles: IntArray, *,
 def entity_tol(points: PointArray) -> float:
     """Scale-relative coincidence tolerance for entity sharing: ``1e-9`` of the point
     cloud's bounding-box diagonal extent, falling back to ``1e-12`` for a degenerate
-    (single-point or empty) cloud.  The one tolerance every scatter/verify step uses, so
-    conformality is judged the same way everywhere."""
+    (single-point or empty) cloud."""
     scale = (float(np.max(points.max(axis=0) - points.min(axis=0)))
              if points.size else 0.0)
     return 1e-9 * scale if scale > 0 else 1e-12
@@ -440,12 +330,7 @@ def _conformal_walk(points: PointArray, conn: IntArray, dim: int, order: int,
                     edge_nodes: PointArray, elem_faces: IntArray,
                     face_orient: IntArray, face_nodes: PointArray,
                     interior: PointArray) -> tuple[PointArray, IntArray]:
-    """Shared body of the ``conformal_*`` walks.
-
-    Numbers every node once -- corners (``points``) ++ edge interiors ++ face interiors
-    ++ cell interiors, in that order -- and fills ``conn_ho`` in lexicographic block
-    order (``i`` fastest).  Unused entity tables (dim 1 edges, dim 1/2 faces) are passed
-    as zero-width arrays and contribute nothing."""
+    """Shared body of the ``conformal_*`` walks."""
     e = conn.shape[0]
     m = nodes_per_element(order, dim)
     p = points.shape[0]
@@ -493,17 +378,7 @@ def _k_from_face_width(k2: int) -> int:
 
 def scatter_edge_nodes(local: PointArray, elem_edges: IntArray, edge_flip: BoolArray,
                        n_edges: int, tol: float, who: str) -> PointArray:
-    """Scatter element-local edge-interior nodes into the shared canonical table.
-
-    ``local`` is ``(E, n_local_edges, order-1, 3)``: every element's own copy of its
-    local edges' interior nodes, in **element traversal order** (that local edge's
-    start corner -> end corner).  Each copy is reversed where ``edge_flip`` says the
-    element traverses the edge anti-canonically, the owning (lowest flat incidence)
-    element supplies each unique edge's nodes, and every other incident copy is
-    **verified** to agree within ``tol`` -- a non-conforming input raises ``ValueError``
-    naming ``who`` rather than silently welding.  Returns ``(n_edges, order-1, 3)`` in
-    canonical (min-corner-id first) order; the inverse of
-    :func:`gather_edge_nodes`."""
+    """Scatter element-local edge-interior nodes into the shared canonical table."""
     k = local.shape[2]
     canon = np.where(edge_flip[:, :, None, None], local[:, :, ::-1, :], local)
     flat_eid = elem_edges.ravel()
@@ -522,15 +397,7 @@ def scatter_edge_nodes(local: PointArray, elem_edges: IntArray, edge_flip: BoolA
 
 def scatter_face_nodes(local: PointArray, elem_faces: IntArray, face_orient: IntArray,
                        n_faces: int, tol: float, who: str) -> PointArray:
-    """Scatter element-local hex-face interior nodes into the shared canonical table.
-
-    ``local`` is ``(E, 6, (order-1)**2, 3)`` in each hex's **element-local ``(u,v)``
-    face frame with ``u`` fastest** -- exactly the frame :func:`_face_interior_slots`
-    reads.  Each copy is permuted to the shared canonical D4 frame through
-    ``face_orient`` (:func:`_perm_tables`), the owning (lowest flat incidence) hex wins,
-    and every other incident copy is **verified** within ``tol``, raising ``ValueError``
-    naming ``who`` otherwise.  Returns ``(n_faces, (order-1)**2, 3)``; the inverse of
-    :func:`gather_face_nodes`."""
+    """Scatter element-local hex-face interior nodes into the shared canonical table."""
     k2 = local.shape[2]
     _, inv = _perm_tables(_k_from_face_width(k2) + 1)          # INV: elem->canon gather
     invp = inv[face_orient]                                    # (E,6,k2)
@@ -552,22 +419,14 @@ def scatter_face_nodes(local: PointArray, elem_faces: IntArray, face_orient: Int
 
 def gather_edge_nodes(edge_nodes: PointArray, elem_edges: IntArray,
                       edge_flip: BoolArray) -> PointArray:
-    """Gather the shared edge table back into element-local order.
-
-    Exact inverse of :func:`scatter_edge_nodes`: returns
-    ``(E, n_local_edges, order-1, 3)`` with each element's copy running along its own
-    traversal direction (reversed wherever ``edge_flip`` is set)."""
+    """Gather the shared edge table back into element-local order."""
     nodes: PointArray = edge_nodes[elem_edges]                 # (E,nloc,order-1,3)
     return np.where(edge_flip[:, :, None, None], nodes[:, :, ::-1, :], nodes)
 
 
 def gather_face_nodes(face_nodes: PointArray, elem_faces: IntArray,
                       face_orient: IntArray) -> PointArray:
-    """Gather the shared hex-face table back into element-local order.
-
-    Exact inverse of :func:`scatter_face_nodes`: returns ``(E, 6, (order-1)**2, 3)`` in
-    each hex's element-local ``(u,v)`` frame (``u`` fastest), undoing the canonical D4
-    permutation carried by ``face_orient``."""
+    """Gather the shared hex-face table back into element-local order."""
     k2 = face_nodes.shape[1]
     perm, _ = _perm_tables(_k_from_face_width(k2) + 1)         # canon->elem gather
     canon: PointArray = face_nodes[elem_faces]                 # (E,6,k2,3)
@@ -579,11 +438,7 @@ def gather_face_nodes(face_nodes: PointArray, elem_faces: IntArray,
 def conformal_line(points: PointArray, lines: IntArray, interior: PointArray,
                    order: int) -> tuple[PointArray, IntArray]:
     """Conformal high-order view of a line mesh: ``(nodes (M,3), conn_ho (L,order+1))``.
-
-    ``lines (L,2)`` is the corner connectivity and ``interior (L,order-1,3)`` each line
-    element's private interior nodes (a line element *is* a 1-cell, so it shares only
-    corners).  Global numbering is ``points`` ++ interiors; ``conn_ho`` indexes ``nodes``
-    in lexicographic block order.  At order 1 this is ``(points, lines)``."""
+    """
     e = lines.shape[0]
     empty_i: IntArray = np.zeros((e, 0), np.int64)
     return _conformal_walk(
@@ -595,14 +450,8 @@ def conformal_line(points: PointArray, lines: IntArray, interior: PointArray,
 def conformal_quad(points: PointArray, quads: IntArray, elem_edges: IntArray,
                    edge_flip: BoolArray, edge_nodes: PointArray,
                    interior: PointArray, order: int) -> tuple[PointArray, IntArray]:
-    """Conformal high-order view of a quad mesh: ``(nodes (M,3), conn_ho (Q,(order+1)**2))``.
-
-    ``quads (Q,4)`` is the **corner** connectivity; ``elem_edges``/``edge_flip`` are the
-    per-quad incidence into ``edge_nodes (Ne,order-1,3)`` (canonical, min-corner-id
-    first) and ``interior (Q,(order-1)**2,3)`` the private face interiors.  Global
-    numbering is ``points`` ++ edge interiors ++ quad interiors, so two quads sharing an
-    edge resolve to the same node ids.  At order 1 this is ``(points, quads)`` in block
-    order."""
+    """Conformal high-order view of a quad mesh: ``(nodes (M,3), conn_ho
+    (Q,(order+1)**2))``."""
     e = quads.shape[0]
     empty_i: IntArray = np.zeros((e, 0), np.int64)
     return _conformal_walk(
@@ -614,15 +463,8 @@ def conformal_hex(points: PointArray, hexes: IntArray, elem_edges: IntArray,
                   edge_flip: BoolArray, edge_nodes: PointArray, elem_faces: IntArray,
                   face_orient: IntArray, face_nodes: PointArray,
                   interior: PointArray, order: int) -> tuple[PointArray, IntArray]:
-    """Conformal high-order view of a hex mesh: ``(nodes (M,3), conn_ho (E,(order+1)**3))``.
-
-    ``hexes (E,8)`` is the **corner** connectivity; ``elem_edges``/``edge_flip`` index
-    ``edge_nodes (Ne,order-1,3)``, ``elem_faces``/``face_orient`` index
-    ``face_nodes (Nf,(order-1)**2,3)`` (canonical D4 frame), and
-    ``interior (E,(order-1)**3,3)`` holds the private cell interiors.  Global numbering
-    is ``points`` ++ edge interiors ++ face interiors ++ cell interiors, so hexes sharing
-    an edge or a face resolve to the same node ids.  At order 1 this is
-    ``(points, hexes)`` in block order."""
+    """Conformal high-order view of a hex mesh: ``(nodes (M,3), conn_ho
+    (E,(order+1)**3))``."""
     return _conformal_walk(
         points, hexes, 3, order, elem_edges, edge_flip, edge_nodes,
         elem_faces, face_orient, face_nodes, interior)

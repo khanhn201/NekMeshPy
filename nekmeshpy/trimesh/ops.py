@@ -129,13 +129,7 @@ def order_boundary_loop(surface: TriMesh, lv: IntArray) -> IntArray:
 # -- isocontours --------------------------------------------------------
 def _chain_segments(segs: FloatArray) -> LineMesh | None:
     """Chain unordered 3-D segments ``(S,6)`` into a single closed ordered loop (the
-    largest connected component), or ``None`` if they form no loop.
-
-    Marching a scalar field over triangles emits its level set as an unordered soup
-    of segments, so this ordering walk is a *surface* operation, not a ``LineMesh``
-    constructor: it lives beside its only caller and hands the ordered points to
-    :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` with ``loop=True``, which
-    is what authors the wrapping ``lines``."""
+    largest connected component), or ``None`` if they form no loop."""
     if segs is None or len(segs) == 0:
         return None
     segs = np.asarray(segs, dtype=float)
@@ -259,11 +253,9 @@ def _lerp_along(P: PointArray, arclen: FloatArray, targets: FloatArray) -> Point
 def resample_polyline(
     points: PointArray, fractions: FloatArray, *, closed: bool = False,
 ) -> PointArray:
-    """Arc-length resample of a polyline at normalized ``fractions`` in ``[0, 1]``.
-    With ``closed=True`` the polyline wraps (fraction ``1`` returns to the start).
-    Returns ``(len(fractions), 3)``.  Use this to prepare an analytic example's curve
-    at the exact sample count a factory needs -- the intrinsic interpolation of a
-    scanned / analytic curve that cannot be pushed to the caller."""
+    """Arc-length resample of a polyline at normalized ``fractions`` in ``[0, 1]``. With
+    ``closed=True`` the polyline wraps (fraction ``1`` returns to the start). Returns
+    ``(len(fractions), 3)``."""
     P: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
     path: PointArray = np.vstack([P, P[0:1, :]]) if closed else P
@@ -313,13 +305,8 @@ def conform_ring_stack(
     fine_rings: list[LineMesh] | list[PointArray],
     seam_ring: PointArray, frlev: FloatArray, n_half: int,
 ) -> list[PointArray]:
-    """Conformalize a stack of scanned interior rings (arbitrary per-ring point
-    counts) onto the seam ring's topology.  Each fine ring is resampled by arc length
-    to ``Nfine = 4*M`` points (``M`` = seam-ring point count), cyclically aligned
-    back-to-front to the seam, then split at arc-length fraction
-    ``f = 0.5 + (f_seam - 0.5) * frlev[k]`` into an ``M``-point ring whose index 0 /
-    index ``M/2`` sit on the two seam rails.  ``f_seam`` is the seam's first-half
-    fraction.  Returns a list of ``(M, 3)`` arrays."""
+    """Conformalize a stack of scanned interior rings (arbitrary per-ring point counts)
+    onto the seam ring's topology."""
     seam: PointArray = np.asarray(seam_ring, dtype=float).reshape(-1, 3)
     lev: FloatArray = np.asarray(frlev, dtype=float)
     M = seam.shape[0]
