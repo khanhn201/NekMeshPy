@@ -43,6 +43,11 @@ class SideTags:
     #: sight.  ``0`` on the base means "rung unknown, upper bound unchecked".
     SIDES: ClassVar[int] = 0
 
+    #: What the rung calls the thing an element id names -- lines / quads / hexes going
+    #: up the ladder.  Fixed by the subclass for the same reason :attr:`SIDES` is, so
+    #: the "only 3 quads" error needs no noun passed in from the mesh.
+    ELEMENT: ClassVar[str] = "elements"
+
     elements: IntArray
     sides: IntArray
     tags: StrArray
@@ -69,14 +74,14 @@ class SideTags:
         object.__setattr__(self, "sides", _frozen(s))
         object.__setattr__(self, "tags", _frozen(t))
 
-    def check_within(self, n_elements: int, what: str) -> None:
+    def check_within(self, n_elements: int) -> None:
         """Raise if any row names an element the mesh does not have."""
         if not len(self):
             return
         hi = int(self.elements.max())
         if hi >= n_elements:
             raise ValueError("%s names element %d but there are only %d %s"
-                             % (type(self).__name__, hi, n_elements, what))
+                             % (type(self).__name__, hi, n_elements, self.ELEMENT))
 
     # -- construction ----------------------------------------------------
     @classmethod
@@ -169,6 +174,7 @@ class PointTags(SideTags):
     ``side - 1``. See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 2
+    ELEMENT: ClassVar[str] = "lines"
 
 
 class EdgeTags(SideTags):
@@ -176,6 +182,7 @@ class EdgeTags(SideTags):
     ``EDGE_POINTS[side - 1]``.  See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 4
+    ELEMENT: ClassVar[str] = "quads"
 
 
 class FaceTags(SideTags):
@@ -183,6 +190,7 @@ class FaceTags(SideTags):
     ``FACE_POINTS[side - 1]``. See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 6
+    ELEMENT: ClassVar[str] = "hexes"
 
 
 class TagBuilder(Generic[T]):
@@ -378,9 +386,9 @@ class ElementTags:
         m = np.asarray(new_id_of, dtype=np.int64).reshape(-1)
         return ElementTags(m[self.ids], self.tags)
 
-    def check_within(self, n_elements: int, what: str) -> None:
+    def check_within(self, n_elements: int) -> None:
         """Raise if any tagged id names an element the mesh does not have."""
         if len(self) and int(self.ids[-1]) >= n_elements:
-            raise ValueError("element_tags names element %d but there are only %d %s"
-                             % (int(self.ids[-1]), n_elements, what))
+            raise ValueError("element_tags names element %d but there are only %d "
+                             "elements" % (int(self.ids[-1]), n_elements))
 

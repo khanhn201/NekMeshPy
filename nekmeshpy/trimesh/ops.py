@@ -189,7 +189,7 @@ def _chain_segments(segs: FloatArray) -> LineMesh | None:
         loops.append(line_loft(coord[order, :], loop=True))
     if not loops:
         return None
-    return max(loops, key=len)
+    return max(loops, key=lambda ring: ring.n_points)
 
 
 def extract_isocontour(surface: TriMesh, u: FloatArray, level: float) -> LineMesh | None:
@@ -224,7 +224,7 @@ def extract_rings(
     frlev = []
     for lv in levels:
         r = extract_isocontour(surface, u, lv)
-        if r is None or len(r) < min_loop_pts:
+        if r is None or r.n_points < min_loop_pts:
             continue
         fr.append(r)
         frlev.append(lv)

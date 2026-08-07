@@ -67,6 +67,19 @@ def test_lines_is_a_required_constructor_argument():
     assert np.array_equal(explicit.lines, linemesh.loft(pts).lines)
 
 
+def test_lines_must_index_points_that_exist():
+    """Connectivity is checked against the point array it indexes, so a stray id is a
+    ``ValueError`` here rather than an ``IndexError`` deep in whatever dereferences
+    ``points[lines]`` later."""
+    pts = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+    with pytest.raises(ValueError, match="lines must index the 3 points"):
+        LineMesh(pts, [[0, 1], [1, 7]])
+    with pytest.raises(ValueError, match="lines must index the 3 points"):
+        LineMesh(pts, [[-1, 0]])
+    # a mesh with no lines has nothing to index, and must still build
+    assert LineMesh(pts, np.zeros((0, 2), dtype=np.int64)).n_lines == 0
+
+
 def test_element_tags_length_must_match_lines():
     # open 3-point chain has 2 line elements
     with pytest.raises(ValueError, match="element_tags length .* must match lines"):

@@ -30,6 +30,28 @@ def _shell(order, n_face=2, n_radial=2):
                            radial=np.linspace(0.0, 1.0, n_radial + 1))
 
 
+# -- container invariants the B-rep rests on ----------------------------
+def test_hex_must_index_shared_faces_that_exist():
+    """``hex`` indexes the shared-face ``QuadMesh``, so a stray face id is caught
+    against that mesh's quad count -- the top rung of the same check ``QuadMesh`` makes
+    against its edges and ``LineMesh`` against its points."""
+    blk = _shell(1)
+    with pytest.raises(ValueError, match="hex must index the .* shared faces"):
+        HexMesh(blk.quads, np.full((2, 6), 999), np.zeros((2, 6), dtype=np.int64))
+    with pytest.raises(ValueError, match="hex must index the .* shared faces"):
+        HexMesh(blk.quads, -np.ones((1, 6), dtype=np.int64),
+                np.zeros((1, 6), dtype=np.int64))
+
+
+def test_order_n_container_asks_for_the_interior_it_cannot_invent():
+    """At order > 1 the private nodes are geometry, so omitting them is an actionable
+    error naming a factory -- not a bare shape mismatch."""
+    blk = _shell(3)
+    assert blk.order == 3
+    with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-hex private"):
+        HexMesh(blk.quads, blk.hex, blk.face_orient)
+
+
 # -- geometric truth: annulus inner wall rides the true sphere ----------
 @pytest.mark.parametrize("order", [2, 3, 4])
 def test_annulus_inner_wall_on_true_sphere(order):

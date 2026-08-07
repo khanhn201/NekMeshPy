@@ -86,14 +86,20 @@ class HexMesh:
             raise TypeError("HexMesh: quads must be a QuadMesh, got %s"
                             % type(quads).__name__)
         self.quads = quads
+
         self.hex: IntArray = np.asarray(hex, dtype=np.int64).reshape(-1, 6)
         self.face_orient: IntArray = np.asarray(
             face_orient, dtype=np.int64).reshape(-1, 6)
         if self.face_orient.shape[0] != self.hex.shape[0]:
             raise ValueError("HexMesh: face_orient length (%d) must match hex (%d)"
                              % (self.face_orient.shape[0], self.hex.shape[0]))
+        F = quads.n_quads                        # the rung below: shared faces
+        if self.hex.size and (self.hex.min() < 0 or self.hex.max() >= F):
+            raise ValueError(
+                "HexMesh: hex must index the %d shared faces of ``quads``; got ids in "
+                "[%d, %d]" % (F, int(self.hex.min()), int(self.hex.max())))
         E = self.hex.shape[0]
-        k = (self.order - 1) ** 3
+
         if interior is None:
             if self.order > 1:
                 raise ValueError(
@@ -101,21 +107,18 @@ class HexMesh:
                     "nodes (pass interior=(E,(order-1)**3,3), or build the block "
                     "with a factory such as HexMesh.extrude(section, ...) from an "
                     "order-%d section)" % (self.order, self.order))
-            self.interior: PointArray = np.zeros((E, 0, 3), dtype=float)
-        else:
-            ia: PointArray = np.asarray(interior, dtype=float)
-            if ia.shape != (E, k, 3):
-                raise ValueError(
-                    "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
-                    % (E, k, ia.shape))
-            self.interior = ia
-        #: which hexes carry a region tag (sparse -- untagged stores nothing)
-        self.element_tags: ElementTags = (
-            ElementTags.empty() if element_tags is None else element_tags)
-        self.face_tags: FaceTags = (
-            FaceTags.empty() if face_tags is None else face_tags)
-        self.element_tags.check_within(E, "hexes")
-        self.face_tags.check_within(E, "hexes")
+            interior = np.zeros((E, 0, 3), dtype=float)
+        self.interior: PointArray = np.asarray(interior, dtype=float)
+        k = (self.order - 1) ** 3
+        if self.interior.shape != (E, k, 3):
+            raise ValueError(
+                "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
+                % (E, k, self.interior.shape))
+
+        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
+        self.face_tags = FaceTags.empty() if face_tags is None else face_tags
+        self.element_tags.check_within(E)
+        self.face_tags.check_within(E)
 
         # corner connectivity + per-hex edge incidence are derived from the shared
         # faces and immutable post-construction (point moves don't change them), so
@@ -223,14 +226,14 @@ class HexMesh:
 
     # -- sizes -----------------------------------------------------------
     @property
-    def n_hexes(self) -> int:
-        """Number of hexahedra."""
-        return self.hexes.shape[0]
-
-    @property
     def n_points(self) -> int:
         """Number of (shared) points."""
         return self.points.shape[0]
+
+    @property
+    def n_hexes(self) -> int:
+        """Number of hexahedra."""
+        return self.hexes.shape[0]
 
     @property
     def n_face_tags(self) -> int:

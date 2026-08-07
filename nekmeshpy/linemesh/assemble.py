@@ -16,7 +16,7 @@ from .._typing import (
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes, reject_loop_caps
 from ..model.tags import ElementTags, PointTags, TagBuilder
-from .linemesh import LineMesh, _as_points
+from .linemesh import LineMesh
 from .query import boundary_points
 
 
@@ -50,7 +50,7 @@ def loft(
     uniform sweep primitive shared with :func:`QuadMesh.loft
     <nekmeshpy.quadmesh.assemble.loft>` and :func:`HexMesh.loft
     <nekmeshpy.hexmesh.assemble.loft>`."""
-    pts = _as_points(points)
+    pts = np.asarray(points, dtype=float)
     n = pts.shape[0]
     if loop:
         reject_loop_caps("LineMesh.loft", first_tag, last_tag)

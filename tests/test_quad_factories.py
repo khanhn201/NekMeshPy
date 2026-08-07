@@ -331,7 +331,7 @@ def test_rectangle_far_field_pairs_with_rotated_circle():
     # per-side rectangle far field (equal counts); every outer point on the box
     inner = _aligned_circle(0.5, 20)
     outer = _far_box(2.0, inner.n_points)
-    assert len(outer) == len(inner)                  # one outer point per inner point
+    assert outer.n_points == inner.n_points          # one outer point per inner point
     # every outer point lands on the square's boundary (max(|x|,|y|) == half)
     assert np.allclose(np.max(np.abs(outer.points[:, :2]), axis=1), 2.0)
     # rough radial alignment: each outer point shares its inner point's half-plane
@@ -499,7 +499,7 @@ def test_rectangle_far_field_in_tilted_plane():
     n = np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0)
     inner = linemesh.circle(0.5, 20, normal=n)
     outer = linemesh.rectangle(4.0, 4.0, inner.n_points, normal=n)
-    assert len(outer) == len(inner)
+    assert outer.n_points == inner.n_points
     # the box loop stays coplanar with inner's plane (both centered at the origin)
     assert np.max(np.abs(outer.points @ n)) < 1e-9
 
@@ -685,6 +685,29 @@ def test_linemesh_rejects_2d_input():
         linemesh.loft([(0, 0), (1, 0)])
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
         linemesh.loft([(0, 0), (1, 0), (1, 1)], loop=True)
+
+
+def test_quad_must_index_shared_edges_that_exist():
+    """``quad`` indexes the shared-edge ``LineMesh``, so a stray edge id is caught
+    against that mesh's line count -- the rung-2 form of the ``lines`` -> ``points``
+    check one rung down."""
+    from nekmeshpy import QuadMesh
+    sec = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, np.linspace(0.5, 1.0, 3))
+    with pytest.raises(ValueError, match="quad must index the .* shared edges"):
+        QuadMesh(sec.lines, np.full((2, 4), 999), np.zeros((2, 4), dtype=bool))
+    with pytest.raises(ValueError, match="quad must index the .* shared edges"):
+        QuadMesh(sec.lines, -np.ones((1, 4), dtype=np.int64),
+                 np.zeros((1, 4), dtype=bool))
+
+
+def test_order_n_container_asks_for_the_interior_it_cannot_invent():
+    """At order > 1 the private nodes are geometry, so omitting them is an actionable
+    error naming a factory -- not a bare shape mismatch."""
+    from nekmeshpy import QuadMesh
+    sec = quadmesh.ogrid(linemesh.circle(1.0, 8, order=3), 2, np.linspace(0.5, 1.0, 3))
+    assert sec.order == 3
+    with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-quad private"):
+        QuadMesh(sec.lines, sec.quad, sec.flip)
 
 
 def test_structured_rejects_wrong_edge_count():

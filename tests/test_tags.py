@@ -329,17 +329,19 @@ def test_a_side_valid_one_rung_up_is_rejected_one_rung_down():
 
 def test_check_within_is_the_only_thing_needing_the_mesh():
     """Element *count* is the mesh's, not the table's -- so it is the one check a
-    container passes in, and the tables spell it the same way."""
+    container passes in, and the *only* thing it passes: what a row names is the
+    table's own business (a FaceTags row names a hex), so no noun crosses over."""
     ft = FaceTags.from_pairs([[3, 1]], ["wall"])
-    ft.check_within(4, "hexes")                                  # 0..3 -> fine
-    with pytest.raises(ValueError, match="FaceTags names element 3 but there are only 3"):
-        ft.check_within(3, "hexes")
+    ft.check_within(4)                                           # 0..3 -> fine
+    with pytest.raises(ValueError, match="FaceTags names element 3 but there are only "
+                                         "3 hexes"):
+        ft.check_within(3)
     et = ElementTags([3], ["fluid"])
-    et.check_within(4, "hexes")
+    et.check_within(4)
     with pytest.raises(ValueError, match="element_tags names element 3"):
-        et.check_within(3, "hexes")
-    FaceTags.empty().check_within(0, "hexes")                    # empty is always fine
-    ElementTags.empty().check_within(0, "hexes")
+        et.check_within(3)
+    FaceTags.empty().check_within(0)                             # empty is always fine
+    ElementTags.empty().check_within(0)
 
 
 def test_the_container_still_rejects_an_out_of_range_element():
