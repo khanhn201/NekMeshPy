@@ -249,7 +249,6 @@ class HexMesh:
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod
-    @staticmethod
     def _signed_vol(P: PointArray) -> float:
         """Sign proxy of the trilinear Jacobian at the hex centre (Nek order)."""
         P = np.asarray(P, dtype=float)
