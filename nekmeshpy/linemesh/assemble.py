@@ -39,6 +39,29 @@ from .linemesh import LineMesh, _as_points
 from .query import boundary_points
 
 
+def _cap_tags(cap: str | Sequence[str] | StrArray | None, N: int = 1) -> list[str]:
+    """Normalize a cap tag to one tag per cap **node** (length ``N``): a scalar
+    ``str`` tags the whole cap, an array-like is one tag per node, and ``None``
+    -- "no cap tag asked for" -- is untagged on every node.
+
+    The bottom rung of the cap-tag normalizer each ``loft`` keeps beside its own
+    use: one tag per section line at the quad rung, one per section quad at the
+    hex rung.  One rung down a "profile" is a single point, so a chain's near /
+    far cap is that one end **node** and ``N`` is 1 -- the array form is therefore
+    a one-element list.  The shapes match across the rungs on purpose: a caller
+    (or a generic wrapper) can pass ``["inlet"]`` at any rung and mean the same
+    thing."""
+    if cap is None:
+        return [""] * N
+    if isinstance(cap, str):
+        return [cap] * N
+    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
+    if arr.shape[0] != N:
+        raise ValueError("cap tags length (%d) must match cap nodes (%d)"
+                         % (arr.shape[0], N))
+    return [str(x) for x in arr.tolist()]
+
+
 def loft(
     points: PointArray,
     *,
@@ -46,8 +69,8 @@ def loft(
     interior: PointArray | None = None,
     point_tags: PointTags | None = None,
     element_tags: Sequence[str] | StrArray | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
     order: int = 1,
 ) -> LineMesh:
     """Loft a stack of point "profiles" into a 1-D mesh -- the bottom rung of the
@@ -72,7 +95,9 @@ def loft(
     here is a single node, so each takes a scalar ``str`` or -- for shape parity
     with :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>` /
     :func:`HexMesh.loft <nekmeshpy.hexmesh.assemble.loft>`, whose caps carry one tag
-    per section line / quad -- a one-element array-like.  A closed sweep has no
+    per section line / quad -- a one-element array-like.  ``None`` (the default) is
+    "no cap tag asked for" and ``NO_TAG`` names the cap untagged; both emit no row.
+    A closed sweep has no
     near/far cap, so passing either with ``loop=True`` raises ``ValueError``
     rather than silently dropping it.
 
@@ -93,10 +118,10 @@ def loft(
         lines = np.column_stack([idx[:-1], idx[1:]])
 
     bnd = point_tags if point_tags is not None else PointTags.empty()
-    # a chain's cap is a single end node, so ``_cap_tags`` normalizes to one tag --
+    # a chain's cap is a single end **node**, so each cap normalizes to one tag --
     # the rung-1 form of the same scalar-or-per-element argument ``QuadMesh.loft`` /
     # ``HexMesh.loft`` take, so all three rungs accept the same shapes.
-    first, last = LineMesh._cap_tags(first_tag)[0], LineMesh._cap_tags(last_tag)[0]
+    first, last = _cap_tags(first_tag)[0], _cap_tags(last_tag)[0]
     if first or last:
         bb = TagBuilder(PointTags)
         bb.extend(bnd)
@@ -116,7 +141,7 @@ def loft(
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
     return LineMesh(pts, lines, interior, bnd,
                     ElementTags.from_dense(element_tags, lines.shape[0], "lines")
-                    if element_tags is not None else None, order=order)
+                    if element_tags is not None else None)
 
 
 def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
@@ -407,7 +432,7 @@ def merge(meshes: Sequence[LineMesh], *,
     if meshes:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
 
-    return LineMesh(points, lines, interior, bnd, etags, order=order)
+    return LineMesh(points, lines, interior, bnd, etags)
 
 __all__ = [
     "loft",

@@ -56,14 +56,29 @@ from .quadmesh import (
 from .query import _boundary_mask
 
 
+def _cap_tags(cap: str | Sequence[str] | StrArray | None, L: int) -> list[str]:
+    """Normalize a cap tag to one tag per section line (length ``L``): a scalar
+    ``str`` tags the whole cap, an array-like is a per-line tag, and ``None``
+    -- "no cap tag asked for" -- is ``NO_TAG`` on every line."""
+    if cap is None:
+        return [NO_TAG] * L
+    if isinstance(cap, str):
+        return [cap] * L
+    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
+    if arr.shape[0] != L:
+        raise ValueError("cap tags length (%d) must match section lines (%d)"
+                         % (arr.shape[0], L))
+    return [str(x) for x in arr.tolist()]
+
+
 def loft(
     slices: Sequence[LineMesh],
     *,
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[LineMesh]] | None = None,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> QuadMesh:
     """Loft a stack of conformal ``LineMesh`` profiles into a quad section
     (the general primitive behind :func:`extrude <nekmeshpy.quadmesh.lift.extrude>`, and the middle rung of the
@@ -77,7 +92,11 @@ def loft(
     ``[a_i, b_i, b_{i+1}, a_{i+1}]``.  The line's ``element_tags`` ride onto every
     quad in its column and tagged boundary points onto the swept wall edges;
     ``first_tag`` / ``last_tag`` name the near / far cap edges (scalar or per-line
-    array).  ``element_tags`` is the orthogonal, **per-layer** dense tag array
+    array); ``None`` (the default) is "no cap tag asked for" and ``NO_TAG`` names
+    the cap untagged -- both emit no row here, and the two differ only where a
+    caller distinguishes "leave it alone" from "clear it" (see
+    :func:`annulus <nekmeshpy.quadmesh.lift.annulus>`).
+    ``element_tags`` is the orthogonal, **per-layer** dense tag array
     (length ``nz``, ``""`` = untagged): where a layer's tag is non-empty it
     *overrides* the profile line tag on every quad of that layer, following the
     toolkit's upper-overrides-lower rule.  Left ``None`` the profile tags stand
@@ -315,16 +334,16 @@ def loft(
     # sweep has no near/far cap edge at all, so it emits no cap row (and rejected
     # the tags above).
     if not loop:
-        first_caps = QuadMesh._cap_tags(first_tag, L)
-        last_caps = QuadMesh._cap_tags(last_tag, L)
+        first_caps = _cap_tags(first_tag, L)
+        last_caps = _cap_tags(last_tag, L)
         for l0 in range(L):
             bb.add_if_tagged(l0, 1, first_caps[l0])
         if nz:
             for l0 in range(L):
                 bb.add_if_tagged((nz - 1) * L + l0, 3, last_caps[l0])
-    lm = LineMesh(points, all_lines, order=order, interior=edge_nodes)
+    lm = LineMesh(points, all_lines, interior=edge_nodes)
     return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags,
-                    order=order)
+)
 
 
 def _loft_evaluated(
@@ -334,8 +353,8 @@ def _loft_evaluated(
     *,
     loop: bool = False,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
     name: str = "loft_fn",
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
@@ -411,8 +430,8 @@ def loft_fn(
     loop: bool = False,
     order: int | None = None,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> QuadMesh:
     """Loft a section from a **parametrized family of profiles** -- :func:`loft <nekmeshpy.quadmesh.assemble.loft>` with
     the slices evaluated rather than handed in, so **every** node (the corners *and*
@@ -548,8 +567,8 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
             local, elem_edges, flip, edges.shape[0],
             conform.entity_tol(points), "QuadMesh.merge")
         interior = np.concatenate([m.interior for m in meshes], axis=0)
-    lm = LineMesh(points, edges, order=order, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, bnd, etags, order=order)
+    lm = LineMesh(points, edges, interior=edge_nodes)
+    return QuadMesh(lm, elem_edges, flip, interior, bnd, etags)
 
 __all__ = [
     "loft",

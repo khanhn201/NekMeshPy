@@ -18,8 +18,6 @@ factory internals live in ``_helpers.py``.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import numpy as np
 
 from .._typing import (
@@ -27,7 +25,6 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..linemesh import LineMesh
 from ..linemesh.linemesh import _repr_tags
@@ -124,8 +121,6 @@ class QuadMesh:
         interior: PointArray | None = None,
         edge_tags: EdgeTags | None = None,
         element_tags: ElementTags | None = None,
-        *,
-        order: int = 1,
     ) -> None:
         """Construct from the B-rep directly: ``lines`` (a ``LineMesh``
         holding every shared edge -- its ``points`` are the shared corners, its ``lines``
@@ -147,10 +142,6 @@ class QuadMesh:
         if not isinstance(lines, LineMesh):
             raise TypeError("QuadMesh: lines must be a LineMesh, got %s"
                             % type(lines).__name__)
-        self._order = int(order)
-        if lines.order != self._order:
-            raise ValueError("QuadMesh: lines.order (%d) must match order (%d)"
-                             % (lines.order, self._order))
         self.lines = lines
         self.quad: IntArray = np.asarray(quad, dtype=np.int64).reshape(-1, 4)
         self.flip: BoolArray = np.asarray(flip, dtype=bool).reshape(-1, 4)
@@ -158,16 +149,16 @@ class QuadMesh:
             raise ValueError("QuadMesh: flip length (%d) must match quad (%d)"
                              % (self.flip.shape[0], self.quad.shape[0]))
         Q = self.quad.shape[0]
-        k = (self._order - 1) ** 2
+        k = (self.order - 1) ** 2
         if interior is None:
-            if self._order > 1:
+            if self.order > 1:
                 raise ValueError(
                     "QuadMesh: order %d > 1 requires the per-quad private interior "
                     "nodes (pass interior=(Q,(order-1)**2,3), or build the section "
                     "with a factory -- the region fills inherit their order from their "
                     "input boundary, e.g. "
                     "QuadMesh.ogrid(LineMesh.circle(r, n, order=%d), n_side, radial))"
-                    % (self._order, self._order))
+                    % (self.order, self.order))
             self.interior: PointArray = np.zeros((Q, 0, 3), dtype=float)
         else:
             ia: PointArray = np.asarray(interior, dtype=float)
@@ -213,8 +204,8 @@ class QuadMesh:
         nodes without silently straight-subdividing, so it raises.  Build with a
         factory (``ogrid`` / ``structured`` / ``box`` / ``sphere`` / ``loft`` / ...) at
         ``order=N``, which places those nodes on the true geometry, or construct
-        ``QuadMesh(lines, quad, flip, interior, ..., order=N)`` directly from the
-        entity fields if you already hold them."""
+        ``QuadMesh(lines, quad, flip, interior, ...)`` directly from the entity fields
+        if you already hold them -- the order rides in on ``lines``."""
         if order != 1:
             raise ValueError(
                 "QuadMesh.from_corners builds the linear (order 1) B-rep from corner "
@@ -226,14 +217,14 @@ class QuadMesh:
                 "QuadMesh.loft(slices) from order-%d profiles), while the grid / "
                 "analytic factories take it directly (QuadMesh.from_grid(P, order=%d), "
                 "QuadMesh.rectangle(corners, nx, ny, order=%d)). Or construct "
-                "QuadMesh(lines, quad, flip, interior=..., order=%d) directly from the "
-                "entity fields."
-                % (order, order, order, order, order, order))
+                "QuadMesh(lines, quad, flip, interior=...) directly from the entity "
+                "fields, where the order rides in on lines."
+                % (order, order, order, order, order))
         pts: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
         conn: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         edges, elem_edges, flip = conform.unique_edges(conn, 2)
         lm = LineMesh(pts, edges)
-        return cls(lm, elem_edges, flip, None, edge_tags, element_tags, order=1)
+        return cls(lm, elem_edges, flip, None, edge_tags, element_tags)
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(Q,4)`` recovered from the edge indices + flip: column
@@ -261,7 +252,7 @@ class QuadMesh:
         try:
             return ("<QuadMesh %d points, %d quads, order %d, element_tags=%s, "
                     "edge_tags=%s>"
-                    % (self.lines.points.shape[0], self.quad.shape[0], self._order,
+                    % (self.lines.points.shape[0], self.quad.shape[0], self.order,
                        _repr_tags(self.element_group_tags),
                        _repr_tags(self.edge_group_tags)))
         except Exception:                     # a repr must never break a debug session
@@ -269,8 +260,14 @@ class QuadMesh:
 
     @property
     def order(self) -> int:
-        """Global polynomial order (1 = linear)."""
-        return self._order
+        """Global polynomial order (1 = linear).
+
+        **Derived, not stored**: read straight off the rung below, exactly as
+        ``points`` / ``quads`` are.  Order is declared once at the bottom of the
+        ladder and rides up, so the edge ``LineMesh`` is its single source of truth
+        and a section cannot disagree with its own edges.  The constructor's
+        ``order=`` argument is validated against ``lines.order`` and then dropped."""
+        return self.lines.order
 
     @property
     def points(self) -> PointArray:
@@ -325,17 +322,5 @@ class QuadMesh:
         """Sorted unique non-empty per-quad element tags present on the section."""
         return self.element_tags.group_tags
 
-    # -- helpers for the operation modules -----------------------------
-    @staticmethod
-    def _cap_tags(cap: str | Sequence[str] | StrArray, L: int) -> list[str]:
-        """Normalize a cap tag to one tag per section line (length ``L``): a scalar
-        ``str`` tags the whole cap, an array-like is a per-line tag."""
-        if isinstance(cap, str):
-            return [cap] * L
-        arr = np.asarray(cap, dtype=np.str_).reshape(-1)
-        if arr.shape[0] != L:
-            raise ValueError("cap tags length (%d) must match section lines (%d)"
-                             % (arr.shape[0], L))
-        return [str(x) for x in arr.tolist()]
 
 

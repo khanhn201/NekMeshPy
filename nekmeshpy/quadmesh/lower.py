@@ -68,7 +68,7 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
             np.asarray([named.get((int(e), int(s)), "") for e, s in sel],
                        dtype=np.str_))
     return LineMesh(mesh.points[gids], local, en, PointTags.empty(), elem,
-                    order=mesh.order)
+)
 
 
 __all__ = ["boundary_mesh"]

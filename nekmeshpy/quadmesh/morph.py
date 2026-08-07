@@ -79,7 +79,7 @@ def blend(a: QuadMesh, b: QuadMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     return [QuadMesh(lm, a.quad, a.flip,
                 (1.0 - t) * ai + t * bi if ho else None,
-                edge_tags=a.edge_tags, order=a.order)
+                edge_tags=a.edge_tags)
             for t, lm in zip(fr, line_blend(a.lines, b.lines, fr))]
 
 
@@ -94,7 +94,7 @@ def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh
     return QuadMesh(line_affine(mesh.lines, matrix, offset), mesh.quad, mesh.flip,
                     affine.apply(mesh.interior, matrix, offset),
                     edge_tags=mesh.edge_tags,
-                    element_tags=mesh.element_tags, order=mesh.order)
+                    element_tags=mesh.element_tags)
 
 
 def transform(mesh: QuadMesh, matrix: FloatArray,
@@ -187,7 +187,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     new_ei[rev] = new_ei[rev][:, ::-1]
     new_lines = LineMesh(target.points[s], structure.lines.lines, new_ei,
                          target.lines.point_tags, target.lines.element_tags,
-                         order=target.lines.order)
+)
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.
@@ -197,7 +197,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
     return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,
-                    target.edge_tags, target.element_tags, order=target.order)
+                    target.edge_tags, target.element_tags)
 
 
 def place_on_path(section: QuadMesh, path: SpacePath,

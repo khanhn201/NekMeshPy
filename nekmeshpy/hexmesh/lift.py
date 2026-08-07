@@ -55,8 +55,8 @@ def extrude(
     *,
     axis: Vec3 = _Z_AXIS,
     origin: Point = _ORIGIN,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
     """Sweep a single quad ``section`` a distance ``length`` along ``axis`` into
     a hex block.
@@ -92,8 +92,8 @@ def annulus(
     outer: QuadMesh,
     radial: int | FloatArray,
     *,
-    inner_tag: str = "",
-    outer_tag: str = "",
+    inner_tag: str | None = None,
+    outer_tag: str | None = None,
 ) -> HexMesh:
     """Shell O-grid filling the region between an inner and an outer closed quad
     surface (e.g. a sphere inside a cubic far-field box).
@@ -107,9 +107,10 @@ def annulus(
     ``radial.size - 1`` shell layers blend inner -> outer directly in 3-D.
 
     Wall faces are tagged from the surfaces' per-quad ``element_tags`` (a closed
-    surface has no free boundary edges): inner caps face 5, outer caps face 6. A
-    non-empty scalar ``inner_tag`` / ``outer_tag`` overrides and names the whole
-    wall."""
+    surface has no free boundary edges): inner caps face 5, outer caps face 6.  A
+    scalar ``inner_tag`` / ``outer_tag`` overrides and names the whole wall:
+    ``None`` (the default) is "not asked for" and inherits the surface's tags, and
+    ``NO_TAG`` is an explicit override *to* untagged, which suppresses them."""
     radial = validate_layers(radial, "annulus radial")
     A: PointArray = np.asarray(inner.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(outer.points, dtype=float).reshape(-1, 3)
@@ -128,12 +129,15 @@ def annulus(
     # shell t is the straight-chord blend inner -> outer sharing inner's quads;
     # consecutive shells loft into hex layers.
     shells = quad_blend(inner, outer, radial)
-    # wall tags from the surfaces' per-quad element_tags; scalar arg overrides
+    # wall tags from the surfaces' per-quad element_tags, which a scalar arg
+    # overrides.  ``None`` is "not asked for" and inherits; ``NO_TAG`` is an
+    # explicit override *to* untagged, so it suppresses the surface's own tags
+    # rather than falling through to them.
     inner_caps: str | StrArray = (
-        inner_tag if inner_tag
+        inner_tag if inner_tag is not None
         else (inner.element_tags.dense(inner.n_quads) if inner.element_tags else ""))
     outer_caps: str | StrArray = (
-        outer_tag if outer_tag
+        outer_tag if outer_tag is not None
         else (outer.element_tags.dense(outer.n_quads) if outer.element_tags else ""))
     return loft(shells, first_tag=inner_caps, last_tag=outer_caps)
 
@@ -183,8 +187,8 @@ def from_grid(
                              element_tag=element_tag, order=order)
               for k in range(P.shape[2])]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
-    return loft(slices, first_tag=tags.get("z_min", ""),
-                last_tag=tags.get("z_max", ""))
+    return loft(slices, first_tag=tags.get("z_min"),
+                last_tag=tags.get("z_max"))
 
 
 def sweep(
@@ -201,8 +205,8 @@ def sweep(
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
     """A block swept from one ``QuadMesh`` ``section`` along the curve ``path`` -- a
     round pipe bent through a 90-degree elbow or a U-turn, from one O-grid disc.
@@ -312,8 +316,8 @@ def sweep_path(
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
     """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a
     :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` rather than by a loose

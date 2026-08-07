@@ -102,9 +102,9 @@ def _elevate(qm: QuadMesh, order: int,
     edge_nodes = conform.scatter_edge_nodes(
         local, elem_edges, flip, edges.shape[0],
         conform.entity_tol(points), "QuadMesh._elevate")
-    lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+    lm = LineMesh(points, edges, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior,
-                    qm.edge_tags, qm.element_tags, order=order)
+                    qm.edge_tags, qm.element_tags)
 
 
 def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray,
@@ -126,7 +126,7 @@ def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray
     edges, elem_edges, flip = conform.unique_edges(quads, 2)
     edge_nodes = conform.scatter_edge_nodes(
         local, elem_edges, flip, edges.shape[0], conform.entity_tol(points), who)
-    lm = LineMesh(points, edges, order=order, interior=edge_nodes)
+    lm = LineMesh(points, edges, interior=edge_nodes)
     return lm, elem_edges, flip, interior
 
 

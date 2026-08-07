@@ -260,32 +260,43 @@ def test_factory_meshes_default_to_order_one():
 _ONE_LINE = [[0, 1]]
 
 
-def test_interior_at_order1_must_be_empty():
-    # order 1 accepts an explicitly empty interior...
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=1,
+def test_empty_interior_is_order1():
+    # an explicitly empty interior and an omitted one are the same order-1 mesh
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE,
                   interior=np.zeros((1, 0, 3)))
     assert lm.order == 1 and lm.interior.shape == (1, 0, 3)
     assert np.allclose(curved(lm), lm.points[lm.lines])
-    # ...and rejects any node claiming to be interior to a linear element.
-    with pytest.raises(ValueError, match=r"\(1,0,3\)"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=1, interior=np.zeros((1, 2, 3)))
+    assert LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE).order == 1
 
 
-def test_order_gt1_requires_interior():
-    with pytest.raises(ValueError, match="interior nodes"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=3)
+@pytest.mark.parametrize("k", [0, 1, 2, 5])
+def test_order_is_read_off_the_interior(k):
+    # ``order`` is derived, not declared: k private nodes per line == order k+1,
+    # so a mesh can never disagree with the nodes it actually stores.
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, interior=np.zeros((1, k, 3)))
+    assert lm.order == k + 1
+    assert lm.interior.shape == (1, k, 3)
 
 
-def test_interior_wrong_shape_rejected():
-    with pytest.raises(ValueError, match=r"\(1,1,3\)"):
-        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=2, interior=np.zeros((1, 5, 3)))
+def test_order_gt1_unrepresentable_without_interior():
+    # the old "order > 1 requires interior nodes" ValueError is now structurally
+    # impossible: with no nodes to count there is no order above 1 to ask for.
+    assert LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE).order == 1
+
+
+@pytest.mark.parametrize("bad", [(2, 1, 3), (1, 1, 2), (1, 1)])
+def test_interior_wrong_shape_rejected(bad):
+    # the line count and the trailing 3 are still checked against the mesh; only
+    # the middle axis is free, because that axis *is* the order.
+    with pytest.raises(ValueError, match="interior must be"):
+        LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, interior=np.zeros(bad))
 
 
 def test_corners_come_from_points_not_the_interior():
     # the endpoints are single-sourced from points[lines]: whatever interior is
     # handed in, the assembled block's corners are the linear corners, and an
     # in-place points edit is reflected immediately.
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=2,
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE,
                   interior=np.array([[[9.0, 9.0, 9.0]]]))
     assert np.allclose(curved(lm)[:, [0, 2], :], lm.points[lm.lines])
     lm.points[:] = lm.points * 2.0
@@ -295,7 +306,7 @@ def test_corners_come_from_points_not_the_interior():
 def test_valid_interior_line_accepted():
     # order-2 line with a straight interior midpoint
     block = subdivide_element(np.array([[0, 0, 0], [1, 0, 0]], float), 2, 1)
-    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, order=2, interior=block[None, 1:2, :])
+    lm = LineMesh([[0, 0, 0], [1, 0, 0]], _ONE_LINE, interior=block[None, 1:2, :])
     assert lm.order == 2
     assert curved(lm).shape == (1, 3, 3)
     assert np.allclose(curved(lm), block[None])

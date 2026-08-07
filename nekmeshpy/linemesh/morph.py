@@ -72,7 +72,7 @@ def blend(a: LineMesh, b: LineMesh,
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
         out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
-                            point_tags=a.point_tags, order=a.order))
+                            point_tags=a.point_tags))
     return out
 
 
@@ -110,7 +110,7 @@ def reverse(mesh: LineMesh) -> LineMesh:
                     bnd,
                     mesh.element_tags.renumber(
                         (L - 1 - np.arange(L, dtype=np.int64))),
-                    order=mesh.order)
+)
 
 
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
@@ -123,7 +123,7 @@ def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh
     return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
                     affine.apply(mesh.interior, matrix, offset),
                     point_tags=mesh.point_tags,
-                    element_tags=mesh.element_tags, order=mesh.order)
+                    element_tags=mesh.element_tags)
 
 
 def transform(mesh: LineMesh, matrix: FloatArray,

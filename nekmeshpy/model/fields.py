@@ -148,8 +148,14 @@ def reject_loop_caps(who: str, *caps: object) -> None:
     rung of the ladder: a closed sweep has no near / far cap, so any non-empty
     end-cap tag argument is necessarily a caller mistake and is rejected loudly
     rather than silently dropped.  ``caps`` are the ``first_tag`` / ``last_tag``
-    values (each a scalar ``str`` or a per-element array-like)."""
+    values (each ``None``, a scalar ``str`` or a per-element array-like).
+
+    ``None`` ("no cap tag asked for") and ``NO_TAG`` both pass: neither places a
+    cap, so neither can conflict with a periodic sweep.  Only a *named* cap is a
+    caller mistake."""
     for cap in caps:
+        if cap is None:
+            continue
         if isinstance(cap, str):
             named = bool(cap)
         else:

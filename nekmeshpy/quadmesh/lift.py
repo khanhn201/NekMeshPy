@@ -54,8 +54,8 @@ def extrude(
     *,
     axis: Vec3 = _Z_AXIS,
     origin: Point = _ORIGIN,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> QuadMesh:
     """Sweep a ``LineMesh`` a distance ``length`` along ``axis`` into a quad
     section (the straight special case of :func:`loft <nekmeshpy.quadmesh.assemble.loft>`).
@@ -87,7 +87,7 @@ def extrude(
 
 def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
             smoothing_method: SmoothingMethod | None = None,
-            inner_tag: str = "", outer_tag: str = "",
+            inner_tag: str | None = None, outer_tag: str | None = None,
             ) -> QuadMesh:
     """Ring O-grid filling the region between an inner and an outer closed loop
     -- e.g. a circular body inside a square far-field box.
@@ -106,8 +106,10 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
 
     Boundary tags come from the loops' per-line ``element_tags`` (each ring edge
     tagged from the matching loop segment, so a named box splits the outer ring
-    into distinct sides).  A non-empty scalar ``inner_tag`` / ``outer_tag``
-    overrides that for the whole inner / outer ring.
+    into distinct sides).  A scalar ``inner_tag`` / ``outer_tag`` overrides that for
+    the whole inner / outer ring: ``None`` (the default) is "not asked for" and
+    inherits the loop's tags, and ``NO_TAG`` is an explicit override *to* untagged,
+    which suppresses them.
 
     The rings are always a genuine high-order blend: ``LineMesh.blend`` interpolates
     the two loops' curved blocks (``blend_ho``) so every ring carries curved
@@ -135,13 +137,15 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
     if outer.order != order:
         raise ValueError("annulus: inner and outer loops must share the same order")
 
-    # tags from each loop's per-segment element_tags; a non-empty scalar
-    # inner_tag / outer_tag overrides that for the whole ring.
+    # tags from each loop's per-segment element_tags, which a scalar inner_tag /
+    # outer_tag overrides for the whole ring.  ``None`` is "not asked for" and
+    # inherits; ``NO_TAG`` is an explicit override *to* untagged, so it suppresses
+    # the loop's own tags rather than falling through to them.
     inner_caps: str | StrArray = (
-        inner_tag if inner_tag
+        inner_tag if inner_tag is not None
         else (inner.element_tags.dense(inner.n_lines) if inner.element_tags else ""))
     outer_caps: str | StrArray = (
-        outer_tag if outer_tag
+        outer_tag if outer_tag is not None
         else (outer.element_tags.dense(outer.n_lines) if outer.element_tags else ""))
 
     # Blend the loops (carrying their curved blocks) and loft directly -- ring k =
@@ -222,8 +226,8 @@ def from_grid(
                         point_tags=pbnd_t, order=order)
               for j in range(nj1)]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
-    return loft(slices, first_tag=tags.get("y_min", ""),
-                last_tag=tags.get("y_max", ""))
+    return loft(slices, first_tag=tags.get("y_min"),
+                last_tag=tags.get("y_max"))
 
 
 def sweep(
@@ -240,8 +244,8 @@ def sweep(
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> QuadMesh:
     """A strip swept from one ``LineMesh`` ``profile`` along the curve ``path``.
 
@@ -354,8 +358,8 @@ def sweep_path(
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
     element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray = "",
-    last_tag: str | Sequence[str] | StrArray = "",
+    first_tag: str | Sequence[str] | StrArray | None = None,
+    last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> QuadMesh:
     """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a
     :class:`SpacePath <nekmeshpy.model.paths.SpacePath>`, which carries its own analytic

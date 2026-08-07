@@ -87,9 +87,9 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
     pts = np.asarray(points, dtype=float).reshape(-1, 3)
     conn = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges, elem_edges, flip = conform.unique_edges(conn, 2)
-    lm = LineMesh(pts, edges, order=order, interior=edge_nodes)
+    lm = LineMesh(pts, edges, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior, edge_tags,
-                    element_tags, order=order)
+                    element_tags)
 
 
 def hex_from_entities(points, hexes, edge_nodes=None, face_nodes=None,
@@ -110,10 +110,10 @@ def hex_from_entities(points, hexes, edge_nodes=None, face_nodes=None,
     conn = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
     canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
     q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
-    edge_lm = LineMesh(pts, q_edges, order=order, interior=edge_nodes)
-    quads = QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes, order=order)
+    edge_lm = LineMesh(pts, q_edges, interior=edge_nodes)
+    quads = QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes)
     return HexMesh(quads, elem_faces, face_orient, interior, face_tags,
-                   element_tags, order=order)
+                   element_tags)
 
 
 def curved(mesh):

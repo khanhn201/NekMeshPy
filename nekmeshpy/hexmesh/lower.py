@@ -118,9 +118,9 @@ def boundary_mesh(mesh: HexMesh, tag: str | None = None, *,
     else:
         names = [tags.get((int(e), int(s)), "") for e, s in sel]   # type: ignore[union-attr]
         elem = ElementTags.from_dense(np.asarray(names, dtype=np.str_))
-    lines = LineMesh(mesh.points[gids], edges, en, order=mesh.order)
+    lines = LineMesh(mesh.points[gids], edges, en)
     return QuadMesh(lines, elem_edges, flip, fn, EdgeTags.empty(), elem,
-                    order=mesh.order)
+)
 
 
 def _templated(mesh: HexMesh, tag: str | None, poly: IntArray, gids: IntArray,
@@ -139,10 +139,10 @@ def _templated(mesh: HexMesh, tag: str | None, poly: IntArray, gids: IntArray,
     en, fn = _high_order_nodes(mesh, g[np.asarray(template.quads, dtype=np.int64)],
                                g[np.asarray(tl.lines, dtype=np.int64)])
     lines = LineMesh(mesh.points[g], tl.lines, en, tl.point_tags, tl.element_tags,
-                     order=tl.order)
+)
     _log_pairing(tag, float(np.max(dist)))
     return QuadMesh(lines, template.quad, template.flip, fn, template.edge_tags,
-                    template.element_tags, order=template.order)
+                    template.element_tags)
 
 
 def _log_pairing(tag: str | None, worst: float) -> None:

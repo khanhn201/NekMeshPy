@@ -19,15 +19,12 @@ an operation touches only the sibling module, never this one.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import numpy as np
 
 from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
@@ -107,8 +104,6 @@ class HexMesh:
         interior: PointArray | None = None,
         face_tags: FaceTags | None = None,
         element_tags: ElementTags | None = None,
-        *,
-        order: int = 1,
     ) -> None:
         """Construct from the B-rep directly: ``quads`` (a ``QuadMesh`` holding every
         shared face -- its ``points`` are the shared corners, its ``quads`` the shared
@@ -129,10 +124,6 @@ class HexMesh:
         if not isinstance(quads, QuadMesh):
             raise TypeError("HexMesh: quads must be a QuadMesh, got %s"
                             % type(quads).__name__)
-        self._order = int(order)
-        if quads.order != self._order:
-            raise ValueError("HexMesh: quads.order (%d) must match order (%d)"
-                             % (quads.order, self._order))
         self.quads = quads
         self.hex: IntArray = np.asarray(hex, dtype=np.int64).reshape(-1, 6)
         self.face_orient: IntArray = np.asarray(
@@ -141,14 +132,14 @@ class HexMesh:
             raise ValueError("HexMesh: face_orient length (%d) must match hex (%d)"
                              % (self.face_orient.shape[0], self.hex.shape[0]))
         E = self.hex.shape[0]
-        k = (self._order - 1) ** 3
+        k = (self.order - 1) ** 3
         if interior is None:
-            if self._order > 1:
+            if self.order > 1:
                 raise ValueError(
                     "HexMesh: order %d > 1 requires the per-hex private interior "
                     "nodes (pass interior=(E,(order-1)**3,3), or build the block "
                     "with a factory such as HexMesh.extrude(section, ...) from an "
-                    "order-%d section)" % (self._order, self._order))
+                    "order-%d section)" % (self.order, self.order))
             self.interior: PointArray = np.zeros((E, 0, 3), dtype=float)
         else:
             ia: PointArray = np.asarray(interior, dtype=float)
@@ -191,8 +182,8 @@ class HexMesh:
         interior nodes without silently straight-subdividing, so it raises.  Build with
         a factory (``extrude`` / ``loft`` / ``annulus`` / ``from_grid``) at ``order=N``,
         which places those nodes on the true geometry, or construct
-        ``HexMesh(quads, hex, face_orient, interior, ..., order=N)`` directly from the
-        entity fields if you already hold them."""
+        ``HexMesh(quads, hex, face_orient, interior, ...)`` directly from the entity
+        fields if you already hold them -- the order rides in on ``quads``."""
         if order != 1:
             raise ValueError(
                 "HexMesh.from_corners builds the linear (order 1) B-rep from corner "
@@ -200,16 +191,16 @@ class HexMesh:
                 "interior nodes it cannot know. Build with a factory at order=%d "
                 "(e.g. HexMesh.extrude(section, ...) / HexMesh.loft(slices) from "
                 "order-%d sections), which places those nodes on the true geometry, "
-                "or construct HexMesh(quads, hex, face_orient, interior=..., "
-                "order=%d) directly from the entity fields (the shared-face QuadMesh "
-                "carries the edge / face nodes)."
-                % (order, order, order, order))
+                "or construct HexMesh(quads, hex, face_orient, interior=...) directly "
+                "from the entity fields (the shared-face QuadMesh carries the edge / "
+                "face nodes, and the order with them)."
+                % (order, order, order))
         pts: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
         conn: IntArray = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
         quads = QuadMesh.from_corners(pts, canonical_conn)
         return cls(quads, elem_faces, face_orient, None, face_tags,
-                   element_tags, order=1)
+                   element_tags)
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(E,8)`` (Nek order) recovered from the shared faces via
@@ -234,7 +225,7 @@ class HexMesh:
         try:
             return ("<HexMesh %d points, %d hexes, order %d, element_tags=%s, "
                     "face_tags=%s>"
-                    % (self.quads.lines.points.shape[0], self.hex.shape[0], self._order,
+                    % (self.quads.lines.points.shape[0], self.hex.shape[0], self.order,
                        _repr_tags(self.element_group_tags),
                        _repr_tags(self.face_group_tags)))
         except Exception:                     # a repr must never break a debug session
@@ -242,8 +233,16 @@ class HexMesh:
 
     @property
     def order(self) -> int:
-        """Global polynomial order (1 = linear)."""
-        return self._order
+        """Global polynomial order (1 = linear).
+
+        **Derived, not stored**: read straight off the rung below, exactly as
+        ``points`` / ``hexes`` are.  Order is declared once at the bottom of the
+        ladder and rides up, so this resolves through
+        :attr:`QuadMesh.order <nekmeshpy.quadmesh.QuadMesh.order>` to the edge
+        ``LineMesh`` that owns it and a block cannot disagree with its own faces.
+        The constructor's ``order=`` argument is validated against ``quads.order``
+        and then dropped."""
+        return self.quads.order
 
     @property
     def points(self) -> PointArray:
@@ -313,17 +312,6 @@ class HexMesh:
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod
-    def _cap_tags(cap: str | Sequence[str] | StrArray, M: int) -> list[str]:
-        """Normalize a cap tag to one tag per section quad (length ``M``): a scalar
-        ``str`` tags the whole cap, an array-like is per-quad."""
-        if isinstance(cap, str):
-            return [cap] * M
-        arr = np.asarray(cap, dtype=np.str_).reshape(-1)
-        if arr.shape[0] != M:
-            raise ValueError("cap tags length (%d) must match section quads (%d)"
-                             % (arr.shape[0], M))
-        return [str(x) for x in arr.tolist()]
-
     @staticmethod
     def _signed_vol(P: PointArray) -> float:
         """Sign proxy of the trilinear Jacobian at the hex centre (Nek order)."""

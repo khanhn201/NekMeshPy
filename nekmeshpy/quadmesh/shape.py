@@ -36,6 +36,19 @@ from .query import boundary_edges
 _SIDES = ("bottom", "right", "top", "left")
 
 
+def _seg_tags(curve: LineMesh) -> list[str] | None:
+    """``curve``'s element tags densified to a ``list[str]``, or ``None`` if every
+    element is untagged (so an untagged curve stays untagged).
+
+    The two callers here both walk a boundary curve segment by segment -- one
+    emitting an edge-tag row per segment, one splitting the loop into half arcs --
+    and both want the dense per-segment form the sparse
+    :class:`ElementTags <nekmeshpy.model.tags.ElementTags>` does not store."""
+    if not curve.element_tags:
+        return None
+    return [str(x) for x in curve.element_tags.dense(curve.n_lines).tolist()]
+
+
 def _ordered_sides(edges: Sequence[LineMesh] | Mapping[str, LineMesh],
                    ) -> list[LineMesh]:
     """``edges`` as the positional ``[bottom, right, top, left]`` list :func:`structured <nekmeshpy.quadmesh.shape.structured>`
@@ -186,14 +199,14 @@ def _blended_ring(pos: PointArray, wall: LineMesh, tau: float,
     lines: IntArray = wall.lines
     order = wall.order
     if order == 1:
-        return LineMesh(pos, lines, order=1)
+        return LineMesh(pos, lines)
     inner: PointArray = (1.0 - tau) * peri_inner + tau * wall.interior
     drift: PointArray = pos - ((1.0 - tau) * peri_pos + tau * wall.points)
     g = gll_nodes(order)[1:order]
     d0, d1 = drift[lines[:, 0]], drift[lines[:, 1]]
     inner = (inner + (1.0 - g)[None, :, None] * d0[:, None, :]
              + g[None, :, None] * d1[:, None, :])
-    return LineMesh(pos, lines, order=order, interior=inner)
+    return LineMesh(pos, lines, interior=inner)
 
 
 def _ring_overlays(ring_pts: Sequence[PointArray], wall: LineMesh,
@@ -238,7 +251,7 @@ def _curve_rows(rows: Sequence[tuple[int, int]], curve: LineMesh,
     into distinct named sides instead of collapsing into one.  A non-empty scalar
     ``override`` (a factory's ``wall_tag`` / ``side_tags[...]``) names the whole side
     instead, and an element left untagged either way emits no row at all."""
-    seg = curve._seg_tags()
+    seg = _seg_tags(curve)
     bb = TagBuilder(EdgeTags)
     for m, (qid, side) in enumerate(rows):
         bb.add_if_tagged(qid, side, override if override
@@ -256,7 +269,7 @@ def _sub_chain(chain: LineMesh, segs: IntArray, seg2line: IntArray) -> LineMesh:
     against its quad's side by endpoint and reverses it where the two disagree, so the
     intervals need not be listed in ascending order."""
     idx: IntArray = seg2line[np.asarray(segs, dtype=np.int64)]
-    return LineMesh(chain.points, chain.lines[idx], order=chain.order,
+    return LineMesh(chain.points, chain.lines[idx],
                     interior=chain.interior[idx])
 
 
@@ -395,7 +408,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         lm, elem_edges, flip, interior = entities_from_blocks(
             blocks, quads, points, order, "QuadMesh.structured")
         qm = QuadMesh(lm, elem_edges, flip, interior,
-                      qm.edge_tags, qm.element_tags, order=order)
+                      qm.edge_tags, qm.element_tags)
     # smooth last: a repositioning smoother rejects order > 1 (high-order smoothing
     # is not implemented).
     return _apply_smoothing(qm, smoothing_method)
@@ -1011,7 +1024,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
     # order-N: the loop's per-line private ``interior`` nodes split the same way (a
     # line element shares nothing but its endpoints), so each half arc carries its
     # exact wall geometry natively -- no curved block anywhere.
-    seg = boundary._seg_tags()
+    seg = _seg_tags(boundary)
     o = boundary.order
     inner: PointArray = boundary.interior
     arc1 = line_loft(bpts[0:nh + 1, :], interior=inner[0:nh],
@@ -1128,11 +1141,11 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
     etags = ElementTags.uniform(cube.n_quads, element_tag)
     # the cube's B-rep is reused verbatim (same topology, same edge numbering); only
     # the node coordinates move, so there is nothing to re-derive or reconcile.
-    lines = LineMesh(project(cube.points), cube.lines.lines, order=order,
+    lines = LineMesh(project(cube.points), cube.lines.lines,
                      interior=project(cube.lines.interior) if order > 1 else None)
     return QuadMesh(lines, cube.quad, cube.flip,
                     project(cube.interior) if order > 1 else None,
-                    element_tags=etags, order=order)
+                    element_tags=etags)
 
 
 def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
@@ -1147,7 +1160,7 @@ def _tag_rim(qm: QuadMesh, rim_tag: str) -> QuadMesh:
     rows = boundary_edges(qm)
     bnd = EdgeTags.from_pairs(rows, [rim_tag] * rows.shape[0]).ordered()
     return QuadMesh(qm.lines, qm.quad, qm.flip, qm.interior if qm.order > 1 else None,
-                    bnd, qm.element_tags, order=qm.order)
+                    bnd, qm.element_tags)
 
 
 def half_box(half_sizes: float | Sequence[float] | FloatArray,
@@ -1243,11 +1256,11 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
         return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
 
     etags = ElementTags.uniform(cube.n_quads, element_tag)
-    lines = LineMesh(project(cube.points), cube.lines.lines, order=order,
+    lines = LineMesh(project(cube.points), cube.lines.lines,
                      interior=project(cube.lines.interior) if order > 1 else None)
     qm = QuadMesh(lines, cube.quad, cube.flip,
                   project(cube.interior) if order > 1 else None,
-                  element_tags=etags, order=order)
+                  element_tags=etags)
     return _tag_rim(qm, rim_tag)
 
 def _patch(fn: Callable[[FloatArray, FloatArray], FloatArray], surface: SurfaceMap,
