@@ -1,33 +1,4 @@
-"""1-D mesh container: line elements ``(L,2)`` over a shared ``(N,3)`` point array.
-
-The line sibling of QuadMesh/HexMesh; it can branch rather than being a single
-ordered path. It carries sparse per-line ``element_tags`` and a sparse tagged
-:class:`~nekmeshpy.model.tags.PointTags` table of tagged end points, both of which
-sweep up on extrude.
-Open vs closed is a property of the ``lines`` connectivity itself -- a loop is a
-cycle of line elements with no degree-1 end point -- and is stored nowhere;
-factories build the common cases (``loft`` / ``line`` / ``arc`` / ``circle`` /
-``rectangle``) and every curve is meshed exactly at the points given -- there is no
-resampling here.
-
-``lines`` is a **required** constructor argument: the container never invents
-connectivity, so there is nothing in ``LineMesh`` that could imply a wrap.  The
-bottom rung of the uniform sweep primitive, :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>`, is what authors it
--- one dimension below ``QuadMesh.loft``/``HexMesh.loft``, each "profile" is a single
-point and the rungs joining consecutive profiles *are* the line elements, with
-``loop=True`` adding the closing rung from the last point back to the first.  It is
-the **only** connectivity-authoring entry point: a chain is ``loft(points)``, a ring
-is ``loft(points, loop=True)``, and anything else comes in through the constructor
-with its ``lines`` spelled out.
-
-This file stays a **pure container**: storage, validation, and the derived views.
-Every operation on a finished mesh lives beside it as a free function bound onto the
-class in ``linemesh/__init__.py``, split by arity and by rung delta -- ``assemble.py``
-(the n-ary ``loft`` / ``merge``, which build a new index space), ``morph.py`` (the
-rung-preserving ``blend``), ``query.py`` (read-only queries), ``shape.py`` /
-``shape.py`` (shape factories).  Adding an operation touches only the sibling module,
-never this one.
-"""
+"""1-D mesh container: line elements ``(L,2)`` over a shared ``(N,3)`` point array."""
 
 from __future__ import annotations
 
@@ -61,22 +32,16 @@ def _as_points(points: PointArray) -> PointArray:
 def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
     """Render a tag vocabulary as ``{inlet,outlet}`` for a container's ``__repr__``,
     eliding past ``limit`` entries with ``...`` so one loud tag scheme cannot push the
-    counts off the line.  Empty tags are dropped, so an untagged mesh reads ``{}``.
-
-    Lives here, at the bottom rung, because all three ladder containers' reprs share it
-    and must render identically -- ``QuadMesh`` / ``HexMesh`` import it directly (they
-    already import ``LineMesh`` from this package).  ``TriMesh`` carries no tags at all
-    and needs none."""
+    counts off the line. Empty tags are dropped, so an untagged mesh reads ``{}``."""
     kept = [t for t in tags if t]
     shown = kept[:limit] + (["..."] if len(kept) > limit else [])
     return "{%s}" % ",".join(shown)
 
 
 class LineMesh:
-    """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a
-    sparse per-line ``element_tags``, and a ``point_tags`` table of tagged end points
-    (``side`` 1-2). Build with ``loft`` / ``line`` / ``arc`` / ``circle``
-    / ``rectangle``."""
+    """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a sparse
+    per-line ``element_tags``, and a ``point_tags`` table of tagged end points (``side``
+    1-2)."""
 
     # local line "edges": row s-1 is side s -> the single local vertex it names.
     EDGE_POINTS = np.array([[0], [1]], dtype=np.int64)
@@ -91,44 +56,9 @@ class LineMesh:
     ) -> None:
         """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), the **required**
         ``lines`` ``(L,2)`` connectivity, the per-line ``interior`` nodes, an optional
-        :class:`PointTags <nekmeshpy.model.tags.PointTags>` naming end points of
-        lines, and an optional :class:`ElementTags
-        <nekmeshpy.model.tags.ElementTags>` naming whichever lines are tagged.
-
-        The argument order is the ladder's: ``(rung below, incidence, interior,
-        side tags, element_tags)``, matching
-        :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` (``lines, quad, flip,
-        interior, ...``) and :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>`
-        (``quads, hex, face_orient, interior, ...``) position for position -- a line element has no orientation bit, so it simply
-        has no ``flip`` / ``face_orient`` slot.
-
-        The container never synthesizes connectivity -- there is no "consecutive
-        chain" default and therefore nothing here that could imply a wrap.  Callers
-        either own their ``lines`` outright (``merge``'s rewelded lines, ``blend``'s
-        copy of ``a.lines``, the quad/hex edge meshes built from
-        ``conform.unique_edges``) or author them with :func:`loft <nekmeshpy.linemesh.assemble.loft>`, which is the only
-        connectivity-generating entry point (``loop=False`` chain / ``loop=True``
-        ring).
-
-        **There is no ``order`` argument anywhere on the ladder.**  ``interior`` is
-        the per-line *private* interior nodes ``(L, order-1, 3)`` in ascending GLL
-        order -- the nodes strictly between each line's two endpoints -- and since a
-        line element has no shared edges or faces, its endpoints (owned by
-        ``points[lines]``) are its only conformal nodes and ``interior`` is the whole
-        high-order state of a ``LineMesh``.  :attr:`order` is therefore *read off*
-        it (``interior.shape[1] + 1``): omit ``interior`` (or pass an empty
-        ``(L,0,3)``) for a linear mesh, pass ``order-1`` nodes per line for anything
-        higher.  Declaring an order that the stored nodes do not support is not
-        rejected, it is unrepresentable.
-
-        The trade this makes: the middle axis is unconstrained, so a caller who
-        builds a wrong-sized ``interior`` now gets a mesh of a *different order*
-        rather than a ``ValueError``.  Only the line count and the trailing 3 are
-        checked here.  Build through a factory or :func:`loft
-        <nekmeshpy.linemesh.assemble.loft>`, which size the block from the order you
-        ask them for.
-
-        ``re2`` export stays linear; only ``vtu`` reads the high-order nodes."""
+        :class:`PointTags <nekmeshpy.model.tags.PointTags>` naming end points of lines,
+        and an optional :class:`ElementTags <nekmeshpy.model.tags.ElementTags>` naming
+        whichever lines are tagged."""
         self.points: PointArray = _as_points(points)
         self.lines: IntArray = np.asarray(lines, dtype=np.int64).reshape(-1, 2)
         L = self.lines.shape[0]
@@ -158,30 +88,14 @@ class LineMesh:
 
     @property
     def order(self) -> int:
-        """Global polynomial order (1 = linear).
-
-        **Derived, not stored** -- ``interior.shape[1] + 1``.  The private interior
-        nodes *are* the whole high-order state of a ``LineMesh``, so the count of
-        them per line is the order, and no container on the ladder stores an order
-        field: :attr:`QuadMesh.order <nekmeshpy.quadmesh.QuadMesh.order>` reads this
-        through its edge ``LineMesh`` and
-        :attr:`HexMesh.order <nekmeshpy.hexmesh.HexMesh.order>` through that.  An
-        order-1 mesh has an empty ``(L,0,3)`` interior and reports 1."""
+        """Global polynomial order (1 = linear)."""
         return int(self.interior.shape[1]) + 1
 
     # -- sizes / topology -----------------------------------------------
     def __repr__(self) -> str:
         """One-line REPL summary: element / point counts, ``order``, and the tag
         vocabulary -- the questions a caller actually has at the prompt, where this
-        toolkit is mostly driven from.  The same field set is rendered by
-        :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>` and
-        :class:`HexMesh <nekmeshpy.hexmesh.HexMesh>` so the three read as a family.
-
-        Deliberately **cheap** -- it reads stored array shapes and the two tag
-        properties only, deriving no topology -- and **total**: any failure degrades to
-        a bare marker instead of raising, because a repr that throws on a half-built or
-        degenerate mesh makes the debugging session it was meant to serve strictly
-        worse."""
+        toolkit is mostly driven from."""
         try:
             return ("<LineMesh %d points, %d lines, order %d, element_tags=%s, "
                     "point_tags=%s>"

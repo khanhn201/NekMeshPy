@@ -1,15 +1,4 @@
-"""Read-only ``HexMesh`` queries -- the operations that leave the ladder.
-
-They take the mesh (or bare connectivity) and return plain arrays, counts, named
-tuples of statistics or formatted text, never another mesh.  This is where the
-topology / validity surface lives (``topology_report``, ``is_watertight``,
-``is_conforming``, ``report``) along with the shared-point view the smoothers drive
-(``weld``, ``classify_points``).
-
-Free functions bound onto :class:`HexMesh <nekmeshpy.hexmesh.hexmesh.HexMesh>` by ``hexmesh/__init__.py``;
-internal toolkit code imports them from here directly rather than through the bound
-``HexMesh.<name>`` sugar.
-"""
+"""Read-only ``HexMesh`` queries -- the operations that leave the ladder."""
 
 from __future__ import annotations
 
@@ -60,12 +49,7 @@ def boundary_points(mesh: HexMesh) -> IntArray:
     return _boundary_points(mesh.hexes)
 
 def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
-    """Per-hex minimum scaled Jacobian ``(n_hexes,)``.
-
-    Defaults to the corner metric (the pinned linear numbers).  With
-    ``high_order=True`` it is sampled at the ``(order+1)**3`` GLL nodes of the
-    curved block (:func:`~nekmeshpy.hexmesh.quality.scaled_jacobian_ho`); at order
-    1 the two agree."""
+    """Per-hex minimum scaled Jacobian ``(n_hexes,)``."""
     from . import quality
     if high_order:
         return quality.scaled_jacobian_ho(mesh, mesh.order)
@@ -81,14 +65,8 @@ def quality_summary(mesh: HexMesh, *, high_order: bool = False) -> QualitySummar
 
 
 class WeldResult(NamedTuple):
-    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld <nekmeshpy.hexmesh.query.weld>`.
-
-    The name is historical.  A ``HexMesh`` is *already* stored shared-point -- one
-    ``(P,3)`` array single-sourced through the whole B-rep ladder -- so nothing is
-    welded here and nothing is copied: these are the container's own live tables,
-    handed over as the flat triple the smoothers, exporters and topology checks
-    want in place of the ladder.
-    """
+    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld
+    <nekmeshpy.hexmesh.query.weld>`."""
 
     #: The mesh's **live** ``(P,3)`` coordinate array.  Assigning into it
     #: (``points[:] = X``) repositions the mesh at every rung; rebinding does not.

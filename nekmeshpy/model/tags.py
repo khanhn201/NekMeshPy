@@ -1,46 +1,4 @@
-"""The two tag tables every rung stores: a side-tag table and :class:`ElementTags`.
-
-The side-tag table has one name per rung, because the entity it names differs:
-:class:`PointTags` on a ``LineMesh``, :class:`EdgeTags` on a ``QuadMesh``,
-:class:`FaceTags` on a ``HexMesh``.  All three are the same three columns and the same
-operations; what differs is the valid ``sides`` range, and that is exactly what earns
-them separate types -- each declares its own ``SIDES`` (2 / 4 / 6) and **validates
-itself at construction**, so a side 6 is a legal ``FaceTags`` row and a rejected
-``EdgeTags`` one.  Only the element *count* is left to the container, through
-``check_within``: it is the mesh's number, not the table's.
-
-**These are not "the boundary".**  The word *boundary* is reserved throughout the
-toolkit for the topological domain boundary -- the facets borne by exactly one element,
-which ``boundary_faces`` / ``boundary_edges`` / ``boundary_points`` compute from
-connectivity.  A side-tag table is the *named subset* of that, and the two genuinely
-differ: an extruded pipe whose wall was never named has 192 boundary faces and 128
-tagged rows.
-
-Both are rung-agnostic *model data* -- they take no container and know nothing about
-lines, quads or hexes beyond an integer element id -- so they live here beside
-``model.physical``'s :class:`~nekmeshpy.model.physical.PhysicalGroup` and
-``model.quality``'s ``QualitySummary`` rather than in a sibling operation module.
-
-**Why they are types and not loose arrays.**  A tagged side is a *row*: an element,
-one of its sides, and a name.  Stored as two parallel arrays, every operation that
-reorders, offsets, filters or concatenates rows has to do it twice, by hand, correctly --
-which is what ``_order_bnd`` used to exist for, three times over.  Here the row is one
-object and those become single calls that cannot desynchronize.
-
-**Why element tags are sparse.**  ``""`` was never a meaningful element tag -- every
-consumer read it as "absent" -- so a dense ``(E,)`` string array spent one slot per
-element to say nothing about most of them.  :class:`ElementTags` stores only the tagged
-ids, so an untagged mesh costs nothing at all, and a wide tag no longer widens the whole
-array (a 16-character tag over 486k hexes was 31 MB of mostly-empty strings).
-
-.. note::
-   ``np.full(n, s, dtype=np.str_)`` and ``np.empty(n, dtype=np.str_)`` both clip to
-   ``<U1`` -- ``np.full(3, "wall", dtype=np.str_)`` yields ``'w'``, silently.  This
-   module never uses either: it builds string arrays with ``np.full(n, s)`` (width
-   inferred from the fill value) or ``np.asarray(seq, dtype=np.str_)`` (width inferred
-   from the sequence).  Keeping that discipline in one file is a large part of why these
-   types exist.
-"""
+"""The two tag tables every rung stores: a side-tag table and :class:`ElementTags`."""
 
 from __future__ import annotations
 
@@ -59,11 +17,7 @@ __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
-    """A read-only *view* of ``arr``.
-
-    Freezing a view rather than ``arr`` itself leaves the caller's own buffer writable,
-    so this hardens the tables against accidental mutation (they are shared by reference
-    across every pass-through operation) without reaching back into caller state."""
+    """A read-only *view* of ``arr``."""
     v = arr.view()
     v.flags.writeable = False
     return v
@@ -81,34 +35,7 @@ def _empty_str() -> StrArray:
 
 @dataclass(frozen=True, eq=False)
 class SideTags:
-    """Shared implementation of the three side-tag tables.
-
-    **Not constructed directly** -- build a :class:`PointTags`, :class:`EdgeTags` or
-    :class:`FaceTags`, whichever rung you are on.  It is documented because that is
-    where the row semantics live; the three subclasses add only their entity and the
-    valid ``sides`` range.  Every operation returns ``type(self)``, so a rung's table
-    stays its own type through sorting, offsetting, filtering and concatenation.
-
-    Rows are ``elements``, ``sides``, ``tags``.
-
-    Row ``r`` names side ``sides[r]`` of element ``elements[r]``.  The side numbering is
-    the rung's own -- 1-2 for a ``LineMesh`` end point, 1-4 for a ``QuadMesh`` edge, 1-6
-    for a ``HexMesh`` face -- and element ids are 0-based.
-
-    Three parallel 1-D columns rather than an ``(Nb,2)`` block plus tags: it keeps
-    :meth:`offset` a plain add, lets consumers gather with ``sides - 1`` directly, and
-    removes the ``int(rows[r, 0])`` idiom from every reader.  :attr:`rows` recovers the
-    paired form for the few callers that want it.
-
-    **Row order is meaningful and is never changed implicitly.**  Construction preserves
-    the order it is given; :meth:`ordered` applies the canonical sort explicitly.  Two
-    consumers depend on this: ``loft`` reads a section's rows in stored order, and the
-    ``.vtu`` writer resolves a node touched by several rows to the *last* one, so a
-    reordering that moved rows tied on ``(element, side)`` would change its output.
-
-    ``eq`` is disabled: the generated ``__eq__`` compares field tuples, which for ndarray
-    fields raises ``ValueError: truth value of an array ... is ambiguous``.  Compare the
-    columns explicitly instead."""
+    """Shared implementation of the three side-tag tables."""
 
     #: How many sides the rung's element has -- 2 / 4 / 6 going up the ladder.  The
     #: subclasses set it, and it is the whole reason they exist as separate types:
@@ -143,17 +70,7 @@ class SideTags:
         object.__setattr__(self, "tags", _frozen(t))
 
     def check_within(self, n_elements: int, what: str) -> None:
-        """Raise if any row names an element the mesh does not have.
-
-        The one check the table cannot make for itself: the side range comes from
-        :attr:`SIDES` and negative ids are always wrong, so both are enforced at
-        construction, but the element **count** is the mesh's, not the table's.  A
-        container calls this with its own count -- the number it alone knows -- rather
-        than the table carrying a copy of it through every ``offset`` and ``concat``,
-        which is a second place for it to go stale.
-
-        Catches the bug class where a ``merge`` forgets to offset one of its blocks,
-        which used to surface only as a wrong tag in the exported file."""
+        """Raise if any row names an element the mesh does not have."""
         if not len(self):
             return
         hi = int(self.elements.max())
@@ -210,10 +127,7 @@ class SideTags:
     # -- operations ------------------------------------------------------
     def ordered(self: T) -> T:
         """The rows stably sorted by ``(element, side)`` -- the canonical storage order.
-
-        Exactly ``np.lexsort((sides, elements))``.  Call it where the old ``_order_bnd``
-        was called and nowhere else: it is what fixes the ``.re2`` boundary block's
-        byte-for-byte order."""
+        """
         if not len(self):
             return self
         p = np.lexsort((self.sides, self.elements))
@@ -252,10 +166,7 @@ class SideTags:
 
 class PointTags(SideTags):
     """Tagged **end points** of a ``LineMesh``'s lines: ``side`` 1-2 -> local vertex
-    ``side - 1``.  See :class:`SideTags` for the shared row semantics.
-
-    Deliberately not re-decorated with ``@dataclass``: it adds no fields, and a second
-    decoration would regenerate ``__repr__`` over the base's summarising one."""
+    ``side - 1``. See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 2
 
@@ -269,25 +180,13 @@ class EdgeTags(SideTags):
 
 class FaceTags(SideTags):
     """Tagged **faces** of a ``HexMesh``'s hexes: ``side`` 1-6 -> the face
-    ``FACE_POINTS[side - 1]``.  See :class:`SideTags` for the shared row semantics.
-
-    These are the rows the ``.re2`` boundary block and the ``.vtu`` ``bc_id`` field are
-    written from -- named faces only, not every face on the domain boundary."""
+    ``FACE_POINTS[side - 1]``. See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 6
 
 
 class TagBuilder(Generic[T]):
-    """Accumulates side-tag rows one at a time, then builds them into ``table_type``.
-
-    Parameterized by the rung's table (``TagBuilder(FaceTags)``) so a factory's loop
-    produces that rung's own type.
-
-    The factories emit rows inside loops over elements and sides, which is what the
-    paired ``bnd.append(...)`` / ``names.append(...)`` idiom used to be.  Backed by plain
-    lists so **insertion order is preserved exactly** -- a dict- or set-backed builder
-    would silently dedupe or reorder rows, and both stored order and ``(element, side)``
-    ties are observable downstream (see :class:`SideTags`)."""
+    """Accumulates side-tag rows one at a time, then builds them into ``table_type``."""
 
     def __init__(self, table_type: type[T]) -> None:
         self._type: type[T] = table_type
@@ -302,10 +201,7 @@ class TagBuilder(Generic[T]):
         self._tags.append(str(tag))
 
     def add_if_tagged(self, element: int, side: int, tag: str) -> None:
-        """Append one row only if ``tag`` is non-empty.
-
-        Deliberately separate from :meth:`add`: the call sites' skip conditions are not
-        all the same, and folding them together is how a behaviour change sneaks in."""
+        """Append one row only if ``tag`` is non-empty."""
         if tag:
             self.add(element, side, tag)
 
@@ -335,22 +231,7 @@ class TagBuilder(Generic[T]):
 
 @dataclass(frozen=True, eq=False)
 class ElementTags:
-    """A mesh's per-element region tags, stored **sparsely**: only tagged elements.
-
-    ``ids`` are the tagged elements (strictly ascending, unique) and ``tags[i]`` names
-    ``ids[i]``.  Every tag is non-empty -- an element is either named or absent, which is
-    what ``""`` always meant in the dense array this replaces.  An untagged mesh is
-    ``ElementTags.empty()``, which stores no ids and no tags at all.
-
-    .. warning::
-       ``len()`` is the number of **tagged** elements, not the mesh's element count.
-       Use the container's own ``n_lines`` / ``n_quads`` / ``n_hexes`` for that.
-
-    Construction normalizes: empty tags are dropped, rows are sorted by id, and duplicate
-    ids are rejected.  That is safe here (unlike the side-tag tables) because element
-    tags are keyed by id -- nothing downstream observes row order.
-
-    ``eq`` is disabled for the same reason as :class:`SideTags`."""
+    """A mesh's per-element region tags, stored **sparsely**: only tagged elements."""
 
     ids: IntArray
     tags: StrArray
@@ -378,21 +259,13 @@ class ElementTags:
     # -- construction ----------------------------------------------------
     @classmethod
     def empty(cls) -> ElementTags:
-        """The nothing-tagged table -- what an untagged mesh stores.
-
-        Spelt the same way as :meth:`SideTags.empty` on purpose: both tag slots of a
-        container are defaulted on adjacent lines, so one name for "the empty one" at
-        both keeps that pair readable."""
+        """The nothing-tagged table -- what an untagged mesh stores."""
         return cls(np.zeros(0, np.int64), _empty_str())
 
     @classmethod
     def from_dense(cls, values: Sequence[str] | StrArray, n: int | None = None,
                    what: str = "elements") -> ElementTags:
-        """From a dense per-element array where ``""`` means untagged.
-
-        ``n``, when given, is the element count the array must match -- the bridge for
-        every factory whose public argument stays dense.  ``what`` names the rung's
-        elements so the error reads in the caller's own vocabulary."""
+        """From a dense per-element array where ``""`` means untagged."""
         v = _str_array(values)
         if n is not None and v.shape[0] != n:
             raise ValueError("element_tags length (%d) must match %s (%d)"
@@ -421,10 +294,7 @@ class ElementTags:
 
     # -- views -----------------------------------------------------------
     def dense(self, n: int) -> StrArray:
-        """The equivalent dense ``(n,)`` array, ``""`` where untagged.
-
-        For the few consumers that genuinely want one element per slot; storage stays
-        sparse."""
+        """The equivalent dense ``(n,)`` array, ``""`` where untagged."""
         out: StrArray = (np.full(n, "") if not len(self)
                          else np.full(n, "", dtype=self.tags.dtype))
         if len(self):
@@ -509,11 +379,7 @@ class ElementTags:
         return ElementTags(m[self.ids], self.tags)
 
     def check_within(self, n_elements: int, what: str) -> None:
-        """Raise if any tagged id names an element the mesh does not have.
-
-        The element **count** is the only thing about itself this table cannot know --
-        negative ids are rejected at construction.  See
-        :meth:`SideTags.check_within`, which this mirrors."""
+        """Raise if any tagged id names an element the mesh does not have."""
         if len(self) and int(self.ids[-1]) >= n_elements:
             raise ValueError("element_tags names element %d but there are only %d %s"
                              % (int(self.ids[-1]), n_elements, what))

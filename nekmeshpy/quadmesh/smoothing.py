@@ -1,10 +1,4 @@
-"""Cross-section smoothing strategies (free functions + registry).
-
-Each strategy repositions interior points on a single ``QuadMesh`` before it is
-swept, keeping the boundary (edges borne by a single quad) fixed.  Strategies are
-callables ``fn(qm, **opts) -> qm`` registered by name via
-``register_section_smoothing`` and looked up by ``set_section_smoothing``.
-"""
+"""Cross-section smoothing strategies (free functions + registry)."""
 
 from __future__ import annotations
 
@@ -126,12 +120,7 @@ def _winslow(qm: QuadMesh, **opts: Any) -> QuadMesh:
 
 def set_section_smoothing(qm: QuadMesh, method: str | None, **opts: Any) -> QuadMesh:
     """Reposition a section's interior points in place via a registered strategy
-    (built-ins: bilinear, conduction, winslow).  Extra keywords are forwarded.
-
-    The relaxers move only the corner graph, so a repositioning method on an
-    ``order > 1`` section is rejected -- high-order smoothing is not implemented yet
-    (the no-op ``bilinear``/``tfi``/``none`` strategies stay allowed at any order,
-    since they leave every node in place)."""
+    (built-ins: bilinear, conduction, winslow). Extra keywords are forwarded."""
     m = (method or "conduction").lower()
     fn = SECTION_METHODS.get(m)
     if fn is None:

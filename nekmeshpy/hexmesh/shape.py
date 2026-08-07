@@ -1,11 +1,5 @@
-"""Shape factories for the ``HexMesh`` rung -- the ones owning a *shape model*
-rather than being generic over any input.
-
-Open and closed shapes are merged into one namespace here: the split was a
-storage distinction, not a caller-facing one.  Each factory meshes its input
-**exactly** -- no factory resamples what it is given -- which is why the
-samplings a caller has to derive for one live here beside it.
-"""
+"""Shape factories for the ``HexMesh`` rung -- the ones owning a *shape model* rather
+than being generic over any input."""
 
 from __future__ import annotations
 
@@ -54,14 +48,7 @@ def _side_map(quads: IntArray) -> dict[tuple[int, int], list[int]]:
 
 def _patch_walk(quads: IntArray, sides: dict[tuple[int, int], list[int]],
                 q0: int, l0: int, who: str) -> IntArray:
-    """The ``(A, B, 2)`` grid of ``(quad, origin)`` states of one structured patch.
-
-    Walks out from quad ``q0`` with the patch's origin corner at its local index
-    ``l0``, taking ``a`` along ``l -> l+1`` and ``b`` along ``l -> l+3``.  The walk
-    stops where a side has no second quad, which is exactly what separates the three
-    patches of a triangular face: their common sides are the spokes to the face
-    centre, and a walk started at a corner reaches one only from inside its own
-    patch."""
+    """The ``(A, B, 2)`` grid of ``(quad, origin)`` states of one structured patch."""
     def step(state: tuple[int, int], axis: int) -> tuple[int, int] | None:
         q, l = state
         u, v = ((l + 1) % 4, (l + 2) % 4) if axis == 0 else ((l + 3) % 4, (l + 2) % 4)
@@ -91,11 +78,7 @@ def _patch_walk(quads: IntArray, sides: dict[tuple[int, int], list[int]],
 
 def _lattice(patch: IntArray, blocks: PointArray, order: int) -> PointArray:
     """Stitch a patch's ``(A, B)`` grid of ``(order+1)**2`` element blocks into one
-    ``(A*order+1, B*order+1, 3)`` node lattice in the patch's own frame.
-
-    An element's block is stored ``i`` fastest with its corner ``0`` at ``(0,0)``, so
-    a patch cell whose origin is local corner ``l`` enters rotated by ``l`` quarter
-    turns."""
+    ``(A*order+1, B*order+1, 3)`` node lattice in the patch's own frame."""
     g: IntArray = np.arange(order + 1, dtype=np.int64)
     # ``(order+1, order+1)`` index grids: ia counts up axis a, ib up axis b
     ia: IntArray = np.repeat(g[:, None], order + 1, axis=1)
@@ -117,17 +100,7 @@ def _lattice(patch: IntArray, blocks: PointArray, order: int) -> PointArray:
 
 def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
     """Recover a triangular face as its three patches, each a node lattice indexed
-    **from its corner**: ``[0, 0]`` is the corner and ``[-1, -1]`` the face centre.
-
-    The structure is read off the connectivity rather than declared: a triangle
-    meshed as three structured patches has exactly three corner nodes lying on a
-    single quad and exactly one interior node lying on three.  Anything else is
-    rejected rather than silently half-meshed.
-
-    Each walk starts at the **centre**, not at a corner.  From a corner the patch's
-    two far sides are the spokes to the centre, which are interior edges with a quad
-    on each side, so the walk would run straight through into the neighbouring patch;
-    from the centre the two far sides are the face's own boundary, where it stops."""
+    **from its corner**: ``[0, 0]`` is the corner and ``[-1, -1]`` the face centre."""
     quads: IntArray = qm.quads
     val = np.bincount(quads.ravel(), minlength=qm.points.shape[0])
     corners: IntArray = np.flatnonzero(val == 1)
@@ -163,14 +136,7 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
 def _corner_incidence(rec: Sequence[Sequence[PointArray]], tol: float,
                       who: str) -> list[list[tuple[int, int]]]:
     """``[[(face, patch), x3], x4]`` -- the three patches meeting at each of the
-    tetrahedron's four corners.
-
-    ``rec[fi][k]`` is face ``fi``'s patch ``k``, indexed from its own corner, so
-    ``rec[fi][k][0, 0]`` *is* that corner and the four corners are recovered by
-    matching those points across faces within ``tol``.  Nothing about the corners is
-    declared by the caller; a set that does not come out as 4 corners each on exactly
-    3 faces, with no face touching one twice, does not bound a tetrahedron and is
-    rejected here rather than meshed into a twisted block."""
+    tetrahedron's four corners."""
     pts: list[Point] = []
     ids: list[list[int]] = []
     for lats in rec:
@@ -204,13 +170,7 @@ def _corner_incidence(rec: Sequence[Sequence[PointArray]], tol: float,
 
 
 def _coons3(f: dict[tuple[int, int], PointArray]) -> PointArray:
-    """The transfinite interior of a block from its six face lattices.
-
-    ``f[(axis, end)]`` is the face at ``end`` (0 or 1) of ``axis``, indexed by the
-    other two axes in increasing order.  Faces minus edges plus corners -- the
-    standard 3-D Coons sum -- so all six faces come back exactly, which is what lets
-    neighbouring blocks weld: each shared face is computed from the same boundary data
-    on both sides."""
+    """The transfinite interior of a block from its six face lattices."""
     ni, nj = f[(2, 0)].shape[0], f[(2, 0)].shape[1]
     nk = f[(0, 0)].shape[1]
     ti: PointArray = _lin(ni)[:, None, None, None]
@@ -237,12 +197,7 @@ def _coons3(f: dict[tuple[int, int], PointArray]) -> PointArray:
 
 
 def _face_tag(qm: QuadMesh, who: str) -> str:
-    """A face's single ``element_tags`` name, or ``""`` if it carries none.
-
-    A tetrahedron side is one boundary patch, so its tag is one name: a partly tagged
-    face is a caller mistake worth naming rather than a per-quad channel worth
-    plumbing.  Tagging at the lowest level -- on the face that becomes the wall --
-    is the toolkit-wide convention."""
+    """A face's single ``element_tags`` name, or ``""`` if it carries none."""
     names = qm.element_group_tags
     if len(names) > 1:
         raise ValueError(
@@ -256,20 +211,7 @@ def _face_tag(qm: QuadMesh, who: str) -> str:
 
 
 def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
-    """A hex block from its full ``(ni*N+1, nj*N+1, nk*N+1, 3)`` node lattice.
-
-    Every node is *placed* from ``lat``; nothing is subdivided, which is what
-    ``from_grid`` cannot do -- it takes corners and blends straight, so at
-    ``order > 1`` its edges are chords.  Assembled through the three rungs' ``loft``
-    (``LineMesh.loft(interior=)`` -> ``QuadMesh.loft(sweep_nodes=)`` ->
-    ``HexMesh.loft(sweep_nodes=)``), so the B-rep, the numbering and the D4 face codes
-    all come from the existing sweep primitive rather than being re-derived here.
-
-    ``tags`` names the block's three **outer** sides -- the faces at ``i = 0``,
-    ``j = 0`` and ``k = 0``, which are the three tetrahedron sides at this corner.
-    Each rides a channel the rung below already has: the ``i = 0`` side from a
-    boundary *point* tag on every line profile, the ``j = 0`` side from each section
-    sweep's near cap, and the ``k = 0`` side from the block sweep's near cap."""
+    """A hex block from its full ``(ni*N+1, nj*N+1, nk*N+1, 3)`` node lattice."""
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
@@ -302,14 +244,7 @@ def _match(a: PointArray, b: PointArray, tol: float) -> bool:
 def _orient(a: tuple[PointArray, str], b: tuple[PointArray, str],
             c: tuple[PointArray, str], tol: float,
             who: str) -> tuple[tuple[PointArray, str], ...]:
-    """Put the three patches meeting at one corner on a common axis frame.
-
-    ``a`` fixes the frame: its two axes are tetrahedron edges ``e0`` and ``e1``.  The
-    other two are then identified by *which of their own edge curves matches* ``a``'s
-    -- the one sharing ``e1`` is returned second (indexed ``e1, e2``) and the one
-    sharing ``e0`` third (indexed ``e0, e2``).  Comparing curves rather than trusting
-    the argument order is what lets a caller hand the four faces in any order, so each
-    patch's **tag travels with it** rather than with its position."""
+    """Put the three patches meeting at one corner on a common axis frame."""
     e0, e1 = a[0][:, 0], a[0][0, :]
     out: dict[int, tuple[PointArray, str]] = {}
     for p, tag in (b, c):
@@ -328,36 +263,7 @@ def _orient(a: tuple[PointArray, str], b: tuple[PointArray, str],
 
 def tetra(faces: Sequence[QuadMesh], *,
           center: Point | Sequence[float] | None = None) -> HexMesh:
-    """Mesh the curvilinear **tetrahedron** enclosed by four triangular ``faces``.
-
-    Each face is a ``QuadMesh`` triangle meshed as **three structured patches meeting
-    at one interior node** -- the standard quad split of a triangle, refined.  The
-    four must share their six edges pairwise and meet at four corners; all of that is
-    recovered from the connectivity, so nothing has to be declared and a mismatch is a
-    loud ``ValueError`` rather than a silently twisted block.
-
-    The fill is the classic tetrahedron split -- **one hex block per corner** -- and
-    each block inherits whatever split the faces already carry: along each of the
-    three edges at its corner it spans that edge's portion up to the node where the
-    two incident patches meet.  A block's three outer sides *are* the patches of the
-    three faces at that corner, taken verbatim and never re-interpolated, so the mesh
-    is exact wherever the input faces are.  Its three inner sides are transfinite
-    patches of two face spokes and two chords into the centre, computed identically
-    from both blocks that share them, so they weld.
-
-    ``center`` defaults to the centroid of the four face centres.  Pass one when that
-    is a poor choice: a tetrahedron with three similar faces and one much larger has
-    its natural centroid near the plane of the three small faces' centres, and three
-    nearly coplanar edges at a corner is a flat cell.
-
-    Order N rides through: each face's own nodes are read off its B-rep with the
-    conformal walk, and each block is assembled from its full node lattice rather than
-    from corners, so a curved input face gives a curved block at any order.
-
-    This is what fills the crotch of a pipe junction, where three quadrant faces meet
-    a patch of pipe wall -- an octant of a 3-D O-grid is a tetrahedron in exactly this
-    sense, its ``n**3`` core block and three ``n x n x Nradial`` slabs being the four
-    corner blocks (see ``examples/quadrant_pipe_tjunction.py``)."""
+    """Mesh the curvilinear **tetrahedron** enclosed by four triangular ``faces``."""
     who = "HexMesh.tetra"
     fs = list(faces)
     if len(fs) != 4:

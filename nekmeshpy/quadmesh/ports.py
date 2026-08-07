@@ -1,25 +1,5 @@
-"""A cross-section together with the two facts a bare section cannot state about
-itself: **which way it faces** and **where its axis is**.
-
-A :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>` disc knows its own plane, but not the outward side of it, and its
-centroid is not its centre -- an O-grid's centroid misses the axis point the boundary
-loop was built about by a small residual.  Both gaps are ones every caller joining two
-pieces has had to close by guessing:
-
-* :func:`hexmesh.bridge <nekmeshpy.hexmesh.lift.bridge>` infers each disc's outward
-  direction from the line between the two centroids.  That is right whenever the two
-  really do face each other and silently wrong when they do not -- it flips one of
-  them and folds the connector, with nothing to catch it.
-* A sweep started from a disc's centroid rather than its axis point puts its first
-  station slightly off the very disc it was meant to reproduce, because ``"fixed"``
-  orientation makes the section exactly perpendicular to the tangent it is handed.
-
-A ``Port`` carries both, so the joins can *check* rather than guess: that two ports
-face each other, and that their radii agree.
-
-Free functions bound onto :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>` by
-``quadmesh/__init__.py``; internal toolkit code imports them from here directly.
-"""
+"""A cross-section together with the two facts a bare section cannot state about itself:
+**which way it faces** and **where its axis is**."""
 
 from __future__ import annotations
 
@@ -39,14 +19,7 @@ NORMAL_TOL = 1e-12
 @dataclass(frozen=True, eq=False)
 class Port:
     """An open end of a meshed component: its cross-section, the outward direction, the
-    axis point, and the nominal radius.
-
-    ``eq=False`` for the same reason the tag tables use it: the generated ``__eq__``
-    would compare ndarray fields and raise on the ambiguous truth value.
-
-    Validates itself at construction -- a non-unit normal, a non-``(3,)`` vector or a
-    non-positive radius is a ``ValueError`` here rather than a bad mesh later.  Build
-    one with :func:`port`, which derives the parts it can."""
+    axis point, and the nominal radius."""
 
     #: The cross-section itself.
     section: QuadMesh
@@ -100,17 +73,7 @@ class Port:
 def port(section: QuadMesh, *, outward: Vec3 | Sequence[float],
          center: Point | Sequence[float] | None = None,
          radius: float | None = None) -> Port:
-    """A :class:`Port` from a section plus the side that faces out.
-
-    ``outward`` need not be exact -- the normal is the section's own least-squares
-    fitted plane normal, and ``outward`` only picks which of its two signs is the
-    outward one.  So the path tangent, or the axis the component was built along, will
-    do; the fit supplies the precision.
-
-    ``center`` defaults to the centroid and ``radius`` to the farthest point from it.
-    Name ``center`` explicitly when the section has a distinguished axis point -- for
-    an O-grid disc, the centre its boundary loop was built about -- because the
-    centroid is near it but not on it."""
+    """A :class:`Port` from a section plus the side that faces out."""
     n = plane_normal(section, hint=outward, check=False)
     c: Point = (np.asarray(section.points, dtype=float).mean(axis=0)
                 if center is None else np.asarray(center, dtype=float).reshape(-1))

@@ -1,23 +1,4 @@
-"""A declarative 2-D turtle-walk path builder.
-
-A path is a table of moves -- ``("line", length)`` or ``("arc", radius, signed
-degrees)`` -- each starting where the previous one ended *and* keeping its heading,
-so the walk is C1 by construction with no fillet fitting or corner rounding. Exact
-closed forms (a straight's own length, ``radius * angle`` for an arc) make the
-arc-length parametrization ``s in [0, 1]`` exact to machine precision, and the
-**analytic** tangent -- rather than one differenced from the sampled centerline --
-keeps a :func:`hexmesh.lift.sweep <nekmeshpy.hexmesh.lift.sweep>` frame from tilting at every
-straight/arc junction, where the path's curvature jumps.
-
-The walk itself is pure 2-D turn-and-heading algebra.  :func:`embed` then lifts it
-onto a plane in space -- in-plane axes plus an origin -- yielding a :class:`SpacePath`
-whose callables are what a sweep actually consumes.  That lift is linear algebra and
-nothing else, so this module still carries no geometry-specific meshing content; it
-lives here rather than in each caller because the one thing every hand-written copy
-of it has to get right is that the origin enters :attr:`~SpacePath.centerline` and
-**not** :attr:`~SpacePath.tangent` -- a tangent is a direction, and translating it
-tilts every frame along the sweep.
-"""
+"""A declarative 2-D turtle-walk path builder."""
 
 from __future__ import annotations
 
@@ -59,13 +40,8 @@ class TurtlePath(NamedTuple):
 
 def turtle_path(moves: Sequence[Move], start: Sequence[float] = (0.0, 0.0),
                 heading: float = 0.0) -> TurtlePath:
-    """Walk ``moves`` from ``start`` heading ``heading`` (radians, measured from
-    ``+x``) into a :class:`TurtlePath`.
-
-    A line's move is ``("line", length)``; an arc's is ``("arc", radius,
-    signed_degrees)`` (positive = counter-clockwise). Each segment starts at the
-    previous one's endpoint and heading, so the path is continuous and C1 by
-    construction."""
+    """Walk ``moves`` from ``start`` heading ``heading`` (radians, measured from ``+x``)
+    into a :class:`TurtlePath`."""
     is_arc, p0, direction, center, radius, theta0, dtheta, length = (
         [], [], [], [], [], [], [], [])
     p: FloatArray = np.asarray(start, dtype=float)
@@ -117,10 +93,9 @@ def turtle_path(moves: Sequence[Move], start: Sequence[float] = (0.0, 0.0),
     breaks = cum[1:-1] / total       # normalized s of every segment junction
 
     def locate(s: FloatArray) -> tuple[FloatArray, FloatArray]:
-        """Dispatch normalized arc lengths onto ``(segment index, arc length into
-        it)`` -- both closed forms below start here, via a ``searchsorted`` of the
-        cumulative table, so nothing is ever evaluated with a neighbour's
-        geometry."""
+        """Dispatch normalized arc lengths onto ``(segment index, arc length into it)``
+        -- both closed forms below start here, via a ``searchsorted`` of the cumulative
+        table, so nothing is ever evaluated with a neighbour's geometry."""
         t = np.clip(np.asarray(s, dtype=float).ravel(), 0.0, 1.0) * total
         idx = np.clip(np.searchsorted(cum, t, side="right") - 1, 0, len_a.size - 1)
         return idx, t - cum[idx]
@@ -135,10 +110,8 @@ def turtle_path(moves: Sequence[Move], start: Sequence[float] = (0.0, 0.0),
 
     def tangent(s: FloatArray) -> FloatArray:
         """The analytic derivative of :func:`centerline`: a straight's is its own
-        constant direction; an arc's is the radius vector turned a quarter turn in
-        the direction of travel. Both are already unit length -- differencing the
-        sampled centerline instead is only O(h**2) and worst exactly at a
-        straight/arc junction, where the curvature jumps."""
+        constant direction; an arc's is the radius vector turned a quarter turn in the
+        direction of travel."""
         idx, loc = locate(s)
         sgn = np.sign(dth_a[idx])
         theta = th0_a[idx] + sgn * loc / rad_a[idx]
@@ -149,13 +122,9 @@ def turtle_path(moves: Sequence[Move], start: Sequence[float] = (0.0, 0.0),
 
 
 class SpacePath(NamedTuple):
-    """A path **in space**, exposed as continuous callables of normalized arc length
-    ``s in [0, 1]`` -- the 3-D counterpart of :class:`TurtlePath` and what
-    :func:`hexmesh.lift.sweep_path <nekmeshpy.hexmesh.lift.sweep_path>` consumes.
-
-    Built by :func:`embed` from a planar walk, but nothing here assumes planarity: any
-    pair of vectorized ``(K,) -> (K,3)`` callables plus a length and a break table is a
-    valid ``SpacePath``."""
+    """A path **in space**, exposed as continuous callables of normalized arc length ``s
+    in [0, 1]`` -- the 3-D counterpart of :class:`TurtlePath` and what
+    :func:`hexmesh.lift.sweep_path <nekmeshpy.hexmesh.lift.sweep_path>` consumes."""
 
     #: ``(K,)`` in ``[0, 1]`` -> ``(K, 3)`` points.
     centerline: Callable[[FloatArray], PointArray]
@@ -185,19 +154,7 @@ def _plane_axis(vector: Vec3 | Sequence[float], name: str) -> Vec3:
 def embed(path: TurtlePath, *, u: Vec3 | Sequence[float], v: Vec3 | Sequence[float],
           origin: Point | Sequence[float] = (0.0, 0.0, 0.0)) -> SpacePath:
     """Lift a 2-D :class:`TurtlePath` onto the plane spanned by ``u`` and ``v`` through
-    ``origin``: the walk's own ``(x, y)`` becomes ``origin + x*u + y*v``.
-
-    ``u`` and ``v`` must be orthonormal.  They are applied verbatim rather than
-    normalized, because a non-unit axis would rescale the walk -- silently making the
-    arc lengths in :attr:`~SpacePath.total_length` and
-    :attr:`~SpacePath.break_fractions` disagree with the curve they now describe, which
-    is exactly the sort of error a sweep turns into a mesh instead of an exception.
-
-    ``origin`` enters :attr:`~SpacePath.centerline` and **not**
-    :attr:`~SpacePath.tangent`.  That asymmetry is the whole reason this is a shared
-    function: a tangent is a direction, so translating it would tilt it, and every
-    frame built along the sweep inherits the tilt -- the section stops being
-    perpendicular to the path and the wall drifts off the true surface."""
+    ``origin``: the walk's own ``(x, y)`` becomes ``origin + x*u + y*v``."""
     U = _plane_axis(u, "u")
     V = _plane_axis(v, "v")
     dot = float(U @ V)

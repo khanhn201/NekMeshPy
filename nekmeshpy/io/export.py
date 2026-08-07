@@ -1,12 +1,4 @@
-"""Export / generic-view free functions for a ``HexMesh``.
-
-Exports to a shared-point ``Mesh``, meshio, native Nek ``.re2`` / field file
-(``<prefix>0.f00001``), or VTK XML (``.vtu``). Each writer takes the **full** output
-filename, extension included. The ``.vtu`` writer emits high-order VTK Lagrange cells
-at ``order > 1`` and the Nek field writer emits the full GLL node block; ``.re2``
-always stays linear. The ``groups`` parameter maps each
-boundary name to a Nek BC code and tag.
-"""
+"""Export / generic-view free functions for a ``HexMesh``."""
 
 from __future__ import annotations
 
@@ -43,12 +35,7 @@ GroupsArg = Union[PhysicalGroups, Mapping[str, str], None]
 
 
 def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
-    """Normalise the ``groups`` argument to a ``PhysicalGroups``.
-
-    A ``PhysicalGroups`` passes through; a ``{name: nek_code}`` mapping becomes a
-    registry with 1-based tags in insertion order; ``None`` auto-numbers the mesh's
-    distinct boundary names.
-    """
+    """Normalise the ``groups`` argument to a ``PhysicalGroups``."""
     if isinstance(groups, PhysicalGroups):
         return groups
     if groups is None:
@@ -115,9 +102,8 @@ def _str_to_double(s: str) -> float:
 
 def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
     """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
-    included -- nothing is appended).  The mesh is written **linear** at any order:
-    Nek's re2 has no high-order format, so only the 8 corners of each hex are
-    emitted."""
+    included -- nothing is appended). The mesh is written **linear** at any order: Nek's
+    re2 has no high-order format, so only the 8 corners of each hex are emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     face_tags = mesh.face_tags
@@ -151,26 +137,8 @@ _FLD_ETAG = 6.54321        # endian-identification float32, as in ``.re2``
 
 def to_fld(mesh: HexMesh, filename: str, *,
            time: float = 0.0, istep: int = 0, wdsz: int = 8) -> HexMesh:
-    """Write the binary Nek5000 field file (``<prefix>0.f00001``) to ``filename``
-    (the **full** name -- nothing is appended).
-
-    This is the **high-order** geometry export.  Unlike ``.re2``, which has no
-    high-order format and so ships only the 8 corners of each hex, the field format
-    stores a full ``lx1*ly1*lz1`` block of **GLL** nodes per element -- exactly what
-    this toolkit's B-rep holds at ``order = N`` (``lx1 = N+1``).  The nodes are
-    written in Nek's own per-element lexicographic order (``i`` fastest, then ``j``,
-    then ``k``), which is the ordering the ``conform.conformal_*`` walk already
-    produces, so the block is handed over without a permutation.
-
-    Only ``fields = "X"`` is written: a mesh carries geometry and nothing else, so
-    there is no solution data to emit.  The file is little-endian; ``wdsz`` selects
-    single (``4``) or double (``8``) precision for the coordinates.  The trailing
-    per-element min/max metadata block that Nek writes for 3-D files is emitted too,
-    always in single precision.
-
-    Format reference: Nek5000's ``#std`` header + endian tag + ``int32`` element map
-    + field data + min/max metadata.
-    """
+    """Write the binary Nek5000 field file (``<prefix>0.f00001``) to ``filename`` (the
+    **full** name -- nothing is appended)."""
     if wdsz not in (4, 8):
         raise ValueError("wdsz must be 4 (single) or 8 (double), got %r" % (wdsz,))
     order = mesh.order
@@ -250,15 +218,8 @@ def _lagrange_curve_perm(order: int) -> IntArray:
 
 def _lagrange_quad_perm(order: int) -> IntArray:
     """Map our lexicographic (``i`` fastest, index ``i + (order+1)*j``) quad nodes to
-    the VTK Lagrange-quadrilateral order: 4 corners, then the four edges
-    (bottom / right / top / left), then the interior nodes (``i`` fastest).
-
-    The corners run CCW but **the edges do not**: ``PointIndexFromIJK`` in VTK's
-    ``vtkHigherOrderQuadrilateral`` numbers the top edge by ascending ``i`` and the
-    left edge by ascending ``j``, i.e. both in the *axis* direction rather than in the
-    CCW traversal direction.  Reversing them (which is what a CCW reading suggests) is
-    a no-op at ``order == 2`` -- each edge run is a single node -- and only corrupts
-    the cell from ``order == 3`` on."""
+    the VTK Lagrange-quadrilateral order: 4 corners, then the four edges (bottom / right
+    / top / left), then the interior nodes (``i`` fastest)."""
     n = order
     row = n + 1
 
@@ -287,27 +248,7 @@ def _unwelded(n_elem: int, m: int) -> IntArray:
 
 def _to_equispaced(nodes: PointArray, conn_ho: IntArray,
                    order: int, dim: int) -> PointArray:
-    """Re-place the conformal node array on **equispaced** parameters.
-
-    VTK's Lagrange cells are *defined* on an equispaced node lattice -- there is no
-    GLL cell type in VTK (``VTK_BEZIER_*`` takes control points, also not GLL).  The
-    toolkit stores GLL nodes, so handing them over verbatim tells the reader the wrong
-    parametrization and it reconstructs a different polynomial: measured on a unit cube
-    at order 3, VTK renders the *identity* map with a 7.4e-2 excursion, one hump per
-    element -- the visible crease at element joints.  At ``order == 2`` the two lattices
-    coincide, which is why the artifact only appears from order 3 on.
-
-    This is a change of nodal basis, not a resampling loss: each element's polynomial is
-    one object, and it is re-read at ``order+1`` different parameters per axis, so the
-    geometry is preserved exactly (to float round-off) and only the *labels* change.
-
-    Shared entities stay consistent because the interpolation is a tensor product and
-    the uniform/GLL lattices agree at ``0.0``/``1.0``: a node on a shared edge or face is
-    evaluated at the boundary parameter in the transverse directions, which selects that
-    entity's own nodes alone.  Both incident elements therefore compute the same value
-    from the same data (differing only in float summation order, ~1e-16), so scattering
-    into the shared array is well-defined whichever element writes last.
-    """
+    """Re-place the conformal node array on **equispaced** parameters."""
     g = gll_nodes(order)
     u = uniform_spacing(order)
     if np.array_equal(g, u):                 # order <= 2: nothing to relabel
@@ -327,16 +268,7 @@ def _hex_arrays(mesh: HexMesh,
                 g: PhysicalGroups) -> tuple[PointArray, IntArray, int, IntArray]:
     """Hex nodes + ``bc_id``: linear un-welded ``VTK_HEXAHEDRON`` at ``order == 1``, a
     conformal (shared-node) ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per
-    cell) above it, whose face nodes inherit the boundary face's tag.
-
-    ``bc_id`` precedence is the un-welded writer's rule, applied in the shared-node
-    numbering: the boundary rows are scattered in ``mesh.face_tags`` order and the
-    **last row to touch a node wins** (this is exactly how two boundary faces sharing an
-    edge *within* one hex have always been resolved).  Welding widens the same rule
-    across elements: an untagged element never writes, so a node shared by a tagged face
-    and an untagged neighbour keeps its tag; where two *differently* tagged faces of
-    different elements meet, the single shared node necessarily carries one of the two
-    tags -- the later boundary row's."""
+    cell) above it, whose face nodes inherit the boundary face's tag."""
     if mesh.order == 1:
         elements = mesh.points[mesh.hexes]               # (N,8,3) per-element coords
         N = elements.shape[0]
@@ -402,9 +334,7 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
                *, bc_out: IntArray | None = None) -> None:
     """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
     ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order
-    (consecutive blocks when the nodes are un-welded, shared ids when conformal).
-    ``bc_out``, if given, is one value per point, written as ``bc_id`` PointData.  The
-    XML container renders VTK Lagrange cells reliably in ParaView / VisIt."""
+    (consecutive blocks when the nodes are un-welded, shared ids when conformal)."""
     P = X.shape[0]
     N, m = conn.shape
     with open(fname, "w") as fid:
@@ -451,10 +381,7 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
 # -- .vtu (XML; VTK Lagrange cells render reliably in ParaView / VisIt) --
 def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
-    ``bc_id`` tags.
-
-    At ``order == 1`` each hex is a linear ``VTK_HEXAHEDRON``; at ``order > 1`` a
-    ``VTK_LAGRANGE_HEXAHEDRON`` carrying the hex's ``(order+1)**3`` curved GLL nodes."""
+    ``bc_id`` tags."""
     X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
     _write_vtu(fname, X, conn, cell_type, bc_out=bc_out)
     return mesh
@@ -462,9 +389,7 @@ def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
 
 def line_to_vtu(mesh: LineMesh, fname: str) -> LineMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``LineMesh``, un-welded (one
-    node block per line element).  At ``order == 1`` each element is a ``VTK_LINE`` (2
-    nodes); at ``order > 1`` a ``VTK_LAGRANGE_CURVE`` carrying the element's
-    ``order+1`` GLL nodes -- so a high-order ``circle`` renders as its true arc."""
+    node block per line element)."""
     X, conn, cell_type = _line_arrays(mesh)
     _write_vtu(fname, X, conn, cell_type)
     return mesh
@@ -472,10 +397,7 @@ def line_to_vtu(mesh: LineMesh, fname: str) -> LineMesh:
 
 def quad_to_vtu(mesh: QuadMesh, fname: str) -> QuadMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, un-welded (one
-    node block per quad).  At ``order == 1`` each quad is a ``VTK_QUAD`` (4 CCW nodes);
-    at ``order > 1`` a ``VTK_LAGRANGE_QUADRILATERAL`` carrying the element's
-    ``(order+1)**2`` GLL nodes -- so a high-order ``sphere`` renders as its true
-    surface."""
+    node block per quad)."""
     X, conn, cell_type = _quad_arrays(mesh)
     _write_vtu(fname, X, conn, cell_type)
     return mesh

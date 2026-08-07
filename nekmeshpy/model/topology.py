@@ -1,9 +1,4 @@
-"""Mesh topology / validity checks, decoupled from the mesh containers.
-
-Free functions on the shared-point representation: ``hex_report`` /
-``is_watertight`` for all-hex volume meshes, ``surface_report`` / ``is_closed``
-for triangle surface meshes.  Both reports also count connected components.
-"""
+"""Mesh topology / validity checks, decoupled from the mesh containers."""
 
 from __future__ import annotations
 
@@ -22,13 +17,7 @@ _FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
 
 
 class TopologyReport(NamedTuple):
-    """Facet inventory and validity verdicts for an all-hex mesh.
-
-    Returned by :func:`hex_report` and by ``HexMesh.topology_report()``.  There is
-    no ``kind`` discriminator: the dict this replaced carried ``"kind": "hex"``
-    only so :func:`format_report` could tell a hex report from a surface one, and
-    the type now says that.
-    """
+    """Facet inventory and validity verdicts for an all-hex mesh."""
 
     #: Number of hex elements.
     n_elements: int
@@ -55,11 +44,7 @@ class TopologyReport(NamedTuple):
 
 # -- shared helpers -----------------------------------------------------
 def _count_components(n: int, edges: IntArray) -> int:
-    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges.
-
-    SciPy's union-find rather than a hand-rolled one: the Python version walked the
-    parent array one element at a time and cost ~18 s on a 490k-hex build (17.4M calls
-    to its inner ``find``), against ~0.1 s here for the same answer."""
+    """Number of connected components of an ``n``-point graph with ``(E,2)`` edges."""
     if n == 0:
         return 0
     e = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
@@ -136,12 +121,7 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
 
 # -- hex (volume) meshes ------------------------------------------------
 def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
-    """Topology / watertightness report for an all-hex mesh.
-
-    ``points`` is ``(P,3)``, ``hexes`` is ``(N,8)`` in Nek corner order.  Returns
-    the facet inventory, open-edge and hanging-point counts, component count, and
-    the ``watertight`` / ``conformal`` verdicts.
-    """
+    """Topology / watertightness report for an all-hex mesh."""
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
     N = HC.shape[0]
@@ -194,11 +174,7 @@ def is_watertight(points: PointArray, hexes: IntArray) -> bool:
 
 # -- triangle (surface) meshes ------------------------------------------
 def surface_report(points: PointArray, tris: IntArray) -> dict[str, Any]:
-    """Topology report for a triangle surface mesh.
-
-    ``points`` is ``(nv,3)``, ``tris`` is ``(nt,3)``.  Returns a dict with the edge
-    inventory, boundary-loop and component counts, and the ``closed`` verdict.
-    """
+    """Topology report for a triangle surface mesh."""
     T = np.asarray(tris, dtype=np.int64).reshape(-1, 3)
     M = T.shape[0]
     edges = np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]], axis=0)
@@ -246,12 +222,7 @@ def is_closed(points: PointArray, tris: IntArray) -> bool:
 
 # -- reporting ----------------------------------------------------------
 def format_report(report: Union[TopologyReport, dict[str, Any]]) -> str:
-    """Human-readable multi-line summary of a hex or surface report.
-
-    The two branches are told apart by *type* now that :func:`hex_report` returns a
-    :class:`TopologyReport`; :func:`surface_report` still hands back a dict (its own
-    conversion is a separate change), so the dict branch is the surface one.
-    """
+    """Human-readable multi-line summary of a hex or surface report."""
     if isinstance(report, TopologyReport):
         return "\n".join([
             "hex elements   : %d" % report.n_elements,

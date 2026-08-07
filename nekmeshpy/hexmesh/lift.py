@@ -1,15 +1,4 @@
-"""Fixed-arity ``HexMesh`` operations that raise a rung (delta +1).
-
-``extrude`` sweeps one section straight; ``annulus`` fills between two index-paired
-closed surfaces; ``from_grid`` builds a block from one structured point grid.  All
-three are thin: they position profiles and hand them to
-:func:`~nekmeshpy.hexmesh.assemble.loft`, which owns the index space, so the numbering
-they expose is the loft's carried up unchanged.
-
-Free functions bound onto :class:`HexMesh <nekmeshpy.hexmesh.hexmesh.HexMesh>` by ``hexmesh/__init__.py``;
-internal toolkit code imports them from here directly rather than through the bound
-``HexMesh.<name>`` sugar.
-"""
+"""Fixed-arity ``HexMesh`` operations that raise a rung (delta +1)."""
 
 from __future__ import annotations
 
@@ -58,22 +47,8 @@ def extrude(
     first_tag: str | Sequence[str] | StrArray | None = None,
     last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
-    """Sweep a single quad ``section`` a distance ``length`` along ``axis`` into
-    a hex block.
-
-    The section is translated rigidly along ``axis`` (its placement is
-    preserved); ``origin`` shifts the whole block. ``layers`` is either an ``int``
-    count of uniform layers or the normalized copy-plane positions in ``[0, 1]``,
-    strictly increasing, last ``1``
-    (:func:`validate_layers <nekmeshpy.model.fields.validate_layers>`);
-    ``layers[0]`` is the near cap and ``layers.size - 1`` hex layers span it to
-    ``1``. ``first_tag`` / ``last_tag`` name the caps. The straight special case
-    of ``loft``.
-
-    ``length`` and ``layers`` are positional-or-keyword, like ``path`` /
-    ``fractions`` on the sibling :func:`sweep <nekmeshpy.hexmesh.lift.sweep>`: they are required, so making them
-    keyword-only bought nothing. Every existing
-    ``extrude(section, axis=..., length=..., layers=...)`` call still binds."""
+    """Sweep a single quad ``section`` a distance ``length`` along ``axis`` into a hex
+    block."""
     axis_u: Vec3 = np.asarray(axis, dtype=float)
     axis_u = axis_u / np.linalg.norm(axis_u)
     offsets = validate_layers(layers, "extrude layers") * float(length)
@@ -95,22 +70,8 @@ def annulus(
     inner_tag: str | None = None,
     outer_tag: str | None = None,
 ) -> HexMesh:
-    """Shell O-grid filling the region between an inner and an outer closed quad
-    surface (e.g. a sphere inside a cubic far-field box).
-
-    The two surfaces are paired by index: equal point count ``P`` and identical
-    ``quads`` connectivity, with point ``p`` of ``inner`` joined radially to point
-    ``p`` of ``outer``. ``radial`` is either an ``int`` count of uniform shell layers
-    or the shell positions in ``[0, 1]``, strictly increasing
-    (:func:`validate_layers <nekmeshpy.model.fields.validate_layers>`);
-    ``radial[0]`` is the inner shell and the last is ``1``, so
-    ``radial.size - 1`` shell layers blend inner -> outer directly in 3-D.
-
-    Wall faces are tagged from the surfaces' per-quad ``element_tags`` (a closed
-    surface has no free boundary edges): inner caps face 5, outer caps face 6.  A
-    scalar ``inner_tag`` / ``outer_tag`` overrides and names the whole wall:
-    ``None`` (the default) is "not asked for" and inherits the surface's tags, and
-    ``NO_TAG`` is an explicit override *to* untagged, which suppresses them."""
+    """Shell O-grid filling the region between an inner and an outer closed quad surface
+    (e.g. a sphere inside a cubic far-field box)."""
     radial = validate_layers(radial, "annulus radial")
     A: PointArray = np.asarray(inner.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(outer.points, dtype=float).reshape(-1, 3)
@@ -148,35 +109,7 @@ def from_grid(
     element_tag: str = "",
     order: int = 1,
 ) -> HexMesh:
-    """Build hexes from a structured point grid ``P`` ``(ni+1,nj+1,nk+1,3)``.
-    ``side_tags`` maps side names (``x_min``/``x_max``/``y_min``/``y_max``/
-    ``z_min``/``z_max``) to boundary names on the six outer sides; a side left out
-    or mapped to ``NO_TAG`` emits no tag row. ``element_tag`` is written
-    to every hex's ``element_tags``.
-
-    ``order`` (default 1 = linear) sets the polynomial order: at ``order > 1``
-    each hex carries ``(order+1)**3`` straight-sided (trilinear) GLL nodes.
-
-    Built as a :func:`loft <nekmeshpy.hexmesh.assemble.loft>` of the grid's **``k``-sections**: section ``k`` is
-    the :func:`QuadMesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>` of the
-    slab ``P[:, :, k, :]`` (itself a ``LineMesh`` loft), and the sweep runs
-    ``k = 0..nk``.  Every tagged side rides a channel the rung below already has:
-    the section's four ``edge_tags`` become the ``x_min`` / ``x_max`` / ``y_min`` /
-    ``y_max`` swept side faces (section side ``s`` -> hex face ``s``, which is
-    exactly the ``_GRID_SIDES`` Nek face numbering) and the sweep's caps the
-    ``z_min`` / ``z_max`` ones; ``element_tag`` rides the section's per-quad tags.
-    So corners, shared edges and shared faces all come out of the layer-by-layer
-    B-rep assembly instead of a ``unique_edges`` re-derivation.
-
-    **Ordering is the loft's, carried up unchanged** -- composing the rung below
-    means accepting its numbering, so nothing is relabelled here.  The grid is
-    numbered ``i`` fastest, ``k`` slowest: grid node ``(i, j, k)`` is point
-    ``(k*(nj+1) + j)*(ni+1) + i`` and grid cell ``(i, j, k)`` is hex
-    ``(k*nj + j)*ni + i``, i.e. ``points`` equals
-    ``P.transpose(2, 1, 0, 3).reshape(-1, 3)`` -- *not* the ``P.reshape(-1, 3)``
-    (``k``-fastest) order this factory used historically.  ``face_tags`` stays
-    lexsorted by ``(element, face)``, so its row order follows the hex ids; each
-    tagged row still names the same physical side."""
+    """Build hexes from a structured point grid ``P`` ``(ni+1,nj+1,nk+1,3)``."""
     P = np.asarray(P, dtype=float)
     tags = {s: n for s, n in (side_tags or {}).items() if n}
     for side in tags:
@@ -209,81 +142,7 @@ def sweep(
     last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
     """A block swept from one ``QuadMesh`` ``section`` along the curve ``path`` -- a
-    round pipe bent through a 90-degree elbow or a U-turn, from one O-grid disc.
-
-    Sweep one cross-section along a **curved** path: the section is carried by a moving
-    orthonormal frame, so at every station it is placed by a *rigid* motion -- the
-    curved generalization of :func:`extrude <nekmeshpy.hexmesh.lift.extrude>`, which is this with a straight path and a
-    constant frame.
-
-    **The section is moved rigidly, not point-by-point.**  Through a bend of radius
-    ``Rb`` a node sitting ``d`` outboard of the centreline traverses radius ``Rb + d``
-    and one ``d`` inboard traverses ``Rb - d``: they cover different distances and
-    neither of them follows the path.  That is the correct behaviour of a swept solid,
-    and it is what offsetting every section point along its own copy of the curve would
-    get wrong -- that would shear the section, and on a bend tighter than the section
-    is wide it would fold the inboard nodes through the axis and invert the elements.
-    Nothing here prevents that fold -- a bend radius must exceed the section's own
-    in-plane extent -- but it is not silently meshed either: the folded layer comes out
-    mixed-winding and ``loft`` rejects it, naming the sweep as the likely cause.
-
-    ``path`` is **vectorized** -- ``(K,) -> (K,3)`` -- unlike ``loft_fn``'s
-    profile-at-a-time callable, and deliberately so: a rotation-minimizing frame is a
-    *sequential* integration along the curve, so it cannot be evaluated at one isolated
-    parameter.  (``loft_fn``'s ``f`` is scalar for its own reason: it returns a
-    *mesh*, and a callable handing back one mesh can only take one parameter value.
-    ``LineMesh.loft_fn``'s ``f`` returns coordinates, so it is vectorized again.
-    The three shapes disagree because the three return types do.)  ``sweep`` samples
-    the whole node lattice
-    ``_refined_lattice(fractions, order)`` in one call, builds the frame field on it,
-    places the section at every level -- corner levels *and* the intermediate GLL levels
-    -- and delegates to :func:`loft <nekmeshpy.hexmesh.assemble.loft>` through ``sweep_nodes``.  So the sweep direction is
-    exact at any order, not straight-subdivided between slices.
-
-    ``fractions`` are the path parameter values themselves, in ``path``'s own units, and
-    grade the sweep exactly as they do on ``loft_fn``.  ``loop=True`` takes the
-    trailing wrap value; the closing profile is the *identical* placement as the first
-    (not a re-evaluation), so a closed sweep welds exactly rather than to a tolerance.
-
-    ``orientation`` picks the frame generator
-    (:func:`nekmeshpy.model.frames.sweep_placements`): ``"transport"`` -- the default,
-    rotation-minimizing, seeded from the section's own in-plane axis so it does not spin
-    at the start and correct on a non-planar path; ``"fixed"`` with ``up=`` -- exact and
-    zero-twist, the right choice for a planar path (an elbow, a U-turn), failing loudly
-    if a tangent turns parallel to ``up``; ``"frenet"`` -- included but wrong for a
-    sweep, being undefined on a straight run and sign-flipping through an inflection.
-    It names a *mode* and nothing else; the per-station up vectors that used to be
-    passed as ``orientation`` are now a ``(K,3)`` ``up=`` with ``orientation="fixed"``.
-    ``up`` therefore takes either a single ``(3,)`` world direction or a ``(K,3)``
-    per-station field (told apart by rank).  ``twist`` adds a total roll in radians
-    about the tangent, spread over the stations.
-
-    ``tangent`` is the path's **derivative**, ``(K,) -> (K,3)``, and is worth passing
-    whenever the path has one in closed form.  Without it the tangent field is central
-    differences of the *sampled* centreline: O(h^2), and worst exactly where the
-    curvature jumps (a straight run meeting an arc), which tilts every frame there --
-    so the centreline lands exactly and the section does not.  **This is the quiet
-    failure mode, not a loud one**: measured on ``examples/serpentine_pipe.py`` the
-    finite-differenced sweep pulls the wall 1.1e-4 *inside* ``R_PIPE`` -- 0.2% of the
-    tube radius -- while passing every quality, watertightness and topology check the
-    suite has; passing the analytic derivative takes the same measurement to 4.1e-11.
-    It is normalized here, so any non-unit scaling of the true derivative will do.
-
-    ``origin`` is **required**: it is the section's reference point, the one that rides
-    the path.  It used to default to the section's centroid, which is defensible and
-    frequently wrong -- an O-grid disc's centroid is *not* its centre (the grid is
-    slightly asymmetric), so the obvious call produced a quietly off-axis block with no
-    error anywhere.  There is no safe default, so there is no default; pass the centre
-    the boundary loop was built about.  ``normal=`` overrides the section's own fitted
-    plane, needed only when it is not planar (which is otherwise a ``ValueError``
-    rather than a silent shear).  Tags behave exactly as on :func:`loft <nekmeshpy.hexmesh.assemble.loft>`:
-    ``element_tags`` is per sweep layer and overrides the section's own where non-empty,
-    and ``first_tag`` / ``last_tag`` cap the ends (rejected when ``loop=True``).
-
-    The order is the **section's own** -- a rigid placement cannot change it, so there
-    is nothing for a separate ``order=`` argument to say that argument one does not
-    already say.
-    """
+    round pipe bent through a 90-degree elbow or a U-turn, from one O-grid disc."""
     order = section.order
     _, t = _sweep_lattice(fractions, order, loop=loop, name="sweep")
     if loop:
@@ -319,24 +178,9 @@ def sweep_path(
     first_tag: str | Sequence[str] | StrArray | None = None,
     last_tag: str | Sequence[str] | StrArray | None = None,
 ) -> HexMesh:
-    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a
-    :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` rather than by a loose
-    ``(centerline, tangent, fractions)`` triple.
-
-    The path object already carries its own analytic tangent and its own junction
-    table, so this asks for an element length instead of a station array: give exactly
-    one of ``target_length`` (the desired hex length along the sweep), ``layers`` (that
-    many on average), or ``fractions`` (the stations verbatim, for a path graded piece
-    by piece).  See
-    :func:`path_fractions <nekmeshpy.linemesh.shape.path_fractions>` for the resolution.
-
-    Everything else is ``sweep``'s, unchanged and with ``sweep``'s own defaults --
-    including ``orientation="transport"``.  A planar walk out of
-    :func:`paths.embed <nekmeshpy.model.paths.embed>` almost always wants
-    ``orientation="fixed"`` with ``up=`` the plane normal, but that is not defaulted
-    here: ``up``'s **sign** picks which of two frames rolled 180 degrees apart carries
-    the section, and a normal derived from the embedding's axis order would be a guess
-    at the caller's intent rather than a reading of it."""
+    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`SpacePath
+    <nekmeshpy.model.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
+    fractions)`` triple."""
     fr = path_fractions(path, target_length=target_length, layers=layers,
                         fractions=fractions)
     return sweep(section, path.centerline, fr, origin=origin, tangent=path.tangent,
@@ -347,13 +191,7 @@ def sweep_path(
 
 def _find_roll(a: QuadMesh, b: QuadMesh, axis: Vec3 | Sequence[float]) -> int:
     """The quarter turn ``k`` about ``axis`` that minimizes the index-wise deviation
-    between ``a`` and ``b`` about their own centres.
-
-    Two discs off the same quadrant recipe carry their seams on the same 45-degree
-    family, but each arrives through its own chain of axis-permuting rotations, so the
-    index pairing between them may be rolled by a multiple of 90 degrees.  Blending
-    across a rolled pairing twists the result into inverted elements, so the roll is
-    *measured* rather than assumed."""
+    between ``a`` and ``b`` about their own centres."""
     ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
     best_k, best_d = 0, np.inf
     for k in range(4):
@@ -378,33 +216,7 @@ def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
             axis: Vec3 | Sequence[float] | None = None, layers: int = 2,
             max_deviation: float = 0.2, radius_tol: float = 0.05) -> HexMesh:
     """A short block morphing between two same-connectivity sections whose *node
-    patterns* differ slightly -- and whose **both** end faces are bit-exact.
-
-    For a seam between two pieces built by nearly, but not quite, the same recipe: a
-    couple of percent between one quadrant's wall spacing and another's, say.  A plain
-    coordinate weld across such a seam can never be exact, and at ``order > 1``
-    :func:`merge <nekmeshpy.hexmesh.assemble.merge>` verifies shared high-order edge
-    and face nodes against ``conform.entity_tol`` (~1e-9 of the model extent), so
-    "close" fails.  A blend is exact instead: its first slice **is** ``a``'s own
-    points, and its last is ``b``'s own geometry reached through ``a``'s labelling
-    (:func:`quadmesh.reindex <nekmeshpy.quadmesh.morph.reindex>`), so both end welds
-    are bit-exact while the mismatch is absorbed smoothly inside.
-
-    ``a`` is left completely untouched -- whatever it is already bit-identical to (a
-    swept connector's own terminal section, say) stays so.  Relabelling ``b`` is what
-    buys that: rotating ``a``'s *coordinates* into the pairing instead would make the
-    blend's first slice a rotated copy of ``a``, close to but not identical with
-    ``a``'s own literal end.
-
-    The 90-degree roll between the two index patterns is measured, not assumed (see
-    ``_find_roll``); ``axis`` is the axis it is measured about, normally the seam
-    normal.  A residual deviation above ``max_deviation`` means no quarter turn aligns
-    the two at all, which is a ``ValueError`` rather than a twisted block.
-
-    Passing :class:`Ports <nekmeshpy.quadmesh.ports.Port>` rather than bare sections
-    lets ``axis`` default to ``a``'s own stated normal -- which is what the seam normal
-    always was -- and adds the two checks a fitted plane cannot make on its own: that
-    the ports face each other, and that they are the same size."""
+    patterns* differ slightly -- and whose **both** end faces are bit-exact."""
     if layers < 1:
         raise ValueError("adapter: layers must be >= 1, got %d" % layers)
     sec_a = a.section if isinstance(a, Port) else a
@@ -437,13 +249,7 @@ def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
 
 def _as_port(x: QuadMesh | Port, toward: Point, who: str) -> tuple[Port, bool]:
     """``(port, was_stated)`` -- promote a bare ``QuadMesh`` by *guessing* its outward
-    direction as the one pointing at ``toward``, or take a ``Port``'s stated one.
-
-    The guess is what these joins have always done, and it is right whenever the two
-    sections really do face each other.  It cannot tell that they do: handed two ports
-    facing the same way it flips one and folds the connector, with nothing to catch it.
-    Passing a :class:`Port <nekmeshpy.quadmesh.ports.Port>` states the direction instead,
-    which is what lets the caller below check rather than assume."""
+    direction as the one pointing at ``toward``, or take a ``Port``'s stated one."""
     if isinstance(x, Port):
         return x, True
     n = quad_plane_normal(x, check=False)
@@ -482,14 +288,7 @@ def _check_facing(pa: Port, pb: Port, both_stated: bool, who: str,
 def _stub_sections(disc: QuadMesh, direction: Vec3, distance: float,
                    count: int) -> list[QuadMesh]:
     """``count`` copies of ``disc``'s own exact pattern, rigidly carried a total
-    ``distance`` along ``direction`` from its own centroid.
-
-    ``direction`` is the disc's **own** true normal at both call sites, not the raw
-    centroid-to-centroid direction: the two differ by a small angle whenever a disc is
-    not perfectly centred on its nominal position, and a rigid placement is exactly
-    perpendicular to whatever tangent it is handed -- even at station 0 -- so a tangent
-    a hair off the disc's own normal makes the first section a hair off the disc
-    itself."""
+    ``distance`` along ``direction`` from its own centroid."""
     c = disc.points.mean(axis=0)
     if count < 2 or distance <= 0.0:
         return [disc]
@@ -507,26 +306,7 @@ def bridge(a: QuadMesh | Port, b: QuadMesh | Port, *, layers: int = 4,
            radius_tol: float = 0.05) -> HexMesh:
     """A connector between two same-radius sections whose node patterns are too far
     apart for :func:`adapter <nekmeshpy.hexmesh.lift.adapter>` -- two legs of different
-    T-junctions, built by different algorithms.
-
-    A short rigid stub is carried off **each** side along its own true normal, so both
-    near ends stay bit-exact to whatever ``a`` and ``b`` are themselves bonded to, and
-    the remaining gap is spanned by a straight blend -- with the stubs and the blend
-    lofted together as **one** block.  That single loft is what makes this exact at
-    ``order > 1``: leaving the far seam to :func:`merge
-    <nekmeshpy.hexmesh.assemble.merge>`'s tolerance weld is fine at order 1, but order
-    > 1 also verifies shared high-order edge nodes against ``conform.entity_tol``,
-    which an approximate weld cannot meet.  One loft has no internal seam to verify.
-
-    The blend needs an honest point correspondence, and here the two patterns are
-    genuinely far apart -- stations spaced by arc length against uniform angular ones
-    can differ by a *median* comparable to the section radius, and no rotation improves
-    it, because the mismatch is a difference in station *distribution* rather than
-    orientation.  Nearest-neighbour matching of the two centred point clouds fixes
-    that, and **every** section on ``b``'s side is then relabelled through it, not just
-    the one touching the blend: relabelling only the tip leaves the blend's last slice
-    and ``b``'s own naturally-labelled stub disagreeing, which twists that seam into
-    inverted elements."""
+    T-junctions, built by different algorithms."""
     if blend_layers < 1:
         raise ValueError("bridge: blend_layers must be >= 1, got %d" % blend_layers)
     sec_a = a.section if isinstance(a, Port) else a

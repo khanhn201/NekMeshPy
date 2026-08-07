@@ -1,8 +1,4 @@
-"""Hex-element quality metrics.
-
-All metrics operate on a shared-point representation ``(points, hexes)`` where
-``points`` is ``(P,3)`` and ``hexes`` is ``(N,8)`` in Nek corner order.
-"""
+"""Hex-element quality metrics."""
 
 from __future__ import annotations
 
@@ -19,10 +15,7 @@ _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
 
 
 def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
-    """Per-hex minimum corner scaled Jacobian, shape ``(N,)``.
-
-    1 is a perfect cube corner; <= 0 is degenerate / inverted.
-    """
+    """Per-hex minimum corner scaled Jacobian, shape ``(N,)``."""
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
     N = HC.shape[0]
@@ -42,12 +35,7 @@ def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
 
 
 def _ho_block(mesh: HexMesh, order: int) -> PointArray:
-    """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample.
-
-    The mesh's entity B-rep is walked
-    (:func:`~nekmeshpy.model.conform.conformal_hex`) and the block gathered
-    **transiently** as ``nodes[conn_ho]`` -- nothing is stored.
-    """
+    """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample."""
     from ..model import conform
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
@@ -60,16 +48,7 @@ def _ho_block(mesh: HexMesh, order: int) -> PointArray:
 def scaled_jacobian_ho(mesh: HexMesh, order: int) -> FloatArray:
     """Per-hex minimum scaled Jacobian sampled at the ``(order+1)**3`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
-    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`.
-
-    ``mesh`` is a ``HexMesh``; its high-order nodes are gathered from the entity B-rep
-    on the fly.
-
-    Each node's ``det(J) / prod(|tangent|)`` is formed from the mapping's parametric
-    tangents there.  This is the **opt-in** metric: the default corner-based
-    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` keeps the pinned linear numbers, and at ``order == 1`` (GLL
-    nodes == corners) this reduces to it.
-    """
+    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`."""
     from ..model.interp import scaled_jacobian_ho as _sj
     return _sj(_ho_block(mesh, order), order, dim=3)
 
@@ -106,12 +85,7 @@ def histogram(points: PointArray, hexes: IntArray, bins: int = 10,
 
 def format_report(stats: QualitySummary,
                   hist: tuple[IntArray, FloatArray] | None = None) -> str:
-    """Human-readable multi-line quality report from :func:`summary` output.
-
-    The ``poor`` label is **derived** from ``POOR_THRESHOLD`` rather than spelling
-    the number again, so the text can never disagree with the count it labels; the
-    label is padded to the 13-column field the other rows use.
-    """
+    """Human-readable multi-line quality report from :func:`summary` output."""
     lines = [
         "elements     : %d" % stats.n_elements,
         "scaled Jac   : min=%.4f  mean=%.4f  median=%.4f  max=%.4f"
