@@ -234,6 +234,42 @@ def _canon_qidx() -> IntArray:
 _CANON_QIDX: IntArray = _canon_qidx()
 
 
+def _frame_code_table() -> IntArray:
+    """``(6, 256)`` inverse of :data:`_CANON_QIDX`: for hex local face ``f``, the D4 code
+    whose corner permutation packs to ``p0*64 + p1*16 + p2*4 + p3``.  ``-1`` marks a
+    packing no D4 element realizes."""
+    tab: IntArray = np.full((6, 256), -1, dtype=np.int64)
+    w: IntArray = np.array([64, 16, 4, 1], dtype=np.int64)
+    for f in range(6):
+        for code in range(8):
+            tab[f, int(_CANON_QIDX[f, code] @ w)] = code
+    return tab
+
+
+_FRAME_CODE_TAB: IntArray = _frame_code_table()
+
+
+def face_frame_code(local: IntArray, canonical: IntArray) -> IntArray:
+    """``(E,6)`` D4 codes carrying each hex's element-local face frame (``local``
+    ``(E,6,4)`` corner ids in :data:`_LOCAL_FACES` order) onto the ``canonical``
+    ``(E,6,4)`` CCW rows.  :func:`canonical_faces` reads those rows off an owner element;
+    this is the same relation for a caller that **chose** its rows in advance, and so
+    needs the codes fitted against them."""
+    # ``perm[e,f,p]`` is the canonical slot local corner ``p`` lands in; a slot fits in a
+    # byte, and so does the packed row (max 3*64+3*16+3*4+3 = 255).
+    perm = np.zeros(local.shape, dtype=np.uint8)
+    for c in range(1, 4):
+        perm += np.uint8(c) * (local == canonical[:, :, c, None])
+    key: IntArray = (perm[..., 0].astype(np.int64) * 64 + perm[..., 1] * 16
+                     + perm[..., 2] * 4 + perm[..., 3])
+    codes: IntArray = _FRAME_CODE_TAB[np.arange(6, dtype=np.int64)[None, :], key]
+    if codes.size and int(codes.min()) < 0:
+        raise ValueError(
+            "face_frame_code: an element-local face frame is not a D4 image of its "
+            "canonical row -- the two do not describe the same quadrilateral")
+    return codes
+
+
 def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """CCW-connectivity sibling of :func:`unique_faces`."""
     _, elem_faces, face_orient = unique_faces(hexes)
@@ -254,6 +290,68 @@ def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
         for p in range(4):
             canonical_conn[ids, q[:, p]] = corner_ids[:, p]
     return canonical_conn, elem_faces, face_orient
+
+
+def _edge_on_face() -> IntArray:
+    """``(12,3)`` -- for each hex local edge, one ``(local face, element-local side of
+    that face, reversed)`` it can be read through.  Every hex edge borders two faces;
+    which one is picked is arbitrary, because a conformal B-rep gives the same answer
+    through either."""
+    out: IntArray = np.zeros((12, 3), dtype=np.int64)
+    for e, (ca, cb) in enumerate(_LOCAL_EDGES[3].tolist()):
+        for f in range(6):
+            fc = _LOCAL_FACES[f].tolist()
+            sides = [(fc[p], fc[(p + 1) % 4]) for p in range(4)]
+            if (ca, cb) in sides:
+                out[e] = (f, sides.index((ca, cb)), 0)
+                break
+            if (cb, ca) in sides:
+                out[e] = (f, sides.index((cb, ca)), 1)
+                break
+    return out
+
+
+def _canon_side() -> tuple[IntArray, IntArray]:
+    """``(SIDE (6,8,4), REV (6,8,4))`` -- the canonical side each element-local face side
+    lands on under D4 ``code``, and whether the element walks it backwards.  Canonical
+    side ``s`` runs slot ``s`` -> ``s+1``, so an element side whose two slots descend is
+    that lower slot's side, traversed against it."""
+    side: IntArray = np.zeros((6, 8, 4), dtype=np.int64)
+    rev: IntArray = np.zeros((6, 8, 4), dtype=bool)
+    for f in range(6):
+        for code in range(8):
+            for p in range(4):
+                c0 = int(_CANON_QIDX[f, code, p])
+                c1 = int(_CANON_QIDX[f, code, (p + 1) % 4])
+                forward = c1 == (c0 + 1) % 4
+                side[f, code, p] = c0 if forward else c1
+                rev[f, code, p] = not forward
+    return side, rev
+
+
+_EDGE_ON_FACE: IntArray = _edge_on_face()
+_CANON_SIDE, _CANON_SIDE_REV = _canon_side()
+
+
+def hex_edges_from_faces(elem_faces: IntArray, face_orient: IntArray,
+                         face_edges: IntArray, face_flip: BoolArray
+                         ) -> tuple[IntArray, BoolArray]:
+    """``(elem_edges (E,12), edge_flip (E,12))`` -- each hex's incidence on the shared
+    edge table, read *through* the shared faces instead of deduplicated out of its
+    corners.
+
+    The edge-rung sibling of :func:`hex_corners_from_faces`, and the reason a ``HexMesh``
+    does not care what order its shared edges are stored in: the ids come from the table
+    itself (``face_edges`` / ``face_flip`` are the shared-face ``QuadMesh``'s own ``quad``
+    / ``flip``), not from re-deriving a numbering that would then have to agree with it.
+    """
+    f, p = _EDGE_ON_FACE[None, :, 0], _EDGE_ON_FACE[None, :, 1]
+    rev: BoolArray = _EDGE_ON_FACE[None, :, 2].astype(bool)
+    code = face_orient[:, _EDGE_ON_FACE[:, 0]]                       # (E,12)
+    s = _CANON_SIDE[f, code, p]
+    fid = elem_faces[:, _EDGE_ON_FACE[:, 0]]
+    return (face_edges[fid, s],
+            face_flip[fid, s] ^ _CANON_SIDE_REV[f, code, p] ^ rev)
 
 
 def hex_corners_from_faces(face_conn: IntArray, elem_faces: IntArray,

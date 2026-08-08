@@ -41,7 +41,7 @@ def _line_nodes(m):
 
 
 def _section(order):
-    ring = linemesh.circle(0.5, 8, element_tags=["wall"] * 8, order=order)
+    ring = linemesh.circle(0.5, 8, element_tag="wall", order=order)
     return quadmesh.ogrid(ring, 2, uniform_spacing(2), wall_tag="wall")
 
 

@@ -292,12 +292,14 @@ iteration of the same assembly — exactly one more rung block, appended once, w
 the first profile *not* duplicated — so the seam is a genuine shared entity and the
 result closes watertight in the sweep direction (a torus surface from
 `quadmesh.loft` of revolved rings; a solid torus from `hexmesh.loft` of revolved
-discs). A closed sweep has no near/far cap, so at every rung `loop=True`
+discs). A closed sweep has no *free* near/far end, so at every rung `loop=True`
 
-- **raises `ValueError`** if given `first_tag` / `last_tag` (scalar or per-element
-  array) rather than silently dropping it, and
-- emits **no cap tag rows** — side walls from the profiles' own tagged
-  entities are unaffected.
+- emits **no cap tag rows by default** — the caps of an open sweep inherit the
+  bounding slices' own `element_tags`, and a seam has no free side to inherit onto,
+  while side walls from the profiles' own tagged entities are unaffected; but
+- **does place `first_tag` / `last_tag`** when they are given: the two caps are the
+  same seam entity seen from either side, so naming one names that side of it (which
+  is how a periodic pair gets its two names).
 
 `quadmesh.annulus` closes in the *ring* direction, which lives in the loops' own
 connectivity rather than the loft direction, so it does **not** use `loop=True`.

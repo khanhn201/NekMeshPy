@@ -221,7 +221,8 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
         col: PointArray = lat[:, j, k, :]
         inner = (None if o == 1 else
                  np.stack([col[i * o + 1:i * o + o] for i in range(nl)], axis=0))
-        return line_loft(col[::o], interior=inner, order=o, point_tags=bnd)
+        lm = line_loft(col[::o], interior=inner, order=o)
+        return LineMesh(lm.points, lm.lines, lm.interior, bnd)
 
     def section(k: int) -> QuadMesh:
         return quad_loft([profile(j * o, k) for j in range(nm + 1)],

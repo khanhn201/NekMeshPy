@@ -145,7 +145,8 @@ def _two_quad_slices():
 
 def test_loft_per_quad_first_tag_and_scalar_last_tag():
     s0, s1 = _two_quad_slices()
-    block = hexmesh.loft([s0, s1], first_tag=["capA", "capB"], last_tag="top")
+    block = hexmesh.loft([s0, s1], last_tag="top",
+                         first_tag=ElementTags.from_dense(["capA", "capB"]))
     tag_at = {(e, f): t for e, f, t in block.face_tags}
     assert tag_at[(0, 5)] == "capA"        # per-quad bottom caps
     assert tag_at[(1, 5)] == "capB"
@@ -153,7 +154,9 @@ def test_loft_per_quad_first_tag_and_scalar_last_tag():
     assert tag_at[(1, 6)] == "top"
 
 
-def test_loft_cap_length_mismatch_raises():
+def test_loft_cap_tags_must_name_quads_the_section_has():
     s0, s1 = _two_quad_slices()
-    with pytest.raises(ValueError, match="cap tags length"):
-        hexmesh.loft([s0, s1], first_tag=["only_one"])
+    with pytest.raises(ValueError, match="only 2 elements"):
+        hexmesh.loft([s0, s1], first_tag=ElementTags([2], ["off_the_end"]))
+    with pytest.raises(TypeError, match="cap tag must be"):
+        hexmesh.loft([s0, s1], first_tag=["a", "b"])

@@ -122,9 +122,12 @@ class HexMesh:
 
         # corner connectivity + per-hex edge incidence are derived from the shared
         # faces and immutable post-construction (point moves don't change them), so
-        # memoize once.
+        # memoize once.  Both are *reads* of the B-rep, never a fresh dedup: the shared
+        # edge ids come out of ``quads``' own table, so the order that table is stored in
+        # is nobody else's business.
         self._corners: IntArray = self._derive_corners()
-        _, self._elem_edges, self._edge_flip = conform.unique_edges(self._corners, 3)
+        self._elem_edges, self._edge_flip = conform.hex_edges_from_faces(
+            self.hex, self.face_orient, quads.quad, quads.flip)
 
     @classmethod
     def from_corners(

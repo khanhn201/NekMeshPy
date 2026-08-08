@@ -145,7 +145,7 @@ def test_path_fractions_rejects_a_zero_layer_count(walk):
 # -- sweep_path, at both rungs ------------------------------------------------
 def _profile(order):
     return linemesh.circle(0.3, 8, center=(0.5, -2.0, 7.0), normal=(0.0, 0.0, 1.0),
-                           element_tags=["wall"] * 8, order=order)
+                           element_tag="wall", order=order)
 
 
 def _section(order):

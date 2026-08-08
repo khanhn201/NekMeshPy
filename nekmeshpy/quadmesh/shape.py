@@ -783,11 +783,15 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
     seg = _seg_tags(boundary)
     o = boundary.order
     inner: PointArray = boundary.interior
-    arc1 = line_loft(bpts[0:nh + 1, :], interior=inner[0:nh],
-                         element_tags=None if seg is None else seg[0:nh], order=o)
-    arc2 = line_loft(np.vstack([bpts[nh:M, :], bpts[0:1, :]]),
-                         interior=inner[nh:M],
-                         element_tags=None if seg is None else seg[nh:M], order=o)
+    def _arc(pts: PointArray, interior: PointArray, tags: object) -> LineMesh:
+        lm = line_loft(pts, interior=interior, order=o)
+        if tags is None:
+            return lm
+        return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+                        ElementTags.from_dense(tags))
+    arc1 = _arc(bpts[0:nh + 1, :], inner[0:nh], None if seg is None else seg[0:nh])
+    arc2 = _arc(np.vstack([bpts[nh:M, :], bpts[0:1, :]]), inner[nh:M],
+                None if seg is None else seg[nh:M])
     h1 = half_ogrid(arc1, spine, radial, center_scale=center_scale,
                     wall_tag=wall_tag, smoothing_method=smoothing_method)
     h2 = half_ogrid(arc2, spine2, radial, center_scale=center_scale,
@@ -966,7 +970,7 @@ def _patch(fn: Callable[[FloatArray, FloatArray], FloatArray], surface: SurfaceM
     return loft_fn(
         lambda y: line_loft_fn(
             lambda x: surface(fn(x, np.full(np.shape(x), y))), fr, order=order),
-        fr, order=order, element_tags=[tag] * n)
+        fr, order=order, element_tags=tag or None)
 
 
 def tri_patch(surface: SurfaceMap, ab: SurfaceCurve, bc: SurfaceCurve,

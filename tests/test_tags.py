@@ -148,13 +148,11 @@ def test_element_tags_empty_allocates_nothing():
     assert empty.group_tags == []
 
 
-def test_from_dense_drops_empties_and_matches_length():
+def test_from_dense_drops_empties():
     t = ElementTags.from_dense(["", "wall", "", "inlet"])
     assert np.array_equal(t.ids, [1, 3])
     assert np.array_equal(t.tags, ["wall", "inlet"])
     assert len(t) == 2                     # tagged count, NOT element count
-    with pytest.raises(ValueError, match="element_tags length"):
-        ElementTags.from_dense(["a", "b"], n=3)
 
 
 def test_normalization_sorts_and_rejects_duplicates():

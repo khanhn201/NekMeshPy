@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from conftest import assert_same_side_tags
 
-from nekmeshpy import LineMesh, QuadMesh, hexmesh, linemesh, quadmesh
+from nekmeshpy import ElementTags, LineMesh, QuadMesh, hexmesh, linemesh, quadmesh
 
 RADIAL = np.linspace(0.4, 1.0, 3)
 
@@ -22,7 +22,7 @@ RADIAL = np.linspace(0.4, 1.0, 3)
 def _meshes(order):
     """One mesh per rung, all curved at ``order > 1`` (the circle's interior nodes sit
     on the true arc), so a transform that skipped a table would show up."""
-    ring = linemesh.circle(2.0, 8, element_tags=["wall"] * 8, order=order)
+    ring = linemesh.circle(2.0, 8, element_tag="wall", order=order)
     section = quadmesh.ogrid(ring, 2, RADIAL, wall_tag="wall")
     block = hexmesh.extrude(section, length=1.0, layers=np.linspace(0.0, 1.0, 3),
                             first_tag="inlet", last_tag="outlet")
@@ -219,7 +219,7 @@ def test_reverse_keeps_high_order_nodes_on_the_true_arc():
 
 @pytest.mark.parametrize("order", [1, 3])
 def test_reverse_is_an_involution(order):
-    lm = linemesh.circle(1.0, 6, element_tags=["wall"] * 6, order=order)
+    lm = linemesh.circle(1.0, 6, element_tag="wall", order=order)
     back = linemesh.reverse(linemesh.reverse(lm))
     assert np.array_equal(back.points, lm.points)
     assert np.array_equal(back.lines, lm.lines)
@@ -229,8 +229,10 @@ def test_reverse_is_an_involution(order):
 
 
 def test_reverse_remaps_element_and_point_tags_to_the_same_physical_points():
-    lm = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
-                       element_tags=["a", "b"], first_tag="in", last_tag="out")
+    chain = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
+                          first_tag="in", last_tag="out")
+    lm = LineMesh(chain.points, chain.lines, chain.interior, chain.point_tags,
+                  ElementTags.from_dense(["a", "b"]))
     out = linemesh.reverse(lm)
     assert out.element_tags.dense(out.n_lines).tolist() == ["b", "a"]
     # the tag that named the x=0 end still names it after the relabel
@@ -246,12 +248,11 @@ def test_reverse_keeps_a_loop_closed():
 
 
 # -- cap-tag shape parity across the three rungs ------------------------------
-def test_line_loft_caps_accept_the_array_form_like_the_rungs_above():
-    """A chain's cap is one node, so the per-element form is a one-element array --
-    the point is that the same argument shapes work at every rung."""
+def test_line_loft_caps_are_one_name_each():
+    """A chain's cap is one node, so the per-element form the rungs above accept
+    reduces to a single string here -- and anything else is refused outright."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
     scalar = linemesh.loft(P, first_tag="in", last_tag="out")
-    array = linemesh.loft(P, first_tag=["in"], last_tag=np.array(["out"]))
-    assert_same_side_tags(array.point_tags, scalar.point_tags)
-    with pytest.raises(ValueError, match="must match cap nodes"):
-        linemesh.loft(P, first_tag=["in", "also-in"])
+    assert list(scalar.point_tags) == [(0, 1, "in"), (1, 2, "out")]
+    with pytest.raises(TypeError, match="single tag string"):
+        linemesh.loft(P, first_tag=["in"])

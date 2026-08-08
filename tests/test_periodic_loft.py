@@ -9,12 +9,12 @@ shared entity rather than a duplicated layer.  These tests pin that: a lofted lo
 matches the ``loop`` factory one dimension down, a revolved surface closes into a
 torus with no free edge and no duplicate line, a revolved disc closes into a
 watertight solid torus whose only free faces are the outer wall, and an end-cap tag
-on a closed sweep is rejected at all three levels."""
+on a closed sweep lands on the seam -- from whichever side names it."""
 
 import numpy as np
 import pytest
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
+from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 from nekmeshpy.model import topology
 
 R0, RSEC = 3.0, 1.0          # torus major / minor radius
@@ -29,7 +29,7 @@ def _ring_profiles(order=1, nsec=NSEC, nring=NRING):
     high-order ``interior`` by the same rigid map as its corners, so each profile
     stays an exact circle."""
     ring = linemesh.circle(RSEC, nring, center=(R0, 0.0, 0.0),
-                           element_tags=["wall"] * nring, order=order)
+                           element_tag="wall", order=order)
     return [linemesh.rotate(ring, 2.0 * np.pi * k / nsec, axis=(0.0, 1.0, 0.0))
             for k in range(nsec)]
 
@@ -193,28 +193,47 @@ def test_hex_loft_loop_beats_repeating_the_first_profile():
             > closed_report.n_boundary_faces)
 
 
-# -- cap tags are rejected on a closed sweep, at every rung -------------------
+# -- cap tags on a closed sweep name the seam, at every rung ------------------
 @pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
-def test_line_loft_loop_rejects_cap_tags(cap):
-    with pytest.raises(ValueError, match="no near/far cap"):
-        linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0]]),
-                      loop=True, **{cap: "cap"})
-
-
-@pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
-def test_quad_loft_loop_rejects_cap_tags(cap):
-    with pytest.raises(ValueError, match="no near/far cap"):
-        quadmesh.loft(_ring_profiles(nsec=4), loop=True, **{cap: "cap"})
+def test_line_loft_loop_places_cap_tags(cap):
+    """A closed sweep has no free end, but its seam is still a real side -- so a cap
+    tag is placed rather than refused: the caller may well mean to name it."""
+    lm = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [1, 1, 0]]),
+                       loop=True, **{cap: "seam"})
+    assert lm.point_tags.count("seam") == 1
 
 
 @pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
-def test_hex_loft_loop_rejects_cap_tags(cap):
-    with pytest.raises(ValueError, match="no near/far cap"):
-        hexmesh.loft(_disc_profiles(nsec=4), loop=True, **{cap: "cap"})
+def test_quad_loft_loop_places_cap_tags(cap):
+    qm = quadmesh.loft(_ring_profiles(nsec=4), loop=True, **{cap: "seam"})
+    # one tagged edge per section line, on the seam layer's own side
+    assert qm.edge_tags.count("seam") == NRING
+    tagged = qm.edge_tags.select(qm.edge_tags.mask_for("seam"))
+    assert set(tagged.sides.tolist()) == {{"first_tag": 1, "last_tag": 3}[cap]}
 
 
-def test_loft_loop_rejects_per_element_cap_arrays():
-    """An array cap tag is rejected too -- not just the scalar form."""
+@pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
+def test_hex_loft_loop_places_cap_tags(cap):
+    profiles = _disc_profiles(nsec=4)
+    hm = hexmesh.loft(profiles, loop=True, **{cap: "seam"})
+    tagged = hm.face_tags.select(hm.face_tags.mask_for("seam"))
+    assert len(tagged) == profiles[0].n_quads       # one face per section quad
+    assert set(tagged.sides.tolist()) == {{"first_tag": 5, "last_tag": 6}[cap]}
+
+
+def test_loft_loop_places_a_per_line_cap_table():
+    """The per-slice-element form lands on the seam too -- not just the scalar."""
     profiles = _ring_profiles(nsec=4)
-    with pytest.raises(ValueError, match="no near/far cap"):
-        quadmesh.loft(profiles, loop=True, first_tag=["cap"] * NRING)
+    caps = ElementTags.from_dense(["seam"] + [""] * (NRING - 1))
+    qm = quadmesh.loft(profiles, loop=True, first_tag=caps)
+    assert qm.edge_tags.count("seam") == 1
+
+
+def test_loft_loop_can_tag_one_side_of_the_seam_only():
+    """The two caps are the same seam seen from either side, so naming one names one
+    side: the whole point of allowing cap tags on a closed sweep."""
+    qm = quadmesh.loft(_ring_profiles(nsec=4), loop=True, first_tag="in")
+    both = quadmesh.loft(_ring_profiles(nsec=4), loop=True,
+                         first_tag="in", last_tag="out")
+    assert qm.edge_tags.count("in") == NRING and qm.edge_tags.count("out") == 0
+    assert both.edge_tags.count("in") == both.edge_tags.count("out") == NRING

@@ -11,9 +11,9 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, hex_from_entities, run_example
+from conftest import GOLDEN, curved, run_example
 
-from nekmeshpy import HexMesh, hexmesh, quadmesh
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.io import export
 from nekmeshpy.model.interp import corner_indices, hex_face_indices
 
@@ -103,13 +103,11 @@ def test_from_grid_order_n_corner_consistent():
 # -- blend / merge ------------------------------------------------------
 def test_blend_morphs_hex_curved_blocks():
     a = _shell(3, n_face=1, n_radial=1)
-    # a uniformly scaled copy, built natively from a's own entity tables
-    b = hex_from_entities(a.points * 2.0, a.hexes,
-                          edge_nodes=a.edge_nodes * 2.0,
-                          face_nodes=a.face_nodes * 2.0,
-                          interior=a.interior * 2.0,
-                          face_tags=a.face_tags,
-                          order=3)
+    # a uniformly scaled copy, built natively from a's own entity tables -- same B-rep,
+    # every stored node doubled, so the two pair by index at every rung
+    lines = LineMesh(a.points * 2.0, a.edges, interior=a.edge_nodes * 2.0)
+    quads = QuadMesh(lines, a.quads.quad, a.quads.flip, a.face_nodes * 2.0)
+    b = HexMesh(quads, a.hex, a.face_orient, a.interior * 2.0, a.face_tags)
     lo, mid, hi = hexmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)

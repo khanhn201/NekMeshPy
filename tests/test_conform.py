@@ -5,7 +5,8 @@ resolve to the *same* nodes from every incident element, decided by topology
 (corner ids), not a coordinate search.  Three invariants ride through:
 
 * **round-trip** -- the entity decomposition is lossless: rebuilding a mesh from its
-  own B-rep tables (the ``conftest`` ``*_from_entities`` scaffolds) reproduces the conformal node block exactly;
+  own B-rep tables (``quad_from_entities`` at the quad rung, ``hexmesh.merge`` of a lone
+  block at the hex rung) reproduces the conformal node block exactly;
 * **conformality** -- the ``conform.conformal_*`` walk deduplicates shared entity nodes
   (node count == the geometric unique-node count, well below the un-welded
   ``E*(N+1)^d``) and its corner slots are always ``points[conn]``;
@@ -19,7 +20,7 @@ stays first-class) and the walk is just ``points`` + ``conn`` in block order.
 
 import numpy as np
 import pytest
-from conftest import conformal, curved, hex_from_entities, quad_from_entities
+from conftest import conformal, curved, quad_from_entities
 
 from nekmeshpy import HexMesh, LineMesh, hexmesh, linemesh, quadmesh
 from nekmeshpy.model import conform
@@ -335,13 +336,57 @@ def test_face_code_maps_element_frame_to_canonical():
 @pytest.mark.parametrize("order", [2, 3])
 def test_hex_round_trip_curved_shell(order):
     hm = _shell(order)
-    rebuilt = hex_from_entities(hm.points, hm.hexes, edge_nodes=hm.edge_nodes,
-                                face_nodes=hm.face_nodes, interior=hm.interior,
-                                order=order)
+    # ``merge`` of one block is the round trip: it gathers the entity store back into
+    # element-local order and re-derives the whole B-rep from the corners, scattering
+    # into its own numbering.  The block's numbering is its own business; its nodes are
+    # not, and a table that disagrees with the corners it claims raises in the scatter.
+    rebuilt = hexmesh.merge([hm])
     assert np.allclose(curved(rebuilt), curved(hm), atol=1e-12)
     nodes, conn = conformal(hm)
     assert np.allclose(nodes[conn][:, corner_indices(order, 3), :],
                        hm.points[hm.hexes], atol=1e-12)
+
+
+# -- hex edge incidence is read off the faces, not re-deduplicated -----
+def test_hex_edges_from_faces_resolve_to_their_own_corner_pairs():
+    """The complete statement, and the only one that does not name a numbering: reading
+    the stored row each ``(hex, local edge)`` claims -- reversed where its flip says so
+    -- must give back that edge's own two corners, for every block builder, since each
+    hands the container a differently-built shared-face ``QuadMesh``."""
+    x = np.linspace(0, 1, 3)
+    X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
+    ring = linemesh.circle(1.0, 8)
+    disc = quadmesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
+    blocks = [_shell(1),                                    # annulus
+              hexmesh.from_grid(np.stack([X, Y, Z], axis=-1)),
+              hexmesh.loft([quadmesh.translate(disc, (0.0, 0.0, z))
+                            for z in np.linspace(0.0, 1.0, 4)]),
+              hexmesh.loft([quadmesh.translate(disc, (0.0, 0.0, z))
+                            for z in np.linspace(0.0, 1.0, 4)], loop=True),
+              hexmesh.merge([_shell(1, n_face=1, n_radial=1)])]
+    for hm in blocks:
+        rows = hm.edges[hm._elem_edges]                     # (E,12,2) as stored
+        walked = np.where(hm._edge_flip[:, :, None], rows[:, :, ::-1], rows)
+        assert np.array_equal(walked, hm.hexes[:, conform._LOCAL_EDGES[3]])
+
+
+@pytest.mark.parametrize("order", [2, 3])
+def test_hex_does_not_care_what_order_its_edges_are_stored_in(order):
+    """The container reads its edge ids out of the shared-face table, so relabelling
+    that table -- rows permuted, ``quad`` remapped, nodes carried along -- is invisible
+    in the mesh's geometry.  Under the old dedup this silently misplaced every
+    high-order edge node."""
+    hm = _shell(order, n_face=1, n_radial=2)
+    ne = hm.edges.shape[0]
+    sigma = np.random.default_rng(0).permutation(ne)        # old id -> new slot
+    lines = LineMesh(hm.points, hm.edges[sigma],
+                     interior=hm.edge_nodes[sigma])
+    inv = np.argsort(sigma)
+    faces = quadmesh.QuadMesh(lines, inv[hm.quads.quad], hm.quads.flip,
+                              hm.face_nodes)
+    relabelled = HexMesh(faces, hm.hex, hm.face_orient, hm.interior)
+    assert not np.array_equal(relabelled._elem_edges, hm._elem_edges)
+    assert np.allclose(curved(relabelled), curved(hm), atol=1e-12)
 
 
 # -- hex conformality: the walk dedups shared edges + faces ------------

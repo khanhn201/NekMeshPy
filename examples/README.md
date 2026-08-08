@@ -55,8 +55,9 @@ also writes a Nek field file (`bifurcation0.f00001`) carrying its high-order GLL
 The 2-D section meshers (`quadmesh.ogrid` / `structured` / `half_ogrid` /
 `quadrant_ogrid` / `spined_ogrid` / `annulus`) are toolkit primitives; the scripts supply a boundary and sweep/stack
 them. Tags flow down the pipeline **`LineMesh` → `QuadMesh` edges → `HexMesh`
-faces**: a boundary loop carries a tag per line element
-(`linemesh.loft([…], element_tags=[…], loop=True)`), which is copied onto section edges — how
+faces**: a boundary loop carries a region tag on its lines
+(`linemesh.loft([…], element_tags="wall", loop=True)`), which the section meshers copy
+onto the section's wall edges — how
 `flow_past_cylinder.py` splits its far field into `inlet`/`outlet`/`top`/`bottom`
 via `linemesh.rectangle(w, h, N, side_tags={"left": "inlet", …})` — the side/face tag
 arguments are **Mappings** keyed by side name (`bottom`/`right`/`top`/`left`), not

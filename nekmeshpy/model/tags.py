@@ -13,7 +13,7 @@ from .._typing import BoolArray, IntArray, StrArray
 T = TypeVar("T", bound="SideTags")
 
 __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
-           "ElementTags"]
+           "ElementTags", "sweep_element_tags", "sweep_cap_tags"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -271,13 +271,9 @@ class ElementTags:
         return cls(np.zeros(0, np.int64), _empty_str())
 
     @classmethod
-    def from_dense(cls, values: Sequence[str] | StrArray, n: int | None = None,
-                   what: str = "elements") -> ElementTags:
+    def from_dense(cls, values: Sequence[str] | StrArray) -> ElementTags:
         """From a dense per-element array where ``""`` means untagged."""
         v = _str_array(values)
-        if n is not None and v.shape[0] != n:
-            raise ValueError("element_tags length (%d) must match %s (%d)"
-                             % (v.shape[0], what, n))
         ids: IntArray = np.flatnonzero(v != "").astype(np.int64)
         return cls(ids, v[ids])
 
@@ -392,3 +388,41 @@ class ElementTags:
             raise ValueError("element_tags names element %d but there are only %d "
                              "elements" % (int(self.ids[-1]), n_elements))
 
+
+
+def sweep_element_tags(spec: str | ElementTags | None, n_layers: int,
+                       n_slice: int, who: str) -> ElementTags:
+    """The swept elements' region tags from a ``loft``'s ``element_tags`` argument.
+
+    ``None`` tags nothing, a ``str`` tags every swept element, and an
+    :class:`ElementTags` over one slice's ``n_slice`` elements tags each element by
+    the slice element it was extruded from (element ``i*n_slice + k``)."""
+    if spec is None:
+        return ElementTags.empty()
+    if isinstance(spec, str):
+        return ElementTags.uniform(int(n_layers) * int(n_slice), spec)
+    if isinstance(spec, ElementTags):
+        spec.check_within(int(n_slice))
+        return spec.repeat_blocks(int(n_layers), int(n_slice))
+    raise TypeError(
+        "%s: element_tags must be a tag string, an ElementTags over the %d elements "
+        "of one slice, or None; got %s"
+        % (who, n_slice, type(spec).__name__))
+
+
+def sweep_cap_tags(spec: str | ElementTags | None, default: ElementTags,
+                   n_slice: int, who: str) -> StrArray:
+    """One cap's dense ``(n_slice,)`` tag row from a ``loft``'s ``first_tag`` /
+    ``last_tag`` argument, falling back to ``default`` (the bounding slice's own
+    element tags -- a cap side *is* that slice element) when the argument is ``None``.
+    """
+    if spec is None:
+        return default.dense(int(n_slice))
+    if isinstance(spec, str):
+        return np.full(int(n_slice), spec)
+    if isinstance(spec, ElementTags):
+        spec.check_within(int(n_slice))
+        return spec.dense(int(n_slice))
+    raise TypeError(
+        "%s: a cap tag must be a tag string, an ElementTags over the %d elements of "
+        "one slice, or None; got %s" % (who, n_slice, type(spec).__name__))

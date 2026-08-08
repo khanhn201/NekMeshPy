@@ -107,7 +107,7 @@ def test_tags_ride_up_from_the_line_level():
     n = 2
     fr = quadmesh.quadrant_seam_fractions(n, RADIAL, CS)
     arc = linemesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2,
-                       element_tags=["wall"] * (2 * n))
+                       element_tag="wall")
     s1 = linemesh.line(np.zeros(3), np.array([R, 0.0, 0.0]), fr, element_tag="sym")
     s2 = _radius(np.pi / 2, fr)
     q = quadmesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)

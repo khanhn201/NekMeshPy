@@ -5,7 +5,7 @@ coordinates."""
 import numpy as np
 import pytest
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
+from nekmeshpy import ElementTags, LineMesh, hexmesh, linemesh, quadmesh
 from nekmeshpy.model.fields import geometric_spacing, uniform_spacing
 
 
@@ -507,13 +507,13 @@ def test_rectangle_far_field_in_tilted_plane():
 # -- element tags: tagged on the loop's line elements, carried onto the section
 # boundary edges ------------------------------------------------------------
 
-def test_loop_element_tags_length_validated():
-    # a closed 3-point loop has 3 line elements; element_tags must match
-    with pytest.raises(ValueError, match="element_tags length .* must match lines"):
-        linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags=["a", "b"], loop=True)
-    # a matching count (one per line element) is accepted
-    assert linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
-                     element_tags=["a", "b", "c"], loop=True).element_tags.dense(3).tolist() == ["a", "b", "c"]
+def test_loop_element_tags_name_every_line():
+    # a closed 3-point loop has 3 line elements; one name covers them all
+    lm = linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags="a", loop=True)
+    assert lm.element_tags.dense(3).tolist() == ["a", "a", "a"]
+    with pytest.raises(TypeError, match="single tag string"):
+        linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
+                      element_tags=["a", "b", "c"], loop=True)
 
 
 def test_unnamed_rectangle_far_field_stays_untagged():
@@ -576,7 +576,7 @@ def test_element_tags_propagate_line_to_hex_faces():
 def test_ogrid_reads_boundary_element_tags():
     # the wall is named at the lowest level -- the boundary loop's element_tags --
     # with no scalar wall_tag.  The wall ring (4*n_side edges) all inherit the tag.
-    boundary = linemesh.circle(0.5, 16, element_tags=["wall"] * 16)
+    boundary = linemesh.circle(0.5, 16, element_tag="wall")
     qm = quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
     assert qm.n_edge_tags == 4 * 4
     assert set(qm.edge_tags.tags.tolist()) == {"wall"}
@@ -584,7 +584,7 @@ def test_ogrid_reads_boundary_element_tags():
 
 def test_ogrid_wall_tag_overrides_boundary_element_tags():
     # a non-empty scalar wall_tag OVERRIDES the loop's element_tags for the whole wall
-    boundary = linemesh.circle(0.5, 16, element_tags=["ring"] * 16)
+    boundary = linemesh.circle(0.5, 16, element_tag="ring")
     qm = quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
                         wall_tag="override")
     assert set(qm.edge_tags.tags.tolist()) == {"override"}
@@ -594,8 +594,9 @@ def test_ogrid_wall_tag_overrides_boundary_element_tags():
 def _tagged_arc(Nt, tags):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
-    return linemesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]),
-                         element_tags=tags)
+    lm = linemesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
+    return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+                    ElementTags.from_dense(tags))
 
 
 def test_half_ogrid_reads_arc_element_tags():
@@ -664,7 +665,7 @@ def test_structured_side_tags_empty_suppresses_edge_tag():
 def test_annulus_inner_tag_overrides_loop_element_tags():
     # a tagged inner loop names the inner ring at the line level; a non-empty
     # inner_tag OVERRIDES it for the whole inner ring
-    inner = linemesh.circle(0.5, 16, element_tags=["body"] * 16)
+    inner = linemesh.circle(0.5, 16, element_tag="body")
     outer = linemesh.rectangle(
         12.0, 12.0, 16, side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
     qm = quadmesh.annulus(inner, outer, geometric_spacing(4, 1.12),
@@ -803,7 +804,7 @@ def _circle_loop(Nt, tag="wall"):
     M = 8 * Nt
     th = np.linspace(0.0, 2 * np.pi, M, endpoint=False)
     pts = np.column_stack([np.cos(th), np.sin(th), np.zeros(M)])
-    return linemesh.loft(pts, element_tags=[tag] * M, loop=True)
+    return linemesh.loft(pts, element_tags=tag, loop=True)
 
 
 def test_spined_ogrid_valid_and_tagged():
@@ -901,8 +902,8 @@ def test_spined_ogrid_matches_two_half_ogrids():
     radial = uniform_spacing(2)
     combined = quadmesh.spined_ogrid(loop, radial, center_scale=0.5)
 
-    arc1 = linemesh.loft(P[0:nh + 1, :], element_tags=["wall"] * nh)
-    arc2 = linemesh.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags=["wall"] * nh)
+    arc1 = linemesh.loft(P[0:nh + 1, :], element_tags="wall")
+    arc2 = linemesh.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags="wall")
     h1 = quadmesh.half_ogrid(arc1, _diameter_spine(arc1, 0.5, radial), radial,
                              center_scale=0.5, wall_tag="")
     h2 = quadmesh.half_ogrid(arc2, _diameter_spine(arc2, 0.5, radial), radial,

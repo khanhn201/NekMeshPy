@@ -79,7 +79,7 @@ left_ground = linemesh.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
 # in order; at ORDER > 1 the interior GLL nodes sit on the exact circle
 bump = linemesh.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
                     start_theta=np.pi, end_theta=0.0,
-                    element_tags=["wall"] * N_BUMP, order=ORDER)
+                    element_tag="wall", order=ORDER)
 right_ground = linemesh.line((R, 0.0, 0.0), (W, 0.0, 0.0),
                              np.linspace(0.0, 1.0, N_GROUND + 1),
                              element_tag="wall", order=ORDER)

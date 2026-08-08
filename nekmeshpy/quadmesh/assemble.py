@@ -11,17 +11,19 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _check_fraction_count, _refined_lattice, _weld
 from ..model import conform
 from ..model.conform import entity_tol
-from ..model.fields import gll_nodes, reject_loop_caps
+from ..model.fields import gll_nodes
+from ..model.sweep import Sweep
 from ..model.tags import (
     EdgeTags,
     ElementTags,
     TagBuilder,
+    sweep_cap_tags,
+    sweep_element_tags,
 )
 from .quadmesh import (
     NO_TAG,
@@ -32,29 +34,14 @@ from .quadmesh import (
 from .query import _boundary_mask
 
 
-def _cap_tags(cap: str | Sequence[str] | StrArray | None, L: int) -> list[str]:
-    """Normalize a cap tag to one tag per section line (length ``L``): a scalar
-    ``str`` tags the whole cap, an array-like is a per-line tag, and ``None``
-    -- "no cap tag asked for" -- is ``NO_TAG`` on every line."""
-    if cap is None:
-        return [NO_TAG] * L
-    if isinstance(cap, str):
-        return [cap] * L
-    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
-    if arr.shape[0] != L:
-        raise ValueError("cap tags length (%d) must match section lines (%d)"
-                         % (arr.shape[0], L))
-    return [str(x) for x in arr.tolist()]
-
-
 def loft(
     slices: Sequence[LineMesh],
     *,
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[LineMesh]] | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """Loft a stack of conformal ``LineMesh`` profiles into a quad section (the general
     primitive behind :func:`extrude <nekmeshpy.quadmesh.lift.extrude>`, and the middle
@@ -62,8 +49,6 @@ def loft(
     <nekmeshpy.linemesh.assemble.loft>` and :func:`HexMesh.loft
     <nekmeshpy.hexmesh.assemble.loft>`)."""
     slices = list(slices)
-    if loop:
-        reject_loop_caps("QuadMesh.loft", first_tag, last_tag)
     lines = np.asarray(slices[0].lines, dtype=np.int64).reshape(-1, 2)
     L = lines.shape[0]
     n_prof = len(slices)
@@ -105,94 +90,40 @@ def loft(
 
     a = lines[:, 0]
     b = lines[:, 1]
-    # only points actually carried by a profile line get a rung (an isolated point
-    # borders no quad, so a rung there would be a dangling edge).
-    used: IntArray = (np.unique(lines.ravel()) if L
-                      else np.zeros(0, dtype=np.int64))
-    nu = used.shape[0]
-    rung_slot: IntArray = np.full(nn, -1, dtype=np.int64)
-    rung_slot[used] = np.arange(nu, dtype=np.int64)
-
-    # -- grow the global edge LineMesh layer by layer -------------------
-    # level i's profile lines occupy [prof_off[i], prof_off[i]+L); the rungs of
-    # transition i->next(i) occupy [rung_off[i], rung_off[i]+nu).  ``nxt`` is the
-    # profile each layer sweeps *to*: i+1 normally, wrapping to 0 for the closing
-    # layer of a periodic sweep -- the single extra iteration below.
-    nxt: IntArray = (np.arange(1, nz + 1, dtype=np.int64) % n_prof if nz
-                     else np.zeros(0, dtype=np.int64))
-    gi: FloatArray = gll_nodes(order)[1:order] if ho else np.zeros(0)
-    prof_off: IntArray = np.empty(n_prof, dtype=np.int64)
-    rung_off: IntArray = np.empty(max(nz, 0), dtype=np.int64)
-    line_rows: list[IntArray] = []
-    inter_rows: list[PointArray] = []
-    cur = 0
-
-    def _append_rung(layer: int) -> None:
-        """Append the rung block of layer ``layer`` (profile ``layer`` ->
-        ``nxt[layer]``) to the growing edge mesh -- appended exactly once per
-        layer, so the seam rung of a periodic sweep is never duplicated."""
-        nonlocal cur
-        j = int(nxt[layer])
-        rung_off[layer] = cur
-        line_rows.append(np.column_stack([layer * nn + used, j * nn + used]))
-        if ho:
-            if sw is not None:
-                # the true profile points at this layer's interior GLL levels --
-                # no blend, so a curved sweep survives.
-                inter_rows.append(np.stack(
-                    [np.asarray(m.points, dtype=float).reshape(-1, 3)[used]
-                     for m in sw[layer]], axis=1))          # (nu, order-1, 3)
-            else:
-                lo, hi = S[layer, used, :], S[j, used, :]
-                inter_rows.append(lo[:, None, :]
-                                  + gi[None, :, None] * (hi - lo)[:, None, :])
-        cur += nu
-
-    for i in range(n_prof):
-        prof_off[i] = cur                                # merge level i's LineMesh
-        line_rows.append(lines + i * nn)
-        if ho:
-            inter_rows.append(np.asarray(slices[i].interior, dtype=float))
-        cur += L
-        if i:                                            # rungs (i-1) -> i
-            _append_rung(i - 1)
-    if loop and nz:
-        # the one extra iteration: the closing rung (M-1) -> 0.  No profile is
-        # re-appended, so the seam shares profile 0's lines and nodes outright.
-        _append_rung(nz - 1)
-    all_lines: IntArray = (np.concatenate(line_rows, axis=0) if line_rows
-                           else np.zeros((0, 2), dtype=np.int64))
-    edge_nodes: PointArray | None = (
-        np.concatenate(inter_rows, axis=0) if ho else None)
-
-    # -- quads purely by line index -------------------------------------
-    # quad row for (layer i, line l) = i*L + l; corners [a_i, b_i, b_{i+1}, a_{i+1}].
-    # local edge 1 = level-i profile line l (forward), 2 = rung at b (forward),
-    # 3 = level-(i+1) profile line l (reversed), 4 = rung at a (reversed).
-    i_idx: IntArray = np.repeat(np.arange(nz, dtype=np.int64), L)
-    l_idx = np.tile(np.arange(L, dtype=np.int64), nz)
-    j_idx: IntArray = nxt[i_idx] if nz else i_idx        # the swept-to profile
+    # a lone profile bounds no layer, so it carries no entity either
+    sweep = Sweep(n_prof if nz else 0, nz, nn, loop=loop)
+    nxt = sweep.nxt
+    i_idx, l_idx, j_idx = sweep.elements(L)
     av = a[l_idx]
     bv = b[l_idx]
+
+    # Only points a line actually carries get a rung -- an isolated point borders no
+    # quad, so a rung there would be a dangling edge.
+    used: IntArray = (np.unique(lines.ravel()) if L else np.zeros(0, np.int64))
+    nu = used.shape[0]
+    slot: IntArray = np.full(nn, -1, np.int64)
+    slot[used] = np.arange(nu, dtype=np.int64)
+
+    # The two entity families of any sweep, at this rung: each profile line *carried*
+    # to a level, and each profile point *swept* across a layer.  Both are closed
+    # forms, so the edge table is written rather than deduplicated.
+    lay: IntArray = np.arange(nz, dtype=np.int64)
+    lvl: IntArray = np.arange(sweep.n_levels, dtype=np.int64)
+    edges: IntArray = np.concatenate([
+        (lines[None] + (lvl * nn)[:, None, None]).reshape(-1, 2),
+        np.stack([sweep.point(lay[:, None], used[None, :]).ravel(),
+                  sweep.point(nxt[:, None], used[None, :]).ravel()], axis=1)], axis=0)
+    # quad ``i*L + l`` is profile line ``l`` dragged across layer ``i``: corners
+    # [a_i, b_i, b_j, a_j], local edges [carried at i, rung at b, carried at j, rung
+    # at a].  Sides 3 / 4 traverse their stored edge backwards, hence the flip row.
     quad: IntArray = np.stack([
-        prof_off[i_idx] + l_idx,
-        rung_off[i_idx] + rung_slot[bv],
-        prof_off[j_idx] + l_idx,
-        rung_off[i_idx] + rung_slot[av]], axis=1)
-    flip: BoolArray = np.tile(
-        np.array([False, False, True, True]), (nz * L, 1))
-    # quad ``i*L + l`` inherits profile line ``l``'s tag
-    etags: ElementTags = slices[0].element_tags.gather(l_idx)
-    if element_tags is not None:
-        # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
-        # profile's line tag on every quad of that layer.
-        layer_tags: StrArray = np.asarray(
-            element_tags, dtype=np.str_).reshape(-1)
-        if layer_tags.shape[0] != nz:
-            raise ValueError(
-                "loft: element_tags is per layer, so it needs %d entries, got %d"
-                % (nz, layer_tags.shape[0]))
-        etags = etags.overlay(ElementTags.blocks(layer_tags, L))
+        sweep.carried(i_idx, l_idx, L),
+        sweep.swept(i_idx, slot[bv], L, nu),
+        sweep.carried(j_idx, l_idx, L),
+        sweep.swept(i_idx, slot[av], L, nu)], axis=1)
+    flip: BoolArray = np.tile(np.array([False, False, True, True]), (nz * L, 1))
+
+    etags = sweep_element_tags(element_tags, nz, L, "QuadMesh.loft")
 
     # order-N: without ``sweep_nodes`` each column quad is a transfinite (Coons)
     # patch -- curved along the profile line (from the slices' own points + private
@@ -200,6 +131,7 @@ def loft(
     # boundary already lives on the merged/rung lines, so the patch is evaluated only
     # at the private interior slots.
     interior: PointArray | None = None
+    edge_nodes: PointArray | None = None
     if ho:
         g = gll_nodes(order)
         row = order + 1
@@ -222,6 +154,13 @@ def loft(
         Scur[:, :, 1:order, :] = np.stack(
             [np.asarray(s.interior, dtype=float) for s in slices], axis=0)
         islots = _quad_interior_slots(order)
+        # a shared edge has exactly one source in a closed-form sweep, so both families
+        # are *written* -- no element block to read them back out of, and no owner
+        # election.  A carried edge is the profile's own curve verbatim; a rung is the
+        # straight GLL blend of its two corners, or the true intermediate profiles'
+        # own points when there are any.
+        Sp: PointArray = S[:, used, :]                  # (n_prof, nu, 3)
+        carried: PointArray = Scur[lvl][:, :, 1:order, :]
         if sw is not None:
             # every node of every sweep level is a genuine profile point, so the
             # element block is a straight gather out of them -- no patch, nothing
@@ -235,6 +174,10 @@ def loft(
                         [_line_nodes(sw[i][k - 1]) for i in range(nz)], axis=0)
             interior = lev[i_idx[:, None], (islots // row)[None, :],
                            l_idx[:, None], (islots % row)[None, :], :]
+            rungs: PointArray = np.stack(
+                [np.stack([np.asarray(sw[i][k - 1].points, dtype=float)
+                           .reshape(-1, 3)[used] for k in range(1, order)], axis=1)
+                 for i in range(nz)], axis=0) if nz else np.zeros((0, nu, order - 1, 3))
         else:
             bottom = Scur[i_idx, l_idx]                 # (Q,row,3) a->b at i
             top = Scur[j_idx, l_idx]                    # (Q,row,3) a->b at next(i)
@@ -243,8 +186,15 @@ def loft(
             gg = g[None, :, None]
             left = a_lo[:, None, :] + gg * (a_hi - a_lo)[:, None, :]   # (Q,row,3)
             right = b_lo[:, None, :] + gg * (b_hi - b_lo)[:, None, :]
+            # only the private interior is blended; the profiles' and rungs' own nodes
+            # bound the patch verbatim, so nothing is resampled.
             interior = _coons_at(bottom, top, left, right, g,
                                  islots % row, islots // row)
+            lo, hi = Sp[lay], Sp[nxt]                   # (nz,nu,3) the rung's two ends
+            rungs = (lo[:, :, None, :]
+                     + g[1:order][None, None, :, None] * (hi - lo)[:, :, None, :])
+        edge_nodes = np.concatenate(
+            [carried.reshape(-1, order - 1, 3), rungs.reshape(-1, order - 1, 3)], axis=0)
 
     # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
     bb = TagBuilder(EdgeTags)
@@ -254,20 +204,21 @@ def loft(
         qside = 4 if side == 1 else 2
         for ii in range(nz):
             bb.add(ii * L + l0, qside, tag)
-    # caps: scalar tags the whole cap, an array tags per section line.  A periodic
-    # sweep has no near/far cap edge at all, so it emits no cap row (and rejected
-    # the tags above).
-    if not loop:
-        first_caps = _cap_tags(first_tag, L)
-        last_caps = _cap_tags(last_tag, L)
+    # a cap edge *is* a profile line, so with no argument it inherits that line's own
+    # element tag -- except on a closed sweep, where the "caps" are the interior seam
+    # and only an explicit tag names them.
+    closed = ElementTags.empty()
+    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
+                                L, "QuadMesh.loft")
+    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+                               L, "QuadMesh.loft")
+    for l0 in range(L):
+        bb.add_if_tagged(l0, 1, first_caps[l0])
+    if nz:
         for l0 in range(L):
-            bb.add_if_tagged(l0, 1, first_caps[l0])
-        if nz:
-            for l0 in range(L):
-                bb.add_if_tagged((nz - 1) * L + l0, 3, last_caps[l0])
-    lm = LineMesh(points, all_lines, interior=edge_nodes)
-    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags,
-)
+            bb.add_if_tagged((nz - 1) * L + l0, 3, last_caps[l0])
+    lm = LineMesh(points, edges, interior=edge_nodes)
+    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags)
 
 
 def _loft_evaluated(
@@ -276,9 +227,9 @@ def _loft_evaluated(
     order: int,
     *,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
     name: str = "loft_fn",
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
@@ -336,9 +287,9 @@ def loft_fn(
     *,
     loop: bool = False,
     order: int | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """Loft a section from a **parametrized family of profiles** -- :func:`loft
     <nekmeshpy.quadmesh.assemble.loft>` with the slices evaluated rather than handed in,
@@ -346,8 +297,6 @@ def loft_fn(
     from calling ``f`` and nothing is blended along the sweep."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
     _check_fraction_count(fr, loop=loop, name="loft_fn")
-    if loop:
-        reject_loop_caps("QuadMesh.loft_fn", first_tag, last_tag)
     if order is None:
         # The node lattice the profiles are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the

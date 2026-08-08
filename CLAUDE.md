@@ -143,7 +143,16 @@ because `.re2` writes rows in stored order and `.vtu` gives a node touched by se
 rows the last one's tag.
 
 `element_tags` is sparse (`ids + tags`), so an untagged mesh stores nothing and `len()`
-is the *tagged* count. Factory keywords stay dense (`element_tags=["wall"] * n`).
+is the *tagged* count.
+
+**`loft`'s three tag arguments are the same shape at every rung**: `element_tags` names
+the *swept* elements — one string for all of them, or an `ElementTags` over **one
+slice's** elements, which tags each swept column by the slice element it came from.
+`first_tag` / `last_tag` take the same two shapes and name the cap sides, defaulting to
+the bounding slice's own `element_tags` (a cap side *is* that slice element) — except on
+a `loop`, whose caps are the interior seam and are named only when asked. A slice at the
+line rung is a single point, so all three reduce to one string there. Nothing is
+inherited implicitly: an untagged argument tags nothing.
 
 `NO_TAG` is `""`. On cap arguments (`first_tag`/`last_tag`, and `annulus`'s
 `inner_tag`/`outer_tag`) **`None` means "not asked for" and `NO_TAG` means an explicit

@@ -3,24 +3,28 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
 import numpy as np
 
 from .._typing import (
+    BoolArray,
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _check_fraction_count, _refined_lattice, _weld
 from ..model import conform
 from ..model.conform import entity_tol
-from ..model.fields import gll_nodes, reject_loop_caps
+from ..model.fields import gll_nodes
+from ..model.sweep import Sweep
 from ..model.tags import (
     ElementTags,
     FaceTags,
     TagBuilder,
+    sweep_cap_tags,
+    sweep_element_tags,
 )
 from ..quadmesh import NO_TAG, QuadMesh
 from .hexmesh import HexMesh, _slice_block, _sweep_at
@@ -36,19 +40,129 @@ def _face_brep(points: PointArray, canonical_conn: IntArray,
     return QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes)
 
 
-def _cap_tags(cap: str | Sequence[str] | StrArray | None, M: int) -> list[str]:
-    """Normalize a cap tag to one tag per section quad (length ``M``): a scalar
-    ``str`` tags the whole cap, an array-like is per-quad, and ``None``
-    -- "no cap tag asked for" -- is ``NO_TAG`` on every quad."""
-    if cap is None:
-        return [NO_TAG] * M
-    if isinstance(cap, str):
-        return [cap] * M
-    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
-    if arr.shape[0] != M:
-        raise ValueError("cap tags length (%d) must match section quads (%d)"
-                         % (arr.shape[0], M))
-    return [str(x) for x in arr.tolist()]
+class _SweptBrep(NamedTuple):
+    """A swept hex block's B-rep, *written* from the two entity families rather than
+    deduplicated out of its corners: the shared edges and faces, each element's incidence
+    on them, the faces' own edge incidence one rung down, and -- since a closed form knows
+    it -- the one ``(element, local entity)`` each entity's high-order nodes come from."""
+
+    edges: IntArray
+    elem_edges: IntArray
+    edge_flip: BoolArray
+    edge_src: IntArray
+    faces: IntArray
+    elem_faces: IntArray
+    face_orient: IntArray
+    face_edges: IntArray
+    face_flip: BoolArray
+    face_src: IntArray
+
+
+def _swept_brep(sweep: Sweep, sec: QuadMesh, hexes: IntArray, flip: bool,
+                i_idx: IntArray, q_idx: IntArray, j_idx: IntArray) -> _SweptBrep:
+    """The B-rep of ``sweep`` applied to section ``sec``, in closed form.
+
+    Every entity is *carried* (a section quad / edge sitting at one level) or *swept* (a
+    section edge / point dragged across one layer), and each family is an arithmetic
+    block, so nothing here deduplicates or sorts -- ids come out in family order at both
+    rungs.  A face takes its canonical frame from the section's own winding (carried) or
+    from the section edge dragged across the layer (swept), never from an owner element,
+    which is not shift-invariant across levels."""
+    nn, nlev, nz = sweep.nn, sweep.n_levels, sweep.n_layers
+    quads = np.asarray(sec.quads, dtype=np.int64).reshape(-1, 4)
+    M = quads.shape[0]
+    # local face / in-plane edge ``k`` of a hex is section side ``fside[k]``, and its
+    # local corner ``k`` section corner ``cslot[k]``; reversing the template walks the
+    # section's sides backwards from side 3 and swaps its two odd corners.
+    fside: IntArray = np.array([3, 2, 1, 0] if flip else [0, 1, 2, 3], dtype=np.int64)
+    cslot: IntArray = np.array([0, 3, 2, 1] if flip else [0, 1, 2, 3], dtype=np.int64)
+    # an entity only exists where an element carries it: an isolated section point, or a
+    # section edge no quad references, would otherwise spawn an unreferenced row.  The
+    # first section slot referencing each one is where its nodes will be read from.
+    used_p, first_p = np.unique(quads.ravel(), return_index=True)
+    used_e, first_e = np.unique(sec.quad.ravel(), return_index=True)
+    pq, pc = np.divmod(first_p.astype(np.int64), 4)
+    eq, es = np.divmod(first_e.astype(np.int64), 4)
+    nu, ne = used_p.shape[0], used_e.shape[0]
+    pslot: IntArray = np.full(nn, -1, np.int64)
+    pslot[used_p] = np.arange(nu, dtype=np.int64)
+    eslot: IntArray = np.full(sec.lines.n_lines, -1, np.int64)
+    eslot[used_e] = np.arange(ne, dtype=np.int64)
+    ab: IntArray = np.sort(sec.lines.lines[used_e], axis=1)       # (ne,2) min-first
+    A, B = ab[:, 0], ab[:, 1]
+
+    lvl: IntArray = np.arange(nlev, dtype=np.int64)
+    lay: IntArray = np.arange(nz, dtype=np.int64)
+    nxt = sweep.nxt
+
+    rows: IntArray = np.concatenate([
+        (ab[None] + (lvl * nn)[:, None, None]).reshape(-1, 2),
+        np.stack([sweep.point(np.minimum(lay, nxt)[:, None], used_p[None, :]).ravel(),
+                  sweep.point(np.maximum(lay, nxt)[:, None], used_p[None, :]).ravel()],
+                 axis=1)], axis=0)
+
+    # local edges 0-3 / 4-7 are the section sides carried to this hex's near / far level,
+    # 8-11 its corners swept across the layer.  Every stored row is min-first, so a
+    # traversal's flip is just the directed pair read off the corners.
+    side: IntArray = eslot[sec.quad][q_idx][:, fside]             # (E,4)
+    ends: IntArray = hexes[:, conform._LOCAL_EDGES[3]]            # (E,12,2) directed
+    elem_edges: IntArray = np.concatenate([
+        sweep.carried(i_idx[:, None], side, ne),
+        sweep.carried(j_idx[:, None], side, ne),
+        sweep.swept(i_idx[:, None], pslot[hexes[:, :4] % nn], ne, nu)], axis=1)
+
+    faces: IntArray = np.concatenate([
+        (quads[None] + (lvl * nn)[:, None, None]).reshape(-1, 4),
+        np.stack([sweep.point(lay[:, None], A[None, :]).ravel(),
+                  sweep.point(lay[:, None], B[None, :]).ravel(),
+                  sweep.point(nxt[:, None], B[None, :]).ravel(),
+                  sweep.point(nxt[:, None], A[None, :]).ravel()], axis=1)], axis=0)
+    elem_faces: IntArray = np.concatenate([
+        sweep.swept(i_idx[:, None], side, M, ne),
+        sweep.carried(i_idx, q_idx, M)[:, None],
+        sweep.carried(j_idx, q_idx, M)[:, None]], axis=1)
+
+    # the faces one rung down: a carried face walks the section quad's own sides; a swept
+    # face walks [carried at i, rung at B, carried at j (backwards), rung at A].
+    kk: IntArray = np.arange(ne, dtype=np.int64)
+    face_edges: IntArray = np.concatenate([
+        sweep.carried(lvl[:, None, None], eslot[sec.quad][None], ne).reshape(-1, 4),
+        np.stack([sweep.carried(lay[:, None], kk[None, :], ne).ravel(),
+                  sweep.swept(lay[:, None], pslot[B][None, :], ne, nu).ravel(),
+                  sweep.carried(nxt[:, None], kk[None, :], ne).ravel(),
+                  sweep.swept(lay[:, None], pslot[A][None, :], ne, nu).ravel()],
+                 axis=1)], axis=0)
+    face_flip: BoolArray = np.concatenate([
+        np.tile(quads > quads[:, [1, 2, 3, 0]], (nlev, 1)),
+        np.stack([np.zeros(nz * ne, dtype=bool),
+                  np.repeat(lay > nxt, ne),
+                  np.ones(nz * ne, dtype=bool),
+                  np.repeat(lay < nxt, ne)], axis=1)], axis=0)
+
+    # where each entity's nodes come from.  Every level below the last is the *near*
+    # level of its own layer (local face 5, in-plane edges 0-3); the open sweep's top
+    # level is only ever a *far* level, so it reads off the last layer instead.
+    home: IntArray = np.minimum(lvl, nz - 1)
+    near: BoolArray = (lvl < nz)[:, None]
+    mid: IntArray = np.arange(M, dtype=np.int64)
+    edge_src: IntArray = np.stack([
+        np.concatenate([(home[:, None] * M + eq[None, :]).ravel(),
+                        (lay[:, None] * M + pq[None, :]).ravel()]),
+        np.concatenate([np.where(near, fside[es][None, :],
+                                 4 + fside[es][None, :]).ravel(),
+                        np.broadcast_to(8 + cslot[pc], (nz, nu)).ravel()])],
+        axis=1)
+    face_src: IntArray = np.stack([
+        np.concatenate([(home[:, None] * M + mid[None, :]).ravel(),
+                        (lay[:, None] * M + eq[None, :]).ravel()]),
+        np.concatenate([np.broadcast_to(np.where(near, 4, 5), (nlev, M)).ravel(),
+                        np.broadcast_to(fside[es], (nz, ne)).ravel()])], axis=1)
+
+    return _SweptBrep(rows, elem_edges, ends[:, :, 0] > ends[:, :, 1], edge_src,
+                      faces, elem_faces,
+                      conform.face_frame_code(hexes[:, conform._LOCAL_FACES],
+                                              faces[elem_faces]),
+                      face_edges, face_flip, face_src)
 
 
 def loft(
@@ -56,33 +170,30 @@ def loft(
     *,
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[QuadMesh]] | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
     """Loft a stack of conformal quad profiles into a hex block (the general primitive
     behind ``extrude``, and the top rung of the uniform sweep shared with
     :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
     :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>`)."""
     slices = list(slices)
-    if loop:
-        reject_loop_caps("HexMesh.loft", first_tag, last_tag)
     quads = np.asarray(slices[0].quads, dtype=np.int64).reshape(-1, 4)
     # section (quad, side) -> name; each swept side face inherits its section edge
     side_name: dict[tuple[int, int], str] = slices[0].edge_tags.as_dict()
-    tag_sides = bool(slices[0].edge_tags)
     M = quads.shape[0]
     n_prof = len(slices)
     # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
     nz = n_prof if loop else n_prof - 1
-    # ``nxt[i]`` is the profile layer ``i`` sweeps *to*: i+1 normally, wrapping to
-    # 0 for the closing layer of a periodic sweep.
-    nxt: IntArray = (np.arange(1, nz + 1, dtype=np.int64) % n_prof if nz
-                     else np.zeros(0, dtype=np.int64))
     S = np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3)
                   for s in slices], axis=0)             # (n_prof, nn, 3)
     nn = S.shape[1]
     points = S.reshape(n_prof * nn, 3)                   # global id = i*nn + v
+    # a lone slice bounds no layer, so it carries no entity either -- ``n_levels`` is
+    # the count of levels the sweep *uses*, and ``nxt`` is where the loop lives.
+    sweep = Sweep(n_prof if nz else 0, nz, nn, loop=loop)
+    nxt = sweep.nxt
 
     # Decide handedness once from the first layer and flip the quad template if
     # left-handed; reject a mixed-winding section rather than invert elements.
@@ -97,43 +208,40 @@ def loft(
     flip = bool(nz and signs[0] < 0)
     qw = quads[:, [0, 3, 2, 1]] if flip else quads
 
-    # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners); a
-    # periodic sweep has no cap at all, so it emits none (and rejected the tags).
-    first_caps = ([NO_TAG] * M if loop else _cap_tags(first_tag, M))
-    last_caps = ([NO_TAG] * M if loop else _cap_tags(last_tag, M))
+    # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners).  A cap
+    # face *is* a section quad, so with no argument it inherits that quad's own element
+    # tag -- except on a closed sweep, whose "caps" are the interior seam.
+    closed = ElementTags.empty()
+    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
+                                M, "HexMesh.loft")
+    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+                               M, "HexMesh.loft")
 
-    hexes = np.empty((nz * M, 8), dtype=np.int64)
-    # every layer repeats the section's per-quad tags (hex ``e = i*M + q``)
-    etags: ElementTags = slices[0].element_tags.repeat_blocks(nz, M)
-    if element_tags is not None:
-        # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
-        # section's per-quad tag on every hex of that layer.
-        layer_tags: StrArray = np.asarray(
-            element_tags, dtype=np.str_).reshape(-1)
-        if layer_tags.shape[0] != nz:
-            raise ValueError(
-                "loft: element_tags is per layer, so it needs %d entries, got %d"
-                % (nz, layer_tags.shape[0]))
-        etags = etags.overlay(ElementTags.blocks(layer_tags, M))
+    # hex ``e = i*M + q`` is section quad ``q`` dragged across layer ``i``: its 8
+    # corners are that quad's 4 at the near level then the same 4 at the far level.
+    i_idx, q_idx, j_idx = sweep.elements(M)
+    hexes: IntArray = np.concatenate(
+        [i_idx[:, None] * nn + qw[q_idx], j_idx[:, None] * nn + qw[q_idx]], axis=1)
+    brep = _swept_brep(sweep, slices[0], hexes, flip, i_idx, q_idx, j_idx)
+    etags = sweep_element_tags(element_tags, nz, M, "HexMesh.loft")
+
+    # face tags, by column rather than by element: a section side names the same hex
+    # face on every layer, and a cap names one layer's worth.
     bb = TagBuilder(FaceTags)
-    e = 0
-    for i in range(nz):
-        j = int(nxt[i])                     # the profile this layer sweeps to
+    layer0: IntArray = np.arange(nz, dtype=np.int64) * M
+    for (q, s), nm in side_name.items():
+        if nm == NO_TAG:
+            continue
+        hf = (5 - s) if flip else s
+        for e in (layer0 + q).tolist():
+            bb.add(e, hf, nm)
+    for q in range(M):
+        if first_caps[q]:
+            bb.add(q, 5, first_caps[q])
+    if nz:
         for q in range(M):
-            v = qw[q, :]
-            hexes[e] = np.concatenate([i * nn + v, j * nn + v])
-            if tag_sides:
-                # section side s -> hex face s, or 5-s when the quad was flipped
-                for s in (1, 2, 3, 4):
-                    nm = side_name.get((q, s))
-                    if nm is None or nm == NO_TAG:
-                        continue
-                    bb.add(e, (5 - s) if flip else s, nm)
-            if i == 0 and first_caps[q]:
-                bb.add(e, 5, first_caps[q])
-            if i == nz - 1 and last_caps[q]:
-                bb.add(e, 6, last_caps[q])
-            e += 1
+            if last_caps[q]:
+                bb.add((nz - 1) * M + q, 6, last_caps[q])
 
     # order-N: each hex column is a straight GLL sweep between the two bounding
     # profiles' in-plane blocks, evaluated only at the entity slots -- the two
@@ -173,8 +281,6 @@ def loft(
         if order == 1:
             sw = None                      # order 1 has no interior level at all
 
-    edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
-    canonical_conn, elem_faces, face_orient = conform.canonical_faces(hexes)
     edge_nodes: PointArray | None = None
     face_nodes: PointArray | None = None
     interior: PointArray | None = None
@@ -199,6 +305,13 @@ def loft(
             def _at(slots: IntArray) -> PointArray:
                 """The column's straight GLL sweep, evaluated at those hex slots."""
                 return _sweep_at(bottom, top, g, slots, m2)
+
+            def _pick(elems: IntArray, slots: IntArray) -> PointArray:
+                """``(K,S,3)`` -- the same sweep at per-row ``(element, slot)`` pairs."""
+                gg = g[slots // m2][:, :, None]
+                m = slots % m2
+                return ((1.0 - gg) * bottom[elems[:, None], m]
+                        + gg * top[elems[:, None], m])
         else:
             # every sweep level is a genuine section, so the full ``(E, row, m2, 3)``
             # level stack is known outright and a node is a pure gather -- nothing is
@@ -218,20 +331,28 @@ def loft(
                 """The true node at those hex slots, read out of the level stack."""
                 return lev[:, slots // m2, slots % m2, :]
 
-        k2 = (order - 1) ** 2
-        eslots = conform._edge_slots(3, order)[:, 1:-1]         # (12, order-1)
-        local_e = _at(eslots.ravel()).reshape(E, 12, order - 1, 3)
-        fslots = conform._face_interior_slots(order)            # (6, k2)
-        local_f = _at(fslots.ravel()).reshape(E, 6, k2, 3)
+            def _pick(elems: IntArray, slots: IntArray) -> PointArray:
+                """``(K,S,3)`` -- the same gather at per-row ``(element, slot)`` pairs."""
+                return lev[elems[:, None], slots // m2, slots % m2, :]
+
         interior = _at(conform._interior_slots(3, order))
-        tol = conform.entity_tol(points)
-        edge_nodes = conform.scatter_edge_nodes(
-            local_e, elem_edges, eflip, edges.shape[0], tol, "HexMesh.loft")
-        face_nodes = conform.scatter_face_nodes(
-            local_f, elem_faces, face_orient, canonical_conn.shape[0], tol,
-            "HexMesh.loft")
-    faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
-    return HexMesh(faces, elem_faces, face_orient, interior,
+
+        # A shared entity has exactly one source here, named by ``*_src``, so its nodes
+        # are read once and written once -- no owner election, and no ``scatter_*``
+        # tolerance check, because there is no second copy to disagree with.
+        ee, le = brep.edge_src[:, 0], brep.edge_src[:, 1]
+        local_e = _pick(ee, conform._edge_slots(3, order)[:, 1:-1][le])
+        edge_nodes = np.where(brep.edge_flip[ee, le][:, None, None],
+                              local_e[:, ::-1, :], local_e)
+
+        fe, lf = brep.face_src[:, 0], brep.face_src[:, 1]
+        local_f = _pick(fe, conform._face_interior_slots(order)[lf])
+        _, into_canon = conform._perm_tables(order)
+        face_nodes = np.take_along_axis(
+            local_f, into_canon[brep.face_orient[fe, lf]][:, :, None], axis=1)
+    edge_lm = LineMesh(points, brep.edges, interior=edge_nodes)
+    faces = QuadMesh(edge_lm, brep.face_edges, brep.face_flip, face_nodes)
+    return HexMesh(faces, brep.elem_faces, brep.face_orient, interior,
                    bb.build_ordered(), etags)
 
 
@@ -241,9 +362,9 @@ def _loft_evaluated(
     order: int,
     *,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
     name: str = "loft_fn",
 ) -> HexMesh:
     """The shared tail of every sweep whose sections are **evaluated** on the refined
@@ -301,9 +422,9 @@ def loft_fn(
     *,
     loop: bool = False,
     order: int | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
     """Loft a block from a **parametrized family of sections** -- :func:`loft
     <nekmeshpy.hexmesh.assemble.loft>` with the slices evaluated rather than handed in,
@@ -311,8 +432,6 @@ def loft_fn(
     from calling ``f`` and nothing is blended along the sweep."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
     _check_fraction_count(fr, loop=loop, name="loft_fn")
-    if loop:
-        reject_loop_caps("HexMesh.loft_fn", first_tag, last_tag)
     if order is None:
         # The node lattice the sections are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the

@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import ElementTags, QuadMesh, hexmesh, linemesh, quadmesh
+from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 
 R, RT, NS, NV = 2.0, 0.6, 2, 6
 RADIAL = np.array([0.5, 1.0])
@@ -34,7 +34,7 @@ def _tube_disc(order, *, flipped=False, wall_tag=""):
     """
     ring = linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0),
                            order=order,
-                           element_tags=["wall"] * (4 * NS) if wall_tag else None)
+                           element_tag="wall" if wall_tag else "")
     if flipped:
         ring = linemesh.reverse(ring)
     return quadmesh.ogrid(ring, NS, RADIAL, wall_tag=wall_tag)
@@ -144,10 +144,11 @@ def test_loop_rejects_a_family_that_does_not_close():
                         loop=True, order=2)
 
 
-def test_loop_rejects_end_caps():
-    with pytest.raises(ValueError):
-        hexmesh.loft_fn(_torus_f(1), _ring_fractions(), loop=True,
-                        first_tag="in")
+def test_loop_places_end_caps_on_the_seam():
+    """A closed sweep has no free end, but its seam is a real side -- a cap tag names
+    that side of it rather than being refused."""
+    hm = hexmesh.loft_fn(_torus_f(1), _ring_fractions(), loop=True, first_tag="in")
+    assert hm.face_tags.count("in") > 0
 
 
 def test_loop_rejects_fewer_than_three_fractions():
@@ -208,27 +209,26 @@ def test_grading_is_honored_per_layer():
 
 # -- tags --------------------------------------------------------------------
 
-def test_per_layer_element_tags_override_the_section_quad_tags():
+def test_element_tags_name_the_swept_column_of_each_section_quad():
+    """``element_tags`` is per *section element*: quad q's tag lands on every hex
+    swept from it, at every layer -- and a single string names the whole block."""
     base = quadmesh.ogrid(
         linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
-    tagged = QuadMesh(base.lines, base.quad, base.flip, base.interior,
-                      base.edge_tags,
-                      ElementTags.uniform(base.n_quads, "fluid"))
-    f = lambda t: quadmesh.rotate(tagged, t, axis=(0, 0, 1))                 # noqa: E731
-    layers = ["", "hot", ""]
-    blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
+    f = lambda t: quadmesh.rotate(base, t, axis=(0, 0, 1))                   # noqa: E731
+    per_quad = ElementTags.from_dense(["hot"] + [""] * (base.n_quads - 1))
+    blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=per_quad)
     tags = blk.element_tags.dense(blk.n_hexes).reshape(3, base.n_quads)   # hex (layer i, quad q)
-    assert list(np.unique(tags[0])) == ["fluid"]
-    assert list(np.unique(tags[1])) == ["hot"]         # non-empty layer tag wins
-    assert list(np.unique(tags[2])) == ["fluid"]
+    assert list(np.unique(tags[:, 0])) == ["hot"]
+    assert list(np.unique(tags[:, 1:])) == [""]
+    assert hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 4),
+                           element_tags="fluid").element_group_tags == ["fluid"]
 
 
-def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
+def test_side_and_cap_boundary_tags_survive_the_element_tags():
     f = _torus_f(1, wall_tag="wall")
     blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 3), order=1,
-                          element_tags=["a", "b"],
-                             first_tag="inlet", last_tag="outlet")
+                          element_tags="a", first_tag="inlet", last_tag="outlet")
     assert set(blk.face_group_tags) == {"wall", "inlet", "outlet"}
     b = blk.face_tags
     # caps land on faces 5/6 of the first / last layer, the wall on side faces
@@ -236,14 +236,16 @@ def test_side_and_cap_boundary_tags_survive_the_per_layer_override():
     assert sides("inlet") == {5}
     assert sides("outlet") == {6}
     assert sides("wall") <= {1, 2, 3, 4}
-    assert blk.element_tags.group_tags == ["a", "b"]
+    assert blk.element_tags.group_tags == ["a"]
 
 
-def test_loft_rejects_a_mis_sized_element_tags():
+def test_loft_rejects_element_tags_naming_a_quad_the_section_lacks():
     base = _flat_disc(1)
     slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
-    with pytest.raises(ValueError, match="per layer"):
-        hexmesh.loft(slices, element_tags=["a", "b", "c"])   # 3 tags, 2 layers
+    with pytest.raises(ValueError, match="only %d elements" % base.n_quads):
+        hexmesh.loft(slices, element_tags=ElementTags([base.n_quads], ["off"]))
+    with pytest.raises(TypeError, match="element_tags must be"):
+        hexmesh.loft(slices, element_tags=["a", "b"])
 
 
 # -- validation of what f returns --------------------------------------------

@@ -38,7 +38,7 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 # -- build the O-grid cross-section, then extrude it along the axis -----------
 # interior filled + repositioned (wall fixed); extrude copies it along the axis
 wall = linemesh.circle(RADIUS, 4 * N_SIDE,
-                       element_tags=["wall"] * (4 * N_SIDE), order=ORDER)
+                       element_tag="wall", order=ORDER)
 radial = geometric_spacing(N_RADIAL, RADIAL_GRADING)
 
 section = quadmesh.ogrid(wall, N_SIDE, radial,

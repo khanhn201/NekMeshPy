@@ -28,7 +28,7 @@ from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 # 1. Boundary: a closed circular loop, tagged "wall" at the lowest level.
 n = 4 * 6                                   # 4 * n_side points around the ring
-boundary = linemesh.circle(radius=0.5, n=n, element_tags=["wall"] * n)
+boundary = linemesh.circle(radius=0.5, n=n, element_tag="wall")
 
 # 2. Section: fill the loop with an O-grid, 4 radial layers.
 section = quadmesh.ogrid(boundary, n_side=6, radial=4,

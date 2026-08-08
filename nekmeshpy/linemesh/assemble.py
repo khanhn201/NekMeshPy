@@ -11,28 +11,24 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..model.conform import entity_tol
-from ..model.fields import gll_nodes, reject_loop_caps
+from ..model.fields import gll_nodes
 from ..model.tags import ElementTags, PointTags, TagBuilder
 from .linemesh import LineMesh
 from .query import boundary_points
 
 
-def _cap_tags(cap: str | Sequence[str] | StrArray | None, N: int = 1) -> list[str]:
-    """Normalize a cap tag to one tag per cap **node** (length ``N``): a scalar ``str``
-    tags the whole cap, an array-like is one tag per node, and ``None`` -- "no cap tag
-    asked for" -- is untagged on every node."""
-    if cap is None:
-        return [""] * N
-    if isinstance(cap, str):
-        return [cap] * N
-    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
-    if arr.shape[0] != N:
-        raise ValueError("cap tags length (%d) must match cap nodes (%d)"
-                         % (arr.shape[0], N))
-    return [str(x) for x in arr.tolist()]
+def _one_tag(tag: str | None, who: str) -> str:
+    """A rung-1 tag argument as a plain string: one point carries one name."""
+    if tag is None:
+        return ""
+    if not isinstance(tag, str):
+        raise TypeError(
+            "LineMesh.loft: %s must be a single tag string or None -- a slice here is "
+            "one point, so there is nothing to tag per element; got %s"
+            % (who, type(tag).__name__))
+    return tag
 
 
 def loft(
@@ -40,20 +36,22 @@ def loft(
     *,
     loop: bool = False,
     interior: PointArray | None = None,
-    point_tags: PointTags | None = None,
-    element_tags: Sequence[str] | StrArray | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | None = None,
+    first_tag: str | None = None,
+    last_tag: str | None = None,
     order: int = 1,
 ) -> LineMesh:
     """Loft a stack of point "profiles" into a 1-D mesh -- the bottom rung of the
     uniform sweep primitive shared with :func:`QuadMesh.loft
     <nekmeshpy.quadmesh.assemble.loft>` and :func:`HexMesh.loft
-    <nekmeshpy.hexmesh.assemble.loft>`."""
+    <nekmeshpy.hexmesh.assemble.loft>`.
+
+    A slice here is a single **point**, so the three tag arguments the upper rungs
+    take as "one tag or an ``ElementTags`` over the slice" reduce to one tag each:
+    ``element_tags`` names every lofted line, and ``first_tag`` / ``last_tag`` name
+    the chain's two end points."""
     pts = np.asarray(points, dtype=float)
     n = pts.shape[0]
-    if loop:
-        reject_loop_caps("LineMesh.loft", first_tag, last_tag)
     idx = np.arange(n, dtype=np.int64)
     if n < 2:
         lines: IntArray = np.zeros((0, 2), dtype=np.int64)
@@ -62,14 +60,11 @@ def loft(
     else:
         lines = np.column_stack([idx[:-1], idx[1:]])
 
-    bnd = point_tags if point_tags is not None else PointTags.empty()
-    # a chain's cap is a single end **node**, so each cap normalizes to one tag --
-    # the rung-1 form of the same scalar-or-per-element argument ``QuadMesh.loft`` /
-    # ``HexMesh.loft`` take, so all three rungs accept the same shapes.
-    first, last = _cap_tags(first_tag)[0], _cap_tags(last_tag)[0]
+    first = _one_tag(first_tag, "first_tag")
+    last = _one_tag(last_tag, "last_tag")
+    bnd = PointTags.empty()
     if first or last:
         bb = TagBuilder(PointTags)
-        bb.extend(bnd)
         L = lines.shape[0]
         if first and L:
             bb.add(0, 1, first)
@@ -84,9 +79,9 @@ def loft(
         b: PointArray = pts[lines[:, 1]]
         g = gll_nodes(order)[1:order]              # interior GLL nodes only
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
-    return LineMesh(pts, lines, interior, bnd,
-                    ElementTags.from_dense(element_tags, lines.shape[0], "lines")
-                    if element_tags is not None else None)
+    tag = _one_tag(element_tags, "element_tags")
+    etags = ElementTags.uniform(lines.shape[0], tag) if tag else ElementTags.empty()
+    return LineMesh(pts, lines, interior, bnd, etags)
 
 
 def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
@@ -155,7 +150,9 @@ def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointAr
 
 def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray, *,
             loop: bool = False, order: int = 1,
-            element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
+            element_tags: str | None = None,
+            first_tag: str | None = None,
+            last_tag: str | None = None) -> LineMesh:
     """Loft a curve given as its own analytic parametrization -- :func:`loft
     <nekmeshpy.linemesh.assemble.loft>` with the profiles **evaluated** rather than
     handed in, so **every** node (corners *and* the private high-order ``interior``)
@@ -191,11 +188,12 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
         corners = corners[:-1]
 
     if order == 1:
-        return loft(corners, loop=loop, element_tags=element_tags)
+        return loft(corners, loop=loop, element_tags=element_tags,
+                    first_tag=first_tag, last_tag=last_tag)
     slot: IntArray = (np.arange(ni)[:, None] * order
                       + np.arange(1, order)[None, :])        # (n, order-1)
-    return loft(corners, loop=loop, interior=P[slot],
-                element_tags=element_tags, order=order)
+    return loft(corners, loop=loop, interior=P[slot], element_tags=element_tags,
+                first_tag=first_tag, last_tag=last_tag, order=order)
 
 
 def _weld(pos: Sequence[PointArray], seams: Sequence[IntArray],

@@ -100,7 +100,7 @@ def test_layer_count_rejects_zero_and_floats():
 
 def test_repr_of_each_container_names_counts_and_tag_groups():
     from nekmeshpy import TriMesh
-    section = quadmesh.ogrid(linemesh.circle(1.0, 8, element_tags=["wall"] * 8), 2, 2)
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, element_tag="wall"), 2, 2)
     block = hexmesh.extrude(section, axis=(0, 0, 1), length=1.0, layers=2,
                             first_tag="inlet", last_tag="outlet")
     assert repr(section).startswith("<QuadMesh ")
