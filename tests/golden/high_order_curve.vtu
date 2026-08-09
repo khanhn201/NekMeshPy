@@ -3,55 +3,19 @@
   <UnstructuredGrid>
     <Piece NumberOfPoints="16" NumberOfCells="8">
       <Points>
-        <DataArray type="Float64" NumberOfComponents="3" format="ascii">
-          2 0 0
-          1.4142135623730951 1.4142135623730949 0
-          1.2246467991473532e-16 2 0
-          -1.4142135623730949 1.4142135623730951 0
-          -2 2.4492935982947064e-16 0
-          -1.4142135623730954 -1.4142135623730949 0
-          -3.6739403974420594e-16 -2 0
-          1.4142135623730947 -1.4142135623730954 0
-          1.8477590650225735 0.76536686473017956 0
-          0.76536686473017967 1.8477590650225735 0
-          -0.76536686473017945 1.8477590650225735 0
-          -1.8477590650225735 0.76536686473017979 0
-          -1.8477590650225737 -0.76536686473017934 0
-          -0.76536686473018067 -1.847759065022573 0
-          0.76536686473018001 -1.8477590650225733 0
-          1.847759065022573 -0.76536686473018078 0
+        <DataArray type="Float64" NumberOfComponents="3" format="binary">
+          gAEAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAADNO39mnqD2P8w7f2aeoPY/AAAAAAAAAAAHXBQzJqahPAAAAAAAAABAAAAAAAAAAADMO39mnqD2v807f2aeoPY/AAAAAAAAAAAAAAAAAAAAwAdcFDMmprE8AAAAAAAAAADOO39mnqD2v8w7f2aeoPa/AAAAAAAAAAAKip5MOXm6vAAAAAAAAADAAAAAAAAAAADLO39mnqD2P847f2aeoPa/AAAAAAAAAABGjTLPa5D9P2Oprqbifeg/AAAAAAAAAABkqa6m4n3oP0aNMs9rkP0/AAAAAAAAAABiqa6m4n3ov0aNMs9rkP0/AAAAAAAAAABGjTLPa5D9v2Wprqbifeg/AAAAAAAAAABHjTLPa5D9v2Gprqbifei/AAAAAAAAAABtqa6m4n3ov0SNMs9rkP2/AAAAAAAAAABnqa6m4n3oP0WNMs9rkP2/AAAAAAAAAABEjTLPa5D9P26prqbifei/AAAAAAAAAAA=
         </DataArray>
       </Points>
       <Cells>
-        <DataArray type="Int64" Name="connectivity" format="ascii">
-          0 1 8
-          1 2 9
-          2 3 10
-          3 4 11
-          4 5 12
-          5 6 13
-          6 7 14
-          7 0 15
+        <DataArray type="Int64" Name="connectivity" format="binary">
+          wAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAACAAAAAAAAAABAAAAAAAAAAIAAAAAAAAACQAAAAAAAAACAAAAAAAAAAMAAAAAAAAACgAAAAAAAAADAAAAAAAAAAQAAAAAAAAACwAAAAAAAAAEAAAAAAAAAAUAAAAAAAAADAAAAAAAAAAFAAAAAAAAAAYAAAAAAAAADQAAAAAAAAAGAAAAAAAAAAcAAAAAAAAADgAAAAAAAAAHAAAAAAAAAAAAAAAAAAAADwAAAAAAAAA=
         </DataArray>
-        <DataArray type="Int64" Name="offsets" format="ascii">
-          3
-          6
-          9
-          12
-          15
-          18
-          21
-          24
+        <DataArray type="Int64" Name="offsets" format="binary">
+          QAAAAAAAAAADAAAAAAAAAAYAAAAAAAAACQAAAAAAAAAMAAAAAAAAAA8AAAAAAAAAEgAAAAAAAAAVAAAAAAAAABgAAAAAAAAA
         </DataArray>
-        <DataArray type="UInt8" Name="types" format="ascii">
-          68
-          68
-          68
-          68
-          68
-          68
-          68
-          68
+        <DataArray type="UInt8" Name="types" format="binary">
+          CAAAAAAAAABERERERERERA==
         </DataArray>
       </Cells>
     </Piece>

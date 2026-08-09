@@ -11,7 +11,7 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example
+from conftest import GOLDEN, curved, run_example, vtu_cell_types
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.interp import corner_indices, hex_face_indices
@@ -206,25 +206,17 @@ def test_lagrange_hex_perm_order2_body_center_last():
 
 
 # -- VTU (XML) export ---------------------------------------------------
-def _vtu_cell_types(path):
-    import xml.dom.minidom as m
-    d = m.parse(path)
-    ta = [da for da in d.getElementsByTagName("DataArray")
-          if da.getAttribute("Name") == "types"][0]
-    return set(ta.firstChild.data.split())
-
-
 def test_vtu_order1_is_plain_hex(tmp_path):
     p = str(tmp_path / "lin.vtu")
     export.to_vtu(_shell(1), p, groups=GROUPS)
-    assert _vtu_cell_types(p) == {"12"}                  # VTK_HEXAHEDRON
+    assert vtu_cell_types(p) == {12}                  # VTK_HEXAHEDRON
     assert 'Name="bc_id"' in open(p).read()
 
 
 def test_vtu_high_order_is_lagrange_hex(tmp_path):
     p = str(tmp_path / "ho.vtu")
     export.to_vtu(_shell(3), p, groups=GROUPS)           # 4**3 = 64 nodes/hex
-    assert _vtu_cell_types(p) == {"72"}                  # VTK_LAGRANGE_HEXAHEDRON
+    assert vtu_cell_types(p) == {72}                  # VTK_LAGRANGE_HEXAHEDRON
     assert 'Name="bc_id"' in open(p).read()
 
 
