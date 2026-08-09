@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import (
+    BoolArray,
     FloatArray,
     IntArray,
     PointArray,
@@ -106,14 +107,32 @@ class HexMesh:
         self.element_tags.check_within(E)
         self.face_tags.check_within(E)
 
-        # corner connectivity + per-hex edge incidence are derived from the shared
-        # faces and immutable post-construction (point moves don't change them), so
-        # memoize once.  Both are *reads* of the B-rep, never a fresh dedup: the shared
-        # edge ids come out of ``quads``' own table, so the order that table is stored in
-        # is nobody else's business.
+        # Corner connectivity is derived from the shared faces and immutable
+        # post-construction (point moves don't change it), so memoize it once.
         self._corners: IntArray = self._derive_corners()
-        self._elem_edges, self._edge_flip = conform.hex_edges_from_faces(
-            self.hex, self.face_orient, quads.quad, quads.flip)
+        # The per-hex edge incidence is the same kind of read -- never a fresh dedup, the
+        # ids come out of ``quads``' own table -- but only export, quality and ``merge``'s
+        # gather ever ask for it, so it is deferred rather than paid by every
+        # construction.  ``merge`` in particular builds its own and would never look.
+        self._edge_tables: tuple[IntArray, BoolArray] | None = None
+
+    def _edge_incidence(self) -> tuple[IntArray, BoolArray]:
+        """``(elem_edges (E,12), edge_flip (E,12))``, read off the shared faces on first
+        ask and kept."""
+        if self._edge_tables is None:
+            self._edge_tables = conform.hex_edges_from_faces(
+                self.hex, self.face_orient, self.quads.quad, self.quads.flip)
+        return self._edge_tables
+
+    @property
+    def _elem_edges(self) -> IntArray:
+        """``(E,12)`` per-hex incidence on the shared edge table."""
+        return self._edge_incidence()[0]
+
+    @property
+    def _edge_flip(self) -> BoolArray:
+        """``(E,12)`` ``True`` where the hex walks that edge against its stored row."""
+        return self._edge_incidence()[1]
 
     @classmethod
     def from_corners(
