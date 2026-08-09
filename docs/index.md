@@ -4,7 +4,7 @@ An object-oriented, all-hex meshing **toolkit** with Nek5000/NekRS export.
 
 The library is a set of composable primitives: a shared-point mesh model, named
 physical groups, `HexMesh` factories, smoothing / surface operations, sizing
-fields, quality + topology checks, and meshio I/O. Concrete meshers (bifurcation
+fields, quality + topology checks, and meshio I/O. Concrete meshers (carotid
 vessel, straight pipes, external-flow domains) are built on the toolkit and live
 in [`examples/`](https://github.com/nekmeshpy/nekmeshpy/tree/main/examples), not
 in the library.

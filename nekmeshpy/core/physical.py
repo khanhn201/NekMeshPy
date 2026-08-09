@@ -112,7 +112,7 @@ class PhysicalGroups:
     def from_tags(cls, tag_wall: int = 1, tag_trunk: int = 2, tag_top1: int = 3,
                   tag_top2: int = 4, tag_f1: int = 5, tag_f2: int = 6
                   ) -> "PhysicalGroups":
-        """Build the bifurcation registry from explicit boundary tags."""
+        """Build the carotid registry from explicit boundary tags."""
         return cls([
             PhysicalGroup("wall",         tag_wall,  2, "W  "),
             PhysicalGroup("trunk_outlet", tag_trunk, 2, "v  "),

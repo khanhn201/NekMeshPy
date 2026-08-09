@@ -1,6 +1,6 @@
 """Tests for the toolkit generalization layer: physical groups, the shared-point
 Mesh view, quality, and the section-smoothing registry (exercised on the
-mesh the bifurcation example builds)."""
+mesh the carotid example builds)."""
 
 import numpy as np
 

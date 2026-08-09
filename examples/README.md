@@ -8,7 +8,7 @@ Install the package (`pip install -e .`), then run any script from the repo root
 with the repo on `PYTHONPATH`:
 
 ```bash
-PYTHONPATH=. python examples/bifurcation.py            # vessel surface mesher (car case)
+PYTHONPATH=. python examples/carotid.py            # vessel surface mesher (car case)
 PYTHONPATH=. python examples/circular_pipe.py          # all-hex O-grid circular pipe
 PYTHONPATH=. python examples/circular_pipe_tjunction.py # analytic all-hex pipe T-junction
 PYTHONPATH=. python examples/quadrant_pipe_tjunction.py # welded small-branch T-junction (quadrant blocks)
@@ -28,12 +28,12 @@ PYTHONPATH=. python examples/high_order_quad.py        # order-2 cubed-sphere su
 PYTHONPATH=. python examples/high_order_hex.py         # order-2 spherical shell (curved volume)
 ```
 
-Each writes native Nek5000/NekRS `.re2` plus a `.vtu` for ParaView; `bifurcation.py`
-also writes a Nek field file (`bifurcation0.f00001`) carrying its high-order GLL nodes.
+Each writes native Nek5000/NekRS `.re2` plus a `.vtu` for ParaView; `carotid.py`
+also writes a Nek field file (`carotid0.f00001`) carrying its high-order GLL nodes.
 
 | script | what it builds |
 |---|---|
-| `bifurcation.py` | vessel surface pipeline: seam fields → cut into legs → O-grid legs (`quadmesh.spined_ogrid`) → `loft`/`merge` → smooth (uses `data/car.{vtx,tri}`) |
+| `carotid.py` | vessel surface pipeline: seam fields → cut into legs → O-grid legs (`quadmesh.spined_ogrid`) → `loft`/`merge` → smooth (uses `data/car.{vtx,tri}`) |
 | `circular_pipe.py` | `quadmesh.ogrid` disc extruded along an axis (`hexmesh.extrude`) |
 | `circular_pipe_tjunction.py` | analytic three-leg junction: shared seam arcs + spine → spined-O-grid legs (`quadmesh.spined_ogrid`) → `loft`/`merge` (no input geometry; the STL wall polish is present but off at `ORDER = 4` — see `SMOOTH_ITERS`) |
 | `quadrant_pipe_tjunction.py` | welded small-branch T-junction, four `quadmesh.quadrant_ogrid` blocks per section. **One quadrant of the main pipe *is* a quadrant of the branch**: four regions (two legs, branch stub, two crotch caps) meet at the axes-crossing point `O`, and every interface between them is a quadrant face radiating from it — the branch's footprint disc contributes its `+z` and `-z` quadrants to the two legs' composite junction faces and its two lateral quadrants to the caps, while the legs share the wide `bypass` quadrant with each other. Each crotch is filled by `hexmesh.tetra`: a quadrant face is itself a three-patch triangle (core + the two halves of its ring band), so handing three of them plus a wall patch to the generic tetrahedron split yields the octant of a 3-D O-grid — core cube + three radial slabs — with the block split the faces already carry. Exact at any order: every wall curve is carried as a parametrization and meshed with `loft_fn`, each leg's transition is a `hexmesh.loft_fn` (a plain `loft` is straight along the sweep), and the caps are nested `loft_fn` blocks evaluated at every node — so all wall nodes, high-order ones included, sit on the main or branch cylinder to `2.2e-16` at `ORDER` 1–4. Single watertight, conformal component |
@@ -85,7 +85,7 @@ curve rather than samples of it. The library default is `1` (plain linear elemen
 the factories that accept one, so any of them can be re-run linear or curved by
 editing a single number. Most ship at `ORDER = 2`; the three curved-wall junction
 cases go higher — `circular_pipe_tjunction.py` at **`ORDER = 4`**,
-`quadrant_pipe_tjunction.py` at **`ORDER = 3`**, and `bifurcation.py` at
+`quadrant_pipe_tjunction.py` at **`ORDER = 3`**, and `carotid.py` at
 **`ORDER = 3`**: its walls come off a scanned STL and so have no closed form to
 evaluate, but it recovers one by refitting each station's ring as a **truncated
 Fourier series** (`fourier_ring`, keeping the lower half of the rFFT modes of
@@ -120,7 +120,7 @@ viewer renders as curved geometry via the XML `.vtu` writer (`export.to_vtu` /
 `line_to_vtu` / `quad_to_vtu`) — ParaView and VisIt render Lagrange cells reliably
 from `.vtu`. To hand the curved geometry to **Nek** rather than to a viewer, use the
 field-file writer `export.to_fld` (`<prefix>0.f00001`, `fields="X"`): unlike `.re2` it
-stores the full `lx1³` GLL block per element. `bifurcation.py` writes one alongside its
+stores the full `lx1³` GLL block per element. `carotid.py` writes one alongside its
 `.re2`/`.vtu` (`EXPORT_FLD`).
 
 ## Library modules
@@ -138,5 +138,5 @@ exempts them from the "must define a `mesh` global" check.
 
 The scripts double as integration tests: `tests/conftest.py` runs them with
 `runpy.run_path` and inspects the `mesh` global (plus the golden `.re2`/`.vtu` for
-the bifurcation — coordinates to `1e-12`, topology and tags byte-exact). They must
+the carotid — coordinates to `1e-12`, topology and tags byte-exact). They must
 keep producing a valid mesh.
