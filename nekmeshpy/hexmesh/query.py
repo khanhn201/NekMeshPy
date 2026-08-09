@@ -13,6 +13,7 @@ from .._typing import (
     PointArray,
 )
 from ..model import conform
+from ..model.interp import corner_indices
 from ..model.quality import QualitySummary
 from ..model.topology import TopologyReport
 from .hexmesh import HexMesh
@@ -133,12 +134,35 @@ def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
     Ej = HC[:, he[:, 1]].ravel()
     return np.unique(np.sort(np.column_stack([Ei, Ej]), axis=1), axis=0)
 
+def element_blocks(mesh: HexMesh) -> PointArray:
+    """``(E, (order+1)**3, 3)`` -- each hex's own node block, assembled natively from the
+    B-rep: shared corners, then the shared edge-interior nodes in element traversal order,
+    then the shared face interiors turned out of each face's canonical frame into this
+    hex's, then the private per-hex interiors, each written at its lattice slot.  Nothing
+    is resampled or deduplicated.
+
+    The top rung of :func:`linemesh.element_blocks
+    <nekmeshpy.linemesh.query.element_blocks>` / :func:`quadmesh.element_blocks
+    <nekmeshpy.quadmesh.query.element_blocks>`; this one has the extra face family."""
+    order = mesh.order
+    row = order + 1
+    out: PointArray = np.empty((mesh.n_hexes, row ** 3, 3), dtype=float)
+    out[:, corner_indices(order, 3), :] = mesh.points[mesh.hexes]
+    out[:, conform._edge_slots(3, order)[:, 1:-1], :] = conform.gather_edge_nodes(
+        mesh.edge_nodes, mesh._elem_edges, mesh._edge_flip)
+    out[:, conform._face_interior_slots(order), :] = conform.gather_face_nodes(
+        mesh.face_nodes, mesh.hex, mesh.face_orient)
+    out[:, conform._interior_slots(3, order), :] = mesh.interior
+    return out
+
+
 __all__ = [
     "WeldResult",
     "boundary_elements",
     "boundary_faces",
     "boundary_points",
     "classify_points",
+    "element_blocks",
     "is_conforming",
     "is_watertight",
     "quality_summary",

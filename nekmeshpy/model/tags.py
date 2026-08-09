@@ -198,39 +198,66 @@ class TagBuilder(Generic[T]):
 
     def __init__(self, table_type: type[T]) -> None:
         self._type: type[T] = table_type
-        self._elements: list[int] = []
-        self._sides: list[int] = []
-        self._tags: list[str] = []
+        self._elements: list[IntArray] = []
+        self._sides: list[IntArray] = []
+        self._tags: list[StrArray] = []
+        self._n = 0
 
-    def add(self, element: int, side: int, tag: str) -> None:
-        """Append one row unconditionally."""
-        self._elements.append(int(element))
-        self._sides.append(int(side))
-        self._tags.append(str(tag))
+    @staticmethod
+    def _rows(element: int | IntArray, side: int | IntArray,
+              tag: str | StrArray) -> tuple[IntArray, IntArray, StrArray]:
+        """``(elements, sides, tags)`` as three equal-length 1-D arrays, broadcast
+        against each other."""
+        e, s, t = np.broadcast_arrays(
+            np.asarray(element, dtype=np.int64), np.asarray(side, dtype=np.int64),
+            np.asarray(tag, dtype=np.str_))
+        return e.reshape(-1), s.reshape(-1), np.asarray(t, dtype=np.str_).reshape(-1)
 
-    def add_if_tagged(self, element: int, side: int, tag: str) -> None:
-        """Append one row only if ``tag`` is non-empty."""
-        if tag:
-            self.add(element, side, tag)
+    def _append(self, e: IntArray, s: IntArray, t: StrArray) -> None:
+        if e.size:
+            self._elements.append(e)
+            self._sides.append(s)
+            self._tags.append(t)
+            self._n += e.shape[0]
+
+    def add(self, element: int | IntArray, side: int | IntArray,
+            tag: str | StrArray) -> None:
+        """Append rows unconditionally.  Each of ``element`` / ``side`` / ``tag`` is a
+        scalar or an array, and the three broadcast against each other -- so one call
+        names one row, or one side of a whole column of elements, or a set of rows
+        outright, without a Python loop over elements."""
+        self._append(*self._rows(element, side, tag))
+
+    def add_if_tagged(self, element: int | IntArray, side: int | IntArray,
+                      tag: str | StrArray) -> None:
+        """:meth:`add`, minus the rows whose tag is empty -- so a per-element tag array
+        can be handed over whole, untagged entries and all, and a scalar ``NO_TAG``
+        adds nothing."""
+        e, s, t = self._rows(element, side, tag)
+        keep: BoolArray = t != ""
+        if not keep.all():
+            e, s, t = e[keep], s[keep], t[keep]
+        self._append(e, s, t)
 
     def extend(self, table: T) -> None:
         """Append every row of ``table``, in its order."""
-        for e, s, t in table:
-            self.add(e, s, t)
+        self._append(np.asarray(table.elements, dtype=np.int64).reshape(-1),
+                     np.asarray(table.sides, dtype=np.int64).reshape(-1),
+                     _str_array(table.tags))
 
     def __len__(self) -> int:
-        return len(self._elements)
+        return self._n
 
     def __bool__(self) -> bool:
-        return bool(self._elements)
+        return bool(self._n)
 
     def build(self) -> T:
         """The rows as stored, in insertion order."""
         if not self._elements:
             return self._type.empty()
-        return self._type(np.asarray(self._elements, dtype=np.int64),
-                          np.asarray(self._sides, dtype=np.int64),
-                          _str_array(self._tags))
+        return self._type(np.concatenate(self._elements),
+                          np.concatenate(self._sides),
+                          np.concatenate(self._tags).astype(np.str_))
 
     def build_ordered(self) -> T:
         """:meth:`build` then :meth:`SideTags.ordered`."""

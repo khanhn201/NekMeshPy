@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import NamedTuple
 
 import numpy as np
 
@@ -14,11 +13,15 @@ from .._typing import (
     PointArray,
 )
 from ..linemesh import LineMesh
-from ..linemesh.assemble import _check_fraction_count, _refined_lattice, _weld
+from ..linemesh.assemble import (
+    _at_levels,
+    _check_fraction_count,
+    _refined_lattice,
+    _weld,
+)
 from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes
-from ..model.sweep import Sweep
 from ..model.tags import (
     ElementTags,
     FaceTags,
@@ -26,8 +29,9 @@ from ..model.tags import (
     sweep_cap_tags,
     sweep_element_tags,
 )
-from ..quadmesh import NO_TAG, QuadMesh
-from .hexmesh import HexMesh, _slice_block, _sweep_at
+from ..quadmesh import QuadMesh
+from ..quadmesh.query import element_blocks as quad_blocks
+from .hexmesh import HexMesh, _sweep_at
 from .query import _boundary_points
 
 
@@ -38,131 +42,6 @@ def _face_brep(points: PointArray, canonical_conn: IntArray,
     q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
     edge_lm = LineMesh(points, q_edges, interior=edge_nodes)
     return QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes)
-
-
-class _SweptBrep(NamedTuple):
-    """A swept hex block's B-rep, *written* from the two entity families rather than
-    deduplicated out of its corners: the shared edges and faces, each element's incidence
-    on them, the faces' own edge incidence one rung down, and -- since a closed form knows
-    it -- the one ``(element, local entity)`` each entity's high-order nodes come from."""
-
-    edges: IntArray
-    elem_edges: IntArray
-    edge_flip: BoolArray
-    edge_src: IntArray
-    faces: IntArray
-    elem_faces: IntArray
-    face_orient: IntArray
-    face_edges: IntArray
-    face_flip: BoolArray
-    face_src: IntArray
-
-
-def _swept_brep(sweep: Sweep, sec: QuadMesh, hexes: IntArray, flip: bool,
-                i_idx: IntArray, q_idx: IntArray, j_idx: IntArray) -> _SweptBrep:
-    """The B-rep of ``sweep`` applied to section ``sec``, in closed form.
-
-    Every entity is *carried* (a section quad / edge sitting at one level) or *swept* (a
-    section edge / point dragged across one layer), and each family is an arithmetic
-    block, so nothing here deduplicates or sorts -- ids come out in family order at both
-    rungs.  A face takes its canonical frame from the section's own winding (carried) or
-    from the section edge dragged across the layer (swept), never from an owner element,
-    which is not shift-invariant across levels."""
-    nn, nlev, nz = sweep.nn, sweep.n_levels, sweep.n_layers
-    quads = np.asarray(sec.quads, dtype=np.int64).reshape(-1, 4)
-    M = quads.shape[0]
-    # local face / in-plane edge ``k`` of a hex is section side ``fside[k]``, and its
-    # local corner ``k`` section corner ``cslot[k]``; reversing the template walks the
-    # section's sides backwards from side 3 and swaps its two odd corners.
-    fside: IntArray = np.array([3, 2, 1, 0] if flip else [0, 1, 2, 3], dtype=np.int64)
-    cslot: IntArray = np.array([0, 3, 2, 1] if flip else [0, 1, 2, 3], dtype=np.int64)
-    # an entity only exists where an element carries it: an isolated section point, or a
-    # section edge no quad references, would otherwise spawn an unreferenced row.  The
-    # first section slot referencing each one is where its nodes will be read from.
-    used_p, first_p = np.unique(quads.ravel(), return_index=True)
-    used_e, first_e = np.unique(sec.quad.ravel(), return_index=True)
-    pq, pc = np.divmod(first_p.astype(np.int64), 4)
-    eq, es = np.divmod(first_e.astype(np.int64), 4)
-    nu, ne = used_p.shape[0], used_e.shape[0]
-    pslot: IntArray = np.full(nn, -1, np.int64)
-    pslot[used_p] = np.arange(nu, dtype=np.int64)
-    eslot: IntArray = np.full(sec.lines.n_lines, -1, np.int64)
-    eslot[used_e] = np.arange(ne, dtype=np.int64)
-    ab: IntArray = np.sort(sec.lines.lines[used_e], axis=1)       # (ne,2) min-first
-    A, B = ab[:, 0], ab[:, 1]
-
-    lvl: IntArray = np.arange(nlev, dtype=np.int64)
-    lay: IntArray = np.arange(nz, dtype=np.int64)
-    nxt = sweep.nxt
-
-    rows: IntArray = np.concatenate([
-        (ab[None] + (lvl * nn)[:, None, None]).reshape(-1, 2),
-        np.stack([sweep.point(np.minimum(lay, nxt)[:, None], used_p[None, :]).ravel(),
-                  sweep.point(np.maximum(lay, nxt)[:, None], used_p[None, :]).ravel()],
-                 axis=1)], axis=0)
-
-    # local edges 0-3 / 4-7 are the section sides carried to this hex's near / far level,
-    # 8-11 its corners swept across the layer.  Every stored row is min-first, so a
-    # traversal's flip is just the directed pair read off the corners.
-    side: IntArray = eslot[sec.quad][q_idx][:, fside]             # (E,4)
-    ends: IntArray = hexes[:, conform._LOCAL_EDGES[3]]            # (E,12,2) directed
-    elem_edges: IntArray = np.concatenate([
-        sweep.carried(i_idx[:, None], side, ne),
-        sweep.carried(j_idx[:, None], side, ne),
-        sweep.swept(i_idx[:, None], pslot[hexes[:, :4] % nn], ne, nu)], axis=1)
-
-    faces: IntArray = np.concatenate([
-        (quads[None] + (lvl * nn)[:, None, None]).reshape(-1, 4),
-        np.stack([sweep.point(lay[:, None], A[None, :]).ravel(),
-                  sweep.point(lay[:, None], B[None, :]).ravel(),
-                  sweep.point(nxt[:, None], B[None, :]).ravel(),
-                  sweep.point(nxt[:, None], A[None, :]).ravel()], axis=1)], axis=0)
-    elem_faces: IntArray = np.concatenate([
-        sweep.swept(i_idx[:, None], side, M, ne),
-        sweep.carried(i_idx, q_idx, M)[:, None],
-        sweep.carried(j_idx, q_idx, M)[:, None]], axis=1)
-
-    # the faces one rung down: a carried face walks the section quad's own sides; a swept
-    # face walks [carried at i, rung at B, carried at j (backwards), rung at A].
-    kk: IntArray = np.arange(ne, dtype=np.int64)
-    face_edges: IntArray = np.concatenate([
-        sweep.carried(lvl[:, None, None], eslot[sec.quad][None], ne).reshape(-1, 4),
-        np.stack([sweep.carried(lay[:, None], kk[None, :], ne).ravel(),
-                  sweep.swept(lay[:, None], pslot[B][None, :], ne, nu).ravel(),
-                  sweep.carried(nxt[:, None], kk[None, :], ne).ravel(),
-                  sweep.swept(lay[:, None], pslot[A][None, :], ne, nu).ravel()],
-                 axis=1)], axis=0)
-    face_flip: BoolArray = np.concatenate([
-        np.tile(quads > quads[:, [1, 2, 3, 0]], (nlev, 1)),
-        np.stack([np.zeros(nz * ne, dtype=bool),
-                  np.repeat(lay > nxt, ne),
-                  np.ones(nz * ne, dtype=bool),
-                  np.repeat(lay < nxt, ne)], axis=1)], axis=0)
-
-    # where each entity's nodes come from.  Every level below the last is the *near*
-    # level of its own layer (local face 5, in-plane edges 0-3); the open sweep's top
-    # level is only ever a *far* level, so it reads off the last layer instead.
-    home: IntArray = np.minimum(lvl, nz - 1)
-    near: BoolArray = (lvl < nz)[:, None]
-    mid: IntArray = np.arange(M, dtype=np.int64)
-    edge_src: IntArray = np.stack([
-        np.concatenate([(home[:, None] * M + eq[None, :]).ravel(),
-                        (lay[:, None] * M + pq[None, :]).ravel()]),
-        np.concatenate([np.where(near, fside[es][None, :],
-                                 4 + fside[es][None, :]).ravel(),
-                        np.broadcast_to(8 + cslot[pc], (nz, nu)).ravel()])],
-        axis=1)
-    face_src: IntArray = np.stack([
-        np.concatenate([(home[:, None] * M + mid[None, :]).ravel(),
-                        (lay[:, None] * M + eq[None, :]).ravel()]),
-        np.concatenate([np.broadcast_to(np.where(near, 4, 5), (nlev, M)).ravel(),
-                        np.broadcast_to(fside[es], (nz, ne)).ravel()])], axis=1)
-
-    return _SweptBrep(rows, elem_edges, ends[:, :, 0] > ends[:, :, 1], edge_src,
-                      faces, elem_faces,
-                      conform.face_frame_code(hexes[:, conform._LOCAL_FACES],
-                                              faces[elem_faces]),
-                      face_edges, face_flip, face_src)
 
 
 def loft(
@@ -177,81 +56,63 @@ def loft(
     """Loft a stack of conformal quad profiles into a hex block (the general primitive
     behind ``extrude``, and the top rung of the uniform sweep shared with
     :func:`linemesh.assemble.loft <nekmeshpy.linemesh.assemble.loft>` and
-    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>`)."""
+    :func:`QuadMesh.loft <nekmeshpy.quadmesh.assemble.loft>`).
+
+    The body climbs the ladder the result is stored on: the shared edges and their nodes
+    (the ``LineMesh``), then the shared faces and theirs (the ``QuadMesh``), then the
+    hexes and their private interiors.  Every entity of a sweep is *carried* (a section
+    quad / edge sitting at one level) or *swept* (a section edge / point dragged across
+    one layer), and both families are arithmetic -- ``level * n_carried + k`` and
+    ``n_prof * n_carried + layer * n_swept + k``, two contiguous blocks that cannot
+    collide -- so every table below is written, never deduplicated."""
     slices = list(slices)
-    quads = np.asarray(slices[0].quads, dtype=np.int64).reshape(-1, 4)
-    # section (quad, side) -> name; each swept side face inherits its section edge
-    side_name: dict[tuple[int, int], str] = slices[0].edge_tags.as_dict()
-    M = quads.shape[0]
     n_prof = len(slices)
     # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
     nz = n_prof if loop else n_prof - 1
+    # A sweep with no layer builds nothing.  A closed one needs three, and the bound is
+    # about identity, not size: entities here are resolved by their corner ids, so two
+    # layers -- which span the same pair of levels twice -- would hand two genuinely
+    # different rungs the same ids.  Three layers is already a real torus given
+    # ``sweep_nodes``; the tight case is not what is being excluded.
+    if nz < 1:
+        raise ValueError("loft needs at least 2 slices (one layer), got %d" % n_prof)
+    if loop and nz < 3:
+        raise ValueError(
+            "loft(loop=True) needs at least 3 slices, got %d -- one layer sweeps a slice "
+            "onto itself so every element's corners repeat, and two put both layers "
+            "across the same pair of levels, which gives two distinct rungs the same "
+            "corner ids.  An entity here *is* its corners, so neither is representable."
+            % n_prof)
+    sec = slices[0]
+    quads = np.asarray(sec.quads, dtype=np.int64).reshape(-1, 4)
+    M = quads.shape[0]
     S = np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3)
                   for s in slices], axis=0)             # (n_prof, nn, 3)
     nn = S.shape[1]
     points = S.reshape(n_prof * nn, 3)                   # global id = i*nn + v
-    # a lone slice bounds no layer, so it carries no entity either -- ``n_levels`` is
-    # the count of levels the sweep *uses*, and ``nxt`` is where the loop lives.
-    sweep = Sweep(n_prof if nz else 0, nz, nn, loop=loop)
-    nxt = sweep.nxt
+    # ``nxt[i]`` is the level layer ``i`` sweeps *to*: i+1 normally, wrapping to 0 on the
+    # closing layer of a periodic sweep -- the one place ``loop`` shows up.
+    nxt: IntArray = np.arange(1, nz + 1, dtype=np.int64) % n_prof
+    lvl: IntArray = np.arange(n_prof, dtype=np.int64)
+    lay: IntArray = np.arange(nz, dtype=np.int64)
 
-    # Decide handedness once from the first layer and flip the quad template if
-    # left-handed; reject a mixed-winding section rather than invert elements.
-    signs = np.array([HexMesh._signed_vol(np.vstack([S[0, quads[q], :], S[1, quads[q], :]]))
-                      for q in range(M)]) if nz else np.zeros(0)
-    if nz and not (np.all(signs > 0) or np.all(signs < 0)):
-        raise ValueError(
-            "loft: layer 0 is not consistently wound (mixed hex orientation). "
-            "Either the section mesher emitted mixed winding, or a sweep folded the "
-            "section through its own path -- a bend tighter than the section is wide "
-            "turns the inboard elements inside out.")
-    flip = bool(nz and signs[0] < 0)
-    qw = quads[:, [0, 3, 2, 1]] if flip else quads
-
-    # caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners).  A cap
-    # face *is* a section quad, so with no argument it inherits that quad's own element
-    # tag -- except on a closed sweep, whose "caps" are the interior seam.
-    closed = ElementTags.empty()
-    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
-                                M, "HexMesh.loft")
-    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
-                               M, "HexMesh.loft")
-
-    # hex ``e = i*M + q`` is section quad ``q`` dragged across layer ``i``: its 8
-    # corners are that quad's 4 at the near level then the same 4 at the far level.
-    i_idx, q_idx, j_idx = sweep.elements(M)
-    hexes: IntArray = np.concatenate(
-        [i_idx[:, None] * nn + qw[q_idx], j_idx[:, None] * nn + qw[q_idx]], axis=1)
-    brep = _swept_brep(sweep, slices[0], hexes, flip, i_idx, q_idx, j_idx)
-    etags = sweep_element_tags(element_tags, nz, M, "HexMesh.loft")
-
-    # face tags, by column rather than by element: a section side names the same hex
-    # face on every layer, and a cap names one layer's worth.
-    bb = TagBuilder(FaceTags)
-    layer0: IntArray = np.arange(nz, dtype=np.int64) * M
-    for (q, s), nm in side_name.items():
-        if nm == NO_TAG:
-            continue
-        hf = (5 - s) if flip else s
-        for e in (layer0 + q).tolist():
-            bb.add(e, hf, nm)
-    for q in range(M):
-        if first_caps[q]:
-            bb.add(q, 5, first_caps[q])
-    if nz:
-        for q in range(M):
-            if last_caps[q]:
-                bb.add((nz - 1) * M + q, 6, last_caps[q])
-
-    # order-N: each hex column is a straight GLL sweep between the two bounding
-    # profiles' in-plane blocks, evaluated only at the entity slots -- the two
-    # z-face interiors come from the slices' own quad interiors, the four side-face
-    # interiors and the cell interior are swept from the slices' edge / quad nodes,
-    # the in-slice edges are the slices' shared edge nodes and the vertical edges
-    # straight corner blends.  ``scatter_*`` then canonicalizes.
-    order = slices[0].order
+    order = sec.order
     if any(s.order != order for s in slices):
         raise ValueError("loft: all slices must share the same order")
+    ho = order > 1
+    # The corners come from the first slice alone, and every slice's high-order nodes are
+    # read by its entity ids, so matching geometry is not enough -- both tables have to be
+    # the same table.
+    sec_lines = np.asarray(sec.lines.lines, dtype=np.int64).reshape(-1, 2)
+    for k, sl in enumerate(slices):
+        if not (np.array_equal(np.asarray(sl.quads, dtype=np.int64).reshape(-1, 4), quads)
+                and np.array_equal(
+                    np.asarray(sl.lines.lines, dtype=np.int64).reshape(-1, 2), sec_lines)):
+            raise ValueError(
+                "loft: every slice must be index-paired with the first, but slice %d "
+                "stores a different quad or shared-edge table.  Place one section with "
+                "the affine ops (translate / rotate / transform) rather than rebuilding "
+                "it per level, or the sweep reads its nodes off the wrong entities." % k)
 
     # the intermediate sections, if any -- one list of ``order-1`` per layer, in
     # ascending GLL-level order.  Validated here so a mis-sized stack names the
@@ -271,89 +132,226 @@ def loft(
             for m in level:
                 if (m.order != order or m.n_points != nn
                         or not np.array_equal(
-                            np.asarray(m.quads, dtype=np.int64).reshape(-1, 4),
-                            quads)):
+                            np.asarray(m.quads, dtype=np.int64).reshape(-1, 4), quads)
+                        or not np.array_equal(
+                            np.asarray(m.lines.lines, dtype=np.int64).reshape(-1, 2),
+                            sec_lines)):
                     raise ValueError(
                         "loft: sweep_nodes[%d] sections must match the slices "
                         "(order %d, %d points, %d quads), got order %d with %d "
                         "points and %d quads"
                         % (i, order, nn, M, m.order, m.n_points, m.n_quads))
-        if order == 1:
+        if not ho:
             sw = None                      # order 1 has no interior level at all
 
-    edge_nodes: PointArray | None = None
-    face_nodes: PointArray | None = None
-    interior: PointArray | None = None
-    if order > 1:
+    # Decide handedness once from the first layer and flip the quad template if
+    # left-handed; reject a mixed-winding section rather than invert elements.  Only the
+    # *sign* is read, so this is the trilinear Jacobian proxy of every layer-0 hex at
+    # once -- the same three edge vectors ``HexMesh._signed_vol`` takes, vectorized.
+    P: PointArray = np.concatenate([S[0, quads], S[1, quads]], axis=1)   # (M,8,3)
+    r = P[:, [1, 2, 5, 6]].mean(axis=1) - P[:, [0, 3, 4, 7]].mean(axis=1)
+    u = P[:, [2, 3, 6, 7]].mean(axis=1) - P[:, [0, 1, 4, 5]].mean(axis=1)
+    w = P[:, [4, 5, 6, 7]].mean(axis=1) - P[:, [0, 1, 2, 3]].mean(axis=1)
+    signs: FloatArray = np.einsum("ij,ij->i", np.cross(r, u), w)
+    if not (np.all(signs > 0) or np.all(signs < 0)):
+        raise ValueError(
+            "loft: layer 0 is not consistently wound (mixed hex orientation). "
+            "Either the section mesher emitted mixed winding, or a sweep folded the "
+            "section through its own path -- a bend tighter than the section is wide "
+            "turns the inboard elements inside out.")
+    flip = bool(signs[0] < 0)
+    qw = quads[:, [0, 3, 2, 1]] if flip else quads
+    # local face / in-plane edge ``k`` of a hex is section side ``fside[k]``; reversing
+    # the template walks the section's sides backwards from side 3.
+    fside: IntArray = np.array([3, 2, 1, 0] if flip else [0, 1, 2, 3], dtype=np.int64)
+
+    # hex ``e = i*M + q`` is section quad ``q`` dragged across layer ``i``: its 8
+    # corners are that quad's 4 at the near level then the same 4 at the far level.
+    i_idx: IntArray = np.repeat(lay, M)
+    q_idx: IntArray = np.tile(np.arange(M, dtype=np.int64), nz)
+    j_idx: IntArray = nxt[i_idx]
+    hexes: IntArray = np.concatenate(
+        [i_idx[:, None] * nn + qw[q_idx], j_idx[:, None] * nn + qw[q_idx]], axis=1)
+
+    # An entity only exists where an element carries it: an isolated section point, or a
+    # section edge no quad references, would otherwise spawn an unreferenced row.
+    used_p: IntArray = np.unique(quads.ravel())
+    used_e: IntArray = np.unique(sec.quad.ravel())
+    nu, ne = used_p.shape[0], used_e.shape[0]
+    pslot: IntArray = np.full(nn, -1, np.int64)
+    pslot[used_p] = np.arange(nu, dtype=np.int64)
+    eslot: IntArray = np.full(sec.lines.n_lines, -1, np.int64)
+    eslot[used_e] = np.arange(ne, dtype=np.int64)
+    ab: IntArray = np.sort(sec.lines.lines[used_e], axis=1)       # (ne,2) min-first
+    A, B = ab[:, 0], ab[:, 1]
+    sec_side: IntArray = eslot[sec.quad][q_idx][:, fside]         # (E,4) used-edge slot
+    # a section stores each shared edge in its own direction; the rows above are
+    # min-first, so this is where a section's edge nodes have to be read backwards.
+    rev_e: BoolArray = sec.lines.lines[used_e][:, 0] > sec.lines.lines[used_e][:, 1]
+
+    def _edge_int(m: QuadMesh) -> PointArray:
+        """That section's own shared-edge interiors for the used edges, turned into the
+        canonical (min-first) direction the rows above are stored in."""
+        e: PointArray = np.asarray(m.lines.interior, dtype=float)[used_e]
+        return np.where(rev_e[:, None, None], e[:, ::-1, :], e)
+
+    # -- the column block: the private per-hex interior's only source ------------
+    # Order-N only.  Each hex column is a straight GLL sweep between its two bounding
+    # slices' in-plane blocks -- or, given ``sweep_nodes``, a pure gather out of the true
+    # intermediate sections, with nothing interpolated along the sweep at all.  Only
+    # step 6 needs it: every *shared* node below is written from the sections directly.
+    if ho:
         g = gll_nodes(order)
         row = order + 1
         m2 = row * row
-        SC = np.stack([_slice_block(s, order) for s in slices], axis=0)
-        # (nz, M, m2, 3) in-plane blocks of the bottom/top slice of each layer,
-        # flattened to hex order e = i*M + q.  ``nxt`` picks the top slice, so the
-        # periodic closing layer sweeps back onto profile 0's own block.
-        bottom = SC[np.arange(nz, dtype=np.int64)].reshape(nz * M, m2, 3)
-        top = SC[nxt].reshape(nz * M, m2, 3)
+        E = nz * M
+        SC = np.stack([quad_blocks(s) for s in slices], axis=0)
+        bottom = SC[lay].reshape(E, m2, 3)
+        top = SC[nxt].reshape(E, m2, 3)
         kk = np.arange(m2)
         trans = (kk // row) + row * (kk % row)        # transpose the in-plane grid
         if flip:
+            # the reversed corner template transposes the in-plane grid with it, or the
+            # column's grid is scrambled against its own corner table
             bottom = bottom[:, trans, :]
             top = top[:, trans, :]
-        E = nz * M
 
         if sw is None:
             def _at(slots: IntArray) -> PointArray:
                 """The column's straight GLL sweep, evaluated at those hex slots."""
                 return _sweep_at(bottom, top, g, slots, m2)
 
-            def _pick(elems: IntArray, slots: IntArray) -> PointArray:
-                """``(K,S,3)`` -- the same sweep at per-row ``(element, slot)`` pairs."""
-                gg = g[slots // m2][:, :, None]
-                m = slots % m2
-                return ((1.0 - gg) * bottom[elems[:, None], m]
-                        + gg * top[elems[:, None], m])
         else:
-            # every sweep level is a genuine section, so the full ``(E, row, m2, 3)``
-            # level stack is known outright and a node is a pure gather -- nothing is
-            # interpolated along the sweep.  The intermediate levels take the *same*
-            # in-plane transpose as bottom/top when the section is left-handed, or the
-            # column's grid is scrambled against its own corner table.
             lev: PointArray = np.empty((E, row, m2, 3), dtype=float)
             lev[:, 0] = bottom
             lev[:, order] = top
             for k in range(1, order):
                 blk: PointArray = np.stack(
-                    [_slice_block(sw[i][k - 1], order) for i in range(nz)],
-                    axis=0).reshape(E, m2, 3) if nz else np.zeros((0, m2, 3))
+                    [quad_blocks(sw[i][k - 1]) for i in range(nz)],
+                    axis=0).reshape(E, m2, 3)
                 lev[:, k] = blk[:, trans, :] if flip else blk
 
             def _at(slots: IntArray) -> PointArray:
                 """The true node at those hex slots, read out of the level stack."""
                 return lev[:, slots // m2, slots % m2, :]
 
-            def _pick(elems: IntArray, slots: IntArray) -> PointArray:
-                """``(K,S,3)`` -- the same gather at per-row ``(element, slot)`` pairs."""
-                return lev[elems[:, None], slots // m2, slots % m2, :]
+    # -- 1. the shared edges: the global LineMesh's topology ---------------------
+    # Rows are min-first, so a traversal's flip is the directed pair read off the corners.
+    carried_rows: IntArray = _at_levels(ab, lvl, nn)         # a section edge at a level
+    swept_rows: IntArray = np.stack([                        # a section point, dragged
+        _at_levels(used_p, np.minimum(lay, nxt), nn),
+        _at_levels(used_p, np.maximum(lay, nxt), nn)], axis=1)
+    edges: IntArray = np.concatenate([carried_rows, swept_rows], axis=0)
 
+    # -- 2. that LineMesh's interior: one write per shared edge ------------------
+    # A carried edge *is* that slice's own shared-edge interior, verbatim.  A rung is the
+    # straight GLL blend of its two corner points, or -- given ``sweep_nodes`` -- the
+    # intermediate sections' own points.  Nothing is read through an element.
+    edge_nodes: PointArray | None = None
+    carried_e: PointArray = np.zeros((0, ne, max(order - 1, 0), 3))
+    if ho:
+        carried_e = np.stack([_edge_int(s) for s in slices], axis=0)
+        if sw is not None:
+            rungs: PointArray = np.stack(
+                [np.stack([np.asarray(sw[i][k - 1].points, dtype=float)
+                           .reshape(-1, 3)[used_p] for k in range(1, order)], axis=1)
+                 for i in range(nz)], axis=0)
+        else:
+            Sp: PointArray = S[:, used_p, :]            # (n_prof, nu, 3)
+            gg = g[1:order][None, None, :, None]
+            rungs = ((1.0 - gg) * Sp[lay][:, :, None, :] + gg * Sp[nxt][:, :, None, :])
+        # the rung rows above are min-first, so the wrap layer stores its own backwards
+        rungs = np.where((lay > nxt)[:, None, None, None], rungs[:, :, ::-1, :], rungs)
+        edge_nodes = np.concatenate(
+            [carried_e.reshape(-1, order - 1, 3), rungs.reshape(-1, order - 1, 3)], axis=0)
+    edge_lm = LineMesh(points, edges, interior=edge_nodes)
+
+    # -- 3. the shared faces: their corners, and their edges in that LineMesh ----
+    # Each family fixes its own canonical frame, from the section -- never from an owner
+    # element, whose frame is not shift-invariant across levels.
+    # carried: the section quad at a level.  Its row is that quad's own CCW corners, so
+    # its four sides are the section's own sides, walked in the section's own direction.
+    carried_conn: IntArray = _at_levels(quads, lvl, nn)
+    carried_sides: IntArray = _at_levels(eslot[sec.quad], lvl, ne)
+    carried_flip: BoolArray = np.tile(quads > quads[:, [1, 2, 3, 0]], (n_prof, 1))
+    # swept: the section edge ``(A, B)`` dragged across a layer.  Its row is
+    # ``[A_i, B_i, B_j, A_j]``, so its sides walk [carried at i, rung at B, carried at j
+    # (backwards), rung at A] -- the two rung sides run with the layer, and the stored
+    # rung row is min-first, which is what the wrap layer's flips say.
+    k_e: IntArray = np.arange(ne, dtype=np.int64)
+    rung0 = n_prof * ne                                   # the first swept edge id
+    swept_conn: IntArray = np.stack([
+        _at_levels(A, lay, nn), _at_levels(B, lay, nn),
+        _at_levels(B, nxt, nn), _at_levels(A, nxt, nn)], axis=1)
+    swept_sides: IntArray = np.stack([
+        _at_levels(k_e, lay, ne),
+        rung0 + _at_levels(pslot[B], lay, nu),
+        _at_levels(k_e, nxt, ne),
+        rung0 + _at_levels(pslot[A], lay, nu)], axis=1)
+    swept_flip: BoolArray = np.stack([
+        np.zeros(nz * ne, dtype=bool), np.repeat(lay > nxt, ne),
+        np.ones(nz * ne, dtype=bool), np.repeat(lay < nxt, ne)], axis=1)
+
+    face_conn: IntArray = np.concatenate([carried_conn, swept_conn], axis=0)
+    face_edges: IntArray = np.concatenate([carried_sides, swept_sides], axis=0)
+    face_flip: BoolArray = np.concatenate([carried_flip, swept_flip], axis=0)
+
+    # -- 4. that QuadMesh's interior: one write per shared face ------------------
+    # Written straight into the canonical frame, so no D4 code enters here.  A carried
+    # face *is* that slice's own private quad interior -- same frame, because the
+    # canonical row is that quad's own CCW corner order.  A swept face is its section
+    # edge's own nodes along ``u``, carried across the layer along ``v``.
+    face_nodes: PointArray | None = None
+    if ho:
+        k2 = (order - 1) ** 2
+        carried_f: PointArray = np.stack(
+            [np.asarray(s.interior, dtype=float) for s in slices], axis=0)
+        if sw is not None:
+            swept_f: PointArray = np.stack(
+                [np.stack([_edge_int(sw[i][v - 1]) for v in range(1, order)], axis=0)
+                 for i in range(nz)], axis=0).transpose(0, 2, 1, 3, 4)
+        else:
+            gv = g[1:order][None, None, :, None, None]
+            swept_f = ((1.0 - gv) * carried_e[lay][:, :, None, :, :]
+                       + gv * carried_e[nxt][:, :, None, :, :])
+        face_nodes = np.concatenate(
+            [carried_f.reshape(-1, k2, 3), swept_f.reshape(-1, k2, 3)], axis=0)
+    faces = QuadMesh(edge_lm, face_edges, face_flip, face_nodes)
+
+    # -- 5. the hexes, as indices into that QuadMesh ----------------------------
+    # Local faces 0-3 are the section's sides swept across the layer, 4 / 5 the section
+    # quad carried to the near / far level.  ``face_frame_code`` then fits each hex's
+    # local frame onto the canonical row chosen above.
+    elem_faces: IntArray = np.concatenate([
+        n_prof * M + i_idx[:, None] * ne + sec_side,
+        (i_idx * M + q_idx)[:, None],
+        (j_idx * M + q_idx)[:, None]], axis=1)
+    face_orient = conform.face_frame_code(hexes[:, conform._LOCAL_FACES],
+                                          face_conn[elem_faces])
+
+    # -- 6. the private per-hex interior ----------------------------------------
+    interior: PointArray | None = None
+    if ho:
         interior = _at(conform._interior_slots(3, order))
 
-        # A shared entity has exactly one source here, named by ``*_src``, so its nodes
-        # are read once and written once -- no owner election, and no ``scatter_*``
-        # tolerance check, because there is no second copy to disagree with.
-        ee, le = brep.edge_src[:, 0], brep.edge_src[:, 1]
-        local_e = _pick(ee, conform._edge_slots(3, order)[:, 1:-1][le])
-        edge_nodes = np.where(brep.edge_flip[ee, le][:, None, None],
-                              local_e[:, ::-1, :], local_e)
-
-        fe, lf = brep.face_src[:, 0], brep.face_src[:, 1]
-        local_f = _pick(fe, conform._face_interior_slots(order)[lf])
-        _, into_canon = conform._perm_tables(order)
-        face_nodes = np.take_along_axis(
-            local_f, into_canon[brep.face_orient[fe, lf]][:, :, None], axis=1)
-    edge_lm = LineMesh(points, brep.edges, interior=edge_nodes)
-    faces = QuadMesh(edge_lm, brep.face_edges, brep.face_flip, face_nodes)
-    return HexMesh(faces, brep.elem_faces, brep.face_orient, interior,
-                   bb.build_ordered(), etags)
+    # -- tags: by column rather than by element ---------------------------------
+    # a section side names the same hex face on every layer, and a cap names one layer's
+    # worth.  Caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners); a cap
+    # face *is* a section quad, so with no argument it inherits that quad's own element
+    # tag -- except on a closed sweep, whose "caps" are the interior seam.
+    closed = ElementTags.empty()
+    first_caps = sweep_cap_tags(first_tag, closed if loop else sec.element_tags,
+                                M, "HexMesh.loft")
+    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+                               M, "HexMesh.loft")
+    bb = TagBuilder(FaceTags)
+    for (q, side), nm in sec.edge_tags.as_dict().items():
+        bb.add_if_tagged(lay * M + q, (5 - side) if flip else side, nm)
+    cap: IntArray = np.arange(M, dtype=np.int64)
+    bb.add_if_tagged(cap, 5, first_caps)
+    bb.add_if_tagged((nz - 1) * M + cap, 6, last_caps)
+    etags = sweep_element_tags(element_tags, nz, M, "HexMesh.loft")
+    return HexMesh(faces, elem_faces, face_orient, interior, bb.build_ordered(), etags)
 
 
 def _loft_evaluated(

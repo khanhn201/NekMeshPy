@@ -11,7 +11,6 @@ from .._typing import (
 )
 from ..linemesh.linemesh import _repr_tags
 from ..model import conform
-from ..model.interp import corner_indices
 from ..model.tags import (
     ElementTags,
     FaceTags,
@@ -37,19 +36,6 @@ _GRID_SIDES: dict[str, tuple[str, int]] = {
 
 
 # -- native (block-free) high-order helpers -----------------------------
-def _slice_block(s: QuadMesh, order: int) -> PointArray:
-    """``(Q,(order+1)**2,3)`` in-plane high-order block of one loft profile, assembled
-    natively from that section's B-rep (shared corners ++ shared edge-interior nodes in
-    element traversal order ++ private quad interiors)."""
-    row = order + 1
-    out: PointArray = np.empty((s.quads.shape[0], row * row, 3), dtype=float)
-    out[:, corner_indices(order, 2), :] = s.points[s.quads]
-    out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
-        s.lines.interior, s.quad, s.flip)
-    out[:, conform._interior_slots(2, order), :] = s.interior
-    return out
-
-
 def _sweep_at(bottom: PointArray, top: PointArray, g: FloatArray,
               slots: IntArray, m2: int) -> PointArray:
     """A loft column's straight GLL sweep evaluated at the hex block ``slots``."""

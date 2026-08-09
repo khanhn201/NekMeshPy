@@ -1,8 +1,14 @@
-"""``model.sweep`` -- the product index space every ``loft`` numbers by.
+"""The product index space every ``loft`` numbers by: one slice, copied across levels
+and joined across layers.
 
-The closed forms replace a dedup pass, so what has to be pinned is that they *agree*
-with one: the same entity partition ``conform.unique_edges`` would find, and the same
-incidence per element.  Numbering is not pinned -- nothing here compares ids.
+Each rung writes that arithmetic inline -- an entity is ``level * n_carried + k`` if it
+is *carried* and ``nlev * n_carried + layer * n_swept + k`` if it is *swept*, two
+contiguous blocks that cannot collide -- so what is pinned here is the behaviour, never a
+helper.
+
+These closed forms replace a dedup pass, so the thing to hold them to is that they
+*agree* with one: the same entity partition ``conform.unique_edges`` would find, and the
+same incidence per element.  Numbering itself is not pinned -- nothing here compares ids.
 
 They also replace the ``scatter_*`` owner election, which was the only thing checking two
 elements against each other, so the node-level checks carry that weight now.  Both use a
@@ -17,7 +23,6 @@ import pytest
 from nekmeshpy import linemesh, quadmesh
 from nekmeshpy.model import conform
 from nekmeshpy.model.fields import gll_nodes
-from nekmeshpy.model.sweep import Sweep
 
 
 def _profiles(n_prof, loop, order=1):
@@ -27,28 +32,130 @@ def _profiles(n_prof, loop, order=1):
     return out[:n_prof]
 
 
-# -- the index space itself ---------------------------------------------------
-def test_nxt_is_where_loop_lives():
-    assert Sweep(4, 3, 8).nxt.tolist() == [1, 2, 3]          # open: no wrap
-    assert Sweep(4, 4, 8, loop=True).nxt.tolist() == [1, 2, 3, 0]
-    assert Sweep(1, 0, 8).nxt.tolist() == []                 # one slice, no layer
+# -- the element numbering every rung shares ----------------------------------
+@pytest.mark.parametrize("loop", [False, True])
+def test_elements_are_layer_major(loop):
+    """``e = layer * n_per_slice + k`` at both rungs, and a closed sweep adds exactly one
+    more layer.  Every tagging and node check below indexes by it, and ``loft``'s
+    ``element_tags`` contract -- an ``ElementTags`` over *one* slice's elements tags each
+    swept column -- is only meaningful because of it."""
+    from nekmeshpy.model.tags import ElementTags
+    profs = _profiles(4, loop)
+    L, nz = profs[0].n_lines, 4 if loop else 3
+    per_line = ElementTags.from_dense(np.array(["e%d" % k for k in range(L)]))
+    qm = quadmesh.loft(profs, loop=loop, element_tags=per_line)
+    assert qm.n_quads == nz * L                       # a closed sweep adds one layer
+    assert qm.element_tags.dense(nz * L).tolist() == ["e%d" % k for k in range(L)] * nz
 
 
-def test_the_two_families_never_collide():
-    """Carried and swept ids partition ``0 .. total-1`` exactly once."""
-    s = Sweep(4, 3, 8)
-    nc, ns = 5, 6
-    ids = np.concatenate([
-        s.carried(np.repeat(np.arange(4), nc), np.tile(np.arange(nc), 4), nc),
-        s.swept(np.repeat(np.arange(3), ns), np.tile(np.arange(ns), 3), nc, ns)])
-    assert sorted(ids.tolist()) == list(range(s.total(nc, ns)))
+def _relabel_lines(m):
+    """The same ``LineMesh``, same corners and geometry, shared lines renumbered."""
+    from nekmeshpy import LineMesh
+    sigma = np.random.default_rng(0).permutation(m.n_lines)
+    return LineMesh(m.points, m.lines[sigma], interior=m.interior[sigma])
 
 
-def test_elements_are_layer_major():
-    i, k, j = Sweep(3, 2, 8).elements(4)
-    assert i.tolist() == [0, 0, 0, 0, 1, 1, 1, 1]        # e = layer * n + k
-    assert k.tolist() == [0, 1, 2, 3, 0, 1, 2, 3]
-    assert j.tolist() == [1, 1, 1, 1, 2, 2, 2, 2]
+def _relabel_edges(m):
+    """The same ``QuadMesh``, same corners and geometry, shared edges renumbered."""
+    from nekmeshpy import LineMesh, QuadMesh
+    sigma = np.random.default_rng(0).permutation(m.lines.n_lines)
+    lines = LineMesh(m.points, m.lines.lines[sigma], interior=m.lines.interior[sigma])
+    return QuadMesh(lines, np.argsort(sigma)[m.quad], m.flip, m.interior)
+
+
+def test_loft_rejects_slices_that_are_not_index_paired():
+    """Both rungs read every slice's high-order nodes by the *first* slice's entity ids,
+    so a stack that agrees on corners but numbers its shared entities differently is a
+    loud error.  It used to be a silently wrong mesh: structurally perfect, with every
+    shared edge / face node read off the wrong entity."""
+    from nekmeshpy import hexmesh
+    ring = linemesh.circle(1.0, 8, order=3)
+    with pytest.raises(ValueError, match="index-paired with the first"):
+        quadmesh.loft([ring, _relabel_lines(linemesh.translate(ring, (0.0, 0.0, 1.0)))])
+    sec = _section(3)
+    top = quadmesh.translate(sec, (0.0, 0.0, 1.0))
+    with pytest.raises(ValueError, match="index-paired with the first"):
+        hexmesh.loft([sec, _relabel_edges(top)])
+    # ... and the affine ops, which is how a stack is meant to be built, still pass
+    assert hexmesh.loft([sec, top]).n_hexes == sec.n_quads
+
+
+def test_loft_rejects_a_stack_that_spans_no_layer():
+    """A sweep needs a layer to build anything, and a closed one needs two.  Left
+    unchecked these were silent bad meshes, not errors: one profile built an empty
+    section, a one-profile loop built elements whose four corners were two points, and an
+    empty stack raised a bare ``IndexError``.  Two layers *is* enough to close a sweep --
+    see :func:`test_a_two_layer_loop_closes_a_torus`."""
+    from nekmeshpy import hexmesh
+    ring = linemesh.circle(1.0, 8)
+    sec = _section(1)
+    pair = [ring, linemesh.translate(ring, (0.0, 0.0, 1.0))]
+    secs = [sec, quadmesh.translate(sec, (0.0, 0.0, 1.0))]
+    with pytest.raises(ValueError, match="at least 2 profiles"):
+        quadmesh.loft([ring])
+    with pytest.raises(ValueError, match="at least 2 profiles"):
+        quadmesh.loft([])
+    for stack in ([ring], pair):                     # one layer, then two
+        with pytest.raises(ValueError, match="at least 3 profiles"):
+            quadmesh.loft(stack, loop=True)
+    with pytest.raises(ValueError, match="at least 2 slices"):
+        hexmesh.loft([sec])
+    for stack in ([sec], secs):
+        with pytest.raises(ValueError, match="at least 3 slices"):
+            hexmesh.loft(stack, loop=True)
+    # the smallest stacks that *do* span a layer still build
+    assert quadmesh.loft(pair).n_quads == ring.n_lines
+    assert hexmesh.loft(secs).n_hexes == sec.n_quads
+    assert quadmesh.loft(pair + [linemesh.translate(ring, (0.0, 0.0, 2.0))],
+                         loop=True).n_quads == 3 * ring.n_lines
+
+
+def _torus_levels(order, n_prof, a=0.6, R=3.0):
+    """``(levels, sweep_nodes)`` for a torus closed in ``n_prof`` layers: a circle in the
+    x-z plane at radius ``R``, revolved about z, sampled on the full GLL lattice."""
+    ring = linemesh.circle(a, 8, order=order)
+    prof = linemesh.translate(linemesh.rotate(ring, np.pi / 2, (1.0, 0.0, 0.0)),
+                              (R, 0.0, 0.0))
+    def f(t):
+        return linemesh.rotate(prof, 2.0 * np.pi * t)
+    g = gll_nodes(order)[1:order]
+    return ([f(k / n_prof) for k in range(n_prof)],
+            [[f((i + gg) / n_prof) for gg in g] for i in range(n_prof)])
+
+
+@pytest.mark.parametrize("n_prof", [3, 4])
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_a_tight_loop_closes_a_torus(order, n_prof):
+    """Three layers is the minimum a closed sweep can be *represented* at, and it is
+    plenty: ``sweep_nodes`` carries each layer's own intermediate profiles, so even the
+    tightest legal ring lands on the true torus rather than chording it.  Two would be
+    geometrically fine and topologically unrepresentable -- both layers span the same
+    pair of levels, so their rungs collide on corner ids."""
+    a, R = 0.6, 3.0
+    lev, sw = _torus_levels(order, n_prof, a, R)
+    qm = quadmesh.loft(lev, loop=True, sweep_nodes=sw)
+    assert qm.n_quads == n_prof * 8
+    # a one-layer loop would leave every quad with two corners, not four
+    assert all(len(set(row.tolist())) == 4 for row in np.asarray(qm.quads))
+    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.flip,
+                                      qm.lines.interior, qm.interior, qm.order)
+    tube = np.hypot(np.hypot(nodes[:, 0], nodes[:, 1]) - R, nodes[:, 2])
+    assert np.max(np.abs(tube - a)) < 1e-12
+
+
+@pytest.mark.parametrize("order", [2, 3])
+def test_a_tight_loop_closes_a_solid_torus(order):
+    """The same at the hex rung, where the collision would show as duplicate *face* rows
+    too: a solid torus shut in three layers is watertight."""
+    from nekmeshpy import hexmesh
+    lev, sw = _torus_levels(order, 3)
+    disc = [quadmesh.ogrid(m, 2, np.linspace(0.5, 1.0, 3)) for m in lev]
+    disc_sw = [[quadmesh.ogrid(m, 2, np.linspace(0.5, 1.0, 3)) for m in level]
+               for level in sw]
+    blk = hexmesh.loft(disc, loop=True, sweep_nodes=disc_sw)
+    assert blk.n_hexes == 3 * disc[0].n_quads
+    assert all(len(set(row.tolist())) == 8 for row in np.asarray(blk.hexes))
+    assert hexmesh.is_watertight(blk)
 
 
 # -- the closed form agrees with the dedup it replaces ------------------------

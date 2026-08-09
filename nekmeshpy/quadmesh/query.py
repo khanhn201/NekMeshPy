@@ -14,6 +14,7 @@ from .._typing import (
     Vec3,
 )
 from ..model import conform, frames
+from ..model.interp import corner_indices
 from ..model.quality import QualitySummary
 from .quadmesh import QuadMesh
 
@@ -74,10 +75,29 @@ def plane_normal(mesh: QuadMesh, *,
     return w
 
 
+def element_blocks(mesh: QuadMesh) -> PointArray:
+    """``(Q, (order+1)**2, 3)`` -- each quad's own node block, assembled natively from the
+    B-rep: shared corners, then the shared edge-interior nodes in element traversal order,
+    then the private per-quad interiors, each written at its lattice slot.  Nothing is
+    resampled or deduplicated.
+
+    The quad rung of :func:`linemesh.element_blocks
+    <nekmeshpy.linemesh.query.element_blocks>`, one dimension up."""
+    order = mesh.order
+    row = order + 1
+    out: PointArray = np.empty((mesh.n_quads, row * row, 3), dtype=float)
+    out[:, corner_indices(order, 2), :] = mesh.points[mesh.quads]
+    out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
+        mesh.lines.interior, mesh.quad, mesh.flip)
+    out[:, conform._interior_slots(2, order), :] = mesh.interior
+    return out
+
+
 __all__ = [
     "boundary_edges",
     "boundary_elements",
     "boundary_points",
+    "element_blocks",
     "plane_normal",
     "quality_summary",
     "scaled_jacobian",

@@ -19,6 +19,7 @@ from .query import (
     boundary_edges,
     boundary_elements,
     boundary_points,
+    element_blocks,
     plane_normal,
     quality_summary,
     scaled_jacobian,
@@ -43,6 +44,7 @@ from .shape import (
 )
 
 __all__ = [
+    "element_blocks",
     "NO_TAG",
     "Port",
     "QuadMesh",

@@ -85,6 +85,18 @@ def loft(
     return LineMesh(pts, lines, interior, bnd, etags)
 
 
+def _at_levels(table: IntArray, level: IntArray, per_level: int) -> IntArray:
+    """``table`` laid out at every ``level`` of a sweep -- ``level * per_level + table``,
+    level-major, keeping ``table``'s trailing shape:
+    ``(n_level,) x (k, ...) -> (n_level * k, ...)``.
+
+    Every id a sweep writes is one of these: a section point / edge / quad id, shifted by
+    how many of that entity one level owns.  The ``loft`` bodies above pick the table and
+    the levels; this is the layout they share."""
+    shift: IntArray = level.reshape((-1,) + (1,) * table.ndim) * per_level
+    return (table[None] + shift).reshape((-1,) + table.shape[1:])
+
+
 def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
     """The ``n*order + 1`` parameter positions of **every** node of the order-``order``
     chain graded by ``fractions`` (``n = len(fractions) - 1`` elements): element ``i``'s

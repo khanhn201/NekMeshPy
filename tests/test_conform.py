@@ -347,6 +347,28 @@ def test_hex_round_trip_curved_shell(order):
                        hm.points[hm.hexes], atol=1e-12)
 
 
+# -- element_blocks: the B-rep gathered back into element order --------
+@pytest.mark.parametrize("order", [1, 2, 3, 4])
+def test_element_blocks_match_the_conformal_walk(order):
+    """``element_blocks`` assembles each element's node lattice straight out of the
+    B-rep, with no global node array; the conformal walk gets there the long way, by
+    deduplicating into one node table and gathering back.  Two independent routes to the
+    same block, at all three rungs.
+
+    ``_shell`` is the one that matters at the hex rung: a cubed-sphere annulus puts its
+    shared faces in many relative orientations, so the face term is gathered back out of
+    a genuinely exercised spread of D4 frames rather than a single one."""
+    ring = linemesh.circle(1.0, 8, order=order)
+    sec = quadmesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
+    blk = _shell(order, n_face=1, n_radial=1)
+    assert linemesh.element_blocks(ring).shape == (ring.n_lines, order + 1, 3)
+    assert quadmesh.element_blocks(sec).shape == (sec.n_quads, (order + 1) ** 2, 3)
+    assert hexmesh.element_blocks(blk).shape == (blk.n_hexes, (order + 1) ** 3, 3)
+    assert np.array_equal(linemesh.element_blocks(ring), curved(ring))
+    assert np.array_equal(quadmesh.element_blocks(sec), curved(sec))
+    assert np.array_equal(hexmesh.element_blocks(blk), curved(blk))
+
+
 # -- hex edge incidence is read off the faces, not re-deduplicated -----
 def test_hex_edges_from_faces_resolve_to_their_own_corner_pairs():
     """The complete statement, and the only one that does not name a numbering: reading

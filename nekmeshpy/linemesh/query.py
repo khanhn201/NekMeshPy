@@ -7,8 +7,26 @@ import numpy as np
 from .._typing import (
     BoolArray,
     IntArray,
+    PointArray,
 )
 from .linemesh import LineMesh
+
+
+def element_blocks(mesh: LineMesh) -> PointArray:
+    """``(L, order+1, 3)`` -- each line's own node block, assembled natively from the
+    shared corner points and this mesh's private interior nodes.  Nothing is resampled or
+    deduplicated: the block *is* what the B-rep already stores, gathered into the element
+    lattice order (start corner -> interior -> end corner).
+
+    The line rung of a query every rung above spells the same way -- see
+    :func:`quadmesh.element_blocks <nekmeshpy.quadmesh.query.element_blocks>`."""
+    order = mesh.order
+    lines = mesh.lines
+    out: PointArray = np.empty((lines.shape[0], order + 1, 3), dtype=float)
+    out[:, 0, :] = mesh.points[lines[:, 0]]
+    out[:, order, :] = mesh.points[lines[:, 1]]
+    out[:, 1:order, :] = mesh.interior
+    return out
 
 
 def boundary_points(mesh: LineMesh) -> IntArray:
@@ -33,4 +51,5 @@ def boundary_elements(mesh: LineMesh) -> IntArray:
 __all__ = [
     "boundary_elements",
     "boundary_points",
+    "element_blocks",
 ]

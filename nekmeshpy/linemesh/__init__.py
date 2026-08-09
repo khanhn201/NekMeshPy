@@ -4,7 +4,7 @@ from . import assemble, morph, query, shape
 from .assemble import loft, loft_fn, merge
 from .linemesh import LineMesh
 from .morph import blend, reverse, rotate, scale, transform, translate
-from .query import boundary_elements, boundary_points
+from .query import boundary_elements, boundary_points, element_blocks
 from .shape import (
     arc,
     arclength_fractions,
@@ -17,6 +17,7 @@ from .shape import (
 )
 
 __all__ = [
+    "element_blocks",
     "LineMesh",
     "arc",
     "arclength_fractions",

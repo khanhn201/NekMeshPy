@@ -350,3 +350,34 @@ def test_the_container_still_rejects_an_out_of_range_element():
     with pytest.raises(ValueError, match="FaceTags names element"):
         HexMesh(blk.quads, blk.hex, blk.face_orient, None,
                 FaceTags.from_pairs([[blk.n_hexes, 1]], ["wall"]))
+
+
+# -- TagBuilder broadcasting -------------------------------------------
+def test_tag_builder_broadcasts_its_three_arguments():
+    """``element`` / ``side`` / ``tag`` each accept a scalar or an array and broadcast,
+    so a caller names a whole column of rows without a Python loop."""
+    from nekmeshpy.model.tags import EdgeTags, TagBuilder
+    ids = np.array([3, 5, 7])
+    bb = TagBuilder(EdgeTags)
+    bb.add(ids, 2, "wall")                      # array x scalar x scalar
+    bb.add(9, np.array([1, 3]), "in")           # scalar x array x scalar
+    bb.add(ids, 4, np.array(["a", "b", "c"]))   # array x scalar x array
+    got = bb.build()
+    assert got.elements.tolist() == [3, 5, 7, 9, 9, 3, 5, 7]
+    assert got.sides.tolist() == [2, 2, 2, 1, 3, 4, 4, 4]
+    assert got.tags.tolist() == ["wall"] * 3 + ["in", "in"] + ["a", "b", "c"]
+    assert len(bb) == 8
+
+
+def test_add_if_tagged_drops_the_untagged_rows_of_an_array():
+    """A per-element tag array goes over whole -- the empty entries simply do not
+    become rows, which is what lets ``loft`` hand its cap tags straight across."""
+    from nekmeshpy.model.tags import EdgeTags, TagBuilder
+    bb = TagBuilder(EdgeTags)
+    bb.add_if_tagged(np.arange(4), 1, np.array(["a", "", "c", ""]))
+    bb.add_if_tagged(np.arange(4), 2, "")        # a scalar NO_TAG adds nothing
+    assert not TagBuilder(EdgeTags)
+    got = bb.build()
+    assert got.elements.tolist() == [0, 2]
+    assert got.tags.tolist() == ["a", "c"]
+    assert len(bb) == 2
