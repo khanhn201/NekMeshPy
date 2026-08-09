@@ -13,7 +13,6 @@ from .._typing import (
     PointArray,
 )
 from ..core import conform, stations
-from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
 from ..core.tags import (
     EdgeTags,
@@ -237,47 +236,9 @@ def _loft_evaluated(
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
     node lattice rather than handed in: validate, close the loop, split, delegate."""
-    profs = list(profs)
-    if len(profs) != t.shape[0]:
-        raise ValueError(
-            "%s: expected one profile per sweep lattice value (%d), got %d"
-            % (name, t.shape[0], len(profs)))
-    nz = (len(profs) - 1) // order
-    ref = profs[0]
-    ref_lines = np.asarray(ref.lines, dtype=np.int64).reshape(-1, 2)
-    for k, m in enumerate(profs):
-        if m.order != order:
-            raise ValueError(
-                "%s: f(%g) returned an order-%d profile, but order=%d was "
-                "requested" % (name, t[k], m.order, order))
-        if (m.n_points != ref.n_points
-                or not np.array_equal(
-                    np.asarray(m.lines, dtype=np.int64).reshape(-1, 2), ref_lines)):
-            raise ValueError(
-                "%s: every profile must be index-paired and conformal with "
-                "the first, but f(%g) returned %d points / %d lines against f(%g)'s "
-                "%d / %d.  Place one profile with the affine ops rather than "
-                "rebuilding it per parameter."
-                % (name, t[k], m.n_points, m.n_lines, t[0], ref.n_points,
-                   ref.n_lines))
-
-    if loop:
-        # the wrap level must land back on level 0; drop it, but keep the seam
-        # layer's own intermediate levels -- they are what curve the seam.
-        P0 = np.asarray(profs[0].points, dtype=float).reshape(-1, 3)
-        Pw = np.asarray(profs[-1].points, dtype=float).reshape(-1, 3)
-        gap = float(np.max(np.linalg.norm(Pw - P0, axis=1))) if P0.size else 0.0
-        tol = entity_tol(P0)
-        if gap > tol:
-            raise ValueError(
-                "%s(loop=True) needs the last fraction to map back to the "
-                "first profile, but f(%g) and f(%g) are %g apart (tolerance %g).  "
-                "Pass the trailing wrap value as the final fraction, or use "
-                "loop=False." % (name, t[-1], t[0], gap, tol))
-        profs = profs[:-1]
-
-    slices = profs[::order]
-    sweep_nodes = [profs[i * order + 1:(i + 1) * order] for i in range(nz)]
+    slices, sweep_nodes = stations.split_evaluated(
+        profs, t, order, loop=loop, conn=lambda m: np.asarray(m.lines, dtype=np.int64).reshape(-1, 2),
+        noun="profile", elems="lines", name=name)
     return loft(slices, loop=loop,
                 sweep_nodes=sweep_nodes if order > 1 else None,
                 element_tags=element_tags,

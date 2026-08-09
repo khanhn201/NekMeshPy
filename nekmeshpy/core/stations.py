@@ -9,12 +9,80 @@ them are all that one subject, which belongs to no rung in particular -- every `
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from typing import Protocol, TypeVar
 
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+from .conform import entity_tol
 from .fields import gll_nodes
+
+
+class Sampled(Protocol):
+    """What an evaluated sweep needs of a slice, at any rung.  The three containers
+    share no base class, so this is structural -- it names the reads, nothing more."""
+
+    @property
+    def order(self) -> int: ...
+    @property
+    def n_points(self) -> int: ...
+    @property
+    def points(self) -> PointArray: ...
+
+
+M = TypeVar("M", bound=Sampled)
+
+
+def split_evaluated(profs: Sequence[M], t: FloatArray, order: int, *, loop: bool,
+                    conn: Callable[[M], IntArray], noun: str, elems: str,
+                    name: str) -> tuple[list[M], list[list[M]]]:
+    """Validate a sweep whose slices were **evaluated** on the refined node lattice
+    rather than handed in, and split them into ``(slices, sweep_nodes)``.
+
+    Every rung above the line does this identically -- one slice per lattice value, all
+    index-paired with the first, the wrap level dropped on a loop -- so the only things
+    that vary are what to compare (``conn``, which doubles as the element count) and what
+    to call the pieces in the errors (``noun`` / ``elems``).  Those nouns are not
+    decoration: they are what the rungs' own tests match on."""
+    slices = list(profs)
+    if len(slices) != t.shape[0]:
+        raise ValueError(
+            "%s: expected one %s per sweep lattice value (%d), got %d"
+            % (name, noun, t.shape[0], len(slices)))
+    nz = (len(slices) - 1) // order
+    ref = slices[0]
+    ref_conn = conn(ref)
+    for k, m in enumerate(slices):
+        if m.order != order:
+            raise ValueError(
+                "%s: f(%g) returned an order-%d %s, but order=%d was requested"
+                % (name, t[k], m.order, noun, order))
+        if m.n_points != ref.n_points or not np.array_equal(conn(m), ref_conn):
+            raise ValueError(
+                "%s: every %s must be index-paired and conformal with the first, but "
+                "f(%g) returned %d points / %d %s against f(%g)'s %d / %d.  Place one "
+                "%s with the affine ops rather than rebuilding it per parameter."
+                % (name, noun, t[k], m.n_points, conn(m).shape[0], elems, t[0],
+                   ref.n_points, ref_conn.shape[0], noun))
+
+    if loop:
+        # the wrap level must land back on level 0; drop it, but keep the seam layer's
+        # own intermediate levels -- they are what curve the seam.
+        P0: PointArray = np.asarray(ref.points, dtype=float).reshape(-1, 3)
+        Pw: PointArray = np.asarray(slices[-1].points, dtype=float).reshape(-1, 3)
+        gap = float(np.max(np.linalg.norm(Pw - P0, axis=1))) if P0.size else 0.0
+        tol = entity_tol(P0)
+        if gap > tol:
+            raise ValueError(
+                "%s(loop=True) needs the last fraction to map back to the first %s, "
+                "but f(%g) and f(%g) are %g apart (tolerance %g).  Pass the trailing "
+                "wrap value as the final fraction, or use loop=False."
+                % (name, noun, t[-1], t[0], gap, tol))
+        slices = slices[:-1]
+
+    return (slices[::order],
+            [slices[i * order + 1:(i + 1) * order] for i in range(nz)])
 
 
 def refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
@@ -84,9 +152,11 @@ def at_levels(table: IntArray, level: IntArray, per_level: int) -> IntArray:
 
 
 __all__ = [
+    "Sampled",
     "at_levels",
     "check_fraction_count",
     "refined_lattice",
     "sweep_lattice",
+    "split_evaluated",
     "sweep_path",
 ]
