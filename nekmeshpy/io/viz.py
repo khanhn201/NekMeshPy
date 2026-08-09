@@ -13,7 +13,7 @@ _log = logging.getLogger("nekmeshpy")
 def plot(
     mesh: HexMesh,
     names: Sequence[str] = ("wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"),
-    out_name: str = "bifurcation",
+    out_name: str = "carotid",
     panes: bool = False,
     grid: bool = True,
     save_path: str | None = None,
@@ -64,7 +64,7 @@ def plot(
     ax.grid(grid)
     if handles:
         ax.legend([h for h, _ in handles], [n for _, n in handles], loc="upper left")
-    ax.set_title("Bifurcation hex mesh: tagged boundary")
+    ax.set_title("Carotid hex mesh: tagged boundary")
     if save_path is None and matplotlib.get_backend().lower() == "agg":
         save_path = "%s_mesh.png" % out_name
     if save_path is not None:

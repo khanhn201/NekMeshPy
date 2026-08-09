@@ -5,7 +5,7 @@
 An all-hex meshing **toolkit** with Nek5000/NekRS export: composable primitives
 — a shared-point mesh model, named physical groups, `HexMesh` factories,
 smoothing / surface operations, sizing fields, quality + topology checks, and
-meshio I/O. Concrete meshers (bifurcation vessel, pipes, external-flow domains)
+meshio I/O. Concrete meshers (carotid vessel, pipes, external-flow domains)
 are built on the toolkit and live in [`examples/`](examples), not the library.
 
 ## Documentation
@@ -66,7 +66,7 @@ report-returning functions hand back **NamedTuples** rather than dicts —
 Full meshers live in [`examples/`](examples), run from the repo root:
 
 ```bash
-PYTHONPATH=. python examples/bifurcation.py        # bifurcation vessel (car case)
+PYTHONPATH=. python examples/carotid.py        # carotid vessel (car case)
 PYTHONPATH=. python examples/circular_pipe.py      # all-hex O-grid pipe
 PYTHONPATH=. python examples/rectangular_pipe.py   # structured duct
 PYTHONPATH=. python examples/flow_past_cylinder.py # external flow around a body
@@ -208,7 +208,7 @@ python -m pytest                     # golden-regression + algorithm tests
 ```
 
 CI runs all three on Python 3.9–3.12. `tests/golden/` freezes the output of
-`examples/bifurcation.py` — coordinates to `1e-12`, connectivity/cell types/boundary
+`examples/carotid.py` — coordinates to `1e-12`, connectivity/cell types/boundary
 tags byte-for-byte — so a golden diff from a refactor is a bug.
 
 ## Roadmap

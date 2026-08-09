@@ -62,7 +62,7 @@ def test_scaled_jacobian_quality(built_mesh):
 
 def test_re2_coords_match_golden(built_mesh):
     ne, coords, _ = read_re2_coords(built_mesh["re2"])
-    gne, gcoords, _ = read_re2_coords(os.path.join(GOLDEN, "bifurcation.re2"))
+    gne, gcoords, _ = read_re2_coords(os.path.join(GOLDEN, "carotid.re2"))
     assert ne == gne == 7200
     assert coords.shape == gcoords.shape
     assert np.max(np.abs(coords - gcoords)) < RE2_TOL
@@ -70,7 +70,7 @@ def test_re2_coords_match_golden(built_mesh):
 
 def test_re2_boundary_block_identical(built_mesh):
     _, _, bnd = read_re2_coords(built_mesh["re2"])
-    _, _, gbnd = read_re2_coords(os.path.join(GOLDEN, "bifurcation.re2"))
+    _, _, gbnd = read_re2_coords(os.path.join(GOLDEN, "carotid.re2"))
     assert bnd == gbnd           # BC block is exact integers/codes
 
 
@@ -105,7 +105,7 @@ def test_vtu_structure_byte_identical(built_mesh):
     element/node numbering, the high-order Lagrange node permutation, and the
     boundary ids are all integers and cannot drift."""
     got = _read_vtu(built_mesh["vtu"])
-    ref = _read_vtu(os.path.join(GOLDEN, "bifurcation.vtu"))
+    ref = _read_vtu(os.path.join(GOLDEN, "carotid.vtu"))
     assert got["_counts"] == ref["_counts"]
     for name in ("connectivity", "offsets", "types", "bc_id"):
         assert np.array_equal(got[name], ref[name]), name
@@ -123,6 +123,6 @@ def test_vtu_coords_match_golden(built_mesh):
     bound rather than a golden that is only valid on one build.
     """
     got = _read_vtu(built_mesh["vtu"])["Points"].reshape(-1, 3)
-    ref = _read_vtu(os.path.join(GOLDEN, "bifurcation.vtu"))["Points"].reshape(-1, 3)
+    ref = _read_vtu(os.path.join(GOLDEN, "carotid.vtu"))["Points"].reshape(-1, 3)
     assert got.shape == ref.shape == (202249, 3)
     assert np.max(np.abs(got - ref)) < RE2_TOL

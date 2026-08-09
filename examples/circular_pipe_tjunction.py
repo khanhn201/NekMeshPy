@@ -1,8 +1,8 @@
 """Circular-pipe T-junction as a conformal all-hex block.
 
-Built from **analytic geometry** (not a scanned surface like ``bifurcation.py``):
+Built from **analytic geometry** (not a scanned surface like ``carotid.py``):
 a main pipe (axis X, radius ``R``) and a branch (axis +Z, radius ``R``) tee off at
-the origin. Same three-leg construction as the bifurcation:
+the origin. Same three-leg construction as the carotid:
 
 * the two saddle points are ``A1 = (0, +R, 0)`` and ``A2 = (0, -R, 0)``; the
   shared **spine** is the ``A1 - A2`` segment through the origin;

@@ -598,7 +598,7 @@ anywhere other than on the straight line between the corners.
   evaluated on the true curve; `f(fr[-1])` must land on `f(fr[0])` within the
   toolkit's scale-relative coincidence tolerance or it is a loud `ValueError`. A curve with **no** closed
   form — a scanned polyline — has nothing to evaluate. A *closed* scanned loop can still
-  be given one by refitting it, which is what `examples/bifurcation.py` does: its
+  be given one by refitting it, which is what `examples/carotid.py` does: its
   `fourier_ring` takes the rFFT of `x`/`y`/`z` against the uniform ring parameter, keeps
   the lower half of the modes (dropping the STL facet noise a high-order wall would
   otherwise resolve faithfully) and feeds that series to `loft_fn`. An **open** scanned
@@ -606,7 +606,7 @@ anywhere other than on the straight line between the corners.
   the arc's deviation from its own chord as a truncated **sine** series in the
   normalized arc-length parameter, and because every `sin(k*pi*s)` vanishes at both
   ends the endpoints stay bit-exact however many modes are kept — which is what lets
-  the bifurcation's three shared seam arcs be refit once, globally, and still weld at
+  the carotid's three shared seam arcs be refit once, globally, and still weld at
   the triple points. Where no refit applies,
   resample with `trimesh.ops.resample_polyline` and accept the chord.
   `examples/circular_pipe_tjunction.py` is the worked

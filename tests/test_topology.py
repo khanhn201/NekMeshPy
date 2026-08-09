@@ -84,7 +84,7 @@ def test_disjoint_hexes_are_two_components():
     assert rep.n_nonmanifold_faces == 0
 
 
-def test_bifurcation_mesh_is_watertight(built_mesh):
+def test_carotid_mesh_is_watertight(built_mesh):
     mesh = built_mesh["mesh"]
     rep = hexmesh.topology_report(mesh)
     assert rep.n_components == 1
@@ -194,7 +194,7 @@ def test_single_triangle_is_open():
     assert rep["n_boundary_loops"] == 1
 
 
-def test_bifurcation_surface_has_three_openings():
+def test_carotid_surface_has_three_openings():
     from conftest import CAR_TRI, CAR_VTX
     surf = TriMesh.from_files(CAR_VTX, CAR_TRI)
     rep = surf.topology_report()

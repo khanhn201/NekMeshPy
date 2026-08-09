@@ -21,7 +21,7 @@ qualified target naming the *namespace* module, not the private container module
 
 ## Golden regression
 
-`tests/golden/` freezes `examples/bifurcation.py`: **geometry to 1e-12, topology and
+`tests/golden/` freezes `examples/carotid.py`: **geometry to 1e-12, topology and
 tags exactly** (connectivity, numbering, VTK cell types, `bc_id`, and the `.re2`
 boundary block byte-for-byte). Floats are not byte-compared — interpreter builds shift
 them ~7e-13.
@@ -30,7 +30,7 @@ The numerics were ported verbatim from reference MATLAB, so most refactors here 
 expected to be output-preserving. After touching geometry, verify directly:
 
 ```bash
-cd /tmp && PYTHONPATH=<repo> python <repo>/examples/bifurcation.py
+cd /tmp && PYTHONPATH=<repo> python <repo>/examples/carotid.py
 python -m pytest <repo>/tests/test_regression.py
 ```
 

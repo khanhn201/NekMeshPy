@@ -104,13 +104,13 @@ side) so merge stays a plain concatenate with no stale interior tag.
 mesh = hexmesh.merge([block_a, block_b])   # welds coincident boundary points only
 ```
 
-→ used throughout the `flow_past_*` examples and the bifurcation pipeline.
+→ used throughout the `flow_past_*` examples and the carotid pipeline.
 
-## The bifurcation vessel pipeline
+## The carotid vessel pipeline
 
 A `TriMesh` surface (`data/car.{vtx,tri}`) is cut into legs via seam fields, each
 leg filled with `half_ogrid`, extruded/merged, and smoothed. →
-`examples/bifurcation.py` — the golden-regression case: its `.re2` / `.vtu`
+`examples/carotid.py` — the golden-regression case: its `.re2` / `.vtu`
 output is frozen in `tests/golden/` (coordinates to `1e-12`, connectivity and
 boundary tags byte-for-byte), so any change that moves it is a bug unless
 deliberately re-based.

@@ -143,7 +143,7 @@ def test_ogrid_interior_edges_are_curved(order):
 @pytest.mark.parametrize("order", [2, 3, 4])
 def test_half_ogrid_interior_edges_are_curved(order):
     # half_ogrid had no order>1 coverage at all.  Reached through spined_ogrid (the
-    # bifurcation path), which runs two half_ogrids and merges them.
+    # carotid path), which runs two half_ogrids and merges them.
     r = 1.5
     loop = linemesh.circle(r, 32, order=order)
     qm = quadmesh.spined_ogrid(loop, [0.0, 0.4, 1.0])
