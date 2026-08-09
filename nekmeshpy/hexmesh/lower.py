@@ -47,7 +47,12 @@ def _high_order_nodes(mesh: HexMesh, quads_global: IntArray, edges_global: IntAr
         en[rev] = en[rev][:, ::-1]
     f_idx = conform.locate_rows(mesh.faces, quads_global,
                                 who="boundary_mesh", what="face")
-    fn: PointArray = np.asarray(mesh.face_nodes, dtype=float)[f_idx]
+    # the parent stores a face's interior in the frame of the row *it* chose, not of the
+    # winding we are extracting it with -- turn it into ours, the face-family
+    # counterpart of the edge reversal just above
+    fn: PointArray = conform.face_nodes_in_frame(
+        np.asarray(mesh.face_nodes, dtype=float)[f_idx], quads_global,
+        np.asarray(mesh.quads.quads, dtype=np.int64)[f_idx])
     return en, fn
 
 
