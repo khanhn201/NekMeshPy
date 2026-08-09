@@ -58,7 +58,7 @@ def conformal(mesh):
     the tests below call it wherever they need the single global node numbering.
     """
     from nekmeshpy import HexMesh, LineMesh, QuadMesh
-    from nekmeshpy.model import conform
+    from nekmeshpy.core import conform
     if isinstance(mesh, LineMesh):
         return conform.conformal_line(mesh.points, mesh.lines, mesh.interior,
                                       mesh.order)
@@ -83,7 +83,7 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
     The tests keep it as a scaffold for the corner -> B-rep round-trip checks.
     """
     from nekmeshpy import LineMesh, QuadMesh
-    from nekmeshpy.model import conform
+    from nekmeshpy.core import conform
     pts = np.asarray(points, dtype=float).reshape(-1, 3)
     conn = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges, elem_edges, flip = conform.unique_edges(conn, 2)

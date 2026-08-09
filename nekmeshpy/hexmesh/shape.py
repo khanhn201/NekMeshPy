@@ -8,11 +8,11 @@ from collections.abc import Sequence
 import numpy as np
 
 from .._typing import IntArray, Point, PointArray
+from ..core import conform
+from ..core.interp import coons_grid
+from ..core.tags import PointTags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
-from ..model import conform
-from ..model.interp import coons_grid
-from ..model.tags import PointTags
 from ..quadmesh import QuadMesh
 from ..quadmesh.assemble import loft as quad_loft
 from .assemble import loft as hex_loft

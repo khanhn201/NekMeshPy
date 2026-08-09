@@ -9,16 +9,16 @@ from typing import Callable
 import numpy as np
 
 from .._typing import FloatArray, IntArray, Point, PointArray, SmoothingMethod, Vec3
+from ..core import conform, surfaces
+from ..core.fields import gll_nodes, validate_layers
+from ..core.interp import coons_grid, coons_grid_fn
+from ..core.surfaces import SurfaceCurve, SurfaceMap
+from ..core.tags import EdgeTags, ElementTags, TagBuilder
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.assemble import loft_fn as line_loft_fn
 from ..linemesh.morph import reverse as line_reverse
 from ..linemesh.shape import line
-from ..model import conform, surfaces
-from ..model.fields import gll_nodes, validate_layers
-from ..model.interp import coons_grid, coons_grid_fn
-from ..model.surfaces import SurfaceCurve, SurfaceMap
-from ..model.tags import EdgeTags, ElementTags, TagBuilder
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
 from .assemble import loft_fn, merge
 from .lift import from_grid

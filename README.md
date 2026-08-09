@@ -162,7 +162,7 @@ owns — `LineMesh` (`points`, `lines`, `interior (L,N-1,3)`); `QuadMesh` (a `li
 `mesh.points[:] = X` propagates everywhere for free. Conformality is likewise
 structural: a shared edge or face is *one stored object* referenced by every incident
 element, resolved by corner ids rather than a coordinate search
-(`nekmeshpy.model.conform`). The conformal walks
+(`nekmeshpy.core.conform`). The conformal walks
 `conform.conformal_line`/`_quad`/`_hex` flatten it on demand into `(nodes, conn_ho)`
 — the high-order analog of `points` + `quads` — and that is what the `.vtu` writer and
 the order-N quality metrics (`mesh.scaled_jacobian(high_order=True)`) read.

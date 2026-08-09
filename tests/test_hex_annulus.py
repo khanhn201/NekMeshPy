@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import ElementTags, HexMesh, QuadMesh, hexmesh, quadmesh
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core.fields import uniform_spacing
 
 # the six cube faces: outward normal n with right-handed tangents (u x v = n)
 _FACES = [

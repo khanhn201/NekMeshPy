@@ -13,9 +13,9 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..model import conform, frames
-from ..model.interp import corner_indices
-from ..model.quality import QualitySummary
+from ..core import conform, frames
+from ..core.interp import corner_indices
+from ..core.quality import QualitySummary
 from .quadmesh import QuadMesh
 
 

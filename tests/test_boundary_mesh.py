@@ -19,8 +19,8 @@ import pytest
 from scipy.spatial import cKDTree
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import conform
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core import conform
+from nekmeshpy.core.fields import uniform_spacing
 
 ORDERS = [1, 2, 3]
 

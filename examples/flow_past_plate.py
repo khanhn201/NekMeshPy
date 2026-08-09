@@ -23,7 +23,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing, gll_nodes
+from nekmeshpy.core.fields import geometric_spacing, gll_nodes
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

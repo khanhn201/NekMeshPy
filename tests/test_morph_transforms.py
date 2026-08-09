@@ -141,7 +141,7 @@ def test_scale_about_a_center_fixes_it():
 # -- the general affine -------------------------------------------------------
 def test_transform_is_the_general_case():
     """``transform`` with the rotation's own matrix reproduces ``rotate`` exactly."""
-    from nekmeshpy.model import affine
+    from nekmeshpy.core import affine
 
     section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, RADIAL)
     matrix, offset = affine.rotation(0.6, axis=(0.0, 1.0, 1.0), center=(1.0, 0, 0))

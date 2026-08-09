@@ -16,11 +16,11 @@ from .._typing import (
     PointArray,
     Vec3,
 )
+from ..core import frames, stations
+from ..core.fields import validate_layers
+from ..core.paths import SpacePath
+from ..core.tags import ElementTags
 from ..linemesh.shape import path_fractions
-from ..model import frames, stations
-from ..model.fields import validate_layers
-from ..model.paths import SpacePath
-from ..model.tags import ElementTags
 from ..quadmesh import QuadMesh
 from ..quadmesh.lift import from_grid as quad_from_grid
 from ..quadmesh.morph import blend as quad_blend
@@ -176,7 +176,7 @@ def sweep_path(
     last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
     """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.model.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
+    <nekmeshpy.core.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
     fractions)`` triple."""
     fr = path_fractions(path, target_length=target_length, layers=layers,
                         fractions=fractions)

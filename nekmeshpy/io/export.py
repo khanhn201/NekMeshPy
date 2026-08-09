@@ -10,14 +10,14 @@ from typing import Any, Union
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
+from ..core import conform, topology
+from ..core.fields import gll_nodes, lagrange_matrix, uniform_spacing
+from ..core.interp import hex_face_indices
+from ..core.mesh import Mesh
+from ..core.physical import PhysicalGroup, PhysicalGroups
 from ..hexmesh import HexMesh
 from ..hexmesh.query import weld as hex_weld
 from ..linemesh import LineMesh
-from ..model import conform, topology
-from ..model.fields import gll_nodes, lagrange_matrix, uniform_spacing
-from ..model.interp import hex_face_indices
-from ..model.mesh import Mesh
-from ..model.physical import PhysicalGroup, PhysicalGroups
 from ..quadmesh import QuadMesh
 
 # VTK cell-type ids: linear + high-order (Lagrange) line / quad / hex.
@@ -239,7 +239,7 @@ def _lagrange_quad_perm(order: int) -> IntArray:
 # VTK node order, and the VTK cell-type id; the hex builder also returns the per-node
 # ``bc_id``.  At ``order == 1`` the nodes stay **un-welded** (one block per element,
 # connectivity = consecutive blocks) -- byte-for-byte the historical output.  At
-# ``order > 1`` the conformal walk (:mod:`nekmeshpy.model.conform`) emits **shared**
+# ``order > 1`` the conformal walk (:mod:`nekmeshpy.core.conform`) emits **shared**
 # nodes: a node on an edge / face between two elements is written once.
 def _unwelded(n_elem: int, m: int) -> IntArray:
     """Consecutive-block connectivity ``(n_elem, m)`` for un-welded node arrays."""

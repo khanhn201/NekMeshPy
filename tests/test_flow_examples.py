@@ -10,8 +10,8 @@ import pytest
 from conftest import conformal, run_example
 
 from nekmeshpy import hexmesh, topology
+from nekmeshpy.core.interp import hex_face_indices
 from nekmeshpy.hexmesh import quality
-from nekmeshpy.model.interp import hex_face_indices
 
 
 def _scaled_jac(mesh):

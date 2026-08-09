@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
-from ..model.quality import POOR_THRESHOLD, QualitySummary
+from ..core.quality import POOR_THRESHOLD, QualitySummary
 from .quadmesh import QuadMesh
 
 # corner -> [corner, next, prev] neighbour point positions (CCW quad)
@@ -40,7 +40,7 @@ def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
 
 def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
     """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample."""
-    from ..model import conform
+    from ..core import conform
     nodes, conn_ho = conform.conformal_quad(
         mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
         mesh.interior, order)
@@ -52,7 +52,7 @@ def scaled_jacobian_ho(mesh: QuadMesh, order: int) -> FloatArray:
     """Per-quad minimum scaled Jacobian sampled at the ``(order+1)**2`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
     :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>`."""
-    from ..model.interp import scaled_jacobian_ho as _sj
+    from ..core.interp import scaled_jacobian_ho as _sj
     return _sj(_ho_block(mesh, order), order, dim=2)
 
 

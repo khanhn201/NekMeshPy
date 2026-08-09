@@ -23,8 +23,8 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core import paths
+from nekmeshpy.core.fields import uniform_spacing
 
 CENTER = (0.4, -1.0, 2.5)
 

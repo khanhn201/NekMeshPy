@@ -22,7 +22,7 @@ from nekmeshpy import (
     linemesh,
     quadmesh,
 )
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core.fields import uniform_spacing
 
 # -- construction ------------------------------------------------------------
 

@@ -65,8 +65,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from nekmeshpy import export, hexmesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.paths import turtle_path
+from nekmeshpy.core import paths
+from nekmeshpy.core.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

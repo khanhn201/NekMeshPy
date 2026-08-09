@@ -23,8 +23,8 @@ import pytest
 from conftest import assert_same_side_tags
 
 from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import conform, frames
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core import conform, frames
+from nekmeshpy.core.fields import uniform_spacing
 
 RP, RB, NU, NS, NR = 0.3, 1.0, 16, 4, 2
 

@@ -12,10 +12,10 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..model import conform
-from ..model.interp import corner_indices
-from ..model.quality import QualitySummary
-from ..model.topology import TopologyReport
+from ..core import conform
+from ..core.interp import corner_indices
+from ..core.quality import QualitySummary
+from ..core.topology import TopologyReport
 from .hexmesh import HexMesh
 
 
@@ -102,7 +102,7 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
 
 def topology_report(mesh: HexMesh) -> TopologyReport:
     """Watertightness / connectivity report of the welded mesh."""
-    from ..model import topology
+    from ..core import topology
     w = weld(mesh)
     return topology.hex_report(w.points, w.hexes)
 
@@ -119,7 +119,7 @@ def is_conforming(mesh: HexMesh) -> bool:
 def report(mesh: HexMesh) -> str:
     """Human-readable summary: element/point counts, scaled-Jacobian quality,
     per-name tagged-face counts, and the topology report."""
-    from ..model import topology
+    from ..core import topology
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
     lines.append(quality.format_report(quality.summary(mesh.points, mesh.hexes)))

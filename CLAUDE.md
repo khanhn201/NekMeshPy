@@ -82,7 +82,7 @@ is boundary extraction → `lower`); *changes rung?* → `lift`/`lower`; *neithe
 Operations are per-rung, so a call site **names its rung**. Code meant to run at every
 rung pairs each mesh with its package explicitly rather than dispatching on `type()`.
 
-`model/` is rung-agnostic: `paths.py`, `surfaces.py`, `conform.py`, `tags.py`. `TriMesh`
+`core/` is rung-agnostic: `paths.py`, `surfaces.py`, `conform.py`, `tags.py`. `TriMesh`
 is the exception to the free-function rule — small queries stay on the class, the rest
 is `trimesh.ops.*`.
 
@@ -96,7 +96,7 @@ faces* + `hex`/`face_orient` + `interior (E,(N-1)³,3)`).
 `points` / `quads` / `hexes` are **derived read-only views**, so corner consistency is
 structural and `mesh.points[:] = X` propagates for free. Conformality is likewise
 structural: a shared edge or face is *one stored object* referenced by every incident
-element, resolved by corner ids rather than coordinate search (`model/conform.py`).
+element, resolved by corner ids rather than coordinate search (`core/conform.py`).
 
 Constructors share one argument order: `(rung below, incidence, [orientation,] interior,
 side_tags, element_tags)`. A line element has no orientation bit, so `LineMesh` has no
@@ -131,7 +131,7 @@ Order-N smoothing is not implemented: a repositioning smoother raises
 
 ## Tags
 
-Tag slots are types from `model/tags.py` that **validate themselves at construction** —
+Tag slots are types from `core/tags.py` that **validate themselves at construction** —
 `PointTags`/`EdgeTags`/`FaceTags` declare their own `SIDES` (2/4/6) and reject an
 out-of-range side with no mesh in sight. The slot is named for the entity:
 `.point_tags` / `.edge_tags` / `.face_tags`.

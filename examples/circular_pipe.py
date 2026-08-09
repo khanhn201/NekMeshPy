@@ -11,7 +11,7 @@ Produces ``circular_pipe.re2`` and ``circular_pipe.vtu``.
 import logging
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing
+from nekmeshpy.core.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

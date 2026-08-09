@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import conform, surfaces
+from nekmeshpy.core import conform, surfaces
 
 R = 1.3
 

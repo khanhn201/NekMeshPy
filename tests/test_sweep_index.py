@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 
 from nekmeshpy import linemesh, quadmesh
-from nekmeshpy.model import conform
-from nekmeshpy.model.fields import gll_nodes
+from nekmeshpy.core import conform
+from nekmeshpy.core.fields import gll_nodes
 
 
 def _profiles(n_prof, loop, order=1):
@@ -39,7 +39,7 @@ def test_elements_are_layer_major(loop):
     more layer.  Every tagging and node check below indexes by it, and ``loft``'s
     ``element_tags`` contract -- an ``ElementTags`` over *one* slice's elements tags each
     swept column -- is only meaningful because of it."""
-    from nekmeshpy.model.tags import ElementTags
+    from nekmeshpy.core.tags import ElementTags
     profs = _profiles(4, loop)
     L, nz = profs[0].n_lines, 4 if loop else 3
     per_line = ElementTags.from_dense(np.array(["e%d" % k for k in range(L)]))
@@ -282,8 +282,8 @@ def test_hex_loft_fn_nodes_are_its_section_lattice_revolved(order, loop):
     from conftest import curved
 
     from nekmeshpy import hexmesh
-    from nekmeshpy.model import affine
-    from nekmeshpy.model.stations import refined_lattice
+    from nekmeshpy.core import affine
+    from nekmeshpy.core.stations import refined_lattice
 
     R = 4.0
     disc = quadmesh.rotate(_section(order), np.pi / 2, (1.0, 0.0, 0.0))

@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import topology
+from nekmeshpy.core import topology
 
 R0, RSEC = 3.0, 1.0          # torus major / minor radius
 NSEC, NRING = 8, 12          # sections around the axis / points around a section
@@ -73,7 +73,7 @@ def test_line_loft_open_is_the_open_factory(order):
 def test_line_loft_high_order_interior_is_the_straight_gll_blend():
     """With no explicit ``interior`` each line's private nodes are the straight GLL
     blend between its endpoints -- the same nodes ``LineMesh.line`` places."""
-    from nekmeshpy.model.fields import gll_nodes
+    from nekmeshpy.core.fields import gll_nodes
     P = np.array([[0.0, 0, 0], [2, 0, 0], [2, 3, 0]])
     lm = linemesh.loft(P, loop=True, order=4)
     g = gll_nodes(4)[1:4]

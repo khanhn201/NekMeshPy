@@ -14,11 +14,11 @@ from .._typing import (
     PointArray,
     Vec3,
 )
+from ..core import affine, conform, frames
+from ..core.paths import SpacePath
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
-from ..model import affine, conform, frames
-from ..model.paths import SpacePath
 from .quadmesh import QuadMesh
 
 
@@ -155,7 +155,7 @@ def place_on_path(section: QuadMesh, path: SpacePath,
     """Where :func:`sweep <nekmeshpy.hexmesh.lift.sweep_path>` **would** put ``section``
     at each of ``fractions``, without building the block: one rigidly placed copy per
     station, through the same :func:`frames.sweep_placements
-    <nekmeshpy.model.frames.sweep_placements>` the sweep itself uses."""
+    <nekmeshpy.core.frames.sweep_placements>` the sweep itself uses."""
     P: PointArray = path.centerline(np.asarray(fractions, dtype=float).ravel())
     T: PointArray = path.tangent(np.asarray(fractions, dtype=float).ravel())
     places = frames.sweep_placements(

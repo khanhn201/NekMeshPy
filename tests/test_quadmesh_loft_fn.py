@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import ElementTags, linemesh, quadmesh
-from nekmeshpy.model import conform
+from nekmeshpy.core import conform
 
 R, RT, NU, NV = 2.0, 0.6, 8, 6
 
@@ -236,7 +236,7 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft():
     """Handing in exactly the profiles the lerp would have invented must give back
     the plain loft -- so ``sweep_nodes`` changes geometry only when the geometry
     genuinely is not straight."""
-    from nekmeshpy.model.fields import gll_nodes
+    from nekmeshpy.core.fields import gll_nodes
     order = 3
     base = _tube_ring(order)
     zs = [0.0, 1.0, 2.0]

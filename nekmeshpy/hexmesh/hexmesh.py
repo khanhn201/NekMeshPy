@@ -9,12 +9,12 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..linemesh.linemesh import _repr_tags
-from ..model import conform
-from ..model.tags import (
+from ..core import conform
+from ..core.tags import (
     ElementTags,
     FaceTags,
 )
+from ..linemesh.linemesh import _repr_tags
 from ..quadmesh import QuadMesh
 
 # default sweep axis / origin for extrude

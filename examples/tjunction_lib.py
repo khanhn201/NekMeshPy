@@ -17,7 +17,7 @@ from collections import namedtuple
 import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import surfaces
+from nekmeshpy.core import surfaces
 
 TJunction = namedtuple("TJunction", "core disc_minus disc_plus disc_branch")
 

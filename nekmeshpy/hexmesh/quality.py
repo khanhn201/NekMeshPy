@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
-from ..model.quality import POOR_THRESHOLD, QualitySummary
+from ..core.quality import POOR_THRESHOLD, QualitySummary
 from .hexmesh import HexMesh
 
 # corner -> [corner, +xi, +eta, +zeta] neighbour point positions
@@ -36,7 +36,7 @@ def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
 
 def _ho_block(mesh: HexMesh, order: int) -> PointArray:
     """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample."""
-    from ..model import conform
+    from ..core import conform
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
         mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
@@ -49,7 +49,7 @@ def scaled_jacobian_ho(mesh: HexMesh, order: int) -> FloatArray:
     """Per-hex minimum scaled Jacobian sampled at the ``(order+1)**3`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
     :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`."""
-    from ..model.interp import scaled_jacobian_ho as _sj
+    from ..core.interp import scaled_jacobian_ho as _sj
     return _sj(_ho_block(mesh, order), order, dim=3)
 
 

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import ElementTags, LineMesh, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing, uniform_spacing
+from nekmeshpy.core.fields import geometric_spacing, uniform_spacing
 
 
 def _rect_edges(x0, x1, y0, y1, nx=1, ny=1):
@@ -105,7 +105,7 @@ def test_rectangle_matches_manual_structured():
 
 
 def test_rectangle_grading_via_fracs():
-    from nekmeshpy.model.fields import symmetric_spacing
+    from nekmeshpy.core.fields import symmetric_spacing
     xf = symmetric_spacing(4, 1.4)
     qm = quadmesh.rectangle(_rect_corners(-1, 1, -1, 1), 4, 4, x_frac=xf, y_frac=xf)
     P = np.asarray(qm.points).reshape(5, 5, 3)
@@ -147,7 +147,7 @@ def test_sphere_pairs_with_box_by_index():
 
 
 def test_sphere_box_annulus_is_watertight():
-    from nekmeshpy.model.fields import uniform_spacing as us
+    from nekmeshpy.core.fields import uniform_spacing as us
     box = quadmesh.box(3.0, 4)
     sph = quadmesh.sphere(0.5, 4)
     block = hexmesh.annulus(sph, box, radial=us(3))
@@ -199,7 +199,7 @@ def test_hemisphere_high_order_nodes_lie_on_the_exact_sphere(order):
 
 
 def test_hemisphere_half_box_annulus_is_watertight():
-    from nekmeshpy.model.fields import uniform_spacing as us
+    from nekmeshpy.core.fields import uniform_spacing as us
     hb = quadmesh.half_box(3.0, 4, n_vertical=4)
     hs = quadmesh.hemisphere(0.5, 4, n_vertical=4, rim_tag="ground")
     block = hexmesh.annulus(hs, hb, radial=us(3))

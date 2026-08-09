@@ -10,7 +10,7 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..model.tags import ElementTags, PointTags
+from ..core.tags import ElementTags, PointTags
 
 
 def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
@@ -40,8 +40,8 @@ class LineMesh:
     ) -> None:
         """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), the **required**
         ``lines`` ``(L,2)`` connectivity, the per-line ``interior`` nodes, an optional
-        :class:`PointTags <nekmeshpy.model.tags.PointTags>` naming end points of lines,
-        and an optional :class:`ElementTags <nekmeshpy.model.tags.ElementTags>` naming
+        :class:`PointTags <nekmeshpy.core.tags.PointTags>` naming end points of lines,
+        and an optional :class:`ElementTags <nekmeshpy.core.tags.ElementTags>` naming
         whichever lines are tagged."""
 
         self.points: PointArray = np.asarray(points, dtype=float)

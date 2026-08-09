@@ -6,8 +6,8 @@ from conftest import run_example
 from scipy import integrate
 
 from nekmeshpy import hexmesh, topology
+from nekmeshpy.core import conform, fields, interp
 from nekmeshpy.hexmesh import quality
-from nekmeshpy.model import conform, fields, interp
 
 
 def _scaled_jac(mesh):

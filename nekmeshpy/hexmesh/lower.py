@@ -6,9 +6,9 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from .._typing import IntArray, PointArray
+from ..core import conform
+from ..core.tags import EdgeTags, ElementTags
 from ..linemesh import LineMesh
-from ..model import conform
-from ..model.tags import EdgeTags, ElementTags
 from ..quadmesh import QuadMesh
 from .hexmesh import HexMesh
 from .query import boundary_faces

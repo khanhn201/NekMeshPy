@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import NO_TAG, EdgeTags, HexMesh, QuadMesh, hexmesh, quadmesh
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core.fields import uniform_spacing
 
 # a unit square, one quad, CCW: side 1 (0,1) bottom, 2 (1,2) right, 3 (2,3) top,
 # 4 (3,0) left -- edge tags are (quad id, side, tag) rows.

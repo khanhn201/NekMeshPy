@@ -12,18 +12,18 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..linemesh import LineMesh
-from ..linemesh.query import element_blocks as line_blocks
-from ..model import conform, stations
-from ..model.conform import entity_tol
-from ..model.fields import gll_nodes
-from ..model.tags import (
+from ..core import conform, stations
+from ..core.conform import entity_tol
+from ..core.fields import gll_nodes
+from ..core.tags import (
     EdgeTags,
     ElementTags,
     TagBuilder,
     sweep_cap_tags,
     sweep_element_tags,
 )
+from ..linemesh import LineMesh
+from ..linemesh.query import element_blocks as line_blocks
 from .quadmesh import (
     QuadMesh,
     _quad_interior_slots,

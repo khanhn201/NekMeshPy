@@ -96,7 +96,7 @@ class TriMesh:
     # -- topology / validity ---------------------------------------------
     def topology_report(self) -> dict[str, Any]:
         """Manifold / connectivity report."""
-        from ..model import topology
+        from ..core import topology
         return topology.surface_report(self.points, self.tris)
 
     def is_closed(self) -> bool:

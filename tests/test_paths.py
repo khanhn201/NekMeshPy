@@ -22,8 +22,8 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core import paths
+from nekmeshpy.core.fields import uniform_spacing
 
 MOVES = [("line", 2.0, 0.0), ("arc", 1.5, 90.0), ("line", 3.0, 0.0),
          ("arc", 1.5, -90.0), ("line", 1.0, 0.0)]

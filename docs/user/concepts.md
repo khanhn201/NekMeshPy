@@ -394,9 +394,9 @@ Things worth knowing:
   <nekmeshpy.linemesh.shape.sweep_fractions>`: an element straddling one would be
   fitted across two different geometries, visible as a kink in the wall.
 - **For a turtle-walked path, reach for `sweep_path` instead.**
-  {func}`paths.embed <nekmeshpy.model.paths.embed>` lifts a 2-D
-  {func}`turtle_path <nekmeshpy.model.paths.turtle_path>` onto a plane in space,
-  giving a {class}`SpacePath <nekmeshpy.model.paths.SpacePath>` that already carries
+  {func}`paths.embed <nekmeshpy.core.paths.embed>` lifts a 2-D
+  {func}`turtle_path <nekmeshpy.core.paths.turtle_path>` onto a plane in space,
+  giving a {class}`SpacePath <nekmeshpy.core.paths.SpacePath>` that already carries
   its own analytic tangent and junction table; {func}`hexmesh.sweep_path
   <nekmeshpy.hexmesh.lift.sweep_path>` then takes a `target_length` (or `layers`)
   rather than a station array and does the `sweep_fractions` call for you. The one
@@ -439,7 +439,7 @@ pair — one convention shared by every layered factory (`extrude`'s `layers`; t
 ring (`0` for a full span flush with the body), last is `1`, so `array.size - 1`
 layers span `array[0]..1`. Use `uniform_spacing(k)`, `geometric_spacing(k, ratio)`
 (`ratio > 1` clusters toward the wall), or `numpy.linspace(a, 1, k + 1)` to start
-at `a`. Both helpers live in {mod}`nekmeshpy.model.fields`.
+at `a`. Both helpers live in {mod}`nekmeshpy.core.fields`.
 
 For the uniform case the same arguments also take a plain **`int`**: `radial=3` /
 `layers=40` means *that many layers* — exactly `uniform_spacing(n)`, the `n+1`
@@ -447,7 +447,7 @@ positions `linspace(0, 1, n+1)`. It counts **cells**, not positions, which is th
 convention `uniform_spacing` and `geometric_spacing` already use, so there is only
 one number to remember. Only a genuine scalar integer takes that branch; an array
 of ints is a position array like any other. Both spellings normalize through
-{func}`nekmeshpy.model.fields.validate_layers`, and an explicit array is returned
+{func}`nekmeshpy.core.fields.validate_layers`, and an explicit array is returned
 bit-for-bit untouched.
 
 ## Per-section smoothing
@@ -523,7 +523,7 @@ afterwards.
 - **interior** — the private per-element nodes (line `N−1`, quad `(N−1)²`, hex
   `(N−1)³`) that are never shared.
 
-`nekmeshpy.model.conform` owns this topology / orientation / reconciliation
+`nekmeshpy.core.conform` owns this topology / orientation / reconciliation
 engine and imports no container — everything crosses as plain arrays. Where a
 combinator must rebuild the shared tables against a new topology (`merge`,
 `hexmesh.loft`), it reconciles with `conform.scatter_edge_nodes` /
@@ -659,12 +659,12 @@ meshed.
   hold. Pass `high_order=True` to `mesh.scaled_jacobian()` /
   `mesh.quality_summary()` to sample the scaled Jacobian at the block's `(N+1)^d` GLL
   nodes instead. At order 1 the GLL nodes *are* the corners, so the two agree exactly.
-  `quality_summary()` returns a {class}`~nekmeshpy.model.quality.QualitySummary`
+  `quality_summary()` returns a {class}`~nekmeshpy.core.quality.QualitySummary`
   **NamedTuple** — `stats.n_inverted`, not `stats["n_inverted"]` — whose `n_poor`
   field and whose `poor (<…)` report line are both derived from the single constant
-  {data}`~nekmeshpy.model.quality.POOR_THRESHOLD`, so the count and the text
+  {data}`~nekmeshpy.core.quality.POOR_THRESHOLD`, so the count and the text
   describing it cannot drift apart. The schema is shared by both rungs and lives
-  container-free in {mod}`nekmeshpy.model.quality`.
+  container-free in {mod}`nekmeshpy.core.quality`.
 - **Smoothing is not implemented at `order > 1`** — the relaxers work on the corner
   graph and would leave mid/interior nodes behind. Rather than degrade silently, a
   *repositioning* method raises `NotImplementedError` above order 1: `conduction` and
@@ -685,7 +685,7 @@ Boundaries are plain **names** during construction. Each name maps to a Nek BC
 code / integer id only at **export**, via the `groups=` argument:
 
 - a `{name: nek_code}` dict,
-- a {class}`~nekmeshpy.model.physical.PhysicalGroups` registry (presets:
+- a {class}`~nekmeshpy.core.physical.PhysicalGroups` registry (presets:
   `PhysicalGroups.nek_default()`, `.duct()`, `.from_tags()`), or
 - `None` to auto-number the mesh's distinct names.
 

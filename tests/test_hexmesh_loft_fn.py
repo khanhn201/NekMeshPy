@@ -307,7 +307,7 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft(flipped):
     genuinely is not straight.  Parametrized over the winding, because the
     left-handed branch transposes the in-plane grid and the intermediate levels
     must take that transpose too."""
-    from nekmeshpy.model.fields import gll_nodes
+    from nekmeshpy.core.fields import gll_nodes
     order = 3
     base = _flat_disc(order, flipped=flipped)
     zs = [0.0, 1.0, 2.0]

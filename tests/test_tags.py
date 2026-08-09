@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model.tags import (
+from nekmeshpy.core.tags import (
     EdgeTags,
     ElementTags,
     FaceTags,
@@ -356,7 +356,7 @@ def test_the_container_still_rejects_an_out_of_range_element():
 def test_tag_builder_broadcasts_its_three_arguments():
     """``element`` / ``side`` / ``tag`` each accept a scalar or an array and broadcast,
     so a caller names a whole column of rows without a Python loop."""
-    from nekmeshpy.model.tags import EdgeTags, TagBuilder
+    from nekmeshpy.core.tags import EdgeTags, TagBuilder
     ids = np.array([3, 5, 7])
     bb = TagBuilder(EdgeTags)
     bb.add(ids, 2, "wall")                      # array x scalar x scalar
@@ -372,7 +372,7 @@ def test_tag_builder_broadcasts_its_three_arguments():
 def test_add_if_tagged_drops_the_untagged_rows_of_an_array():
     """A per-element tag array goes over whole -- the empty entries simply do not
     become rows, which is what lets ``loft`` hand its cap tags straight across."""
-    from nekmeshpy.model.tags import EdgeTags, TagBuilder
+    from nekmeshpy.core.tags import EdgeTags, TagBuilder
     bb = TagBuilder(EdgeTags)
     bb.add_if_tagged(np.arange(4), 1, np.array(["a", "", "c", ""]))
     bb.add_if_tagged(np.arange(4), 2, "")        # a scalar NO_TAG adds nothing

@@ -9,13 +9,13 @@ import pytest
 from conftest import curved
 
 from nekmeshpy import LineMesh, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import (
+from nekmeshpy.core.fields import (
     gll_nodes,
     gll_weights,
     lagrange_derivative_matrix,
     lagrange_matrix,
 )
-from nekmeshpy.model.interp import (
+from nekmeshpy.core.interp import (
     blend_ho,
     coons_grid,
     corner_indices,
@@ -120,8 +120,8 @@ def test_scaled_jacobian_ho_quad_reduces_at_order1():
 
 
 def test_scaled_jacobian_ho_hex_reduces_at_order1():
+    from nekmeshpy.core.fields import uniform_spacing
     from nekmeshpy.hexmesh import quality as hq
-    from nekmeshpy.model.fields import uniform_spacing
 
     loop = linemesh.circle(1.0, 24)
     qm = quadmesh.ogrid(loop, n_side=6, radial=uniform_spacing(4),
@@ -314,7 +314,7 @@ def test_valid_interior_line_accepted():
 
 # -- helpers ------------------------------------------------------------
 def _unit_grid():
-    from nekmeshpy.model.fields import uniform_spacing  # noqa: F401
+    from nekmeshpy.core.fields import uniform_spacing  # noqa: F401
     xs = np.linspace(0, 1, 3)
     ys = np.linspace(0, 1, 3)
     gx, gy = np.meshgrid(xs, ys, indexing="ij")

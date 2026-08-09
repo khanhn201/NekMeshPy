@@ -14,16 +14,16 @@ from .._typing import (
     SmoothingMethod,
     Vec3,
 )
+from ..core import frames, stations
+from ..core.fields import validate_layers
+from ..core.paths import SpacePath
+from ..core.tags import ElementTags, PointTags, TagBuilder
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
 from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
 from ..linemesh.shape import path_fractions
-from ..model import frames, stations
-from ..model.fields import validate_layers
-from ..model.paths import SpacePath
-from ..model.tags import ElementTags, PointTags, TagBuilder
 from ._helpers import _apply_smoothing, _check_boundary
 from .assemble import _loft_evaluated, loft
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
@@ -187,7 +187,7 @@ def sweep_path(
     last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.model.paths.SpacePath>`, which carries its own analytic tangent and
+    <nekmeshpy.core.paths.SpacePath>`, which carries its own analytic tangent and
     junction table -- so this asks for an element length along the sweep instead of a
     station array."""
     fr = path_fractions(path, target_length=target_length, layers=layers,

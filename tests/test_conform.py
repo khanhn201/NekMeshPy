@@ -23,8 +23,8 @@ import pytest
 from conftest import conformal, curved, quad_from_entities
 
 from nekmeshpy import HexMesh, LineMesh, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import conform
-from nekmeshpy.model.interp import corner_indices
+from nekmeshpy.core import conform
+from nekmeshpy.core.interp import corner_indices
 
 
 def _shell(order, n_face=2, n_radial=2):

@@ -6,10 +6,10 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import IntArray, PointArray
+from ..core import conform
+from ..core.fields import gll_nodes
+from ..core.interp import tensor_nodes
 from ..linemesh import LineMesh
-from ..model import conform
-from ..model.fields import gll_nodes
-from ..model.interp import tensor_nodes
 from .quadmesh import QuadMesh, _coons_at, _edge_interior_slots, _quad_interior_slots
 
 #: One wall overlay: ``(quad ids, quad side 1-4, wall curve)`` -- the true boundary

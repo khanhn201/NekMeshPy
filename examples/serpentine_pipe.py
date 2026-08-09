@@ -44,9 +44,9 @@ import time
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.fields import uniform_spacing
-from nekmeshpy.model.paths import turtle_path
+from nekmeshpy.core import paths
+from nekmeshpy.core.fields import uniform_spacing
+from nekmeshpy.core.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

@@ -14,8 +14,8 @@ import pytest
 from conftest import GOLDEN, curved, run_example
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
+from nekmeshpy.core.interp import corner_indices, hex_face_indices
 from nekmeshpy.io import export
-from nekmeshpy.model.interp import corner_indices, hex_face_indices
 
 GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}

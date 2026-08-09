@@ -10,14 +10,14 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..linemesh import LineMesh
-from ..linemesh.linemesh import _repr_tags
-from ..model import conform
-from ..model.interp import quad_edge_indices
-from ..model.tags import (
+from ..core import conform
+from ..core.interp import quad_edge_indices
+from ..core.tags import (
     EdgeTags,
     ElementTags,
 )
+from ..linemesh import LineMesh
+from ..linemesh.linemesh import _repr_tags
 
 #: Tag sentinel meaning "leave this side unnamed": a side carrying it emits no
 #: side-tag row.  Equal to ``""`` so it reads as "unnamed" everywhere.
@@ -44,7 +44,7 @@ _GRID_SIDES: dict[str, tuple[str, int]] = {
 def _edge_interior_slots(order: int) -> IntArray:
     """``(4, order-1)`` lexicographic (``i`` fastest) block slots strictly inside each
     CCW local edge, in **element traversal order** (that edge's start corner -> end
-    corner) -- the frame :func:`~nekmeshpy.model.conform.scatter_edge_nodes` expects."""
+    corner) -- the frame :func:`~nekmeshpy.core.conform.scatter_edge_nodes` expects."""
     return np.stack([quad_edge_indices(s, order)[1:-1] for s in (1, 2, 3, 4)])
 
 

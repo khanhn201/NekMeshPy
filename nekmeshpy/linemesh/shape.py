@@ -8,9 +8,9 @@ from collections.abc import Callable, Mapping, Sequence
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, Vec3
-from ..model.paths import SpacePath
-from ..model.surfaces import SurfaceCurve, SurfaceMap
-from ..model.tags import ElementTags
+from ..core.paths import SpacePath
+from ..core.surfaces import SurfaceCurve, SurfaceMap
+from ..core.tags import ElementTags
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 from .assemble import _eval_curve, loft, loft_fn
 from .linemesh import LineMesh
@@ -130,7 +130,7 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
 def path_fractions(path: SpacePath, *, target_length: float | None = None,
                    layers: int | None = None,
                    fractions: FloatArray | Sequence[float] | None = None) -> FloatArray:
-    """Resolve a :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` and exactly one of
+    """Resolve a :class:`SpacePath <nekmeshpy.core.paths.SpacePath>` and exactly one of
     ``target_length`` / ``layers`` / ``fractions`` into the sweep stations themselves.
     """
     given = [n for n, x in (("target_length", target_length), ("layers", layers),
@@ -153,7 +153,7 @@ def path_fractions(path: SpacePath, *, target_length: float | None = None,
 
 def on_surface(curve: SurfaceCurve, surface: SurfaceMap, *, order: int = 1,
                element_tag: str = "") -> LineMesh:
-    """Mesh a :class:`SurfaceCurve <nekmeshpy.model.surfaces.SurfaceCurve>` by
+    """Mesh a :class:`SurfaceCurve <nekmeshpy.core.surfaces.SurfaceCurve>` by
     evaluating ``surface`` on it -- one element between consecutive nodes of
     ``curve.fr``, exact on the surface at **every** node."""
     return loft_fn(lambda x: surface(curve.g(x)), curve.fr, order=order,

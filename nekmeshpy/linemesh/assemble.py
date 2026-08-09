@@ -11,10 +11,10 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..model import conform, stations
-from ..model.conform import entity_tol
-from ..model.fields import gll_nodes
-from ..model.tags import ElementTags, PointTags, TagBuilder
+from ..core import conform, stations
+from ..core.conform import entity_tol
+from ..core.fields import gll_nodes
+from ..core.tags import ElementTags, PointTags, TagBuilder
 from .linemesh import LineMesh
 from .query import boundary_points
 
