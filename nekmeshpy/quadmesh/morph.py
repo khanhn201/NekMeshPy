@@ -16,6 +16,7 @@ from .._typing import (
 )
 from ..core import affine, conform, frames
 from ..core.paths import SpacePath
+from ..core.tags import EdgeTags
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
@@ -95,6 +96,42 @@ def scale(mesh: QuadMesh, factor: float | Vec3 | Sequence[float],
     return _affine(mesh, *affine.scaling(factor, center))
 
 
+def _rewind(mesh: QuadMesh) -> QuadMesh:
+    """The same section with every quad traversed the other way round -- corners
+    ``(c0,c1,c2,c3)`` become ``(c0,c3,c2,c1)``.
+
+    In B-rep storage that is the edge columns reversed with every traversal bit
+    toggled; the shared edges themselves are untouched, since an edge row is canonical
+    (min corner first) and knows nothing of the winding of the quads on it.  The private
+    interior transposes with the local frame, and an ``edge_tags`` side rides its column
+    to ``5 - side``."""
+    n = mesh.order - 1
+    perm: IntArray = (np.arange(n * n, dtype=np.int64).reshape(n, n).T.ravel()
+                      if n else np.zeros(0, dtype=np.int64))
+    et = mesh.edge_tags
+    return QuadMesh(mesh.lines, mesh.quad[:, ::-1], ~mesh.flip[:, ::-1],
+                    mesh.interior[:, perm, :],
+                    EdgeTags(et.elements, 5 - et.sides, et.tags).ordered(),
+                    mesh.element_tags)
+
+
+def mirror(mesh: QuadMesh, normal: Vec3 | Sequence[float],
+           point: Point | Sequence[float] = affine.ORIGIN) -> QuadMesh:
+    """A new section reflected through the plane with ``normal`` through ``point``, with
+    every quad **re-wound** so it keeps the orientation it was authored with.
+
+    A reflection has determinant ``-1``, so it inverts every element: the bare
+    ``transform`` of a reflection matrix hands back a section whose scaled Jacobian has
+    flipped sign throughout.  ``mirror`` pairs the coordinate map with the winding fix,
+    so the result measures exactly as its original did and lifts to a hex block the
+    right way out.
+
+    The symmetric-domain idiom -- mesh the half you can, recover the whole:
+    ``quadmesh.merge([half, mirror(half, normal=(1, 0, 0))])``, which welds along the
+    symmetry plane the two now share."""
+    return _rewind(_affine(mesh, *affine.reflection(normal, point)))
+
+
 def reindex(structure: QuadMesh, target: QuadMesh,
             sigma: IntArray | Sequence[int]) -> QuadMesh:
     """``target``'s own geometry, reached through ``structure``'s own index labels:
@@ -167,6 +204,7 @@ def place_on_path(section: QuadMesh, path: SpacePath,
 
 __all__ = [
     "blend",
+    "mirror",
     "place_on_path",
     "reindex",
     "rotate",

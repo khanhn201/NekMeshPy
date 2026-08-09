@@ -13,16 +13,17 @@ from .._typing import (
     PointArray,
 )
 from ..core import conform, stations
-from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
 from ..core.tags import (
     EdgeTags,
     ElementTags,
     TagBuilder,
+    element_mask,
     sweep_cap_tags,
     sweep_element_tags,
 )
 from ..linemesh import LineMesh
+from ..linemesh.assemble import _subset as line_subset
 from ..linemesh.query import element_blocks as line_blocks
 from .quadmesh import (
     QuadMesh,
@@ -237,47 +238,9 @@ def _loft_evaluated(
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
     node lattice rather than handed in: validate, close the loop, split, delegate."""
-    profs = list(profs)
-    if len(profs) != t.shape[0]:
-        raise ValueError(
-            "%s: expected one profile per sweep lattice value (%d), got %d"
-            % (name, t.shape[0], len(profs)))
-    nz = (len(profs) - 1) // order
-    ref = profs[0]
-    ref_lines = np.asarray(ref.lines, dtype=np.int64).reshape(-1, 2)
-    for k, m in enumerate(profs):
-        if m.order != order:
-            raise ValueError(
-                "%s: f(%g) returned an order-%d profile, but order=%d was "
-                "requested" % (name, t[k], m.order, order))
-        if (m.n_points != ref.n_points
-                or not np.array_equal(
-                    np.asarray(m.lines, dtype=np.int64).reshape(-1, 2), ref_lines)):
-            raise ValueError(
-                "%s: every profile must be index-paired and conformal with "
-                "the first, but f(%g) returned %d points / %d lines against f(%g)'s "
-                "%d / %d.  Place one profile with the affine ops rather than "
-                "rebuilding it per parameter."
-                % (name, t[k], m.n_points, m.n_lines, t[0], ref.n_points,
-                   ref.n_lines))
-
-    if loop:
-        # the wrap level must land back on level 0; drop it, but keep the seam
-        # layer's own intermediate levels -- they are what curve the seam.
-        P0 = np.asarray(profs[0].points, dtype=float).reshape(-1, 3)
-        Pw = np.asarray(profs[-1].points, dtype=float).reshape(-1, 3)
-        gap = float(np.max(np.linalg.norm(Pw - P0, axis=1))) if P0.size else 0.0
-        tol = entity_tol(P0)
-        if gap > tol:
-            raise ValueError(
-                "%s(loop=True) needs the last fraction to map back to the "
-                "first profile, but f(%g) and f(%g) are %g apart (tolerance %g).  "
-                "Pass the trailing wrap value as the final fraction, or use "
-                "loop=False." % (name, t[-1], t[0], gap, tol))
-        profs = profs[:-1]
-
-    slices = profs[::order]
-    sweep_nodes = [profs[i * order + 1:(i + 1) * order] for i in range(nz)]
+    slices, sweep_nodes = stations.split_evaluated(
+        profs, t, order, loop=loop, conn=lambda m: np.asarray(m.lines, dtype=np.int64).reshape(-1, 2),
+        noun="profile", elems="lines", name=name)
     return loft(slices, loop=loop,
                 sweep_nodes=sweep_nodes if order > 1 else None,
                 element_tags=element_tags,
@@ -372,8 +335,62 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     lm = LineMesh(points, edges, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior, bnd, etags)
 
+def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
+    """``(the kept quads as a QuadMesh, new_quad_of)`` -- the quad rung of
+    :func:`linemesh._subset <nekmeshpy.linemesh.assemble._subset>`, which it calls to
+    carry the shared edges down.
+
+    Shared edges no kept quad references are dropped with the points under them, so the
+    B-rep comes back complete rather than trailing orphaned entities.  Order is
+    preserved: the shared edge-interior and private per-quad nodes ride along."""
+    kept, new_quad_of = conform.renumber_map(keep)
+    quad: IntArray = mesh.quad[kept]
+    edge_keep: BoolArray = np.zeros(mesh.lines.n_lines, dtype=bool)
+    if quad.size:
+        edge_keep[np.unique(quad)] = True
+    sub_lines, new_edge_of = line_subset(mesh.lines, edge_keep)
+    return (QuadMesh(sub_lines, new_edge_of[quad], mesh.flip[kept],
+                     mesh.interior[kept],
+                     mesh.edge_tags.renumber(new_quad_of),
+                     mesh.element_tags.gather(kept)),
+            new_quad_of)
+
+
+def select(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> QuadMesh:
+    """The named quads as a section of their own, renumbered from zero.
+
+    ``which`` is a tag string (every quad carrying it), a ``(Q,)`` boolean mask, or an
+    array of quad ids.  Kept quads hold their relative order, their ``element_tags`` and
+    whichever ``edge_tags`` rows name them; edges and points nothing kept touches are
+    dropped.  The inverse of :func:`merge`.
+
+    Removing elements can open the section up, so the result is **not** guaranteed to be
+    simply connected -- or connected at all.  Ask :func:`components` if that matters."""
+    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_quads,
+                                      "quadmesh.select"))[0]
+
+
+def remove(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> QuadMesh:
+    """The complement of :func:`select`: everything ``which`` does **not** name."""
+    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_quads,
+                                       "quadmesh.remove"))[0]
+
+
+def components(mesh: QuadMesh) -> list[QuadMesh]:
+    """The section split into its connected pieces -- one ``QuadMesh`` per group of
+    quads reachable through shared corner points, in the order their first quad
+    appears."""
+    n, labels = conform.element_components(mesh.quads, mesh.n_points)
+    return [_subset(mesh, labels == c)[0] for c in range(n)]
+
+
 __all__ = [
+    "components",
     "loft",
     "loft_fn",
     "merge",
+    "remove",
+    "select",
 ]

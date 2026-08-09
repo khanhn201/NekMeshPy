@@ -269,6 +269,51 @@ def first_occurrence(inverse: IntArray, n_groups: int) -> IntArray:
     return out
 
 
+def renumber_map(keep: BoolArray) -> tuple[IntArray, IntArray]:
+    """``(kept ids ascending, new_id_of)`` for a subset: ``new_id_of[old]`` is the
+    survivor's new id, or ``-1`` where ``keep`` is False.
+
+    The index bookkeeping every ``select`` / ``remove`` rests on, and the reason those
+    operations *manufacture* a numbering rather than preserve one."""
+    m: BoolArray = np.asarray(keep, dtype=bool).reshape(-1)
+    ids: IntArray = np.flatnonzero(m).astype(np.int64)
+    new_of: IntArray = np.full(m.shape[0], -1, dtype=np.int64)
+    new_of[ids] = np.arange(ids.shape[0], dtype=np.int64)
+    return ids, new_of
+
+
+def element_components(conn: IntArray, n_points: int) -> tuple[int, IntArray]:
+    """``(n_components, label per element)`` over the graph in which two elements are
+    connected when they **share at least one corner point** -- the weakest join, and so
+    the one that answers "is this one body or several".
+
+    Labels are numbered in first-appearance order, so component ``0`` is element ``0``'s.
+    Walked on the bipartite element/point graph rather than a materialized element
+    adjacency, which keeps it linear in the incidence rather than quadratic in the
+    valence."""
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    c: IntArray = np.asarray(conn, dtype=np.int64)
+    e, k = c.shape
+    if e == 0:
+        return 0, np.zeros(0, dtype=np.int64)
+    rows: IntArray = np.repeat(np.arange(e, dtype=np.int64), k)
+    cols: IntArray = e + c.ravel()
+    n = e + int(n_points)
+    graph = sp.coo_matrix((np.ones(rows.shape[0], dtype=np.int8), (rows, cols)),
+                          shape=(n, n))
+    _, raw = connected_components(graph, directed=False)
+    labels: IntArray = np.asarray(raw[:e], dtype=np.int64)
+    # ``connected_components`` also counts every point in no element as its own
+    # component, and numbers by its own walk -- so renumber off the *elements* alone.
+    _, first = np.unique(labels, return_index=True)
+    seen: IntArray = labels[np.sort(first)]
+    remap: IntArray = np.zeros(int(labels.max()) + 1, dtype=np.int64)
+    remap[seen] = np.arange(seen.shape[0], dtype=np.int64)
+    return seen.shape[0], remap[labels]
+
+
 def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code."""
     e = hexes.shape[0]
@@ -321,6 +366,62 @@ def _frame_code_table() -> IntArray:
 
 
 _FRAME_CODE_TAB: IntArray = _frame_code_table()
+
+#: The ``(u,v)`` grid position of each corner of a **bare CCW quad row** -- ``u`` along
+#: corner 0 -> 1, ``v`` along corner 0 -> 3.  That is ``_CORNER_IJK[2]``, and so the
+#: lattice a :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>`'s own ``interior``
+#: is stored on.  A hex's *local face* frame (:data:`_FACE_CORNER_UV`) is not always
+#: this one -- it takes the two in-face axes ascending, which turns faces 3 and 4 -- so
+#: a face read out of a hex **into a quad** cannot reuse the hex's ``face_orient``.
+_CCW_UV: IntArray = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.int64)
+
+
+def _ccw_frame_tables() -> tuple[IntArray, IntArray]:
+    """``(QIDX (8,4), CODE (256,))`` for a bare CCW quad row: where D4 ``code`` sends
+    each of its four slots, and the inverse keyed by the packed permutation -- the
+    row-only twin of :data:`_CANON_QIDX` / :data:`_FRAME_CODE_TAB`, which need a hex
+    face to index."""
+    qidx: IntArray = np.empty((8, 4), dtype=np.int64)
+    for code in range(8):
+        for p in range(4):
+            u, v = int(_CCW_UV[p, 0]), int(_CCW_UV[p, 1])
+            qidx[code, p] = _QIDX[_d4_apply(u, v, code, 1)]
+    tab: IntArray = np.full(256, -1, dtype=np.int64)
+    w: IntArray = np.array([64, 16, 4, 1], dtype=np.int64)
+    for code in range(8):
+        tab[int(qidx[code] @ w)] = code
+    return qidx, tab
+
+
+_CCW_QIDX, _CCW_FRAME_CODE = _ccw_frame_tables()
+
+
+def quad_frame_code(rows: IntArray, canonical: IntArray) -> IntArray:
+    """``(K,)`` D4 codes carrying each CCW quad ``rows`` entry's own ``(u,v)`` frame onto
+    the matching ``canonical`` row's frame -- both orderings of the same four corner ids.
+
+    The row-wise counterpart of :func:`face_frame_code`, which fits the same relation for
+    a hex's six local faces at once.  Fitting it against a **given** canonical row rather
+    than deriving one from the ids is the whole point: which row a shared face stores is
+    the builder's choice, and only that row says what frame its interior nodes are in."""
+    a: IntArray = np.asarray(rows, dtype=np.int64).reshape(-1, 4)
+    b: IntArray = np.asarray(canonical, dtype=np.int64).reshape(-1, 4)
+    if a.shape != b.shape:
+        raise ValueError("quad_frame_code: %d rows against %d canonical rows"
+                         % (a.shape[0], b.shape[0]))
+    # ``sigma[k,p]`` is the canonical slot row ``k``'s corner ``p`` lands in; a slot fits
+    # in a byte and so does the packed row, exactly as ``face_frame_code`` packs it.
+    sigma = np.zeros(a.shape, dtype=np.uint8)
+    for c in range(1, 4):
+        sigma += np.uint8(c) * (a == b[:, c, None])
+    key: IntArray = (sigma[:, 0].astype(np.int64) * 64 + sigma[:, 1] * 16
+                     + sigma[:, 2] * 4 + sigma[:, 3])
+    codes: IntArray = _CCW_FRAME_CODE[key]
+    if codes.size and int(codes.min()) < 0:
+        raise ValueError(
+            "quad_frame_code: a quad row is not a D4 image of its canonical row -- the "
+            "two do not describe the same quadrilateral")
+    return codes
 
 
 def face_frame_code(local: IntArray, canonical: IntArray) -> IntArray:
@@ -644,6 +745,25 @@ def gather_face_nodes(face_nodes: PointArray, elem_faces: IntArray,
     permp = perm[face_orient]                                  # (E,6,k2)
     return np.take_along_axis(canon, np.broadcast_to(
         permp[..., None], permp.shape + (3,)), axis=2)
+
+
+def face_nodes_in_frame(canon_nodes: PointArray, rows: IntArray,
+                        canonical: IntArray) -> PointArray:
+    """``(K,(order-1)**2,3)`` shared face-interior nodes, turned out of their stored
+    ``canonical`` row's frame into the frame of the CCW quad ``rows``.
+
+    :func:`gather_face_nodes` is this same read for a *hex*, which was handed its codes
+    at construction; here they are fitted row against row, which is what lets one mesh's
+    faces be read out into another mesh's quads. Skipping the turn silently permutes the
+    interior nodes of every face whose fit is not the identity -- and leaves the corners
+    and edges right, so the damage shows up only as geometry."""
+    canon: PointArray = np.asarray(canon_nodes, dtype=float)
+    if canon.shape[1] == 0:                                    # order 1: nothing inside
+        return canon
+    perm, _ = _perm_tables(_k_from_face_width(canon.shape[1]) + 1)
+    p: IntArray = perm[quad_frame_code(rows, canonical)]        # (K,k2) canon->row
+    return np.take_along_axis(canon, np.broadcast_to(
+        p[..., None], p.shape + (3,)), axis=1)
 
 
 def conformal_line(points: PointArray, lines: IntArray, interior: PointArray,

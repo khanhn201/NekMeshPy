@@ -12,7 +12,9 @@ about correctness.
 These pin the numerics so every generalization refactor is safe.
 """
 
+import base64
 import os
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -60,7 +62,7 @@ def test_scaled_jacobian_quality(built_mesh):
 
 def test_re2_coords_match_golden(built_mesh):
     ne, coords, _ = read_re2_coords(built_mesh["re2"])
-    gne, gcoords, _ = read_re2_coords(os.path.join(GOLDEN, "bifurcation.re2"))
+    gne, gcoords, _ = read_re2_coords(os.path.join(GOLDEN, "carotid.re2"))
     assert ne == gne == 7200
     assert coords.shape == gcoords.shape
     assert np.max(np.abs(coords - gcoords)) < RE2_TOL
@@ -68,26 +70,33 @@ def test_re2_coords_match_golden(built_mesh):
 
 def test_re2_boundary_block_identical(built_mesh):
     _, _, bnd = read_re2_coords(built_mesh["re2"])
-    _, _, gbnd = read_re2_coords(os.path.join(GOLDEN, "bifurcation.re2"))
+    _, _, gbnd = read_re2_coords(os.path.join(GOLDEN, "carotid.re2"))
     assert bnd == gbnd           # BC block is exact integers/codes
 
 
-def _split_vtu(path):
-    """Split a ``.vtu`` into ``(points, everything_else)``.
+#: VTU ``DataArray`` type -> the little-endian numpy dtype it decodes to.
+_VTU_DTYPE = {"Float64": "<f8", "Int64": "<i8", "Int32": "<i4", "UInt8": "u1"}
 
-    The file holds exactly one float array -- the ascii ``Points`` block -- and is
-    otherwise markup plus the integer ``connectivity`` / ``offsets`` / ``types`` /
-    ``bc_id`` arrays.  Returning the two separately lets the coordinates be compared
-    numerically while every other byte stays pinned exactly.
+
+def _read_vtu(path):
+    """Decode a ``.vtu`` into ``{array name: values}``.
+
+    The export writes ``format="binary"`` -- each ``DataArray`` is base64 of a byte
+    count followed by the raw little-endian values -- so the arrays come back as
+    numbers rather than text.  That is what lets the coordinates be compared
+    numerically while every integer array stays pinned exactly, the same split the
+    old ascii text surgery made.
     """
-    with open(path, "rb") as f:
-        raw = f.read()
-    head, open_tag, tail = raw.partition(b"<Points>")
-    body, close_tag, tail = tail.partition(b"</Points>")
-    s = body.index(b'ascii">') + len(b'ascii">')
-    e = body.index(b"</DataArray>")
-    pts = np.array(body[s:e].split(), dtype=float).reshape(-1, 3)
-    return pts, head + open_tag + body[:s] + body[e:] + close_tag + tail
+    root = ET.parse(path).getroot()
+    out = {}
+    for da in root.iter("DataArray"):
+        raw = base64.b64decode(da.text.strip())
+        n = int(np.frombuffer(raw[:8], "<u8")[0])
+        out[da.get("Name") or "Points"] = np.frombuffer(
+            raw[8:8 + n], _VTU_DTYPE[da.get("type")])
+    piece = root.find(".//Piece")
+    out["_counts"] = (piece.get("NumberOfPoints"), piece.get("NumberOfCells"))
+    return out
 
 
 def test_vtu_structure_byte_identical(built_mesh):
@@ -95,9 +104,11 @@ def test_vtu_structure_byte_identical(built_mesh):
     types, ``bc_id`` -- is byte-exact.  That is where a refactor bug shows up:
     element/node numbering, the high-order Lagrange node permutation, and the
     boundary ids are all integers and cannot drift."""
-    _, got = _split_vtu(built_mesh["vtu"])
-    _, ref = _split_vtu(os.path.join(GOLDEN, "bifurcation.vtu"))
-    assert got == ref
+    got = _read_vtu(built_mesh["vtu"])
+    ref = _read_vtu(os.path.join(GOLDEN, "carotid.vtu"))
+    assert got["_counts"] == ref["_counts"]
+    for name in ("connectivity", "offsets", "types", "bc_id"):
+        assert np.array_equal(got[name], ref[name]), name
 
 
 def test_vtu_coords_match_golden(built_mesh):
@@ -111,7 +122,7 @@ def test_vtu_coords_match_golden(built_mesh):
     ``spsolve``-vs-backslash residual ``RE2_TOL`` was chosen for, so it gets the same
     bound rather than a golden that is only valid on one build.
     """
-    got, _ = _split_vtu(built_mesh["vtu"])
-    ref, _ = _split_vtu(os.path.join(GOLDEN, "bifurcation.vtu"))
+    got = _read_vtu(built_mesh["vtu"])["Points"].reshape(-1, 3)
+    ref = _read_vtu(os.path.join(GOLDEN, "carotid.vtu"))["Points"].reshape(-1, 3)
     assert got.shape == ref.shape == (202249, 3)
     assert np.max(np.abs(got - ref)) < RE2_TOL

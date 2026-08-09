@@ -1,13 +1,13 @@
 """
-Bifurcation vessel mesher: load a triangulated surface, solve three Laplacian
+Carotid vessel mesher: load a triangulated surface, solve three Laplacian
 seam fields, cut into legs A/B/C, build conformal seam rings + a central spine,
 refit each station's scanned wall ring as a truncated Fourier series so the
 high-order nodes sit on a genuine curve, extrude each leg's O-grid sections into
 hexes, weld, smooth, export::
 
-    PYTHONPATH=. python examples/bifurcation.py
+    PYTHONPATH=. python examples/carotid.py
 
-Writes ``bifurcation.re2`` (Nek5000/NekRS) and ``bifurcation.vtu``.
+Writes ``carotid.re2`` (Nek5000/NekRS) and ``carotid.vtu``.
 """
 
 import logging
@@ -55,7 +55,7 @@ SMOOTHING_METHOD = None    # "none" | "bilinear" | "conduction" | "winslow"
 SMOOTH_ITERS = 0             # post-assembly untangle/polish sweeps (0 = off)
 SMOOTH_LAMBDA = 0.5
 FLUX_OFFSET = 2              # hex layers in from the outlet cap (0 = off)
-OUT_NAME = "bifurcation"
+OUT_NAME = "carotid"
 EXPORT_RE2 = True
 EXPORT_VTK = True
 EXPORT_FLD = True            # Nek field file: the GLL nodes .re2 cannot carry
@@ -481,4 +481,4 @@ if EXPORT_FLD:
     export.to_fld(mesh, OUT_NAME + "0.f00001")
 if PLOT:
     viz.plot(mesh, ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"], OUT_NAME)
-print("bifurcation: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
+print("carotid: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))

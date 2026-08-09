@@ -1,10 +1,18 @@
 """1-D mesh container (:class:`LineMesh`), its operations, and its shape factories."""
 
 from . import assemble, morph, query, shape
-from .assemble import loft, loft_fn, merge
+from .assemble import components, loft, loft_fn, merge, remove, select
 from .linemesh import LineMesh
-from .morph import blend, reverse, rotate, scale, transform, translate
-from .query import boundary_elements, boundary_points, element_blocks
+from .morph import blend, mirror, reverse, rotate, scale, transform, translate
+from .query import (
+    boundary_elements,
+    boundary_points,
+    bounds,
+    centroid,
+    element_blocks,
+    element_lengths,
+    length,
+)
 from .shape import (
     arc,
     arclength_fractions,
@@ -17,7 +25,15 @@ from .shape import (
 )
 
 __all__ = [
+    "bounds",
+    "centroid",
+    "components",
     "element_blocks",
+    "element_lengths",
+    "length",
+    "mirror",
+    "remove",
+    "select",
     "LineMesh",
     "arc",
     "arclength_fractions",

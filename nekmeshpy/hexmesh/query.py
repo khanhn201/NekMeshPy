@@ -10,9 +10,10 @@ from .._typing import (
     BoolArray,
     FloatArray,
     IntArray,
+    Point,
     PointArray,
 )
-from ..core import conform
+from ..core import conform, measure
 from ..core.interp import corner_indices
 from ..core.quality import QualitySummary
 from ..core.topology import TopologyReport
@@ -156,18 +157,67 @@ def element_blocks(mesh: HexMesh) -> PointArray:
     return out
 
 
+def _blocks(mesh: HexMesh, high_order: bool) -> PointArray:
+    """The node blocks a measure integrates: the curved ones the mesh stores, or the
+    straight-sided corner blocks it reduces to."""
+    if high_order:
+        return element_blocks(mesh)
+    return measure.corner_blocks(mesh.points, mesh.hexes, 3)
+
+
+def bounds(mesh: HexMesh, *, high_order: bool = False) -> measure.Bounds:
+    """The axis-aligned bounding box of the block's nodes -- corners only unless
+    ``high_order=True`` asks for the stored edge / face / interior nodes too.  See
+    :func:`linemesh.bounds <nekmeshpy.linemesh.query.bounds>` for why neither reading
+    bounds the polynomial itself."""
+    return measure.bounds_of(_blocks(mesh, high_order) if high_order else mesh.points)
+
+
+def element_volumes(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
+    """``(E,)`` **signed** volume of each hex -- the integral of the isoparametric
+    Jacobian, so an inverted hex reads negative, on the same sign convention as
+    :func:`scaled_jacobian`.
+
+    Trilinear corners by default -- which is what ``.re2`` exports, since that format is
+    linear at any order -- and ``high_order=True`` for the curved element the mesh
+    stores.  Both readings are exact: the quadrature is taken high enough to integrate
+    the determinant of an order-N map without error."""
+    return measure.integrate(_blocks(mesh, high_order), 3)[0]
+
+
+def volume(mesh: HexMesh, *, high_order: bool = False) -> float:
+    """Total volume -- :func:`element_volumes` summed.
+
+    The first number to check after :func:`is_watertight`: a mesh can be watertight,
+    conforming and free of inverted elements and still enclose the wrong region because
+    a profile landed at the wrong station.  Being signed, it also catches a mesh whose
+    elements are wound inside out -- that comes back negative rather than plausible."""
+    return float(element_volumes(mesh, high_order=high_order).sum())
+
+
+def centroid(mesh: HexMesh, *, high_order: bool = False) -> Point:
+    """The **volume-weighted** centroid ``integral x dV / integral dV`` -- the mass
+    property, not the mean of the points (which would weight a finely meshed corner
+    over a coarse bulk)."""
+    return measure.centroid_of(_blocks(mesh, high_order), 3, "hexmesh.centroid")
+
+
 __all__ = [
     "WeldResult",
+    "bounds",
     "boundary_elements",
     "boundary_faces",
     "boundary_points",
+    "centroid",
     "classify_points",
     "element_blocks",
+    "element_volumes",
     "is_conforming",
     "is_watertight",
     "quality_summary",
     "report",
     "scaled_jacobian",
     "topology_report",
+    "volume",
     "weld",
 ]

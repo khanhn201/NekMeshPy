@@ -34,6 +34,13 @@ behind the B-rep) — is internal; see
    :members:
 ```
 
+## `model.measure`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.measure
+   :members:
+```
+
 ## `model.affine`
 
 ```{eval-rst}

@@ -80,6 +80,25 @@ def rotation(angle: float, axis: Vec3 | Sequence[float] = Z_AXIS,
     return R, _fixed_point_offset(R, center)
 
 
+def reflection(normal: Vec3 | Sequence[float],
+               point: Point | Sequence[float] = ORIGIN) -> Affine:
+    """The affine map that mirrors through the plane with unit ``normal`` (need not be
+    normalized) passing through ``point`` -- the Householder matrix ``I - 2 n n^T``.
+
+    Its determinant is ``-1``, so it turns every element inside out: this is the map
+    ``mirror`` applies to the coordinates, *paired* with a re-winding of the
+    connectivity.  Handing it to ``transform`` alone leaves an inverted mesh."""
+    n: Vec3 = np.asarray(normal, dtype=float).reshape(-1)
+    if n.shape != (3,):
+        raise ValueError("mirror: normal must be a (3,) direction, got %s" % (n.shape,))
+    norm = float(np.linalg.norm(n))
+    if norm == 0.0:
+        raise ValueError("mirror: normal must be non-zero -- it names a plane")
+    n = n / norm
+    M: FloatArray = np.eye(3) - 2.0 * np.outer(n, n)
+    return M, _fixed_point_offset(M, point)
+
+
 def _fixed_point_offset(matrix: FloatArray,
                         center: Point | Sequence[float]) -> Vec3:
     """The offset that keeps ``center`` fixed under ``matrix``: ``c - matrix @ c``."""

@@ -143,7 +143,10 @@ def test_sphere_pairs_with_box_by_index():
     assert np.array_equal(sph.quads, box.quads)       # identical connectivity
     assert sph.n_points == box.n_points
     assert np.allclose(np.linalg.norm(sph.points, axis=1), R)   # all on the sphere
-    assert set(sph.element_tags.dense(sph.n_quads).tolist()) == {"sphere"}
+    # a shape does not name itself: untagged unless the caller asks
+    assert not sph.element_tags
+    assert set(quadmesh.sphere(R, N, element_tag="ball")
+               .element_tags.dense(box.n_quads).tolist()) == {"ball"}
 
 
 def test_sphere_box_annulus_is_watertight():
@@ -182,8 +185,10 @@ def test_hemisphere_pairs_with_half_box_by_index():
     assert hs.n_points == hb.n_points
     assert np.allclose(np.linalg.norm(hs.points, axis=1), R)   # all on the sphere
     assert np.min(hs.points[:, 2]) > -1e-15                    # upper half only
-    assert set(hs.element_tags.dense(hs.n_quads).tolist()) == {"hemisphere"}
+    assert not hs.element_tags                     # untagged unless asked, as above
     assert set(hs.edge_tags.tags.tolist()) == {"ground"}
+    assert set(quadmesh.hemisphere(R, N, n_vertical=NV, element_tag="dome")
+               .element_tags.dense(hs.n_quads).tolist()) == {"dome"}
 
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])

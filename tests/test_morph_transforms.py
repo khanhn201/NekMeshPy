@@ -247,6 +247,53 @@ def test_reverse_keeps_a_loop_closed():
     assert linemesh.boundary_points(linemesh.reverse(linemesh.circle(1.0, 8))).size == 0
 
 
+# -- reverse on a *closed* loop: the relabel that keeps the ring canonical -----
+@pytest.mark.parametrize("order", [1, 2, 3, 4])
+def test_reverse_leaves_a_ring_canonically_ordered(order):
+    """An open chain reverses onto ``i -> N-1-i``; a ring cannot, because that also
+    rotates it -- line ``k`` would come back spanning ``k-1 -> k``.  A loop pins point
+    ``0`` instead, so line ``k`` still leaves point ``k``, which is the ordering every
+    factory that meshes a loop exactly reads it through."""
+    rev = linemesh.reverse(linemesh.circle(1.0, 8, order=order))
+    n = rev.n_points
+    want = np.column_stack([np.arange(n), (np.arange(n) + 1) % n])
+    assert np.array_equal(rev.lines, want)
+
+
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_a_reversed_ring_still_fills(order):
+    """The defect this closes: the rotated ring handed ``ogrid`` its high-order nodes
+    one segment out, and the elevation raised a non-conforming-edge error rather than
+    meshing.  The fill must now match the unreversed one exactly."""
+    ring = linemesh.circle(1.0, 8, order=order)
+    got = quadmesh.ogrid(linemesh.reverse(ring), 2, 2)
+    assert quadmesh.area(got, high_order=True) == pytest.approx(
+        quadmesh.area(quadmesh.ogrid(ring, 2, 2), high_order=True), rel=1e-12)
+    assert quadmesh.quality_summary(got).n_inverted == 0
+
+
+def test_a_reversed_rings_per_segment_tags_stay_on_their_segments():
+    """The order-1 face of the same defect, and the quieter one: the rotation shifted
+    every per-segment wall tag by one segment without erroring."""
+    ring = linemesh.circle(1.0, 8)
+    named = LineMesh(ring.points, ring.lines, ring.interior, ring.point_tags,
+                     ElementTags(np.arange(8),
+                                 np.array(["s%d" % k for k in range(8)])))
+    rev = linemesh.reverse(named)
+    section = quadmesh.ogrid(rev, 2, 2)
+    where = dict(zip(rev.element_tags.tags.tolist(), rev.element_tags.ids.tolist()))
+    for e, side, tag in section.edge_tags:
+        mid = section.points[section.quads[e][[side - 1, side % 4]]].mean(axis=0)
+        assert np.allclose(mid, rev.points[rev.lines[where[tag]]].mean(axis=0))
+
+
+@pytest.mark.parametrize("order", [1, 3])
+def test_reverse_still_walks_an_open_chain_off_its_last_point(order):
+    """The open case is untouched -- point ``i`` becomes ``N-1-i``, as documented."""
+    lm = linemesh.arc(2.0, 4, start_theta=0.0, end_theta=np.pi / 2, order=order)
+    assert np.array_equal(linemesh.reverse(lm).points, lm.points[::-1])
+
+
 # -- cap-tag shape parity across the three rungs ------------------------------
 def test_line_loft_caps_are_one_name_each():
     """A chain's cap is one node, so the per-element form the rungs above accept

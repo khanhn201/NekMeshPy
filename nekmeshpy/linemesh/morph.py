@@ -16,6 +16,7 @@ from .._typing import (
 from ..core import affine
 from ..core.tags import PointTags
 from .linemesh import LineMesh
+from .query import boundary_points
 
 
 def blend(a: LineMesh, b: LineMesh,
@@ -48,16 +49,44 @@ def blend(a: LineMesh, b: LineMesh,
     return out
 
 
-def reverse(mesh: LineMesh) -> LineMesh:
-    """The same curve traversed the other way: point ``i`` becomes point ``N-1-i``."""
+def _reverse_relabel(mesh: LineMesh) -> IntArray:
+    """The point relabel :func:`reverse` walks the curve backwards through.
+
+    An **open** chain reverses onto ``i -> N-1-i``: the last point becomes the first.
+    A **closed** one cannot use that map -- it also rotates the ring by one, leaving
+    line ``k`` spanning points ``k-1 -> k`` where it spanned ``k -> k+1``.  Every
+    factory that meshes a loop *exactly* reads line ``k`` as the segment leaving point
+    ``k``, so the rotation shifts its per-segment tags by one at order 1 and mis-pairs
+    its high-order nodes above it.  Pinning point ``0`` instead (``i -> (N-i) mod N``)
+    reverses the traversal and leaves the ring canonical.
+
+    Both maps are involutions, so ``reverse`` remains its own inverse either way."""
     n = mesh.points.shape[0]
+    i: IntArray = np.arange(n, dtype=np.int64)
+    if n and boundary_points(mesh).size == 0:      # no degree-1 end: nothing to put last
+        return (n - i) % n
+    return n - 1 - i
+
+
+def reverse(mesh: LineMesh) -> LineMesh:
+    """The same curve traversed the other way, by relabelling rather than re-placing --
+    so the high-order nodes ride along on the true geometry instead of being
+    straight-subdivided between the reversed points.
+
+    An open chain sends point ``i`` to ``N-1-i``.  A **closed** one pins point ``0`` and
+    sends ``i`` to ``(N-i) mod N`` instead: the first map would also rotate the ring, so
+    line ``k`` would come back spanning ``k-1 -> k`` where it spanned ``k -> k+1``, and
+    every factory that meshes a loop *exactly* reads line ``k`` as the segment leaving
+    point ``k``.  Both maps are involutions, so ``reverse`` is its own inverse either
+    way."""
     L = mesh.lines.shape[0]
-    # relabel r(i) = n-1-i, then restore each line's canonical start->end direction:
-    # reverse the element order and swap the two endpoints of every line.
-    lines: IntArray = (n - 1 - mesh.lines)[::-1, ::-1]
+    # relabel, then restore each line's canonical start->end direction: reverse the
+    # element order and swap the two endpoints of every line.
+    rmap = _reverse_relabel(mesh)
+    lines: IntArray = rmap[mesh.lines][::-1, ::-1]
     b = mesh.point_tags
     bnd = PointTags(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
-    return LineMesh(np.ascontiguousarray(mesh.points[::-1]),
+    return LineMesh(np.ascontiguousarray(mesh.points[rmap]),
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
                     bnd,
@@ -104,8 +133,27 @@ def scale(mesh: LineMesh, factor: float | Vec3 | Sequence[float],
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
 
+
+def mirror(mesh: LineMesh, normal: Vec3 | Sequence[float],
+           point: Point | Sequence[float] = affine.ORIGIN) -> LineMesh:
+    """A new curve reflected through the plane with ``normal`` through ``point``.
+
+    This is the one rung where a mirror is *only* the coordinate map.  The rungs above
+    pair it with a re-winding, because a reflection has determinant ``-1`` and a quad or
+    a hex has a signed Jacobian to put back the right way round; a line element has no
+    such sign, and the region fills take their orientation from the loop they are handed
+    rather than from its traversal direction, so a reflected loop fills exactly as its
+    original did.  What *does* invert is the direction of travel -- compose with
+    :func:`reverse` if a caller depends on it.
+
+    Use it to build the half you can mesh and recover the whole:
+    ``linemesh.merge([half, mirror(half, normal=(1, 0, 0))])``."""
+    return _affine(mesh, *affine.reflection(normal, point))
+
+
 __all__ = [
     "blend",
+    "mirror",
     "reverse",
     "rotate",
     "scale",

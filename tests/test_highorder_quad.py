@@ -10,7 +10,7 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example
+from conftest import GOLDEN, curved, run_example, vtu_cell_types
 
 from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
@@ -143,7 +143,7 @@ def test_ogrid_interior_edges_are_curved(order):
 @pytest.mark.parametrize("order", [2, 3, 4])
 def test_half_ogrid_interior_edges_are_curved(order):
     # half_ogrid had no order>1 coverage at all.  Reached through spined_ogrid (the
-    # bifurcation path), which runs two half_ogrids and merges them.
+    # carotid path), which runs two half_ogrids and merges them.
     r = 1.5
     loop = linemesh.circle(r, 32, order=order)
     qm = quadmesh.spined_ogrid(loop, [0.0, 0.4, 1.0])
@@ -372,14 +372,6 @@ def test_lagrange_quad_perm_order2():
 
 
 # -- VTU (XML) export ---------------------------------------------------
-def _vtu_cell_types(path):
-    import xml.dom.minidom as m
-    d = m.parse(path)
-    ta = [da for da in d.getElementsByTagName("DataArray")
-          if da.getAttribute("Name") == "types"][0]
-    return set(ta.firstChild.data.split())
-
-
 def _vtu_num_points(path):
     import xml.dom.minidom as m
     d = m.parse(path)
@@ -389,14 +381,14 @@ def _vtu_num_points(path):
 def test_vtu_order1_is_plain_quad(tmp_path):
     p = str(tmp_path / "lin.vtu")
     export.quad_to_vtu(quadmesh.box(1.0, 1), p)
-    assert _vtu_cell_types(p) == {"9"}                   # VTK_QUAD
+    assert vtu_cell_types(p) == {9}                   # VTK_QUAD
     assert _vtu_num_points(p) == 24                      # 6 faces x 4 nodes
 
 
 def test_vtu_high_order_is_lagrange_quad(tmp_path):
     p = str(tmp_path / "ho.vtu")
     export.quad_to_vtu(quadmesh.box(1.0, 1, order=3), p)
-    assert _vtu_cell_types(p) == {"70"}                  # VTK_LAGRANGE_QUADRILATERAL
+    assert vtu_cell_types(p) == {70}                  # VTK_LAGRANGE_QUADRILATERAL
     # conformal (welded) numbering: shared corners and shared edge-interior nodes
     # are written once.  A closed cube surface at order 3 has 8 corners
     # + 12 edges x (3-1) edge nodes + 6 faces x (3-1)^2 private interiors = 56.

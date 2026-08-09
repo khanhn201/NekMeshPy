@@ -2,7 +2,7 @@
 
 The concrete geometry meshers are flat scripts in ``examples/``; the tests run
 them with :func:`runpy.run_path` and read the resulting ``mesh`` global.  The
-``built_mesh`` fixture runs ``examples/bifurcation.py`` once per session (into a
+``built_mesh`` fixture runs ``examples/carotid.py`` once per session (into a
 temp dir), returning the assembled :class:`~nekmeshpy.hexmesh.HexMesh`
 plus its written ``.re2``/``.vtu`` paths.  Golden reference outputs live
 in ``tests/golden/`` (a frozen snapshot of the validated results).
@@ -23,7 +23,7 @@ _HERE = os.path.dirname(__file__)
 _EXAMPLES = os.path.join(_HERE, "..", "examples")
 GOLDEN = os.path.join(_HERE, "golden")
 
-# bundled ``car`` surface used by the bifurcation example
+# bundled ``car`` surface used by the carotid example
 CAR_VTX = os.path.join(_EXAMPLES, "data", "car.vtx")
 CAR_TRI = os.path.join(_EXAMPLES, "data", "car.tri")
 
@@ -42,11 +42,11 @@ def run_example(name, tmp_path):
 @pytest.fixture(scope="session")
 def built_mesh(tmp_path_factory):
     out = tmp_path_factory.mktemp("mesh")
-    ns = run_example("bifurcation.py", out)
+    ns = run_example("carotid.py", out)
     return {
         "mesh": ns["mesh"],
-        "re2": os.path.join(out, "bifurcation.re2"),
-        "vtu": os.path.join(out, "bifurcation.vtu"),
+        "re2": os.path.join(out, "carotid.re2"),
+        "vtu": os.path.join(out, "carotid.vtu"),
     }
 
 
@@ -90,6 +90,18 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
     lm = LineMesh(pts, edges, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior, edge_tags,
                     element_tags)
+
+
+def vtu_cell_types(path):
+    """The distinct VTK cell type ids in a ``.vtu``, decoded from its binary ``types``
+    array (base64 of a byte count followed by the raw values)."""
+    import base64
+    import xml.etree.ElementTree as ET
+    root = ET.parse(path).getroot()
+    ta = next(da for da in root.iter("DataArray") if da.get("Name") == "types")
+    raw = base64.b64decode(ta.text.strip())
+    n = int(np.frombuffer(raw[:8], "<u8")[0])
+    return set(np.unique(np.frombuffer(raw[8:8 + n], "u1")).tolist())
 
 
 def curved(mesh):

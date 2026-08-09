@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import struct
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, Union
 
 import numpy as np
@@ -330,13 +331,38 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
 
 
 # -- the unstructured-grid writer ---------------------------------------
+def _b64(a: IntArray | PointArray) -> str:
+    """One ``DataArray``'s payload for ``format="binary"``: the byte count followed by
+    the bytes, base64-encoded **as a single blob**.
+
+    That framing is why the file declares ``header_type``.  Encoding the header and the
+    data separately is also seen in the wild, but it leaves base64 padding mid-string,
+    which strict decoders reject -- so this writes the one form every reader takes."""
+    raw = np.ascontiguousarray(a).tobytes()
+    head = np.array([len(raw)], dtype="<u8").tobytes()
+    return base64.b64encode(head + raw).decode("ascii")
+
+
 def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
-               *, bc_out: IntArray | None = None) -> None:
+               *, bc_out: IntArray | None = None, binary: bool = True) -> None:
     """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
     ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order
-    (consecutive blocks when the nodes are un-welded, shared ids when conformal)."""
+    (consecutive blocks when the nodes are un-welded, shared ids when conformal).
+
+    ``binary`` writes each array as inline base64 rather than formatted text.  Ascii
+    costs a Python-level format per row -- there is no vectorized float formatter -- so
+    on a multi-million-node mesh the encoding, not the I/O, is the whole cost."""
     P = X.shape[0]
     N, m = conn.shape
+    offsets: IntArray = np.arange(m, m * N + 1, m, dtype=np.int64)
+    types: IntArray = np.full(N, cell_type, dtype=np.uint8)
+    fmt = "binary" if binary else "ascii"
+
+    def block(a: IntArray | PointArray, rows: Callable[[], str]) -> str:
+        """A ``DataArray``'s body: one base64 payload, or the ascii rows -- which are
+        built only if that is what is being written, hence the thunk."""
+        return "          %s\n" % _b64(a) if binary else rows()
+
     with open(fname, "w") as fid:
         fid.write('<?xml version="1.0"?>\n')
         fid.write('<VTKFile type="UnstructuredGrid" version="1.0" '
@@ -345,32 +371,37 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
         fid.write('    <Piece NumberOfPoints="%d" NumberOfCells="%d">\n' % (P, N))
         fid.write("      <Points>\n")
         fid.write('        <DataArray type="Float64" NumberOfComponents="3" '
-                  'format="ascii">\n')
-        # one formatted block per DataArray rather than a write() per row: the row
-        # loops were ~17M write calls on a 490k-cell mesh.  ``tolist()`` converts to
+                  'format="%s">\n' % fmt)
+        # ascii: one formatted block per DataArray rather than a write() per row -- the
+        # row loops were ~17M write calls on a 490k-cell mesh.  ``tolist()`` converts to
         # Python scalars in C, so the remaining per-element cost is only the format.
-        fid.write("".join("          %.17g %.17g %.17g\n" % (x, y, z)
-                          for x, y, z in X.tolist()))
+        fid.write(block(np.asarray(X, dtype=np.float64),
+                        lambda: "".join("          %.17g %.17g %.17g\n" % (x, y, z)
+                                        for x, y, z in X.tolist())))
         fid.write("        </DataArray>\n")
         fid.write("      </Points>\n")
         fid.write("      <Cells>\n")
         fid.write('        <DataArray type="Int64" Name="connectivity" '
-                  'format="ascii">\n')
-        fid.write("".join("          %s\n" % " ".join(map(str, row))
-                          for row in conn.tolist()))
+                  'format="%s">\n' % fmt)
+        fid.write(block(np.asarray(conn, dtype=np.int64),
+                        lambda: "".join("          %s\n" % " ".join(map(str, row))
+                                        for row in conn.tolist())))
         fid.write("        </DataArray>\n")
-        fid.write('        <DataArray type="Int64" Name="offsets" format="ascii">\n')
-        fid.write("".join("          %d\n" % off for off in range(m, m * N + 1, m)))
+        fid.write('        <DataArray type="Int64" Name="offsets" format="%s">\n' % fmt)
+        fid.write(block(offsets,
+                        lambda: "".join("          %d\n" % o for o in offsets.tolist())))
         fid.write("        </DataArray>\n")
-        fid.write('        <DataArray type="UInt8" Name="types" format="ascii">\n')
-        fid.write(("          %d\n" % cell_type) * N)
+        fid.write('        <DataArray type="UInt8" Name="types" format="%s">\n' % fmt)
+        fid.write(block(types, lambda: ("          %d\n" % cell_type) * N))
         fid.write("        </DataArray>\n")
         fid.write("      </Cells>\n")
         if bc_out is not None:
             fid.write('      <PointData Scalars="bc_id">\n')
             fid.write('        <DataArray type="Int32" Name="bc_id" '
-                      'format="ascii">\n')
-            fid.write("".join("          %d\n" % v for v in bc_out.tolist()))
+                      'format="%s">\n' % fmt)
+            fid.write(block(np.asarray(bc_out, dtype=np.int32),
+                            lambda: "".join("          %d\n" % v
+                                            for v in bc_out.tolist())))
             fid.write("        </DataArray>\n")
             fid.write("      </PointData>\n")
         fid.write("    </Piece>\n")
@@ -379,27 +410,29 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
 
 
 # -- .vtu (XML; VTK Lagrange cells render reliably in ParaView / VisIt) --
-def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None) -> HexMesh:
+def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None,
+           binary: bool = True) -> HexMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
-    ``bc_id`` tags."""
+    ``bc_id`` tags.  ``binary=False`` writes the arrays as text instead, which is
+    readable and diffable but costs a Python format per row."""
     X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
-    _write_vtu(fname, X, conn, cell_type, bc_out=bc_out)
+    _write_vtu(fname, X, conn, cell_type, bc_out=bc_out, binary=binary)
     return mesh
 
 
-def line_to_vtu(mesh: LineMesh, fname: str) -> LineMesh:
+def line_to_vtu(mesh: LineMesh, fname: str, *, binary: bool = True) -> LineMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``LineMesh``, un-welded (one
     node block per line element)."""
     X, conn, cell_type = _line_arrays(mesh)
-    _write_vtu(fname, X, conn, cell_type)
+    _write_vtu(fname, X, conn, cell_type, binary=binary)
     return mesh
 
 
-def quad_to_vtu(mesh: QuadMesh, fname: str) -> QuadMesh:
+def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True) -> QuadMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, un-welded (one
     node block per quad)."""
     X, conn, cell_type = _quad_arrays(mesh)
-    _write_vtu(fname, X, conn, cell_type)
+    _write_vtu(fname, X, conn, cell_type, binary=binary)
     return mesh
 
 

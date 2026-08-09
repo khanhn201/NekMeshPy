@@ -13,7 +13,7 @@ from .._typing import BoolArray, IntArray, StrArray
 T = TypeVar("T", bound="SideTags")
 
 __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
-           "ElementTags", "sweep_element_tags", "sweep_cap_tags"]
+           "ElementTags", "element_mask", "sweep_element_tags", "sweep_cap_tags"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -143,6 +143,18 @@ class SideTags:
         if not len(self):
             return self
         return type(self)(self.elements + int(delta), self.sides, self.tags)
+
+    def renumber(self: T, new_id_of: IntArray) -> T:
+        """The rows carried onto new element ids, where old element ``e`` becomes
+        ``new_id_of[e]``.  A row whose element maps to ``-1`` is dropped -- that is
+        how ``select`` / ``remove`` shed the tags of the elements they did not keep.
+        """
+        if not len(self):
+            return self
+        m = np.asarray(new_id_of, dtype=np.int64).reshape(-1)
+        moved: IntArray = m[self.elements]
+        keep: BoolArray = moved >= 0
+        return type(self)(moved[keep], self.sides[keep], self.tags[keep])
 
     @classmethod
     def concat(cls: type[T], tables: Sequence[T]) -> T:
@@ -415,6 +427,41 @@ class ElementTags:
             raise ValueError("element_tags names element %d but there are only %d "
                              "elements" % (int(self.ids[-1]), n_elements))
 
+
+
+def element_mask(which: str | BoolArray | IntArray | Sequence[int],
+                 tags: ElementTags, n_elements: int, who: str) -> BoolArray:
+    """The ``(n_elements,)`` boolean mask a ``select`` / ``remove`` argument names.
+
+    ``which`` is a **tag string** (every element carrying it -- absent from the mesh's
+    vocabulary is an error, since a silent empty selection is almost always a typo), a
+    ready ``(n_elements,)`` boolean mask, or an array of element ids."""
+    if isinstance(which, str):
+        if which not in tags.group_tags:
+            raise ValueError(
+                "%s: no element carries the tag %r; this mesh has %s"
+                % (who, which, tags.group_tags or "no tagged elements"))
+        return np.asarray(tags.dense(n_elements) == which, dtype=bool)
+    arr = np.asarray(which)
+    if arr.size == 0:
+        return np.zeros(n_elements, dtype=bool)
+    if arr.dtype == bool:
+        m: BoolArray = arr.reshape(-1)
+        if m.shape[0] != n_elements:
+            raise ValueError("%s: a boolean mask must cover all %d elements, got %d"
+                             % (who, n_elements, m.shape[0]))
+        return m
+    if not np.issubdtype(arr.dtype, np.integer):
+        raise TypeError(
+            "%s: select by a tag string, a (%d,) boolean mask, or an array of element "
+            "ids; got a %s array" % (who, n_elements, arr.dtype))
+    ids: IntArray = arr.reshape(-1).astype(np.int64)
+    if int(ids.min()) < 0 or int(ids.max()) >= n_elements:
+        raise ValueError("%s: element ids must lie in [0, %d); got [%d, %d]"
+                         % (who, n_elements, int(ids.min()), int(ids.max())))
+    out: BoolArray = np.zeros(n_elements, dtype=bool)
+    out[ids] = True
+    return out
 
 
 def sweep_element_tags(spec: str | ElementTags | None, n_layers: int,
