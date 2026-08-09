@@ -6,9 +6,12 @@ import numpy as np
 
 from .._typing import (
     BoolArray,
+    FloatArray,
     IntArray,
+    Point,
     PointArray,
 )
+from ..core import measure
 from .linemesh import LineMesh
 
 
@@ -48,8 +51,53 @@ def boundary_elements(mesh: LineMesh) -> IntArray:
     is_end[ends] = True
     return np.flatnonzero(is_end[mesh.lines].any(axis=1)).astype(np.int64)
 
+def _blocks(mesh: LineMesh, high_order: bool) -> PointArray:
+    """The node blocks a measure integrates: the curved ones the mesh stores, or the
+    straight-sided corner blocks it reduces to."""
+    if high_order:
+        return element_blocks(mesh)
+    return measure.corner_blocks(mesh.points, mesh.lines, 1)
+
+
+def bounds(mesh: LineMesh, *, high_order: bool = False) -> measure.Bounds:
+    """The axis-aligned bounding box of the mesh's nodes.
+
+    At ``high_order=False`` that is the **corners** only, which does not enclose a
+    curved element; pass ``high_order=True`` to include the stored interior nodes.
+    Neither bounds the polynomial itself -- a curve can bulge past its own nodes -- so
+    read this as an extent, not a guarantee."""
+    return measure.bounds_of(_blocks(mesh, high_order) if high_order else mesh.points)
+
+
+def element_lengths(mesh: LineMesh, *, high_order: bool = False) -> FloatArray:
+    """``(L,)`` arc length of each line element.
+
+    Straight chord by default; ``high_order=True`` integrates the curve the mesh
+    actually stores, which is the reading that differs on anything built at
+    ``order > 1``.  The line rung of :func:`quadmesh.element_areas
+    <nekmeshpy.quadmesh.query.element_areas>` / :func:`hexmesh.element_volumes
+    <nekmeshpy.hexmesh.query.element_volumes>`."""
+    return measure.integrate(_blocks(mesh, high_order), 1)[0]
+
+
+def length(mesh: LineMesh, *, high_order: bool = False) -> float:
+    """Total arc length -- :func:`element_lengths` summed."""
+    return float(element_lengths(mesh, high_order=high_order).sum())
+
+
+def centroid(mesh: LineMesh, *, high_order: bool = False) -> Point:
+    """The **length-weighted** centroid ``integral x ds / integral ds`` -- the mass
+    property, not the mean of the points (which would weight a dense region of nodes
+    over a long sparse one)."""
+    return measure.centroid_of(_blocks(mesh, high_order), 1, "linemesh.centroid")
+
+
 __all__ = [
+    "bounds",
     "boundary_elements",
     "boundary_points",
+    "centroid",
     "element_blocks",
+    "element_lengths",
+    "length",
 ]

@@ -269,6 +269,51 @@ def first_occurrence(inverse: IntArray, n_groups: int) -> IntArray:
     return out
 
 
+def renumber_map(keep: BoolArray) -> tuple[IntArray, IntArray]:
+    """``(kept ids ascending, new_id_of)`` for a subset: ``new_id_of[old]`` is the
+    survivor's new id, or ``-1`` where ``keep`` is False.
+
+    The index bookkeeping every ``select`` / ``remove`` rests on, and the reason those
+    operations *manufacture* a numbering rather than preserve one."""
+    m: BoolArray = np.asarray(keep, dtype=bool).reshape(-1)
+    ids: IntArray = np.flatnonzero(m).astype(np.int64)
+    new_of: IntArray = np.full(m.shape[0], -1, dtype=np.int64)
+    new_of[ids] = np.arange(ids.shape[0], dtype=np.int64)
+    return ids, new_of
+
+
+def element_components(conn: IntArray, n_points: int) -> tuple[int, IntArray]:
+    """``(n_components, label per element)`` over the graph in which two elements are
+    connected when they **share at least one corner point** -- the weakest join, and so
+    the one that answers "is this one body or several".
+
+    Labels are numbered in first-appearance order, so component ``0`` is element ``0``'s.
+    Walked on the bipartite element/point graph rather than a materialized element
+    adjacency, which keeps it linear in the incidence rather than quadratic in the
+    valence."""
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    c: IntArray = np.asarray(conn, dtype=np.int64)
+    e, k = c.shape
+    if e == 0:
+        return 0, np.zeros(0, dtype=np.int64)
+    rows: IntArray = np.repeat(np.arange(e, dtype=np.int64), k)
+    cols: IntArray = e + c.ravel()
+    n = e + int(n_points)
+    graph = sp.coo_matrix((np.ones(rows.shape[0], dtype=np.int8), (rows, cols)),
+                          shape=(n, n))
+    _, raw = connected_components(graph, directed=False)
+    labels: IntArray = np.asarray(raw[:e], dtype=np.int64)
+    # ``connected_components`` also counts every point in no element as its own
+    # component, and numbers by its own walk -- so renumber off the *elements* alone.
+    _, first = np.unique(labels, return_index=True)
+    seen: IntArray = labels[np.sort(first)]
+    remap: IntArray = np.zeros(int(labels.max()) + 1, dtype=np.int64)
+    remap[seen] = np.arange(seen.shape[0], dtype=np.int64)
+    return seen.shape[0], remap[labels]
+
+
 def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code."""
     e = hexes.shape[0]
@@ -321,7 +366,6 @@ def _frame_code_table() -> IntArray:
 
 
 _FRAME_CODE_TAB: IntArray = _frame_code_table()
-
 
 def face_frame_code(local: IntArray, canonical: IntArray) -> IntArray:
     """``(E,6)`` D4 codes carrying each hex's element-local face frame (``local``

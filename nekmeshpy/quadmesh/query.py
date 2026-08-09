@@ -10,10 +10,11 @@ from .._typing import (
     BoolArray,
     FloatArray,
     IntArray,
+    Point,
     PointArray,
     Vec3,
 )
-from ..core import conform, frames
+from ..core import conform, frames, measure
 from ..core.interp import corner_indices
 from ..core.quality import QualitySummary
 from .quadmesh import QuadMesh
@@ -93,10 +94,56 @@ def element_blocks(mesh: QuadMesh) -> PointArray:
     return out
 
 
+def _blocks(mesh: QuadMesh, high_order: bool) -> PointArray:
+    """The node blocks a measure integrates: the curved ones the mesh stores, or the
+    straight-sided corner blocks it reduces to."""
+    if high_order:
+        return element_blocks(mesh)
+    return measure.corner_blocks(mesh.points, mesh.quads, 2)
+
+
+def bounds(mesh: QuadMesh, *, high_order: bool = False) -> measure.Bounds:
+    """The axis-aligned bounding box of the section's nodes -- corners only unless
+    ``high_order=True`` asks for the stored interior nodes too.  See
+    :func:`linemesh.bounds <nekmeshpy.linemesh.query.bounds>` for why neither reading
+    bounds the polynomial itself."""
+    return measure.bounds_of(_blocks(mesh, high_order) if high_order else mesh.points)
+
+
+def element_areas(mesh: QuadMesh, *, high_order: bool = False) -> FloatArray:
+    """``(Q,)`` surface area of each quad, integrated over the element as it sits in
+    3-D (so a warped quad is measured as the ruled surface it is, not as a projection).
+
+    Bilinear corners by default; ``high_order=True`` integrates the curved element the
+    mesh stores.  A curved area is not a polynomial -- the integrand carries a square
+    root -- so that reading is a quadrature approximation converging with the order,
+    where :func:`hexmesh.element_volumes
+    <nekmeshpy.hexmesh.query.element_volumes>` is exact."""
+    return measure.integrate(_blocks(mesh, high_order), 2)[0]
+
+
+def area(mesh: QuadMesh, *, high_order: bool = False) -> float:
+    """Total surface area -- :func:`element_areas` summed.
+
+    The wetted area of a block's wall is this over the wall's own mesh:
+    ``quadmesh.area(hexmesh.boundary_mesh(block, "wall"))``."""
+    return float(element_areas(mesh, high_order=high_order).sum())
+
+
+def centroid(mesh: QuadMesh, *, high_order: bool = False) -> Point:
+    """The **area-weighted** centroid ``integral x dA / integral dA`` -- the mass
+    property, not the mean of the points."""
+    return measure.centroid_of(_blocks(mesh, high_order), 2, "quadmesh.centroid")
+
+
 __all__ = [
+    "area",
+    "bounds",
     "boundary_edges",
     "boundary_elements",
     "boundary_points",
+    "centroid",
+    "element_areas",
     "element_blocks",
     "plane_normal",
     "quality_summary",

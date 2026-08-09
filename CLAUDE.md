@@ -67,22 +67,28 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 
 | module | Δ | contents |
 |---|---|---|
-| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `merge` — n-ary |
+| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `merge` — n-ary; `select` / `remove` / `components` — the inverse |
 | `lift.py` | +1 | `extrude` / `sweep` / `annulus` / `from_grid`; `adapter` / `bridge` hex-only |
 | `lower.py` | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
-| `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform`; `reindex` quad-only |
-| `query.py` | exit | read-only queries; hex also topology / `report` / `weld` |
+| `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
+| `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` / `weld` |
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
 
-**`loft`, `merge` and `boundary_mesh` are the only operations that manufacture a global
-index space.** To place a new operation: *invents a numbering?* → `assemble` (unless it
-is boundary extraction → `lower`); *changes rung?* → `lift`/`lower`; *neither?* →
-`morph`.
+**`loft`, `merge`, `select`/`remove`/`components` and `boundary_mesh` are the only
+operations that manufacture a global index space** — `select` and its kin are `merge`
+run backwards, and sit beside it for that reason. To place a new operation: *invents a
+numbering?* → `assemble` (unless it is boundary extraction → `lower`); *changes rung?* →
+`lift`/`lower`; *neither?* → `morph`.
+
+A reflection has determinant −1, so `mirror` is the coordinate map **plus** a re-winding
+of the connectivity — never `transform` with a reflection matrix, which inverts every
+element. The line rung is the exception: no signed measure, so nothing to re-wind.
 
 Operations are per-rung, so a call site **names its rung**. Code meant to run at every
 rung pairs each mesh with its package explicitly rather than dispatching on `type()`.
 
-`core/` is rung-agnostic: `paths.py`, `surfaces.py`, `conform.py`, `tags.py`. `TriMesh`
+`core/` is rung-agnostic: `paths.py`, `surfaces.py`, `conform.py`, `tags.py`,
+`measure.py` (one quadrature over a node block, behind every rung's measure). `TriMesh`
 is the exception to the free-function rule — small queries stay on the class, the rest
 is `trimesh.ops.*`.
 

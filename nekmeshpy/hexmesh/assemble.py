@@ -18,11 +18,13 @@ from ..core.tags import (
     ElementTags,
     FaceTags,
     TagBuilder,
+    element_mask,
     sweep_cap_tags,
     sweep_element_tags,
 )
 from ..linemesh import LineMesh
 from ..quadmesh import QuadMesh
+from ..quadmesh.assemble import _subset as quad_subset
 from ..quadmesh.query import element_blocks as quad_blocks
 from .hexmesh import HexMesh, _sweep_at
 from .query import _boundary_points
@@ -524,8 +526,70 @@ def merge(
                        canonical_conn.shape[0], edge_nodes, face_nodes)
     return HexMesh(faces, elem_faces, face_orient, interior, bnd, etags)
 
+def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
+    """``(the kept hexes as a HexMesh, new_hex_of)`` -- the top rung of
+    :func:`quadmesh._subset <nekmeshpy.quadmesh.assemble._subset>`, which it calls to
+    carry the shared faces down (and which calls the line rung under that).
+
+    Shared faces no kept hex references are dropped, with the edges and points under
+    them.  The ``face_orient`` codes survive untouched: they describe each hex's frame
+    against its own canonical face row, and dropping a *neighbour* changes neither."""
+    kept, new_hex_of = conform.renumber_map(keep)
+    hexes: IntArray = mesh.hex[kept]
+    face_keep: BoolArray = np.zeros(mesh.quads.n_quads, dtype=bool)
+    if hexes.size:
+        face_keep[np.unique(hexes)] = True
+    sub_quads, new_face_of = quad_subset(mesh.quads, face_keep)
+    return (HexMesh(sub_quads, new_face_of[hexes], mesh.face_orient[kept],
+                    mesh.interior[kept],
+                    mesh.face_tags.renumber(new_hex_of),
+                    mesh.element_tags.gather(kept)),
+            new_hex_of)
+
+
+def select(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> HexMesh:
+    """The named hexes as a block of their own, renumbered from zero.
+
+    ``which`` is a tag string (every hex carrying it), an ``(E,)`` boolean mask, or an
+    array of hex ids.  Kept hexes hold their relative order, their ``element_tags`` and
+    whichever ``face_tags`` rows name them; faces, edges and points nothing kept touches
+    are dropped.  The inverse of :func:`merge` -- ``merge(components(mesh))`` reproduces
+    a mesh, and ``select`` by a region tag undoes what ``merge`` joined.
+
+    The faces a removal **exposes** are new topological boundary and carry no tag:
+    ``face_tags`` names what it named before, so name the hole yourself from
+    :func:`boundary_faces <nekmeshpy.hexmesh.query.boundary_faces>` if the export needs
+    it.  For the same reason the result is not guaranteed watertight -- that is the
+    point of it."""
+    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_hexes,
+                                      "hexmesh.select"))[0]
+
+
+def remove(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> HexMesh:
+    """The complement of :func:`select`: everything ``which`` does **not** name -- the
+    "drop this block and re-fill it" half of the pair."""
+    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_hexes,
+                                       "hexmesh.remove"))[0]
+
+
+def components(mesh: HexMesh) -> list[HexMesh]:
+    """The mesh split into its connected pieces -- one ``HexMesh`` per group of hexes
+    reachable through shared corner points, in the order their first hex appears.
+
+    What :func:`weld <nekmeshpy.hexmesh.query.weld>` and
+    :func:`topology_report <nekmeshpy.hexmesh.query.topology_report>` tell you *about*
+    (a mesh that turned out to be two bodies), this hands you as meshes."""
+    n, labels = conform.element_components(mesh.hexes, mesh.n_points)
+    return [_subset(mesh, labels == c)[0] for c in range(n)]
+
+
 __all__ = [
+    "components",
     "loft",
     "loft_fn",
     "merge",
+    "remove",
+    "select",
 ]

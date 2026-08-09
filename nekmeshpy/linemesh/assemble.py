@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 import numpy as np
 
 from .._typing import (
+    BoolArray,
     FloatArray,
     IntArray,
     PointArray,
@@ -14,7 +15,7 @@ from .._typing import (
 from ..core import conform, stations
 from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
-from ..core.tags import ElementTags, PointTags, TagBuilder
+from ..core.tags import ElementTags, PointTags, TagBuilder, element_mask
 from .linemesh import LineMesh
 from .query import boundary_points
 
@@ -182,8 +183,58 @@ def merge(meshes: Sequence[LineMesh], *,
 
     return LineMesh(points, lines, interior, bnd, etags)
 
+def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
+    """``(the kept lines as a LineMesh, new_line_of)`` -- the rung-1 half of every
+    ``select``, and what the rung above calls to carry its shared edges across.
+
+    Points referenced by no kept line are dropped and the rest compacted, so the result
+    is a mesh in its own right rather than a view with holes in its numbering.  Order is
+    preserved: the private interior nodes ride along untouched."""
+    kept, new_line_of = conform.renumber_map(keep)
+    lines: IntArray = mesh.lines[kept]
+    used: IntArray = np.unique(lines) if lines.size else np.zeros(0, np.int64)
+    new_point_of: IntArray = np.full(mesh.n_points, -1, dtype=np.int64)
+    new_point_of[used] = np.arange(used.shape[0], dtype=np.int64)
+    return (LineMesh(mesh.points[used], new_point_of[lines], mesh.interior[kept],
+                     mesh.point_tags.renumber(new_line_of),
+                     mesh.element_tags.gather(kept)),
+            new_line_of)
+
+
+def select(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> LineMesh:
+    """The named lines as a curve of their own, renumbered from zero.
+
+    ``which`` is a tag string (every line carrying it), a ``(L,)`` boolean mask, or an
+    array of line ids.  Kept lines hold their relative order and their tags; points no
+    kept line touches are dropped.  The inverse of :func:`merge`, and one of the three
+    operations that manufacture a numbering."""
+    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_lines,
+                                      "linemesh.select"))[0]
+
+
+def remove(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> LineMesh:
+    """The complement of :func:`select`: everything ``which`` does **not** name."""
+    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_lines,
+                                       "linemesh.remove"))[0]
+
+
+def components(mesh: LineMesh) -> list[LineMesh]:
+    """The mesh split into its connected pieces -- one ``LineMesh`` per group of lines
+    reachable through shared points, in the order their first line appears.
+
+    A single chain or loop comes back as a one-element list; what makes this worth
+    calling is the mesh that turns out to be two."""
+    n, labels = conform.element_components(mesh.lines, mesh.n_points)
+    return [_subset(mesh, labels == c)[0] for c in range(n)]
+
+
 __all__ = [
+    "components",
     "loft",
     "loft_fn",
     "merge",
+    "remove",
+    "select",
 ]

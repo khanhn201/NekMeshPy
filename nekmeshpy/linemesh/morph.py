@@ -104,8 +104,27 @@ def scale(mesh: LineMesh, factor: float | Vec3 | Sequence[float],
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
 
+
+def mirror(mesh: LineMesh, normal: Vec3 | Sequence[float],
+           point: Point | Sequence[float] = affine.ORIGIN) -> LineMesh:
+    """A new curve reflected through the plane with ``normal`` through ``point``.
+
+    This is the one rung where a mirror is *only* the coordinate map.  The rungs above
+    pair it with a re-winding, because a reflection has determinant ``-1`` and a quad or
+    a hex has a signed Jacobian to put back the right way round; a line element has no
+    such sign, and the region fills take their orientation from the loop they are handed
+    rather than from its traversal direction, so a reflected loop fills exactly as its
+    original did.  What *does* invert is the direction of travel -- compose with
+    :func:`reverse` if a caller depends on it.
+
+    Use it to build the half you can mesh and recover the whole:
+    ``linemesh.merge([half, mirror(half, normal=(1, 0, 0))])``."""
+    return _affine(mesh, *affine.reflection(normal, point))
+
+
 __all__ = [
     "blend",
+    "mirror",
     "reverse",
     "rotate",
     "scale",

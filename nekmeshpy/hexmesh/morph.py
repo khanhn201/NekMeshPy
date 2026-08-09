@@ -8,11 +8,13 @@ import numpy as np
 
 from .._typing import (
     FloatArray,
+    IntArray,
     Point,
     PointArray,
     Vec3,
 )
-from ..core import affine
+from ..core import affine, conform
+from ..core.tags import FaceTags
 from ..quadmesh.morph import _affine as quad_affine
 from ..quadmesh.morph import blend as quad_blend
 from .hexmesh import HexMesh
@@ -92,8 +94,66 @@ def scale(mesh: HexMesh, factor: float | Vec3 | Sequence[float],
     ``(3,)`` per-axis vector.  Every factor must be positive."""
     return _affine(mesh, *affine.scaling(factor, center))
 
+#: Nek corner order under a re-winding: swap the bottom and top quads.  That is the
+#: reference-space reflection ``t -> 1 - t``, and the cheapest determinant flip that
+#: keeps all six faces the same corner sets they already were.
+_REWIND_CORNERS: IntArray = np.array([4, 5, 6, 7, 0, 1, 2, 3], dtype=np.int64)
+
+#: The face columns that follow from :data:`_REWIND_CORNERS`: faces 1-4 keep their
+#: corner sets (their frames turn over in place) and faces 5 / 6 trade places.
+_REWIND_FACES: IntArray = np.array([0, 1, 2, 3, 5, 4], dtype=np.int64)
+
+
+def _rewind(mesh: HexMesh) -> HexMesh:
+    """The same block with every hex turned inside out -- the corner order permuted by
+    :data:`_REWIND_CORNERS`, which negates the Jacobian.
+
+    The shared faces are left exactly as stored: a face row is canonical and belongs to
+    both its hexes, so re-winding is entirely a matter of each element's *own* view of
+    it.  That view is the ``hex`` face columns plus the ``face_orient`` D4 codes, and
+    the codes are refitted against the unchanged canonical rows rather than reasoned
+    about -- the same call ``merge`` makes when a weld hands an element a face in a
+    frame it did not choose."""
+    hexes: IntArray = mesh.hexes[:, _REWIND_CORNERS]
+    elem_faces: IntArray = mesh.hex[:, _REWIND_FACES]
+    orient: IntArray = conform.face_frame_code(
+        hexes[:, conform._LOCAL_FACES], mesh.quads.quads[elem_faces])
+    n = mesh.order - 1
+    perm: IntArray = (np.arange(n ** 3, dtype=np.int64).reshape(n, n, n)[::-1].ravel()
+                      if n else np.zeros(0, dtype=np.int64))
+    ft = mesh.face_tags
+    return HexMesh(mesh.quads, elem_faces, orient, mesh.interior[:, perm, :],
+                   FaceTags(ft.elements, np.where(ft.sides >= 5, 11 - ft.sides,
+                                                  ft.sides), ft.tags).ordered(),
+                   mesh.element_tags)
+
+
+def mirror(mesh: HexMesh, normal: Vec3 | Sequence[float],
+           point: Point | Sequence[float] = affine.ORIGIN) -> HexMesh:
+    """A new block reflected through the plane with ``normal`` through ``point``, with
+    every hex **re-wound** so it comes back the right way out.
+
+    A reflection has determinant ``-1`` and inverts every element: a bare ``transform``
+    by a reflection matrix hands back a block whose scaled Jacobian is negative
+    throughout and whose :func:`volume <nekmeshpy.hexmesh.query.volume>` reads negative
+    -- a mesh no solver will take.  ``mirror`` pairs the coordinate map with the
+    winding fix, so the result measures exactly as its original did.
+
+    The symmetric-domain idiom -- mesh the half the geometry lets you, then recover the
+    whole::
+
+        full = hexmesh.merge([half, hexmesh.mirror(half, normal=(1, 0, 0))])
+
+    ``merge`` welds the two along the symmetry plane they now share, so the seam comes
+    out conformal rather than doubled.  The faces that were tagged on the symmetry plane
+    are *interior* afterwards and still carry their tag: drop those rows, or leave the
+    plane untagged on the half in the first place."""
+    return _rewind(_affine(mesh, *affine.reflection(normal, point)))
+
+
 __all__ = [
     "blend",
+    "mirror",
     "rotate",
     "scale",
     "transform",

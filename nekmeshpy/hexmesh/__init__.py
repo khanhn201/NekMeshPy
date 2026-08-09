@@ -1,7 +1,7 @@
 """3-D hex mesh container (``HexMesh``), its operations, and constrained smoothing."""
 
 from . import assemble, lift, lower, morph, query, shape
-from .assemble import loft, loft_fn, merge
+from .assemble import components, loft, loft_fn, merge, remove, select
 from .hexmesh import HexMesh
 from .lift import (
     adapter,
@@ -13,25 +13,37 @@ from .lift import (
     sweep_path,
 )
 from .lower import boundary_mesh
-from .morph import blend, rotate, scale, transform, translate
+from .morph import blend, mirror, rotate, scale, transform, translate
 from .query import (
     boundary_elements,
     boundary_faces,
     boundary_points,
+    bounds,
+    centroid,
     classify_points,
     element_blocks,
+    element_volumes,
     is_conforming,
     is_watertight,
     quality_summary,
     report,
     scaled_jacobian,
     topology_report,
+    volume,
     weld,
 )
 from .shape import tetra
 
 __all__ = [
+    "bounds",
+    "centroid",
+    "components",
     "element_blocks",
+    "element_volumes",
+    "mirror",
+    "remove",
+    "select",
+    "volume",
     "HexMesh",
     "adapter",
     "annulus",

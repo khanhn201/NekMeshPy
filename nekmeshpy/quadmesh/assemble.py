@@ -18,10 +18,12 @@ from ..core.tags import (
     EdgeTags,
     ElementTags,
     TagBuilder,
+    element_mask,
     sweep_cap_tags,
     sweep_element_tags,
 )
 from ..linemesh import LineMesh
+from ..linemesh.assemble import _subset as line_subset
 from ..linemesh.query import element_blocks as line_blocks
 from .quadmesh import (
     QuadMesh,
@@ -333,8 +335,62 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     lm = LineMesh(points, edges, interior=edge_nodes)
     return QuadMesh(lm, elem_edges, flip, interior, bnd, etags)
 
+def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
+    """``(the kept quads as a QuadMesh, new_quad_of)`` -- the quad rung of
+    :func:`linemesh._subset <nekmeshpy.linemesh.assemble._subset>`, which it calls to
+    carry the shared edges down.
+
+    Shared edges no kept quad references are dropped with the points under them, so the
+    B-rep comes back complete rather than trailing orphaned entities.  Order is
+    preserved: the shared edge-interior and private per-quad nodes ride along."""
+    kept, new_quad_of = conform.renumber_map(keep)
+    quad: IntArray = mesh.quad[kept]
+    edge_keep: BoolArray = np.zeros(mesh.lines.n_lines, dtype=bool)
+    if quad.size:
+        edge_keep[np.unique(quad)] = True
+    sub_lines, new_edge_of = line_subset(mesh.lines, edge_keep)
+    return (QuadMesh(sub_lines, new_edge_of[quad], mesh.flip[kept],
+                     mesh.interior[kept],
+                     mesh.edge_tags.renumber(new_quad_of),
+                     mesh.element_tags.gather(kept)),
+            new_quad_of)
+
+
+def select(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> QuadMesh:
+    """The named quads as a section of their own, renumbered from zero.
+
+    ``which`` is a tag string (every quad carrying it), a ``(Q,)`` boolean mask, or an
+    array of quad ids.  Kept quads hold their relative order, their ``element_tags`` and
+    whichever ``edge_tags`` rows name them; edges and points nothing kept touches are
+    dropped.  The inverse of :func:`merge`.
+
+    Removing elements can open the section up, so the result is **not** guaranteed to be
+    simply connected -- or connected at all.  Ask :func:`components` if that matters."""
+    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_quads,
+                                      "quadmesh.select"))[0]
+
+
+def remove(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
+           ) -> QuadMesh:
+    """The complement of :func:`select`: everything ``which`` does **not** name."""
+    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_quads,
+                                       "quadmesh.remove"))[0]
+
+
+def components(mesh: QuadMesh) -> list[QuadMesh]:
+    """The section split into its connected pieces -- one ``QuadMesh`` per group of
+    quads reachable through shared corner points, in the order their first quad
+    appears."""
+    n, labels = conform.element_components(mesh.quads, mesh.n_points)
+    return [_subset(mesh, labels == c)[0] for c in range(n)]
+
+
 __all__ = [
+    "components",
     "loft",
     "loft_fn",
     "merge",
+    "remove",
+    "select",
 ]
