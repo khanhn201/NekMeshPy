@@ -12,6 +12,7 @@ from .._typing import (
     IntArray,
     PointArray,
 )
+from ..model import conform
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes
 from ..model.tags import ElementTags, PointTags, TagBuilder
@@ -214,9 +215,9 @@ def _weld(pos: Sequence[PointArray], seams: Sequence[IntArray],
         scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
         t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
         keys = np.round(P[bidx, :] / t).astype(np.int64)
-        _, first_local, inverse = np.unique(
-            keys, axis=0, return_index=True, return_inverse=True)
-        remap[bidx] = bidx[first_local][inverse.ravel()]
+        uniq, inverse, _ = conform.unique_rows(keys)
+        first_local = conform.first_occurrence(inverse, uniq.shape[0])
+        remap[bidx] = bidx[first_local][inverse]
 
     survivors = np.unique(remap)
     new_id: IntArray = np.empty(total, dtype=np.int64)

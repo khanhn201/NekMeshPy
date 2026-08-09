@@ -12,6 +12,7 @@ from .._typing import (
     IntArray,
     PointArray,
 )
+from ..model import conform
 from ..model.quality import QualitySummary
 from ..model.topology import TopologyReport
 from .hexmesh import HexMesh
@@ -23,9 +24,8 @@ def _boundary_mask(hexes: IntArray) -> tuple[IntArray, BoolArray]:
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
     faces: IntArray = HC[:, HexMesh.FACE_POINTS].reshape(-1, 4)
     keys = np.sort(faces, axis=1)
-    _, inverse, counts = np.unique(
-        keys, axis=0, return_inverse=True, return_counts=True)
-    return faces, counts[inverse.ravel()] == 1
+    _, inverse, counts = conform.unique_rows(keys, return_counts=True)
+    return faces, counts[inverse] == 1
 
 def _boundary_points(hexes: IntArray) -> IntArray:
     faces, mask = _boundary_mask(hexes)

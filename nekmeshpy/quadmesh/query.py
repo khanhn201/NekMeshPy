@@ -13,7 +13,7 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..model import frames
+from ..model import conform, frames
 from ..model.quality import QualitySummary
 from .quadmesh import QuadMesh
 
@@ -24,9 +24,8 @@ def _boundary_mask(quads: IntArray) -> tuple[IntArray, BoolArray]:
     Q = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges: IntArray = Q[:, QuadMesh.EDGE_POINTS].reshape(-1, 2)
     keys = np.sort(edges, axis=1)
-    _, inverse, counts = np.unique(
-        keys, axis=0, return_inverse=True, return_counts=True)
-    return edges, counts[inverse.ravel()] == 1
+    _, inverse, counts = conform.unique_rows(keys, return_counts=True)
+    return edges, counts[inverse] == 1
 
 def boundary_edges(mesh: QuadMesh) -> IntArray:
     """``(K,2)`` array of ``[quad id, local edge (1-4)]`` for every edge on
