@@ -13,13 +13,7 @@ from .._typing import (
     PointArray,
 )
 from ..linemesh import LineMesh
-from ..linemesh.assemble import (
-    _at_levels,
-    _check_fraction_count,
-    _refined_lattice,
-    _weld,
-)
-from ..model import conform
+from ..model import conform, stations
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes
 from ..model.tags import (
@@ -237,10 +231,10 @@ def loft(
 
     # -- 1. the shared edges: the global LineMesh's topology ---------------------
     # Rows are min-first, so a traversal's flip is the directed pair read off the corners.
-    carried_rows: IntArray = _at_levels(ab, lvl, nn)         # a section edge at a level
+    carried_rows: IntArray = stations.at_levels(ab, lvl, nn)         # a section edge at a level
     swept_rows: IntArray = np.stack([                        # a section point, dragged
-        _at_levels(used_p, np.minimum(lay, nxt), nn),
-        _at_levels(used_p, np.maximum(lay, nxt), nn)], axis=1)
+        stations.at_levels(used_p, np.minimum(lay, nxt), nn),
+        stations.at_levels(used_p, np.maximum(lay, nxt), nn)], axis=1)
     edges: IntArray = np.concatenate([carried_rows, swept_rows], axis=0)
 
     # -- 2. that LineMesh's interior: one write per shared edge ------------------
@@ -271,8 +265,8 @@ def loft(
     # element, whose frame is not shift-invariant across levels.
     # carried: the section quad at a level.  Its row is that quad's own CCW corners, so
     # its four sides are the section's own sides, walked in the section's own direction.
-    carried_conn: IntArray = _at_levels(quads, lvl, nn)
-    carried_sides: IntArray = _at_levels(eslot[sec.quad], lvl, ne)
+    carried_conn: IntArray = stations.at_levels(quads, lvl, nn)
+    carried_sides: IntArray = stations.at_levels(eslot[sec.quad], lvl, ne)
     carried_flip: BoolArray = np.tile(quads > quads[:, [1, 2, 3, 0]], (n_prof, 1))
     # swept: the section edge ``(A, B)`` dragged across a layer.  Its row is
     # ``[A_i, B_i, B_j, A_j]``, so its sides walk [carried at i, rung at B, carried at j
@@ -281,13 +275,13 @@ def loft(
     k_e: IntArray = np.arange(ne, dtype=np.int64)
     rung0 = n_prof * ne                                   # the first swept edge id
     swept_conn: IntArray = np.stack([
-        _at_levels(A, lay, nn), _at_levels(B, lay, nn),
-        _at_levels(B, nxt, nn), _at_levels(A, nxt, nn)], axis=1)
+        stations.at_levels(A, lay, nn), stations.at_levels(B, lay, nn),
+        stations.at_levels(B, nxt, nn), stations.at_levels(A, nxt, nn)], axis=1)
     swept_sides: IntArray = np.stack([
-        _at_levels(k_e, lay, ne),
-        rung0 + _at_levels(pslot[B], lay, nu),
-        _at_levels(k_e, nxt, ne),
-        rung0 + _at_levels(pslot[A], lay, nu)], axis=1)
+        stations.at_levels(k_e, lay, ne),
+        rung0 + stations.at_levels(pslot[B], lay, nu),
+        stations.at_levels(k_e, nxt, ne),
+        rung0 + stations.at_levels(pslot[A], lay, nu)], axis=1)
     swept_flip: BoolArray = np.stack([
         np.zeros(nz * ne, dtype=bool), np.repeat(lay > nxt, ne),
         np.ones(nz * ne, dtype=bool), np.repeat(lay < nxt, ne)], axis=1)
@@ -429,7 +423,7 @@ def loft_fn(
     so **every** node (the corners *and* the sweep-direction high-order nodes) comes
     from calling ``f`` and nothing is blended along the sweep."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    _check_fraction_count(fr, loop=loop, name="loft_fn")
+    stations.check_fraction_count(fr, loop=loop, name="loft_fn")
     if order is None:
         # The node lattice the sections are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the
@@ -443,7 +437,7 @@ def loft_fn(
                 "Pass order= explicitly only if you also fix f." % (fr[0], type(probe)))
         order = probe.order
 
-    t: FloatArray = _refined_lattice(fr, order)
+    t: FloatArray = stations.refined_lattice(fr, order)
     profs: list[QuadMesh] = [f(float(v)) for v in t]
     return _loft_evaluated(profs, t, order, loop=loop,
                            element_tags=element_tags,
@@ -461,7 +455,7 @@ def merge(
     meshes = list(meshes)
     pos = [m.points for m in meshes]
     counts = [p.shape[0] for p in pos]
-    points, point_id = _weld(pos, [_boundary_points(m.hexes) for m in meshes], tol)
+    points, point_id = conform.weld_points(pos, [_boundary_points(m.hexes) for m in meshes], tol)
 
     hex_list: list[IntArray] = []
     bnd_list: list[FaceTags] = []

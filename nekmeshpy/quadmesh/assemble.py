@@ -13,14 +13,8 @@ from .._typing import (
     PointArray,
 )
 from ..linemesh import LineMesh
-from ..linemesh.assemble import (
-    _at_levels,
-    _check_fraction_count,
-    _refined_lattice,
-    _weld,
-)
 from ..linemesh.query import element_blocks as line_blocks
-from ..model import conform
+from ..model import conform, stations
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes
 from ..model.tags import (
@@ -149,9 +143,9 @@ def loft(
     # The two entity families of any sweep, at this rung.  Both are closed forms -- id
     # ``level*L + line`` carried, ``nlev*L + layer*nu + point`` swept, two contiguous
     # blocks that cannot collide -- so the table is written, never deduplicated.
-    carried_rows: IntArray = _at_levels(lines, lvl, nn)      # a profile line at a level
+    carried_rows: IntArray = stations.at_levels(lines, lvl, nn)      # a profile line at a level
     swept_rows: IntArray = np.stack([                        # a profile point, dragged
-        _at_levels(used, lay, nn), _at_levels(used, nxt, nn)], axis=1)
+        stations.at_levels(used, lay, nn), stations.at_levels(used, nxt, nn)], axis=1)
     edges: IntArray = np.concatenate([carried_rows, swept_rows], axis=0)
 
     # -- 2. that LineMesh's interior: one write per shared edge -----------------
@@ -305,7 +299,7 @@ def loft_fn(
     so **every** node (the corners *and* the sweep-direction high-order nodes) comes
     from calling ``f`` and nothing is blended along the sweep."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    _check_fraction_count(fr, loop=loop, name="loft_fn")
+    stations.check_fraction_count(fr, loop=loop, name="loft_fn")
     if order is None:
         # The node lattice the profiles are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the
@@ -319,7 +313,7 @@ def loft_fn(
                 "Pass order= explicitly only if you also fix f." % (fr[0], type(probe)))
         order = probe.order
 
-    t: FloatArray = _refined_lattice(fr, order)
+    t: FloatArray = stations.refined_lattice(fr, order)
     profs: list[LineMesh] = [f(float(v)) for v in t]
     return _loft_evaluated(profs, t, order, loop=loop,
                            element_tags=element_tags,
@@ -339,7 +333,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     for m in meshes:
         edges, mask = _boundary_mask(m.quads)
         seams.append(np.unique(edges[mask]))
-    points, point_id = _weld(pos, seams, tol)
+    points, point_id = conform.weld_points(pos, seams, tol)
 
     quad_list: list[IntArray] = []
     bnd_list: list[EdgeTags] = []

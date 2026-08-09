@@ -16,9 +16,8 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..linemesh.assemble import _sweep_lattice, _sweep_path
 from ..linemesh.shape import path_fractions
-from ..model import frames
+from ..model import frames, stations
 from ..model.fields import validate_layers
 from ..model.paths import SpacePath
 from ..model.tags import ElementTags
@@ -144,9 +143,9 @@ def sweep(
     """A block swept from one ``QuadMesh`` ``section`` along the curve ``path`` -- a
     round pipe bent through a 90-degree elbow or a U-turn, from one O-grid disc."""
     order = section.order
-    _, t = _sweep_lattice(fractions, order, loop=loop, name="sweep")
+    _, t = stations.sweep_lattice(fractions, order, loop=loop, name="sweep")
     tv: FloatArray = t[:-1] if loop else t
-    P, T = _sweep_path(path, tangent, tv)
+    P, T = stations.sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
         section.points, P, orientation=orientation, up=up, twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,

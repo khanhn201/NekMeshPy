@@ -282,8 +282,8 @@ def test_hex_loft_fn_nodes_are_its_section_lattice_revolved(order, loop):
     from conftest import curved
 
     from nekmeshpy import hexmesh
-    from nekmeshpy.linemesh.assemble import _refined_lattice
     from nekmeshpy.model import affine
+    from nekmeshpy.model.stations import refined_lattice
 
     R = 4.0
     disc = quadmesh.rotate(_section(order), np.pi / 2, (1.0, 0.0, 0.0))
@@ -295,7 +295,7 @@ def test_hex_loft_fn_nodes_are_its_section_lattice_revolved(order, loop):
 
     fr = np.linspace(0.0, 1.0, 5)
     blk = hexmesh.loft_fn(f, fr, order=order, loop=loop)
-    t = _refined_lattice(fr, order)
+    t = refined_lattice(fr, order)
     nz = fr.shape[0] - 1
 
     row, M = order + 1, sec.n_quads

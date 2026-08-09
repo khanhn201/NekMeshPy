@@ -7,12 +7,11 @@ from collections.abc import Callable, Sequence
 import numpy as np
 
 from .._typing import (
-    BoolArray,
     FloatArray,
     IntArray,
     PointArray,
 )
-from ..model import conform
+from ..model import conform, stations
 from ..model.conform import entity_tol
 from ..model.fields import gll_nodes
 from ..model.tags import ElementTags, PointTags, TagBuilder
@@ -85,72 +84,6 @@ def loft(
     return LineMesh(pts, lines, interior, bnd, etags)
 
 
-def _at_levels(table: IntArray, level: IntArray, per_level: int) -> IntArray:
-    """``table`` laid out at every ``level`` of a sweep -- ``level * per_level + table``,
-    level-major, keeping ``table``'s trailing shape:
-    ``(n_level,) x (k, ...) -> (n_level * k, ...)``.
-
-    Every id a sweep writes is one of these: a section point / edge / quad id, shifted by
-    how many of that entity one level owns.  The ``loft`` bodies above pick the table and
-    the levels; this is the layout they share."""
-    shift: IntArray = level.reshape((-1,) + (1,) * table.ndim) * per_level
-    return (table[None] + shift).reshape((-1,) + table.shape[1:])
-
-
-def _refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
-    """The ``n*order + 1`` parameter positions of **every** node of the order-``order``
-    chain graded by ``fractions`` (``n = len(fractions) - 1`` elements): element ``i``'s
-    node ``a`` sits at ``fr[i] + g[a]*(fr[i+1] - fr[i])`` for the GLL nodes ``g`` on
-    ``[0, 1]``, and the chain ends at ``fr[-1]``."""
-    g: FloatArray = gll_nodes(order)
-    fr = fractions
-    u: FloatArray = (fr[:-1, None]
-                     + g[None, :order] * np.diff(fr)[:, None]).ravel()
-    return np.concatenate([u, fr[-1:]])
-
-
-def _check_fraction_count(fr: FloatArray, *, loop: bool, name: str) -> None:
-    """Raise unless ``fr`` carries enough fractions for at least one sweep layer (two,
-    with ``loop=True`` -- the last fraction is the wrap back onto the first profile
-    rather than a level of its own)."""
-    if fr.shape[0] - 1 < 1:
-        raise ValueError("%s needs at least 2 fractions (one layer), got %d"
-                         % (name, fr.shape[0]))
-    if loop and fr.shape[0] - 1 < 2:
-        raise ValueError(
-            "%s(loop=True) needs at least 3 fractions (two layers), got %d -- the "
-            "last one is the wrap back to the first profile, so it is not a level of "
-            "its own" % (name, fr.shape[0]))
-
-
-def _sweep_lattice(fractions: FloatArray, order: int, *, loop: bool,
-                   name: str) -> tuple[FloatArray, FloatArray]:
-    """Validate a sweep's ``fractions`` and return ``(fr, node lattice)``."""
-    fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    _check_fraction_count(fr, loop=loop, name=name)
-    return fr, _refined_lattice(fr, order)
-
-
-def _sweep_path(path: Callable[[FloatArray], PointArray],
-                tangent: Callable[[FloatArray], PointArray] | None,
-                tv: FloatArray) -> tuple[PointArray, PointArray | None]:
-    """Sample a sweep's centreline (and, if given, its analytic derivative) on the
-    station parameters ``tv``, as ``(K,3)`` arrays."""
-    P: PointArray = np.asarray(path(tv), dtype=float)
-    if P.shape != (tv.shape[0], 3):
-        raise ValueError("sweep: path must map the (%d,) sweep lattice to a (%d,3) "
-                         "array of centreline points, got %s"
-                         % (tv.shape[0], tv.shape[0], (P.shape,)))
-    if tangent is None:
-        return P, None
-    T: PointArray = np.asarray(tangent(tv), dtype=float)
-    if T.shape != (tv.shape[0], 3):
-        raise ValueError("sweep: tangent must map the (%d,) sweep lattice to a "
-                         "(%d,3) array of unit tangents, got %s"
-                         % (tv.shape[0], tv.shape[0], (T.shape,)))
-    return P, T / np.linalg.norm(T, axis=1)[:, None]
-
-
 def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointArray:
     """``f(t)`` as a validated ``(len(t), 3)`` array."""
     P: PointArray = np.asarray(f(t), dtype=float)
@@ -183,7 +116,7 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
 
     # every node of the chain, corners and interiors alike, as one parameter array --
     # so the interiors ride the true curve instead of ``loft``'s straight chord blend.
-    t: FloatArray = _refined_lattice(fr, order)
+    t: FloatArray = stations.refined_lattice(fr, order)
     P: PointArray = _eval_curve(f, t)
     corners: PointArray = P[::order]
     if loop:
@@ -209,34 +142,6 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
                 first_tag=first_tag, last_tag=last_tag, order=order)
 
 
-def _weld(pos: Sequence[PointArray], seams: Sequence[IntArray],
-          tol: float | None) -> tuple[PointArray, IntArray]:
-    """The corner half of every ``merge``: concatenate the blocks' points, fuse the
-    coincident *weldable* ones, and renumber."""
-    P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
-    total = P.shape[0]
-
-    remap = np.arange(total, dtype=np.int64)
-    is_bnd: BoolArray = np.zeros(total, dtype=bool)
-    noff = 0
-    for p, seam in zip(pos, seams):
-        is_bnd[noff + seam] = True
-        noff += p.shape[0]
-    bidx = np.flatnonzero(is_bnd)
-    if bidx.size:
-        scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
-        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
-        keys = np.round(P[bidx, :] / t).astype(np.int64)
-        uniq, inverse, _ = conform.unique_rows(keys)
-        first_local = conform.first_occurrence(inverse, uniq.shape[0])
-        remap[bidx] = bidx[first_local][inverse]
-
-    survivors = np.unique(remap)
-    new_id: IntArray = np.empty(total, dtype=np.int64)
-    new_id[survivors] = np.arange(survivors.size)
-    return P[survivors, :], new_id[remap]
-
-
 def merge(meshes: Sequence[LineMesh], *,
           tol: float | None = None) -> LineMesh:
     """Merge line meshes into one, welding coincident **topological end points** (the
@@ -246,7 +151,7 @@ def merge(meshes: Sequence[LineMesh], *,
     pos = [np.asarray(m.points, dtype=float).reshape(-1, 3) for m in meshes]
     counts = [p.shape[0] for p in pos]
     # the weldable points here are the chain **ends** -- the 1-D boundary
-    points, point_id = _weld(pos, [boundary_points(m) for m in meshes], tol)
+    points, point_id = conform.weld_points(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
     bnd_list: list[PointTags] = []

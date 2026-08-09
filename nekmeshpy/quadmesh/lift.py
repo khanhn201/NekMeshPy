@@ -15,13 +15,12 @@ from .._typing import (
     Vec3,
 )
 from ..linemesh import LineMesh
-from ..linemesh.assemble import _sweep_lattice, _sweep_path
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
 from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
 from ..linemesh.shape import path_fractions
-from ..model import frames
+from ..model import frames, stations
 from ..model.fields import validate_layers
 from ..model.paths import SpacePath
 from ..model.tags import ElementTags, PointTags, TagBuilder
@@ -155,9 +154,9 @@ def sweep(
 ) -> QuadMesh:
     """A strip swept from one ``LineMesh`` ``profile`` along the curve ``path``."""
     order = profile.order
-    _, t = _sweep_lattice(fractions, order, loop=loop, name="sweep")
+    _, t = stations.sweep_lattice(fractions, order, loop=loop, name="sweep")
     tv: FloatArray = t[:-1] if loop else t
-    P, T = _sweep_path(path, tangent, tv)
+    P, T = stations.sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
         profile.points, P, orientation=orientation, up=up, twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,

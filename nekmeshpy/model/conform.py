@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from .._typing import BoolArray, IntArray, PointArray
@@ -199,6 +201,36 @@ def unique_rows(rows: IntArray, *, return_counts: bool = False
     starts = np.flatnonzero(first)
     counts = np.diff(np.concatenate((starts, [m]))).astype(np.int64)
     return uniq, inv, counts
+
+
+def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
+          tol: float | None) -> tuple[PointArray, IntArray]:
+    """The corner half of every ``merge``: concatenate the blocks' points, fuse the
+    coincident *weldable* ones, and renumber.  Coordinate identity -- unlike the entity
+    identity the rest of this module resolves by corner ids, which is why a weld is the
+    one place a mesh is decided by geometry."""
+    P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
+    total = P.shape[0]
+
+    remap = np.arange(total, dtype=np.int64)
+    is_bnd: BoolArray = np.zeros(total, dtype=bool)
+    noff = 0
+    for p, seam in zip(pos, seams):
+        is_bnd[noff + seam] = True
+        noff += p.shape[0]
+    bidx = np.flatnonzero(is_bnd)
+    if bidx.size:
+        scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
+        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
+        keys = np.round(P[bidx, :] / t).astype(np.int64)
+        uniq, inverse, _ = unique_rows(keys)
+        first_local = first_occurrence(inverse, uniq.shape[0])
+        remap[bidx] = bidx[first_local][inverse]
+
+    survivors = np.unique(remap)
+    new_id: IntArray = np.empty(total, dtype=np.int64)
+    new_id[survivors] = np.arange(survivors.size)
+    return P[survivors, :], new_id[remap]
 
 
 def first_occurrence(inverse: IntArray, n_groups: int) -> IntArray:
