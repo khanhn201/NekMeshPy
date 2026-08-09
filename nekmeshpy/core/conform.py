@@ -236,6 +236,29 @@ def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
     return P[survivors, :], new_id[remap]
 
 
+def fuse_entities(rows: IntArray, welded: BoolArray) -> tuple[IntArray, IntArray]:
+    """``(new_id (N,), survivors (K,))`` for a merge's concatenated entity table.
+
+    Each block's own entities are already unique, so a weld can only ever join two whose
+    corners are *all* welded points -- everything else keeps its own row and is merely
+    renumbered.  That makes the dedup proportional to the seam rather than the volume,
+    which is the whole reason ``merge`` does not simply re-derive from the corners.
+
+    Survivors come out in concatenation order; an entity's row is whatever its surviving
+    representative stores, so callers that care about direction (edges) should canonicalize
+    ``rows`` first, and callers that care about frame (faces) should refit afterwards."""
+    n = rows.shape[0]
+    rep: IntArray = np.arange(n, dtype=np.int64)
+    cand: IntArray = np.flatnonzero(np.all(welded[rows], axis=1))
+    if cand.size:
+        uniq, inv, _ = unique_rows(np.sort(rows[cand], axis=1))
+        rep[cand] = cand[first_occurrence(inv, uniq.shape[0])][inv]
+    survivors: IntArray = np.flatnonzero(rep == np.arange(n, dtype=np.int64))
+    new_id: IntArray = np.empty(n, dtype=np.int64)
+    new_id[survivors] = np.arange(survivors.shape[0], dtype=np.int64)
+    return new_id[rep], survivors
+
+
 def first_occurrence(inverse: IntArray, n_groups: int) -> IntArray:
     """``(n_groups,)`` lowest position in ``inverse`` carrying each group -- what
     ``np.unique(..., return_index=True)`` returns alongside the unique rows, for a caller

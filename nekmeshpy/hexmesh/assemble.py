@@ -462,32 +462,85 @@ def merge(
     counts = [p.shape[0] for p in pos]
     points, point_id = conform.weld_points(pos, [_boundary_points(m.hexes) for m in meshes], tol)
 
+    # Each block's own B-rep is already correct and already unique; the weld can only
+    # ever join entities whose corners are *all* welded, so the tables are concatenated
+    # and only that subset is fused.  Nothing is re-derived from the corners.
     hex_list: list[IntArray] = []
+    erow_list: list[IntArray] = []
+    frow_list: list[IntArray] = []
+    ee_list: list[IntArray] = []
+    eflip_list: list[BoolArray] = []
+    ef_list: list[IntArray] = []
+    forient_list: list[IntArray] = []
     bnd_list: list[FaceTags] = []
     etag_list: list[ElementTags] = []
-    noff = eoff = 0
+    noff = eoff = foff = elem_off = 0
     for m, c in zip(meshes, counts):
         hex_list.append(point_id[m.hexes + noff])    # local -> concat -> welded id
+        erow_list.append(point_id[m.edges + noff])
+        frow_list.append(point_id[np.asarray(m.quads.quads, dtype=np.int64) + noff])
+        ee_list.append(m._elem_edges + eoff)
+        eflip_list.append(m._edge_flip)
+        ef_list.append(m.hex + foff)
+        forient_list.append(m.face_orient)
         # ids shift by this block's offset; sides stay local to their element
-        etag_list.append(m.element_tags.offset(eoff))
-        bnd_list.append(m.face_tags.offset(eoff))
+        etag_list.append(m.element_tags.offset(elem_off))
+        bnd_list.append(m.face_tags.offset(elem_off))
         noff += c
-        eoff += m.hexes.shape[0]
+        eoff += m.edges.shape[0]
+        foff += m.quads.n_quads
+        elem_off += m.hexes.shape[0]
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
     etags = ElementTags.concat(etag_list)
     bnd = FaceTags.concat(bnd_list).ordered()
-    # order-N: the private per-hex interiors just concatenate, but the shared edge /
-    # face tables must be rebuilt against the *merged* topology -- gather each
-    # block's nodes into its own element-local order, concatenate in merged element
-    # order, then re-scatter.  Those scatters are the conformal-weld guard: two
-    # blocks that disagree on a welded shared edge / face raise instead of silently
-    # welding.
+
     order = meshes[0].order if meshes else 1
     if any(mm.order != order for mm in meshes):
         raise ValueError("merge: all blocks must share the same order")
-    edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
-    canonical_conn, elem_faces, face_orient = conform.canonical_faces(hexes)
+
+    e_rows = (np.concatenate(erow_list, axis=0) if erow_list
+              else np.zeros((0, 2), np.int64))
+    f_rows = (np.concatenate(frow_list, axis=0) if frow_list
+              else np.zeros((0, 4), np.int64))
+    elem_edges = (np.concatenate(ee_list, axis=0) if ee_list
+                  else np.zeros((0, 12), np.int64))
+    eflip = (np.concatenate(eflip_list, axis=0) if eflip_list
+             else np.zeros((0, 12), bool))
+    elem_faces = (np.concatenate(ef_list, axis=0) if ef_list
+                  else np.zeros((0, 6), np.int64))
+
+    # welding renumbers points, so a stored edge row can come out the wrong way round;
+    # put it back min-first and toggle the traversals that referenced it, *before*
+    # fusing, so a fused pair is then two identical rows and no direction survives it.
+    swap: BoolArray = e_rows[:, 0] > e_rows[:, 1]
+    e_rows = np.where(swap[:, None], e_rows[:, ::-1], e_rows)
+    eflip = eflip ^ swap[elem_edges]
+
+    welded: BoolArray = (np.bincount(point_id, minlength=points.shape[0]) > 1
+                         if point_id.size else np.zeros(points.shape[0], bool))
+    e_new, e_keep = conform.fuse_entities(e_rows, welded)
+    f_new, f_keep = conform.fuse_entities(f_rows, welded)
+    edges, canonical_conn = e_rows[e_keep], f_rows[f_keep]
+    elem_edges = e_new[elem_edges]
+    old_elem_faces, elem_faces = elem_faces, f_new[elem_faces]
+    # A fused face keeps its survivor's row, which may be a different frame from the one
+    # the losing block stored -- but only there.  Every other block's codes still describe
+    # their own row, so the refit is the seam, not the volume.
+    face_orient = (np.concatenate(forient_list, axis=0) if forient_list
+                   else np.zeros((0, 6), np.int64))
+    reframed: BoolArray = np.any(
+        ~np.all(f_rows == canonical_conn[f_new], axis=1)[old_elem_faces], axis=1)
+    if reframed.any():
+        e_i = np.flatnonzero(reframed)
+        face_orient[e_i] = conform.face_frame_code(
+            hexes[e_i][:, conform._LOCAL_FACES], canonical_conn[elem_faces[e_i]])
+
+    # order-N: the private per-hex interiors just concatenate, but the shared edge /
+    # face nodes must be re-pinned against the *merged* tables -- gather each block's
+    # into element-local order, concatenate in merged element order, then re-scatter.
+    # Those scatters are the conformal-weld guard: two blocks that disagree on a welded
+    # shared edge / face raise instead of silently welding.
     edge_nodes: PointArray | None = None
     face_nodes: PointArray | None = None
     interior: PointArray | None = None
@@ -508,8 +561,7 @@ def merge(
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
     faces = _face_brep(points, edges, elem_edges, eflip, elem_faces, face_orient,
                        canonical_conn.shape[0], edge_nodes, face_nodes)
-    return HexMesh(faces, elem_faces, face_orient, interior,
-                   bnd, etags)
+    return HexMesh(faces, elem_faces, face_orient, interior, bnd, etags)
 
 __all__ = [
     "loft",
