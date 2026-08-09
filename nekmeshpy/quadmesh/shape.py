@@ -22,7 +22,7 @@ from ..linemesh.shape import line
 from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
 from .assemble import loft_fn, merge
 from .lift import from_grid
-from .quadmesh import QuadMesh
+from .quadmesh import NO_TAG, QuadMesh
 from .query import boundary_edges
 
 #: The four sides of a :func:`structured <nekmeshpy.quadmesh.shape.structured>` patch, in the CCW loop order its ``edges``
@@ -867,11 +867,14 @@ def box(half_sizes: float | Sequence[float] | FloatArray,
 
 
 def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
-           element_tag: str = "sphere", order: int = 1) -> QuadMesh:
+           element_tag: str = NO_TAG, order: int = 1) -> QuadMesh:
     """Closed cubed-sphere surface of ``radius`` about the origin: a unit :func:`box
     <nekmeshpy.quadmesh.shape.box>` projected radially onto the sphere (same
     connectivity, so it pairs by index with a same-``n`` box for :func:`HexMesh.annulus
-    <nekmeshpy.hexmesh.lift.annulus>`)."""
+    <nekmeshpy.hexmesh.lift.annulus>`).
+
+    Untagged unless ``element_tag`` is given, like every other factory: a shape does not
+    name itself, because the name belongs to the model the caller is assembling."""
     from ..linemesh import LineMesh
     cube = box(1.0, n, order=order)
 
@@ -941,12 +944,12 @@ def half_box(half_sizes: float | Sequence[float] | FloatArray,
 
 def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
                n_vertical: int | None = None,
-               element_tag: str = "hemisphere",
-               rim_tag: str = "",
+               element_tag: str = NO_TAG,
+               rim_tag: str = NO_TAG,
                order: int = 1) -> QuadMesh:
     """Cubed-**hemisphere** surface of ``radius`` sitting on the ground plane ``z = 0``:
     a unit :func:`half_box <nekmeshpy.quadmesh.shape.half_box>` projected radially onto
-    the sphere."""
+    the sphere.  Untagged unless ``element_tag`` is given."""
     from ..linemesh import LineMesh
     cube = half_box(1.0, n, n_vertical=n_vertical, order=order)
 

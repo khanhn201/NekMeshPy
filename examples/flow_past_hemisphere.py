@@ -54,7 +54,7 @@ outer = quadmesh.half_box(S, N_FACE, n_vertical=N_HALF, order=ORDER, patch_tags=
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "back", "y_min": "front", "z_max": "top"})
 inner = quadmesh.hemisphere(R, N_FACE, n_vertical=N_HALF, order=ORDER,
-                            rim_tag="ground")
+                            element_tag="hemisphere", rim_tag="ground")
 
 # fill the shell hemisphere -> half box, radial clustered toward the body; inner cap
 # tagged `hemisphere`, outer cap per patch tag, rim swept into the `ground` annulus
