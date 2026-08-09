@@ -47,7 +47,7 @@ cube = quadmesh.box(S, N_FACE, order=ORDER, patch_tags={
     "x_max": "outlet", "x_min": "inlet",
     "y_max": "top", "y_min": "bottom",
     "z_max": "back", "z_min": "front"})
-sphere = quadmesh.sphere(R, N_FACE, order=ORDER)
+sphere = quadmesh.sphere(R, N_FACE, order=ORDER, element_tag="sphere")
 
 # fill the shell sphere -> cube, radial clustered toward the sphere; inner cap
 # tagged `sphere`, outer cap per cube-face element tag

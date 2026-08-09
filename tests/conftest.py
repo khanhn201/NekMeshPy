@@ -92,6 +92,18 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
                     element_tags)
 
 
+def vtu_cell_types(path):
+    """The distinct VTK cell type ids in a ``.vtu``, decoded from its binary ``types``
+    array (base64 of a byte count followed by the raw values)."""
+    import base64
+    import xml.etree.ElementTree as ET
+    root = ET.parse(path).getroot()
+    ta = next(da for da in root.iter("DataArray") if da.get("Name") == "types")
+    raw = base64.b64decode(ta.text.strip())
+    n = int(np.frombuffer(raw[:8], "<u8")[0])
+    return set(np.unique(np.frombuffer(raw[8:8 + n], "u1")).tolist())
+
+
 def curved(mesh):
     """The per-element ``(E,(N+1)^d,3)`` node block, gathered transiently as
     ``nodes[conn_ho]`` from :func:`conformal` -- exactly what the deleted ``.curved``

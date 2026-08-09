@@ -9,7 +9,7 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example
+from conftest import GOLDEN, curved, run_example, vtu_cell_types
 
 from nekmeshpy import LineMesh, linemesh
 from nekmeshpy.io import export
@@ -118,14 +118,6 @@ def test_vtk_curve_perm_puts_endpoints_first():
 
 
 # -- VTU (XML) export ---------------------------------------------------
-def _vtu_cell_types(path):
-    import xml.dom.minidom as m
-    d = m.parse(path)
-    ta = [da for da in d.getElementsByTagName("DataArray")
-          if da.getAttribute("Name") == "types"][0]
-    return set(ta.firstChild.data.split())
-
-
 def _vtu_num_points(path):
     import xml.dom.minidom as m
     d = m.parse(path)
@@ -135,14 +127,14 @@ def _vtu_num_points(path):
 def test_vtu_order1_is_plain_line(tmp_path):
     p = str(tmp_path / "lin.vtu")
     export.line_to_vtu(linemesh.circle(1.0, 5), p)
-    assert _vtu_cell_types(p) == {"3"}                   # VTK_LINE
+    assert vtu_cell_types(p) == {3}                   # VTK_LINE
     assert _vtu_num_points(p) == 10                      # 5 elems x 2 nodes
 
 
 def test_vtu_high_order_is_lagrange_curve(tmp_path):
     p = str(tmp_path / "ho.vtu")
     export.line_to_vtu(linemesh.circle(1.0, 4, order=5), p)
-    assert _vtu_cell_types(p) == {"68"}                  # VTK_LAGRANGE_CURVE
+    assert vtu_cell_types(p) == {68}                  # VTK_LAGRANGE_CURVE
     # conformal (welded) numbering: shared corners are written once.  A closed
     # 4-element loop has 4 corners + 4 x (6-2) private interior nodes = 20.
     assert _vtu_num_points(p) == 20
