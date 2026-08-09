@@ -29,13 +29,18 @@ from .hexmesh import HexMesh, _sweep_at
 from .query import _boundary_points
 
 
-def _face_brep(points: PointArray, canonical_conn: IntArray,
-               edge_nodes: PointArray | None, face_nodes: PointArray | None,
-               order: int) -> QuadMesh:
-    """The shared-face ``QuadMesh`` of a hex block, from its canonical face table."""
-    q_edges, q_elem_edges, q_flip = conform.unique_edges(canonical_conn, 2)
-    edge_lm = LineMesh(points, q_edges, interior=edge_nodes)
-    return QuadMesh(edge_lm, q_elem_edges, q_flip, face_nodes)
+def _face_brep(points: PointArray, edges: IntArray, elem_edges: IntArray,
+               edge_flip: BoolArray, elem_faces: IntArray, face_orient: IntArray,
+               n_faces: int, edge_nodes: PointArray | None,
+               face_nodes: PointArray | None) -> QuadMesh:
+    """The shared-face ``QuadMesh`` of a hex block, read off the hex tables.
+
+    The faces' edges *are* the hex edges -- same set, same table -- so this deduplicates
+    nothing: it reads each face's incidence through one owning hex."""
+    face_edges, face_flip = conform.face_edges_from_hexes(
+        elem_faces, face_orient, elem_edges, edge_flip, n_faces)
+    return QuadMesh(LineMesh(points, edges, interior=edge_nodes),
+                    face_edges, face_flip, face_nodes)
 
 
 def loft(
@@ -501,7 +506,8 @@ def merge(
             local_f, elem_faces, face_orient, canonical_conn.shape[0], tol,
             "HexMesh.merge")
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
-    faces = _face_brep(points, canonical_conn, edge_nodes, face_nodes, order)
+    faces = _face_brep(points, edges, elem_edges, eflip, elem_faces, face_orient,
+                       canonical_conn.shape[0], edge_nodes, face_nodes)
     return HexMesh(faces, elem_faces, face_orient, interior,
                    bnd, etags)
 

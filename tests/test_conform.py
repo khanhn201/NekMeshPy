@@ -369,6 +369,32 @@ def test_element_blocks_match_the_conformal_walk(order):
     assert np.array_equal(hexmesh.element_blocks(blk), curved(blk))
 
 
+def test_face_edges_from_hexes_matches_a_dedup_of_the_face_table():
+    """The shared faces' edges *are* the hex edges -- same set, same table -- so once
+    ``unique_edges(hexes, 3)`` has run, deduplicating the face table again discovers
+    nothing.  Reading each face's incidence through one owning hex has to reproduce that
+    dedup exactly, incidence *and* flip, for every builder."""
+    x = np.linspace(0, 1, 3)
+    X, Y, Z = np.meshgrid(x, x, x, indexing="ij")
+    disc = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, np.linspace(0.5, 1.0, 3))
+    stack = [quadmesh.translate(disc, (0.0, 0.0, z)) for z in np.linspace(0, 1, 4)]
+    blocks = [_shell(1),
+              hexmesh.from_grid(np.stack([X, Y, Z], axis=-1)),
+              hexmesh.loft(stack),
+              hexmesh.loft(stack, loop=True),
+              hexmesh.merge([_shell(1, n_face=1, n_radial=1)])]
+    for hm in blocks:
+        hexes = np.asarray(hm.hexes, np.int64)
+        edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
+        conn, elem_faces, orient = conform.canonical_faces(hexes)
+        want_e, want_i, want_f = conform.unique_edges(conn, 2)
+        assert np.array_equal(edges, want_e)          # the same table, not merely equal
+        got_i, got_f = conform.face_edges_from_hexes(
+            elem_faces, orient, elem_edges, eflip, conn.shape[0])
+        assert np.array_equal(got_i, want_i)
+        assert np.array_equal(got_f, want_f)
+
+
 # -- hex edge incidence is read off the faces, not re-deduplicated -----
 def test_hex_edges_from_faces_resolve_to_their_own_corner_pairs():
     """The complete statement, and the only one that does not name a numbering: reading

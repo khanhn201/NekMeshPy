@@ -227,7 +227,10 @@ def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
         first_local = first_occurrence(inverse, uniq.shape[0])
         remap[bidx] = bidx[first_local][inverse]
 
-    survivors = np.unique(remap)
+    # a cluster's representative maps to itself and everything else maps to a lower
+    # index, so the survivors *are* the fixed points -- same sorted set ``np.unique``
+    # would return, without sorting the whole point cloud to find it.
+    survivors: IntArray = np.flatnonzero(remap == np.arange(total, dtype=np.int64))
     new_id: IntArray = np.empty(total, dtype=np.int64)
     new_id[survivors] = np.arange(survivors.size)
     return P[survivors, :], new_id[remap]
@@ -379,6 +382,50 @@ def _canon_side() -> tuple[IntArray, IntArray]:
 
 _EDGE_ON_FACE: IntArray = _edge_on_face()
 _CANON_SIDE, _CANON_SIDE_REV = _canon_side()
+
+
+def _face_side_edge() -> IntArray:
+    """``(6,4,2)`` -- for hex local face ``f`` and its element-local side ``p``, the hex
+    local edge that side *is*, and whether the side runs against that edge's direction.
+    The transpose of :data:`_EDGE_ON_FACE`, which picks one face per edge."""
+    out: IntArray = np.zeros((6, 4, 2), dtype=np.int64)
+    edges = _LOCAL_EDGES[3].tolist()
+    for f in range(6):
+        fc = _LOCAL_FACES[f].tolist()
+        for p in range(4):
+            side = [fc[p], fc[(p + 1) % 4]]
+            out[f, p] = ((edges.index(side), 0) if side in edges
+                         else (edges.index(side[::-1]), 1))
+    return out
+
+
+_FACE_SIDE_EDGE: IntArray = _face_side_edge()
+#: ``(6,8,4)`` inverse of :data:`_CANON_SIDE`: which element-local side lands on each
+#: canonical one.
+_SIDE_FROM_CANON: IntArray = np.argsort(_CANON_SIDE, axis=2)
+
+
+def face_edges_from_hexes(elem_faces: IntArray, face_orient: IntArray,
+                          elem_edges: IntArray, edge_flip: BoolArray, n_faces: int
+                          ) -> tuple[IntArray, BoolArray]:
+    """``(face_edges (F,4), face_flip (F,4))`` -- each shared face's own edge incidence,
+    read through **one owning hex** instead of deduplicated again.
+
+    The hex edges and the shared faces' edges are the same set stored in the same table,
+    so once ``unique_edges(hexes, 3)`` has run there is nothing left to discover: a
+    canonical side maps back through the owner's D4 code to an element-local face side
+    (:data:`_SIDE_FROM_CANON`), and that side *is* a hex local edge
+    (:data:`_FACE_SIDE_EDGE`).  The flip is three XORs -- stored row vs hex edge, hex edge
+    vs face side, face side vs canonical side."""
+    first = first_occurrence(elem_faces.reshape(-1), n_faces)
+    owner_e, owner_f = np.divmod(first, 6)
+    code = face_orient[owner_e, owner_f]
+    fo, co = owner_f[:, None], code[:, None]
+    p = _SIDE_FROM_CANON[fo, co, np.arange(4)[None, :]]            # (F,4)
+    local = _FACE_SIDE_EDGE[fo, p]                                 # (F,4,2)
+    against: BoolArray = local[:, :, 1].astype(bool) ^ _CANON_SIDE_REV[fo, co, p]
+    return (elem_edges[owner_e[:, None], local[:, :, 0]],
+            edge_flip[owner_e[:, None], local[:, :, 0]] ^ against)
 
 
 def hex_edges_from_faces(elem_faces: IntArray, face_orient: IntArray,
