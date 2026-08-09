@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from .._typing import BoolArray, IntArray, PointArray
@@ -166,16 +168,26 @@ def unique_rows(rows: IntArray, *, return_counts: bool = False
     if m == 0:
         return (a.reshape(0, k), np.zeros(0, np.int64), np.zeros(0, np.int64))
     n = int(a.max()) + 1 if a.size else 1
-    if k == 2 and n * n <= (1 << 62):
-        key = a[:, 0] * n + a[:, 1]
+    # ``np.unique(axis=0)`` views each row as a void scalar and argsorts that, which is
+    # far slower than sorting an integer.  ``k`` ids pack into one int64 as a positional
+    # numeral system in base ``n``, so ascending key order *is* lexicographic row order
+    # and the result is identical, not merely equivalent.  Only the product can
+    # overflow, so fall back to a lexsort when it would.
+    if int(a.min()) >= 0 and n ** k <= (1 << 63) - 1:
+        key = a[:, 0]
+        for c in range(1, k):
+            key = key * n + a[:, c]
         if return_counts:                    # split for the typed np.unique overloads
             ukey, inv2, cnt = np.unique(key, return_inverse=True, return_counts=True)
         else:
             ukey, inv2 = np.unique(key, return_inverse=True)
             cnt = np.zeros(0, dtype=np.int64)
-        uniq = np.stack([ukey // n, ukey % n], axis=1)
-        return (uniq.astype(np.int64), inv2.ravel().astype(np.int64),
-                cnt.astype(np.int64))
+        uniq: IntArray = np.empty((ukey.shape[0], k), dtype=np.int64)
+        rest = ukey
+        for c in range(k - 1, -1, -1):
+            uniq[:, c] = rest % n
+            rest = rest // n
+        return uniq, inv2.ravel().astype(np.int64), cnt.astype(np.int64)
     order = np.lexsort(tuple(a[:, c] for c in range(k - 1, -1, -1)))
     srt = a[order]
     first: BoolArray = np.empty(m, dtype=bool)
@@ -191,15 +203,77 @@ def unique_rows(rows: IntArray, *, return_counts: bool = False
     return uniq, inv, counts
 
 
+def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
+          tol: float | None) -> tuple[PointArray, IntArray]:
+    """The corner half of every ``merge``: concatenate the blocks' points, fuse the
+    coincident *weldable* ones, and renumber.  Coordinate identity -- unlike the entity
+    identity the rest of this module resolves by corner ids, which is why a weld is the
+    one place a mesh is decided by geometry."""
+    P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
+    total = P.shape[0]
+
+    remap = np.arange(total, dtype=np.int64)
+    is_bnd: BoolArray = np.zeros(total, dtype=bool)
+    noff = 0
+    for p, seam in zip(pos, seams):
+        is_bnd[noff + seam] = True
+        noff += p.shape[0]
+    bidx = np.flatnonzero(is_bnd)
+    if bidx.size:
+        scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
+        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
+        keys = np.round(P[bidx, :] / t).astype(np.int64)
+        uniq, inverse, _ = unique_rows(keys)
+        first_local = first_occurrence(inverse, uniq.shape[0])
+        remap[bidx] = bidx[first_local][inverse]
+
+    # a cluster's representative maps to itself and everything else maps to a lower
+    # index, so the survivors *are* the fixed points -- same sorted set ``np.unique``
+    # would return, without sorting the whole point cloud to find it.
+    survivors: IntArray = np.flatnonzero(remap == np.arange(total, dtype=np.int64))
+    new_id: IntArray = np.empty(total, dtype=np.int64)
+    new_id[survivors] = np.arange(survivors.size)
+    return P[survivors, :], new_id[remap]
+
+
+def fuse_entities(rows: IntArray, welded: BoolArray) -> tuple[IntArray, IntArray]:
+    """``(new_id (N,), survivors (K,))`` for a merge's concatenated entity table.
+
+    Each block's own entities are already unique, so a weld can only ever join two whose
+    corners are *all* welded points -- everything else keeps its own row and is merely
+    renumbered.  That makes the dedup proportional to the seam rather than the volume,
+    which is the whole reason ``merge`` does not simply re-derive from the corners.
+
+    Survivors come out in concatenation order; an entity's row is whatever its surviving
+    representative stores, so callers that care about direction (edges) should canonicalize
+    ``rows`` first, and callers that care about frame (faces) should refit afterwards."""
+    n = rows.shape[0]
+    rep: IntArray = np.arange(n, dtype=np.int64)
+    cand: IntArray = np.flatnonzero(np.all(welded[rows], axis=1))
+    if cand.size:
+        uniq, inv, _ = unique_rows(np.sort(rows[cand], axis=1))
+        rep[cand] = cand[first_occurrence(inv, uniq.shape[0])][inv]
+    survivors: IntArray = np.flatnonzero(rep == np.arange(n, dtype=np.int64))
+    new_id: IntArray = np.empty(n, dtype=np.int64)
+    new_id[survivors] = np.arange(survivors.shape[0], dtype=np.int64)
+    return new_id[rep], survivors
+
+
+def first_occurrence(inverse: IntArray, n_groups: int) -> IntArray:
+    """``(n_groups,)`` lowest position in ``inverse`` carrying each group -- what
+    ``np.unique(..., return_index=True)`` returns alongside the unique rows, for a caller
+    that already has the inverse from :func:`unique_rows`.  Scatters the positions in
+    descending order, so the smallest is the write that lands."""
+    out: IntArray = np.empty(n_groups, dtype=np.int64)
+    out[inverse[::-1]] = np.arange(inverse.shape[0] - 1, -1, -1, dtype=np.int64)
+    return out
+
+
 def unique_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """Deduplicate hex faces into unique faces plus a per-hex incidence and D4 code."""
     e = hexes.shape[0]
     ids = hexes[:, _LOCAL_FACES]                            # (E,6,4)
     key = np.sort(ids, axis=2).reshape(e * 6, 4)
-    # Same argument as ``unique_edges``, but four ids will not pack into an int64, so
-    # this sorts the columns directly instead: ``lexsort`` takes its last key as the
-    # primary one, so listing them reversed reproduces ``np.unique(axis=0)``'s
-    # lexicographic row order exactly.
     uniq, inv, _ = unique_rows(key)
     elem_faces = inv.reshape(e, 6).astype(np.int64)
     # origin = slot of the minimum id; column = which of its two edge-neighbours
@@ -234,6 +308,42 @@ def _canon_qidx() -> IntArray:
 _CANON_QIDX: IntArray = _canon_qidx()
 
 
+def _frame_code_table() -> IntArray:
+    """``(6, 256)`` inverse of :data:`_CANON_QIDX`: for hex local face ``f``, the D4 code
+    whose corner permutation packs to ``p0*64 + p1*16 + p2*4 + p3``.  ``-1`` marks a
+    packing no D4 element realizes."""
+    tab: IntArray = np.full((6, 256), -1, dtype=np.int64)
+    w: IntArray = np.array([64, 16, 4, 1], dtype=np.int64)
+    for f in range(6):
+        for code in range(8):
+            tab[f, int(_CANON_QIDX[f, code] @ w)] = code
+    return tab
+
+
+_FRAME_CODE_TAB: IntArray = _frame_code_table()
+
+
+def face_frame_code(local: IntArray, canonical: IntArray) -> IntArray:
+    """``(E,6)`` D4 codes carrying each hex's element-local face frame (``local``
+    ``(E,6,4)`` corner ids in :data:`_LOCAL_FACES` order) onto the ``canonical``
+    ``(E,6,4)`` CCW rows.  :func:`canonical_faces` reads those rows off an owner element;
+    this is the same relation for a caller that **chose** its rows in advance, and so
+    needs the codes fitted against them."""
+    # ``perm[e,f,p]`` is the canonical slot local corner ``p`` lands in; a slot fits in a
+    # byte, and so does the packed row (max 3*64+3*16+3*4+3 = 255).
+    perm = np.zeros(local.shape, dtype=np.uint8)
+    for c in range(1, 4):
+        perm += np.uint8(c) * (local == canonical[:, :, c, None])
+    key: IntArray = (perm[..., 0].astype(np.int64) * 64 + perm[..., 1] * 16
+                     + perm[..., 2] * 4 + perm[..., 3])
+    codes: IntArray = _FRAME_CODE_TAB[np.arange(6, dtype=np.int64)[None, :], key]
+    if codes.size and int(codes.min()) < 0:
+        raise ValueError(
+            "face_frame_code: an element-local face frame is not a D4 image of its "
+            "canonical row -- the two do not describe the same quadrilateral")
+    return codes
+
+
 def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
     """CCW-connectivity sibling of :func:`unique_faces`."""
     _, elem_faces, face_orient = unique_faces(hexes)
@@ -254,6 +364,112 @@ def canonical_faces(hexes: IntArray) -> tuple[IntArray, IntArray, IntArray]:
         for p in range(4):
             canonical_conn[ids, q[:, p]] = corner_ids[:, p]
     return canonical_conn, elem_faces, face_orient
+
+
+def _edge_on_face() -> IntArray:
+    """``(12,3)`` -- for each hex local edge, one ``(local face, element-local side of
+    that face, reversed)`` it can be read through.  Every hex edge borders two faces;
+    which one is picked is arbitrary, because a conformal B-rep gives the same answer
+    through either."""
+    out: IntArray = np.zeros((12, 3), dtype=np.int64)
+    for e, (ca, cb) in enumerate(_LOCAL_EDGES[3].tolist()):
+        for f in range(6):
+            fc = _LOCAL_FACES[f].tolist()
+            sides = [(fc[p], fc[(p + 1) % 4]) for p in range(4)]
+            if (ca, cb) in sides:
+                out[e] = (f, sides.index((ca, cb)), 0)
+                break
+            if (cb, ca) in sides:
+                out[e] = (f, sides.index((cb, ca)), 1)
+                break
+    return out
+
+
+def _canon_side() -> tuple[IntArray, IntArray]:
+    """``(SIDE (6,8,4), REV (6,8,4))`` -- the canonical side each element-local face side
+    lands on under D4 ``code``, and whether the element walks it backwards.  Canonical
+    side ``s`` runs slot ``s`` -> ``s+1``, so an element side whose two slots descend is
+    that lower slot's side, traversed against it."""
+    side: IntArray = np.zeros((6, 8, 4), dtype=np.int64)
+    rev: IntArray = np.zeros((6, 8, 4), dtype=bool)
+    for f in range(6):
+        for code in range(8):
+            for p in range(4):
+                c0 = int(_CANON_QIDX[f, code, p])
+                c1 = int(_CANON_QIDX[f, code, (p + 1) % 4])
+                forward = c1 == (c0 + 1) % 4
+                side[f, code, p] = c0 if forward else c1
+                rev[f, code, p] = not forward
+    return side, rev
+
+
+_EDGE_ON_FACE: IntArray = _edge_on_face()
+_CANON_SIDE, _CANON_SIDE_REV = _canon_side()
+
+
+def _face_side_edge() -> IntArray:
+    """``(6,4,2)`` -- for hex local face ``f`` and its element-local side ``p``, the hex
+    local edge that side *is*, and whether the side runs against that edge's direction.
+    The transpose of :data:`_EDGE_ON_FACE`, which picks one face per edge."""
+    out: IntArray = np.zeros((6, 4, 2), dtype=np.int64)
+    edges = _LOCAL_EDGES[3].tolist()
+    for f in range(6):
+        fc = _LOCAL_FACES[f].tolist()
+        for p in range(4):
+            side = [fc[p], fc[(p + 1) % 4]]
+            out[f, p] = ((edges.index(side), 0) if side in edges
+                         else (edges.index(side[::-1]), 1))
+    return out
+
+
+_FACE_SIDE_EDGE: IntArray = _face_side_edge()
+#: ``(6,8,4)`` inverse of :data:`_CANON_SIDE`: which element-local side lands on each
+#: canonical one.
+_SIDE_FROM_CANON: IntArray = np.argsort(_CANON_SIDE, axis=2)
+
+
+def face_edges_from_hexes(elem_faces: IntArray, face_orient: IntArray,
+                          elem_edges: IntArray, edge_flip: BoolArray, n_faces: int
+                          ) -> tuple[IntArray, BoolArray]:
+    """``(face_edges (F,4), face_flip (F,4))`` -- each shared face's own edge incidence,
+    read through **one owning hex** instead of deduplicated again.
+
+    The hex edges and the shared faces' edges are the same set stored in the same table,
+    so once ``unique_edges(hexes, 3)`` has run there is nothing left to discover: a
+    canonical side maps back through the owner's D4 code to an element-local face side
+    (:data:`_SIDE_FROM_CANON`), and that side *is* a hex local edge
+    (:data:`_FACE_SIDE_EDGE`).  The flip is three XORs -- stored row vs hex edge, hex edge
+    vs face side, face side vs canonical side."""
+    first = first_occurrence(elem_faces.reshape(-1), n_faces)
+    owner_e, owner_f = np.divmod(first, 6)
+    code = face_orient[owner_e, owner_f]
+    fo, co = owner_f[:, None], code[:, None]
+    p = _SIDE_FROM_CANON[fo, co, np.arange(4)[None, :]]            # (F,4)
+    local = _FACE_SIDE_EDGE[fo, p]                                 # (F,4,2)
+    against: BoolArray = local[:, :, 1].astype(bool) ^ _CANON_SIDE_REV[fo, co, p]
+    return (elem_edges[owner_e[:, None], local[:, :, 0]],
+            edge_flip[owner_e[:, None], local[:, :, 0]] ^ against)
+
+
+def hex_edges_from_faces(elem_faces: IntArray, face_orient: IntArray,
+                         face_edges: IntArray, face_flip: BoolArray
+                         ) -> tuple[IntArray, BoolArray]:
+    """``(elem_edges (E,12), edge_flip (E,12))`` -- each hex's incidence on the shared
+    edge table, read *through* the shared faces instead of deduplicated out of its
+    corners.
+
+    The edge-rung sibling of :func:`hex_corners_from_faces`, and the reason a ``HexMesh``
+    does not care what order its shared edges are stored in: the ids come from the table
+    itself (``face_edges`` / ``face_flip`` are the shared-face ``QuadMesh``'s own ``quad``
+    / ``flip``), not from re-deriving a numbering that would then have to agree with it.
+    """
+    f, p = _EDGE_ON_FACE[None, :, 0], _EDGE_ON_FACE[None, :, 1]
+    rev: BoolArray = _EDGE_ON_FACE[None, :, 2].astype(bool)
+    code = face_orient[:, _EDGE_ON_FACE[:, 0]]                       # (E,12)
+    s = _CANON_SIDE[f, code, p]
+    fid = elem_faces[:, _EDGE_ON_FACE[:, 0]]
+    return (face_edges[fid, s],
+            face_flip[fid, s] ^ _CANON_SIDE_REV[f, code, p] ^ rev)
 
 
 def hex_corners_from_faces(face_conn: IntArray, elem_faces: IntArray,
@@ -281,11 +497,6 @@ def unique_edges(conn: IntArray, dim: int) -> tuple[IntArray, IntArray, BoolArra
     lo = np.minimum(a, b)
     hi = np.maximum(a, b)
     lo_f, hi_f = lo.ravel(), hi.ravel()
-    # ``np.unique(axis=0)`` views each row as a void scalar and argsorts that, which is
-    # far slower than sorting an integer.  Two ids pack into one int64 as ``lo*n + hi``
-    # -- a positional numeral system, so ascending key order *is* lexicographic row
-    # order and the result is identical, not merely equivalent.  ``n*n`` is the only
-    # thing that can overflow, so fall back when it would.
     uniq, inv, _ = unique_rows(np.stack([lo_f, hi_f], axis=1))
     elem_edges = inv.reshape(e, ne).astype(np.int64)
     edge_flip: BoolArray = (a > b)

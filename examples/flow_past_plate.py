@@ -23,7 +23,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing, gll_nodes
+from nekmeshpy.core.fields import geometric_spacing, gll_nodes
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -70,7 +70,7 @@ def ellipse(th):
 interior = (None if ORDER == 1 else
             ellipse(theta[:, None]
                     + gll_nodes(ORDER)[1:ORDER][None, :] * (2.0 * np.pi / N_THETA)))
-inner = linemesh.loft(ellipse(theta), element_tags=["plate"] * N_THETA,
+inner = linemesh.loft(ellipse(theta), element_tags="plate",
                       order=ORDER, interior=interior, loop=True)
 
 # square far field discretized into N_THETA line elements (N_THETA/4 per side),

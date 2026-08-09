@@ -19,6 +19,7 @@ from .query import (
     boundary_faces,
     boundary_points,
     classify_points,
+    element_blocks,
     is_conforming,
     is_watertight,
     quality_summary,
@@ -30,6 +31,7 @@ from .query import (
 from .shape import tetra
 
 __all__ = [
+    "element_blocks",
     "HexMesh",
     "adapter",
     "annulus",

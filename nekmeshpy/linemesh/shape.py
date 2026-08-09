@@ -7,9 +7,10 @@ from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
-from .._typing import FloatArray, Point, PointArray, StrArray, Vec3
-from ..model.paths import SpacePath
-from ..model.surfaces import SurfaceCurve, SurfaceMap
+from .._typing import FloatArray, Point, PointArray, Vec3
+from ..core.paths import SpacePath
+from ..core.surfaces import SurfaceCurve, SurfaceMap
+from ..core.tags import ElementTags
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 from .assemble import _eval_curve, loft, loft_fn
 from .linemesh import LineMesh
@@ -24,9 +25,8 @@ def line(start: Point, end: Point, fractions: float | FloatArray, *,
     s: Point = np.asarray(start, dtype=float).ravel()
     e: Point = np.asarray(end, dtype=float).ravel()
     pts = s + frac[:, None] * (e - s)
-    tags = [element_tag] * (pts.shape[0] - 1) if element_tag else None
     # the segment is straight, so ``loft``'s default straight GLL interior is exact
-    return loft(pts, loop=False, element_tags=tags, order=order)
+    return loft(pts, loop=False, element_tags=element_tag or None, order=order)
 
 
 def arc(radius: float, n: int, *,
@@ -34,7 +34,7 @@ def arc(radius: float, n: int, *,
         normal: Vec3 = (0.0, 0.0, 1.0),
         start_theta: float = 0.0,
         end_theta: float = np.pi,
-        element_tags: StrArray | Sequence[str] | None = None,
+        element_tag: str = "",
         order: int = 1) -> LineMesh:
     """An **open** circular arc: ``n`` line elements over ``n+1`` points evenly spaced
     in angle from ``start_theta`` to ``end_theta`` on the circle of ``radius`` about
@@ -50,13 +50,13 @@ def arc(radius: float, n: int, *,
     th: FloatArray = np.linspace(s, e, ni + 1)
     pts: PointArray = _arc_points(radius, c, e1, e2, th)
     if order == 1:
-        return loft(pts, element_tags=element_tags)
+        return loft(pts, element_tags=element_tag or None)
     # element l spans th[l] .. th[l] + dth; its private interior rides the exact arc,
     # overriding ``loft``'s default straight chord blend.
     interior: PointArray = _arc_interior(
         radius, c, e1, e2, th[:-1], (e - s) / ni, order)     # (n, order-1, 3)
-    return loft(pts, interior=interior, element_tags=element_tags,
-                         order=order)
+    return loft(pts, interior=interior, element_tags=element_tag or None,
+                order=order)
 
 
 def _arclength_params(f: Callable[[FloatArray], PointArray], t0: float, t1: float,
@@ -130,7 +130,7 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
 def path_fractions(path: SpacePath, *, target_length: float | None = None,
                    layers: int | None = None,
                    fractions: FloatArray | Sequence[float] | None = None) -> FloatArray:
-    """Resolve a :class:`SpacePath <nekmeshpy.model.paths.SpacePath>` and exactly one of
+    """Resolve a :class:`SpacePath <nekmeshpy.core.paths.SpacePath>` and exactly one of
     ``target_length`` / ``layers`` / ``fractions`` into the sweep stations themselves.
     """
     given = [n for n, x in (("target_length", target_length), ("layers", layers),
@@ -152,19 +152,19 @@ def path_fractions(path: SpacePath, *, target_length: float | None = None,
 
 
 def on_surface(curve: SurfaceCurve, surface: SurfaceMap, *, order: int = 1,
-               element_tags: StrArray | Sequence[str] | None = None) -> LineMesh:
-    """Mesh a :class:`SurfaceCurve <nekmeshpy.model.surfaces.SurfaceCurve>` by
+               element_tag: str = "") -> LineMesh:
+    """Mesh a :class:`SurfaceCurve <nekmeshpy.core.surfaces.SurfaceCurve>` by
     evaluating ``surface`` on it -- one element between consecutive nodes of
     ``curve.fr``, exact on the surface at **every** node."""
     return loft_fn(lambda x: surface(curve.g(x)), curve.fr, order=order,
-                   element_tags=element_tags)
+                   element_tags=element_tag or None)
 
 
 def circle(radius: float, n: int, *,
            center: Point = (0.0, 0.0, 0.0),
            normal: Vec3 = (0.0, 0.0, 1.0),
            start_theta: float = 0.0,
-           element_tags: StrArray | Sequence[str] | None = None,
+           element_tag: str = "",
            order: int = 1) -> LineMesh:
     """A closed loop of ``n`` points evenly spaced on a circle of ``radius`` about
     ``center`` in the plane with the given ``normal`` (default ``+z``)."""
@@ -173,14 +173,14 @@ def circle(radius: float, n: int, *,
     e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
     pts: PointArray = _arc_points(radius, c, e1, e2, th)
     if order == 1:
-        return loft(pts, loop=True, element_tags=element_tags)
+        return loft(pts, loop=True, element_tags=element_tag or None)
     # element l spans angle th[l] .. th[l] + dth; place the interior GLL nodes on
     # the arc (the two endpoint nodes are already the loop's corner points), so the
     # explicit ``interior`` overrides ``loft``'s default straight chord blend.
     interior: PointArray = _arc_interior(
         radius, c, e1, e2, th, 2.0 * np.pi / n, order)             # (n, order-1, 3)
     return loft(pts, loop=True, interior=interior,
-                         element_tags=element_tags, order=order)
+                element_tags=element_tag or None, order=order)
 
 
 def rectangle(width: float, height: float, n: int, *,
@@ -221,7 +221,11 @@ def rectangle(width: float, height: float, n: int, *,
                     "bottom/right/top/left, got %r" % key)
         tags = [t for side in sides for t in [side_tags.get(side, "")] * m]
     # every side is straight, so ``loft``'s default straight GLL interior is exact
-    return loft(pts, loop=True, element_tags=tags, order=order)
+    lm = loft(pts, loop=True, order=order)
+    if tags is None:
+        return lm
+    return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+                    ElementTags.from_dense(tags))
 
 __all__ = [
     "arc",

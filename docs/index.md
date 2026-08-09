@@ -11,7 +11,7 @@ in the library.
 
 ```python
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core.fields import uniform_spacing
 
 boundary = LineMesh.circle(0.5, 24, element_tags=["wall"] * 24)
 section  = QuadMesh.ogrid(boundary, n_side=6, radial=uniform_spacing(4))

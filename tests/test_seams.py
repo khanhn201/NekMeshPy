@@ -26,7 +26,7 @@ RADIAL = np.array([0.0, 0.5, 1.0])
 
 def _disc(radius=1.0, center=(0.0, 0.0, 0.0), n_side=2, order=2, start_theta=0.0):
     ring = linemesh.circle(radius, 4 * n_side, center=center, start_theta=start_theta,
-                           element_tags=["wall"] * (4 * n_side), order=order)
+                           element_tag="wall", order=order)
     return quadmesh.ogrid(ring, n_side, RADIAL, wall_tag="wall")
 
 

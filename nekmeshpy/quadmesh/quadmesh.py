@@ -10,14 +10,14 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..linemesh import LineMesh
-from ..linemesh.linemesh import _repr_tags
-from ..model import conform
-from ..model.interp import quad_edge_indices
-from ..model.tags import (
+from ..core import conform
+from ..core.interp import quad_edge_indices
+from ..core.tags import (
     EdgeTags,
     ElementTags,
 )
+from ..linemesh import LineMesh
+from ..linemesh.linemesh import _repr_tags
 
 #: Tag sentinel meaning "leave this side unnamed": a side carrying it emits no
 #: side-tag row.  Equal to ``""`` so it reads as "unnamed" everywhere.
@@ -44,7 +44,7 @@ _GRID_SIDES: dict[str, tuple[str, int]] = {
 def _edge_interior_slots(order: int) -> IntArray:
     """``(4, order-1)`` lexicographic (``i`` fastest) block slots strictly inside each
     CCW local edge, in **element traversal order** (that edge's start corner -> end
-    corner) -- the frame :func:`~nekmeshpy.model.conform.scatter_edge_nodes` expects."""
+    corner) -- the frame :func:`~nekmeshpy.core.conform.scatter_edge_nodes` expects."""
     return np.stack([quad_edge_indices(s, order)[1:-1] for s in (1, 2, 3, 4)])
 
 
@@ -80,6 +80,9 @@ def _coons_at(bottom: PointArray, top: PointArray, left: PointArray,
 class QuadMesh:
     """A quadrilateral surface / cross-section mesh in **B-rep** form."""
 
+    # local quad edges (CCW); row e is edge e+1
+    EDGE_POINTS = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)
+
     def __init__(
         self,
         lines: LineMesh,
@@ -100,13 +103,19 @@ class QuadMesh:
             raise TypeError("QuadMesh: lines must be a LineMesh, got %s"
                             % type(lines).__name__)
         self.lines = lines
+
         self.quad: IntArray = np.asarray(quad, dtype=np.int64).reshape(-1, 4)
         self.flip: BoolArray = np.asarray(flip, dtype=bool).reshape(-1, 4)
         if self.flip.shape[0] != self.quad.shape[0]:
             raise ValueError("QuadMesh: flip length (%d) must match quad (%d)"
                              % (self.flip.shape[0], self.quad.shape[0]))
-        Q = self.quad.shape[0]
-        k = (self.order - 1) ** 2
+        F = lines.n_lines                        # the rung below: shared edges
+        if self.quad.size and (self.quad.min() < 0 or self.quad.max() >= F):
+            raise ValueError(
+                "QuadMesh: quad must index the %d shared edges of ``lines``; got ids "
+                "in [%d, %d]" % (F, int(self.quad.min()), int(self.quad.max())))
+        E = self.quad.shape[0]
+
         if interior is None:
             if self.order > 1:
                 raise ValueError(
@@ -116,30 +125,22 @@ class QuadMesh:
                     "input boundary, e.g. "
                     "QuadMesh.ogrid(LineMesh.circle(r, n, order=%d), n_side, radial))"
                     % (self.order, self.order))
-            self.interior: PointArray = np.zeros((Q, 0, 3), dtype=float)
-        else:
-            ia: PointArray = np.asarray(interior, dtype=float)
-            if ia.shape != (Q, k, 3):
-                raise ValueError(
-                    "QuadMesh: interior must be (Q,(order-1)**2,3) = (%d,%d,3), got %s"
-                    % (Q, k, ia.shape))
-            self.interior = ia
-        # dense per-quad region/material tag ("" = untagged)
-        #: which quads carry a region tag (sparse -- untagged stores nothing)
-        self.element_tags: ElementTags = (
-            ElementTags.empty() if element_tags is None else element_tags)
-        # tagged edges: [quad id, side 1-4] coupled with their names
-        self.edge_tags: EdgeTags = (
-            EdgeTags.empty() if edge_tags is None else edge_tags)
-        self.element_tags.check_within(Q, "quads")
-        self.edge_tags.check_within(Q, "quads")
+            interior = np.zeros((E, 0, 3), dtype=float)
+        self.interior: PointArray = np.asarray(interior, dtype=float)
+        k = (self.order - 1) ** 2
+        if self.interior.shape != (E, k, 3):
+            raise ValueError(
+                "QuadMesh: interior must be (Q,(order-1)**2,3) = (%d,%d,3), got %s"
+                % (E, k, self.interior.shape))
+
+        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
+        self.edge_tags = EdgeTags.empty() if edge_tags is None else edge_tags
+        self.element_tags.check_within(E)
+        self.edge_tags.check_within(E)
 
         # corner connectivity is derived from quad/flip and immutable post-construction
         # (point moves don't change it), so memoize it once.
         self._corners: IntArray = self._derive_corners()
-
-    # local quad edges (CCW); row e is edge e+1
-    EDGE_POINTS = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)
 
     @classmethod
     def from_corners(
@@ -230,6 +231,7 @@ class QuadMesh:
         a shared edge resolves to the same nodes from either incident quad."""
         return self.lines.interior
 
+    # -- sizes -----------------------------------------------------------
     @property
     def n_points(self) -> int:
         """Number of (shared) points."""
@@ -254,6 +256,4 @@ class QuadMesh:
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-quad element tags present on the section."""
         return self.element_tags.group_tags
-
-
 

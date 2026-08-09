@@ -22,8 +22,8 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core import paths
+from nekmeshpy.core.fields import uniform_spacing
 
 MOVES = [("line", 2.0, 0.0), ("arc", 1.5, 90.0), ("line", 3.0, 0.0),
          ("arc", 1.5, -90.0), ("line", 1.0, 0.0)]
@@ -145,7 +145,7 @@ def test_path_fractions_rejects_a_zero_layer_count(walk):
 # -- sweep_path, at both rungs ------------------------------------------------
 def _profile(order):
     return linemesh.circle(0.3, 8, center=(0.5, -2.0, 7.0), normal=(0.0, 0.0, 1.0),
-                           element_tags=["wall"] * 8, order=order)
+                           element_tag="wall", order=order)
 
 
 def _section(order):

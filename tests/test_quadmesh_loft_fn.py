@@ -17,8 +17,8 @@ what keeps the goldens frozen.
 import numpy as np
 import pytest
 
-from nekmeshpy import linemesh, quadmesh
-from nekmeshpy.model import conform
+from nekmeshpy import ElementTags, linemesh, quadmesh
+from nekmeshpy.core import conform
 
 R, RT, NU, NV = 2.0, 0.6, 8, 6
 
@@ -109,10 +109,11 @@ def test_loop_rejects_a_family_that_does_not_close():
                          loop=True, order=2)
 
 
-def test_loop_rejects_end_caps():
-    with pytest.raises(ValueError):
-        quadmesh.loft_fn(_torus_f(1), _ring_fractions(), loop=True,
-                         first_tag="in")
+def test_loop_places_end_caps_on_the_seam():
+    """A closed sweep has no free end, but its seam is a real side -- a cap tag names
+    that side of it rather than being refused."""
+    qm = quadmesh.loft_fn(_torus_f(1), _ring_fractions(), loop=True, first_tag="in")
+    assert qm.edge_tags.count("in") > 0
 
 
 def test_loop_rejects_fewer_than_three_fractions():
@@ -169,23 +170,27 @@ def test_grading_is_honored_per_layer():
 
 # -- tags --------------------------------------------------------------------
 
-def test_per_layer_element_tags_override_the_profile_line_tags():
-    base = linemesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0),
-                           element_tags=["wall"] * NU)
+def test_element_tags_name_the_swept_column_of_each_profile_line():
+    """``element_tags`` is per *profile line*: line l's tag lands on every quad swept
+    from it, at every layer -- and a single string names the whole section."""
+    base = linemesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0))
     f = lambda t: linemesh.rotate(base, t, axis=(0, 0, 1))                   # noqa: E731
-    layers = ["", "hot", ""]
-    sec = quadmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=layers)
+    per_line = ElementTags.from_dense(["hot"] + [""] * (NU - 1))
+    sec = quadmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=per_line)
     tags = sec.element_tags.dense(sec.n_quads).reshape(3, NU)      # quad (layer i, line l) = i*NU + l
-    assert list(np.unique(tags[0])) == ["wall"]
-    assert list(np.unique(tags[1])) == ["hot"]  # non-empty layer tag wins
-    assert list(np.unique(tags[2])) == ["wall"]
+    assert list(np.unique(tags[:, 0])) == ["hot"]
+    assert list(np.unique(tags[:, 1:])) == [""]
+    assert quadmesh.loft_fn(f, np.linspace(0.0, 1.0, 4),
+                            element_tags="fluid").element_group_tags == ["fluid"]
 
 
-def test_loft_rejects_a_mis_sized_element_tags():
+def test_loft_rejects_element_tags_naming_a_line_the_profile_lacks():
     base = _tube_ring(1)
     slices = [linemesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
-    with pytest.raises(ValueError, match="per layer"):
-        quadmesh.loft(slices, element_tags=["a", "b", "c"])   # 3 tags, 2 layers
+    with pytest.raises(ValueError, match="only %d elements" % base.n_lines):
+        quadmesh.loft(slices, element_tags=ElementTags([base.n_lines], ["off"]))
+    with pytest.raises(TypeError, match="element_tags must be"):
+        quadmesh.loft(slices, element_tags=["a", "b"])
 
 
 # -- validation of what f returns --------------------------------------------
@@ -231,7 +236,7 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft():
     """Handing in exactly the profiles the lerp would have invented must give back
     the plain loft -- so ``sweep_nodes`` changes geometry only when the geometry
     genuinely is not straight."""
-    from nekmeshpy.model.fields import gll_nodes
+    from nekmeshpy.core.fields import gll_nodes
     order = 3
     base = _tube_ring(order)
     zs = [0.0, 1.0, 2.0]

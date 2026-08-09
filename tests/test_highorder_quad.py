@@ -13,9 +13,9 @@ import pytest
 from conftest import GOLDEN, curved, run_example
 
 from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh
+from nekmeshpy.core.fields import uniform_spacing
+from nekmeshpy.core.interp import corner_indices, quad_edge_indices
 from nekmeshpy.io import export
-from nekmeshpy.model.fields import uniform_spacing
-from nekmeshpy.model.interp import corner_indices, quad_edge_indices
 
 
 # -- geometric truth: sphere nodes lie on the true sphere --------------

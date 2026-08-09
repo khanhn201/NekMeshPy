@@ -1,4 +1,4 @@
-"""Moving frames along a sampled curve (``nekmeshpy.model.frames``).
+"""Moving frames along a sampled curve (``nekmeshpy.core.frames``).
 
 The load-bearing check here is ``test_rmf_matches_fixed_up_on_planar_arc``: a planar
 curve has zero torsion, so the rotation-minimizing frame *must* coincide with the
@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from nekmeshpy.model import affine, frames
+from nekmeshpy.core import affine, frames
 
 # ---------------------------------------------------------------- sample curves
 

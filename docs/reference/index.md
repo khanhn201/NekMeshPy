@@ -11,6 +11,6 @@ linemesh
 trimesh
 quadmesh
 hexmesh
-model
+core
 io
 ```

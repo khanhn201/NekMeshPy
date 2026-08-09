@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, Vec3
-from ..model.fields import gll_nodes
+from ..core.fields import gll_nodes
 
 
 def _in_plane_axes(normal: Vec3) -> tuple[Vec3, Vec3]:

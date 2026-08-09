@@ -28,7 +28,7 @@ from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
 
 # 1. Boundary: a closed circular loop, tagged "wall" at the lowest level.
 n = 4 * 6                                   # 4 * n_side points around the ring
-boundary = linemesh.circle(radius=0.5, n=n, element_tags=["wall"] * n)
+boundary = linemesh.circle(radius=0.5, n=n, element_tag="wall")
 
 # 2. Section: fill the loop with an O-grid, 4 radial layers.
 section = quadmesh.ogrid(boundary, n_side=6, radial=4,
@@ -40,7 +40,7 @@ mesh = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
 ```
 
 `radial=4` / `layers=40` is the plain-`int` spelling: *that many uniform layers*,
-i.e. exactly `uniform_spacing(n)` from {mod}`nekmeshpy.model.fields`. Pass an
+i.e. exactly `uniform_spacing(n)` from {mod}`nekmeshpy.core.fields`. Pass an
 explicit position array there instead (`geometric_spacing(4, 1.2)`) when you want
 the layers graded — see
 [the layer convention](concepts.md#the-explicit-initial-layer-convention).
@@ -64,8 +64,8 @@ print(mesh.face_group_tags)          # ['inlet', 'outlet', 'wall']
 Every container has a `__repr__`, so `print(mesh)` gives the one-line inventory —
 counts, `order`, and the two tag vocabularies — without reaching for `report()`.
 The report-returning reads are **NamedTuples**, reached by attribute:
-{class}`~nekmeshpy.model.quality.QualitySummary` from `quality_summary()`,
-{class}`~nekmeshpy.model.topology.TopologyReport` from `topology_report()`, and
+{class}`~nekmeshpy.core.quality.QualitySummary` from `quality_summary()`,
+{class}`~nekmeshpy.core.topology.TopologyReport` from `topology_report()`, and
 `WeldResult` from `weld()`.
 
 ## Export it

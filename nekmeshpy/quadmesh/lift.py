@@ -12,20 +12,18 @@ from .._typing import (
     Point,
     PointArray,
     SmoothingMethod,
-    StrArray,
     Vec3,
 )
+from ..core import frames, stations
+from ..core.fields import validate_layers
+from ..core.paths import SpacePath
+from ..core.tags import ElementTags, PointTags, TagBuilder
 from ..linemesh import LineMesh
-from ..linemesh.assemble import _sweep_lattice, _sweep_path
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
 from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
 from ..linemesh.shape import path_fractions
-from ..model import frames
-from ..model.fields import reject_loop_caps, validate_layers
-from ..model.paths import SpacePath
-from ..model.tags import PointTags, TagBuilder
 from ._helpers import _apply_smoothing, _check_boundary
 from .assemble import _loft_evaluated, loft
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
@@ -38,8 +36,9 @@ def extrude(
     *,
     axis: Vec3 = _Z_AXIS,
     origin: Point = _ORIGIN,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """Sweep a ``LineMesh`` a distance ``length`` along ``axis`` into a quad section
     (the straight special case of :func:`loft <nekmeshpy.quadmesh.assemble.loft>`)."""
@@ -53,7 +52,8 @@ def extrude(
     # connectivity does -- there is no flag to carry.
     placed = translate(line, np.asarray(origin, dtype=float))
     slices = [translate(placed, d * axis_u) for d in offsets]
-    return loft(slices, first_tag=first_tag, last_tag=last_tag)
+    return loft(slices, element_tags=element_tags,
+                first_tag=first_tag, last_tag=last_tag)
 
 def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
             smoothing_method: SmoothingMethod | None = None,
@@ -80,12 +80,10 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
     # outer_tag overrides for the whole ring.  ``None`` is "not asked for" and
     # inherits; ``NO_TAG`` is an explicit override *to* untagged, so it suppresses
     # the loop's own tags rather than falling through to them.
-    inner_caps: str | StrArray = (
-        inner_tag if inner_tag is not None
-        else (inner.element_tags.dense(inner.n_lines) if inner.element_tags else ""))
-    outer_caps: str | StrArray = (
-        outer_tag if outer_tag is not None
-        else (outer.element_tags.dense(outer.n_lines) if outer.element_tags else ""))
+    inner_caps: str | ElementTags | None = (
+        inner_tag if inner_tag is not None else inner.element_tags or None)
+    outer_caps: str | ElementTags | None = (
+        outer_tag if outer_tag is not None else outer.element_tags or None)
 
     # Blend the loops (carrying their curved blocks) and loft directly -- ring k =
     # blend_ho(inner, outer, t_k), so a high-order annulus is curved throughout, not
@@ -114,8 +112,6 @@ def from_grid(
         _GRID_SIDES[side]        # reject an unknown side name (KeyError)
 
     # -- the column profile, shared by every level -----------------------
-    # np.full width-infers from the fill value (dtype=np.str_ would clip to <U1)
-    line_tags: StrArray = np.full(ni, element_tag)
     # tagged profile end points -> the two swept walls (loft: vertex 1 -> quad side
     # 4, vertex 2 -> side 2), which is exactly x_min / x_max.
     pbb = TagBuilder(PointTags)
@@ -130,12 +126,13 @@ def from_grid(
     # interior as the straight GLL blend of its two endpoints.  ``loft`` here builds
     # the sweep-direction rungs the same way and the quad interiors as the Coons
     # patch of the two, so a flat grid cell stays exact.
-    slices = [line_loft(P[:, j, :], element_tags=line_tags,
-                        point_tags=pbnd_t, order=order)
-              for j in range(nj1)]
+    def _profile(j: int) -> LineMesh:
+        lm = line_loft(P[:, j, :], order=order)
+        return LineMesh(lm.points, lm.lines, lm.interior, pbnd_t)
+    slices = [_profile(j) for j in range(nj1)]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
-    return loft(slices, first_tag=tags.get("y_min"),
-                last_tag=tags.get("y_max"))
+    return loft(slices, element_tags=element_tag or None,
+                first_tag=tags.get("y_min"), last_tag=tags.get("y_max"))
 
 
 def sweep(
@@ -151,17 +148,15 @@ def sweep(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """A strip swept from one ``LineMesh`` ``profile`` along the curve ``path``."""
     order = profile.order
-    _, t = _sweep_lattice(fractions, order, loop=loop, name="sweep")
-    if loop:
-        reject_loop_caps("QuadMesh.sweep", first_tag, last_tag)
+    _, t = stations.sweep_lattice(fractions, order, loop=loop, name="sweep")
     tv: FloatArray = t[:-1] if loop else t
-    P, T = _sweep_path(path, tangent, tv)
+    P, T = stations.sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
         profile.points, P, orientation=orientation, up=up, twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,
@@ -187,12 +182,12 @@ def sweep_path(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.model.paths.SpacePath>`, which carries its own analytic tangent and
+    <nekmeshpy.core.paths.SpacePath>`, which carries its own analytic tangent and
     junction table -- so this asks for an element length along the sweep instead of a
     station array."""
     fr = path_fractions(path, target_length=target_length, layers=layers,

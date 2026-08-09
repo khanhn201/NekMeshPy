@@ -69,8 +69,8 @@ import sys
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths, surfaces
-from nekmeshpy.model.paths import turtle_path
+from nekmeshpy.core import paths, surfaces
+from nekmeshpy.core.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -183,7 +183,7 @@ def cyl_params(p):
     return np.stack([np.arctan2(p[..., 1], p[..., 0]), p[..., 2]], axis=-1)
 
 
-#: A wall curve is a :class:`~nekmeshpy.model.surfaces.SurfaceCurve`: its ``g`` maps a
+#: A wall curve is a :class:`~nekmeshpy.core.surfaces.SurfaceCurve`: its ``g`` maps a
 #: ``(K,)`` array of curve parameters to the ``(K, 2)`` ``(phi, z)`` it passes through,
 #: and its ``fr`` holds the ``2*N_QUAD+1`` parameter values of its nodes.  Carrying the
 #: curve as a parametrization rather than as points is what keeps every derived curve

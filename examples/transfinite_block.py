@@ -2,7 +2,7 @@
 
 Trilinearly interpolates eight corners into an ``nx x ny x nz`` grid and hands it
 to :meth:`HexMesh.from_grid`. Per-axis grading is a geometric ratio, or drive
-spacing from a :mod:`nekmeshpy.model.fields` size field (``SIZE_FIELD``).
+spacing from a :mod:`nekmeshpy.core.fields` size field (``SIZE_FIELD``).
 
     PYTHONPATH=. python examples/transfinite_block.py
 """
@@ -12,7 +12,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import export, hexmesh
-from nekmeshpy.model import fields
+from nekmeshpy.core import fields
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

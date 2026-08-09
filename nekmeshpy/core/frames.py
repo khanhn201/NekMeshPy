@@ -269,7 +269,7 @@ def frame_transform(R_from: FloatArray, origin_from: Point,
                     R_to: FloatArray, origin_to: Point) -> tuple[FloatArray, Vec3]:
     """The single rigid ``(matrix, offset)`` carrying the frame ``(R_from,
     origin_from)`` onto ``(R_to, origin_to)``, in the convention of
-    :func:`nekmeshpy.model.affine.apply` -- ``p @ matrix.T + offset``."""
+    :func:`nekmeshpy.core.affine.apply` -- ``p @ matrix.T + offset``."""
     A: FloatArray = np.asarray(R_from, dtype=float)
     B: FloatArray = np.asarray(R_to, dtype=float)
     for name, M in (("R_from", A), ("R_to", B)):

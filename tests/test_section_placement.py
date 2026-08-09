@@ -23,15 +23,15 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core import paths
+from nekmeshpy.core.fields import uniform_spacing
 
 CENTER = (0.4, -1.0, 2.5)
 
 
 def _section(order=2, normal=(0.0, 0.0, 1.0)):
     ring = linemesh.circle(0.5, 8, center=CENTER, normal=normal,
-                           element_tags=["wall"] * 8, order=order)
+                           element_tag="wall", order=order)
     return quadmesh.ogrid(ring, 2, uniform_spacing(2), wall_tag="wall")
 
 

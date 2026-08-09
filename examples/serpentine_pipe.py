@@ -44,9 +44,9 @@ import time
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import paths
-from nekmeshpy.model.fields import uniform_spacing
-from nekmeshpy.model.paths import turtle_path
+from nekmeshpy.core import paths
+from nekmeshpy.core.fields import uniform_spacing
+from nekmeshpy.core.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -125,7 +125,7 @@ START_TANGENT = tuple(PATH.tangent(np.array([0.0]))[0])
 # points so the wall is meshed exactly.
 section = quadmesh.ogrid(
     linemesh.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
-                    element_tags=["wall"] * (4 * N_SIDE), order=ORDER),
+                    element_tag="wall", order=ORDER),
     N_SIDE, uniform_spacing(N_RADIAL),
     center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)
 

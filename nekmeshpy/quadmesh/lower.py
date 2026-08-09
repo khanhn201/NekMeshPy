@@ -5,9 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import IntArray, PointArray
+from ..core import conform
+from ..core.tags import ElementTags, PointTags
 from ..linemesh import LineMesh
-from ..model import conform
-from ..model.tags import ElementTags, PointTags
 from .quadmesh import QuadMesh
 from .query import boundary_edges
 

@@ -22,7 +22,7 @@ from nekmeshpy import (
     linemesh,
     quadmesh,
 )
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy.core.fields import uniform_spacing
 
 # -- construction ------------------------------------------------------------
 
@@ -67,13 +67,27 @@ def test_lines_is_a_required_constructor_argument():
     assert np.array_equal(explicit.lines, linemesh.loft(pts).lines)
 
 
-def test_element_tags_length_must_match_lines():
-    # open 3-point chain has 2 line elements
-    with pytest.raises(ValueError, match="element_tags length .* must match lines"):
-        linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b", "c"])
-    lm = linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b"])
-    assert lm.element_tags.dense(lm.n_lines).tolist() == ["a", "b"]
-    assert lm.element_group_tags == ["a", "b"]
+def test_lines_must_index_points_that_exist():
+    """Connectivity is checked against the point array it indexes, so a stray id is a
+    ``ValueError`` here rather than an ``IndexError`` deep in whatever dereferences
+    ``points[lines]`` later."""
+    pts = [(0, 0, 0), (1, 0, 0), (2, 0, 0)]
+    with pytest.raises(ValueError, match="lines must index the 3 points"):
+        LineMesh(pts, [[0, 1], [1, 7]])
+    with pytest.raises(ValueError, match="lines must index the 3 points"):
+        LineMesh(pts, [[-1, 0]])
+    # a mesh with no lines has nothing to index, and must still build
+    assert LineMesh(pts, np.zeros((0, 2), dtype=np.int64)).n_lines == 0
+
+
+def test_element_tags_is_one_name_for_every_lofted_line():
+    """A slice at this rung is a single point, so there is nothing to vary a tag
+    over: one string names every line, and a per-line sequence is a TypeError."""
+    lm = linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags="a")
+    assert lm.element_tags.dense(lm.n_lines).tolist() == ["a", "a"]
+    assert lm.element_group_tags == ["a"]
+    with pytest.raises(TypeError, match="single tag string"):
+        linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b"])
 
 
 def test_boundary_table_columns_must_match_in_length():
@@ -94,9 +108,9 @@ def test_boundary_points_are_open_ends():
 
 def test_tagged_boundary_points_via_boundaries():
     # side 1 -> local vertex 0, side 2 -> local vertex 1 of the referenced line
-    lm = linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
-                       point_tags=PointTags.from_pairs(
-                           [[0, 1], [1, 2]], ["start", "end"]))
+    lm = LineMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [[0, 1], [1, 2]],
+                  point_tags=PointTags.from_pairs([[0, 1], [1, 2]],
+                                                  ["start", "end"]))
     assert lm.n_point_tags == 2
     assert lm.point_group_tags == ["end", "start"]
 
@@ -184,7 +198,7 @@ def test_arc_high_order_nodes_lie_on_the_exact_circle(order):
 
 
 def test_arc_element_tags_name_every_segment():
-    lm = linemesh.arc(1.0, 4, element_tags=["wall"] * 4)
+    lm = linemesh.arc(1.0, 4, element_tag="wall")
     assert lm.element_tags.dense(lm.n_lines).tolist() == ["wall"] * 4
     assert lm.element_group_tags == ["wall"]
 
@@ -276,9 +290,10 @@ def test_merge_two_arcs_close_into_a_loop():
 def test_merge_open_chains_stay_open_and_carry_tags():
     # two collinear open chains meeting at (1,0,0); the shared point welds but the
     # far ends stay degree-1, so the result is still open.
-    a = linemesh.loft([(0, 0, 0), (1, 0, 0)], element_tags=["a"],
-                      point_tags=PointTags.from_pairs([[0, 1]], ["start"]))
-    b = linemesh.loft([(1, 0, 0), (2, 0, 0)], element_tags=["b"])
+    a = LineMesh([(0, 0, 0), (1, 0, 0)], [[0, 1]],
+                 point_tags=PointTags.from_pairs([[0, 1]], ["start"]),
+                 element_tags=ElementTags.uniform(1, "a"))
+    b = linemesh.loft([(1, 0, 0), (2, 0, 0)], element_tags="b")
     m = linemesh.merge([a, b])
     assert linemesh.boundary_points(m).tolist() == [0, 2]       # the two far ends survive
     assert m.n_points == 3                              # the shared point welded
@@ -306,12 +321,15 @@ def _quad_edge_mid(qm, row):
 def test_extrude_line_to_quad_carries_element_and_edge_tags():
     # an open line along +x, tagged per element, with tagged end points; sweep
     # along +y into a quad strip and check both tag chains land correctly.
-    line = linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
-                         element_tags=["seg0", "seg1"],
-                         point_tags=PointTags.from_pairs(
-                             [[0, 1], [1, 2]], ["start", "end"]))
+    line = LineMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [[0, 1], [1, 2]],
+                    point_tags=PointTags.from_pairs([[0, 1], [1, 2]],
+                                                    ["start", "end"]),
+                    element_tags=ElementTags.from_dense(["seg0", "seg1"]))
+    # the swept quads are new elements, so the profile's tags reach them only by
+    # being asked for -- one ElementTags over the profile's lines
     qm = quadmesh.extrude(line, axis=(0.0, 1.0, 0.0), length=1.0,
                           layers=uniform_spacing(1),
+                          element_tags=line.element_tags,
                           first_tag="near", last_tag="far")
     # element tag rides onto the swept quads (one quad per line, nz=1)
     assert qm.n_quads == 2
@@ -338,7 +356,8 @@ def test_hex_extrude_carries_quad_element_tags():
         [[0, 1, 2, 3], [1, 4, 5, 2]],
         element_tags=ElementTags.from_dense(["A", "B"]))
     block = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=1.0,
-                            layers=uniform_spacing(2))
+                            layers=uniform_spacing(2),
+                            element_tags=section.element_tags)
     assert block.n_hexes == 4
     assert Counter(block.element_tags.dense(block.n_hexes).tolist()) == {"A": 2, "B": 2}
     assert block.element_group_tags == ["A", "B"]
@@ -382,7 +401,7 @@ def test_sweep_fractions_with_no_breaks_is_a_plain_subdivision():
 # -- repr ---------------------------------------------------------------------
 
 def test_repr_reports_counts_order_and_tag_groups():
-    lm = linemesh.circle(1.0, 8, element_tags=["wall"] * 8)
+    lm = linemesh.circle(1.0, 8, element_tag="wall")
     assert repr(lm) == ("<LineMesh 8 points, 8 lines, order 1, "
                         "element_tags={wall}, point_tags={}>")
 

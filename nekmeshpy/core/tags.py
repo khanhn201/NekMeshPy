@@ -13,7 +13,7 @@ from .._typing import BoolArray, IntArray, StrArray
 T = TypeVar("T", bound="SideTags")
 
 __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
-           "ElementTags"]
+           "ElementTags", "sweep_element_tags", "sweep_cap_tags"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -43,6 +43,11 @@ class SideTags:
     #: sight.  ``0`` on the base means "rung unknown, upper bound unchecked".
     SIDES: ClassVar[int] = 0
 
+    #: What the rung calls the thing an element id names -- lines / quads / hexes going
+    #: up the ladder.  Fixed by the subclass for the same reason :attr:`SIDES` is, so
+    #: the "only 3 quads" error needs no noun passed in from the mesh.
+    ELEMENT: ClassVar[str] = "elements"
+
     elements: IntArray
     sides: IntArray
     tags: StrArray
@@ -69,14 +74,14 @@ class SideTags:
         object.__setattr__(self, "sides", _frozen(s))
         object.__setattr__(self, "tags", _frozen(t))
 
-    def check_within(self, n_elements: int, what: str) -> None:
+    def check_within(self, n_elements: int) -> None:
         """Raise if any row names an element the mesh does not have."""
         if not len(self):
             return
         hi = int(self.elements.max())
         if hi >= n_elements:
             raise ValueError("%s names element %d but there are only %d %s"
-                             % (type(self).__name__, hi, n_elements, what))
+                             % (type(self).__name__, hi, n_elements, self.ELEMENT))
 
     # -- construction ----------------------------------------------------
     @classmethod
@@ -169,6 +174,7 @@ class PointTags(SideTags):
     ``side - 1``. See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 2
+    ELEMENT: ClassVar[str] = "lines"
 
 
 class EdgeTags(SideTags):
@@ -176,6 +182,7 @@ class EdgeTags(SideTags):
     ``EDGE_POINTS[side - 1]``.  See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 4
+    ELEMENT: ClassVar[str] = "quads"
 
 
 class FaceTags(SideTags):
@@ -183,6 +190,7 @@ class FaceTags(SideTags):
     ``FACE_POINTS[side - 1]``. See :class:`SideTags` for the shared row semantics."""
 
     SIDES: ClassVar[int] = 6
+    ELEMENT: ClassVar[str] = "hexes"
 
 
 class TagBuilder(Generic[T]):
@@ -190,39 +198,66 @@ class TagBuilder(Generic[T]):
 
     def __init__(self, table_type: type[T]) -> None:
         self._type: type[T] = table_type
-        self._elements: list[int] = []
-        self._sides: list[int] = []
-        self._tags: list[str] = []
+        self._elements: list[IntArray] = []
+        self._sides: list[IntArray] = []
+        self._tags: list[StrArray] = []
+        self._n = 0
 
-    def add(self, element: int, side: int, tag: str) -> None:
-        """Append one row unconditionally."""
-        self._elements.append(int(element))
-        self._sides.append(int(side))
-        self._tags.append(str(tag))
+    @staticmethod
+    def _rows(element: int | IntArray, side: int | IntArray,
+              tag: str | StrArray) -> tuple[IntArray, IntArray, StrArray]:
+        """``(elements, sides, tags)`` as three equal-length 1-D arrays, broadcast
+        against each other."""
+        e, s, t = np.broadcast_arrays(
+            np.asarray(element, dtype=np.int64), np.asarray(side, dtype=np.int64),
+            np.asarray(tag, dtype=np.str_))
+        return e.reshape(-1), s.reshape(-1), np.asarray(t, dtype=np.str_).reshape(-1)
 
-    def add_if_tagged(self, element: int, side: int, tag: str) -> None:
-        """Append one row only if ``tag`` is non-empty."""
-        if tag:
-            self.add(element, side, tag)
+    def _append(self, e: IntArray, s: IntArray, t: StrArray) -> None:
+        if e.size:
+            self._elements.append(e)
+            self._sides.append(s)
+            self._tags.append(t)
+            self._n += e.shape[0]
+
+    def add(self, element: int | IntArray, side: int | IntArray,
+            tag: str | StrArray) -> None:
+        """Append rows unconditionally.  Each of ``element`` / ``side`` / ``tag`` is a
+        scalar or an array, and the three broadcast against each other -- so one call
+        names one row, or one side of a whole column of elements, or a set of rows
+        outright, without a Python loop over elements."""
+        self._append(*self._rows(element, side, tag))
+
+    def add_if_tagged(self, element: int | IntArray, side: int | IntArray,
+                      tag: str | StrArray) -> None:
+        """:meth:`add`, minus the rows whose tag is empty -- so a per-element tag array
+        can be handed over whole, untagged entries and all, and a scalar ``NO_TAG``
+        adds nothing."""
+        e, s, t = self._rows(element, side, tag)
+        keep: BoolArray = t != ""
+        if not keep.all():
+            e, s, t = e[keep], s[keep], t[keep]
+        self._append(e, s, t)
 
     def extend(self, table: T) -> None:
         """Append every row of ``table``, in its order."""
-        for e, s, t in table:
-            self.add(e, s, t)
+        self._append(np.asarray(table.elements, dtype=np.int64).reshape(-1),
+                     np.asarray(table.sides, dtype=np.int64).reshape(-1),
+                     _str_array(table.tags))
 
     def __len__(self) -> int:
-        return len(self._elements)
+        return self._n
 
     def __bool__(self) -> bool:
-        return bool(self._elements)
+        return bool(self._n)
 
     def build(self) -> T:
         """The rows as stored, in insertion order."""
         if not self._elements:
             return self._type.empty()
-        return self._type(np.asarray(self._elements, dtype=np.int64),
-                          np.asarray(self._sides, dtype=np.int64),
-                          _str_array(self._tags))
+        return self._type(np.concatenate(self._elements),
+                          np.concatenate(self._sides),
+                          np.concatenate(self._tags).astype(np.str_))
 
     def build_ordered(self) -> T:
         """:meth:`build` then :meth:`SideTags.ordered`."""
@@ -263,13 +298,9 @@ class ElementTags:
         return cls(np.zeros(0, np.int64), _empty_str())
 
     @classmethod
-    def from_dense(cls, values: Sequence[str] | StrArray, n: int | None = None,
-                   what: str = "elements") -> ElementTags:
+    def from_dense(cls, values: Sequence[str] | StrArray) -> ElementTags:
         """From a dense per-element array where ``""`` means untagged."""
         v = _str_array(values)
-        if n is not None and v.shape[0] != n:
-            raise ValueError("element_tags length (%d) must match %s (%d)"
-                             % (v.shape[0], what, n))
         ids: IntArray = np.flatnonzero(v != "").astype(np.int64)
         return cls(ids, v[ids])
 
@@ -378,9 +409,47 @@ class ElementTags:
         m = np.asarray(new_id_of, dtype=np.int64).reshape(-1)
         return ElementTags(m[self.ids], self.tags)
 
-    def check_within(self, n_elements: int, what: str) -> None:
+    def check_within(self, n_elements: int) -> None:
         """Raise if any tagged id names an element the mesh does not have."""
         if len(self) and int(self.ids[-1]) >= n_elements:
-            raise ValueError("element_tags names element %d but there are only %d %s"
-                             % (int(self.ids[-1]), n_elements, what))
+            raise ValueError("element_tags names element %d but there are only %d "
+                             "elements" % (int(self.ids[-1]), n_elements))
 
+
+
+def sweep_element_tags(spec: str | ElementTags | None, n_layers: int,
+                       n_slice: int, who: str) -> ElementTags:
+    """The swept elements' region tags from a ``loft``'s ``element_tags`` argument.
+
+    ``None`` tags nothing, a ``str`` tags every swept element, and an
+    :class:`ElementTags` over one slice's ``n_slice`` elements tags each element by
+    the slice element it was extruded from (element ``i*n_slice + k``)."""
+    if spec is None:
+        return ElementTags.empty()
+    if isinstance(spec, str):
+        return ElementTags.uniform(int(n_layers) * int(n_slice), spec)
+    if isinstance(spec, ElementTags):
+        spec.check_within(int(n_slice))
+        return spec.repeat_blocks(int(n_layers), int(n_slice))
+    raise TypeError(
+        "%s: element_tags must be a tag string, an ElementTags over the %d elements "
+        "of one slice, or None; got %s"
+        % (who, n_slice, type(spec).__name__))
+
+
+def sweep_cap_tags(spec: str | ElementTags | None, default: ElementTags,
+                   n_slice: int, who: str) -> StrArray:
+    """One cap's dense ``(n_slice,)`` tag row from a ``loft``'s ``first_tag`` /
+    ``last_tag`` argument, falling back to ``default`` (the bounding slice's own
+    element tags -- a cap side *is* that slice element) when the argument is ``None``.
+    """
+    if spec is None:
+        return default.dense(int(n_slice))
+    if isinstance(spec, str):
+        return np.full(int(n_slice), spec)
+    if isinstance(spec, ElementTags):
+        spec.check_within(int(n_slice))
+        return spec.dense(int(n_slice))
+    raise TypeError(
+        "%s: a cap tag must be a tag string, an ElementTags over the %d elements of "
+        "one slice, or None; got %s" % (who, n_slice, type(spec).__name__))

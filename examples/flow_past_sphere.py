@@ -20,7 +20,7 @@ Produces ``flow_past_sphere.re2`` and ``flow_past_sphere.vtu``.
 import logging
 
 from nekmeshpy import export, hexmesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing
+from nekmeshpy.core.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

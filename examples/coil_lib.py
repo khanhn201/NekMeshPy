@@ -11,7 +11,7 @@ never reshaped or rescaled.
 
 The walk is in the coil's own 2-D ``(u, v)``: ``u`` runs along a pass, ``v`` stacks pass
 to pass.  A caller lifts it onto its own plane with
-:func:`paths.embed <nekmeshpy.model.paths.embed>` -- ``serpentine_pipe.py`` maps
+:func:`paths.embed <nekmeshpy.core.paths.embed>` -- ``serpentine_pipe.py`` maps
 ``u -> +z`` and ``v -> -x``, which is also where ``chimera_full.py`` puts it.
 
 Measured facts of the path as shipped: total length 1238.823001646924; 23 segments

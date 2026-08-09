@@ -12,7 +12,7 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..model import affine
+from ..core import affine
 from ..quadmesh.morph import _affine as quad_affine
 from ..quadmesh.morph import blend as quad_blend
 from .hexmesh import HexMesh

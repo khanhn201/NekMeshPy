@@ -5,17 +5,17 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import (
+    BoolArray,
     FloatArray,
     IntArray,
     PointArray,
 )
-from ..linemesh.linemesh import _repr_tags
-from ..model import conform
-from ..model.interp import corner_indices
-from ..model.tags import (
+from ..core import conform
+from ..core.tags import (
     ElementTags,
     FaceTags,
 )
+from ..linemesh.linemesh import _repr_tags
 from ..quadmesh import QuadMesh
 
 # default sweep axis / origin for extrude
@@ -37,19 +37,6 @@ _GRID_SIDES: dict[str, tuple[str, int]] = {
 
 
 # -- native (block-free) high-order helpers -----------------------------
-def _slice_block(s: QuadMesh, order: int) -> PointArray:
-    """``(Q,(order+1)**2,3)`` in-plane high-order block of one loft profile, assembled
-    natively from that section's B-rep (shared corners ++ shared edge-interior nodes in
-    element traversal order ++ private quad interiors)."""
-    row = order + 1
-    out: PointArray = np.empty((s.quads.shape[0], row * row, 3), dtype=float)
-    out[:, corner_indices(order, 2), :] = s.points[s.quads]
-    out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
-        s.lines.interior, s.quad, s.flip)
-    out[:, conform._interior_slots(2, order), :] = s.interior
-    return out
-
-
 def _sweep_at(bottom: PointArray, top: PointArray, g: FloatArray,
               slots: IntArray, m2: int) -> PointArray:
     """A loft column's straight GLL sweep evaluated at the hex block ``slots``."""
@@ -86,14 +73,20 @@ class HexMesh:
             raise TypeError("HexMesh: quads must be a QuadMesh, got %s"
                             % type(quads).__name__)
         self.quads = quads
+
         self.hex: IntArray = np.asarray(hex, dtype=np.int64).reshape(-1, 6)
         self.face_orient: IntArray = np.asarray(
             face_orient, dtype=np.int64).reshape(-1, 6)
         if self.face_orient.shape[0] != self.hex.shape[0]:
             raise ValueError("HexMesh: face_orient length (%d) must match hex (%d)"
                              % (self.face_orient.shape[0], self.hex.shape[0]))
+        F = quads.n_quads                        # the rung below: shared faces
+        if self.hex.size and (self.hex.min() < 0 or self.hex.max() >= F):
+            raise ValueError(
+                "HexMesh: hex must index the %d shared faces of ``quads``; got ids in "
+                "[%d, %d]" % (F, int(self.hex.min()), int(self.hex.max())))
         E = self.hex.shape[0]
-        k = (self.order - 1) ** 3
+
         if interior is None:
             if self.order > 1:
                 raise ValueError(
@@ -101,27 +94,45 @@ class HexMesh:
                     "nodes (pass interior=(E,(order-1)**3,3), or build the block "
                     "with a factory such as HexMesh.extrude(section, ...) from an "
                     "order-%d section)" % (self.order, self.order))
-            self.interior: PointArray = np.zeros((E, 0, 3), dtype=float)
-        else:
-            ia: PointArray = np.asarray(interior, dtype=float)
-            if ia.shape != (E, k, 3):
-                raise ValueError(
-                    "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
-                    % (E, k, ia.shape))
-            self.interior = ia
-        #: which hexes carry a region tag (sparse -- untagged stores nothing)
-        self.element_tags: ElementTags = (
-            ElementTags.empty() if element_tags is None else element_tags)
-        self.face_tags: FaceTags = (
-            FaceTags.empty() if face_tags is None else face_tags)
-        self.element_tags.check_within(E, "hexes")
-        self.face_tags.check_within(E, "hexes")
+            interior = np.zeros((E, 0, 3), dtype=float)
+        self.interior: PointArray = np.asarray(interior, dtype=float)
+        k = (self.order - 1) ** 3
+        if self.interior.shape != (E, k, 3):
+            raise ValueError(
+                "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
+                % (E, k, self.interior.shape))
 
-        # corner connectivity + per-hex edge incidence are derived from the shared
-        # faces and immutable post-construction (point moves don't change them), so
-        # memoize once.
+        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
+        self.face_tags = FaceTags.empty() if face_tags is None else face_tags
+        self.element_tags.check_within(E)
+        self.face_tags.check_within(E)
+
+        # Corner connectivity is derived from the shared faces and immutable
+        # post-construction (point moves don't change it), so memoize it once.
         self._corners: IntArray = self._derive_corners()
-        _, self._elem_edges, self._edge_flip = conform.unique_edges(self._corners, 3)
+        # The per-hex edge incidence is the same kind of read -- never a fresh dedup, the
+        # ids come out of ``quads``' own table -- but only export, quality and ``merge``'s
+        # gather ever ask for it, so it is deferred rather than paid by every
+        # construction.  ``merge`` in particular builds its own and would never look.
+        self._edge_tables: tuple[IntArray, BoolArray] | None = None
+
+    def _edge_incidence(self) -> tuple[IntArray, BoolArray]:
+        """``(elem_edges (E,12), edge_flip (E,12))``, read off the shared faces on first
+        ask and kept."""
+        if self._edge_tables is None:
+            self._edge_tables = conform.hex_edges_from_faces(
+                self.hex, self.face_orient, self.quads.quad, self.quads.flip)
+        return self._edge_tables
+
+    @property
+    def _elem_edges(self) -> IntArray:
+        """``(E,12)`` per-hex incidence on the shared edge table."""
+        return self._edge_incidence()[0]
+
+    @property
+    def _edge_flip(self) -> BoolArray:
+        """``(E,12)`` ``True`` where the hex walks that edge against its stored row."""
+        return self._edge_incidence()[1]
 
     @classmethod
     def from_corners(
@@ -223,14 +234,14 @@ class HexMesh:
 
     # -- sizes -----------------------------------------------------------
     @property
-    def n_hexes(self) -> int:
-        """Number of hexahedra."""
-        return self.hexes.shape[0]
-
-    @property
     def n_points(self) -> int:
         """Number of (shared) points."""
         return self.points.shape[0]
+
+    @property
+    def n_hexes(self) -> int:
+        """Number of hexahedra."""
+        return self.hexes.shape[0]
 
     @property
     def n_face_tags(self) -> int:

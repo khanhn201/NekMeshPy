@@ -5,8 +5,8 @@ coordinates."""
 import numpy as np
 import pytest
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing, uniform_spacing
+from nekmeshpy import ElementTags, LineMesh, hexmesh, linemesh, quadmesh
+from nekmeshpy.core.fields import geometric_spacing, uniform_spacing
 
 
 def _rect_edges(x0, x1, y0, y1, nx=1, ny=1):
@@ -105,7 +105,7 @@ def test_rectangle_matches_manual_structured():
 
 
 def test_rectangle_grading_via_fracs():
-    from nekmeshpy.model.fields import symmetric_spacing
+    from nekmeshpy.core.fields import symmetric_spacing
     xf = symmetric_spacing(4, 1.4)
     qm = quadmesh.rectangle(_rect_corners(-1, 1, -1, 1), 4, 4, x_frac=xf, y_frac=xf)
     P = np.asarray(qm.points).reshape(5, 5, 3)
@@ -147,7 +147,7 @@ def test_sphere_pairs_with_box_by_index():
 
 
 def test_sphere_box_annulus_is_watertight():
-    from nekmeshpy.model.fields import uniform_spacing as us
+    from nekmeshpy.core.fields import uniform_spacing as us
     box = quadmesh.box(3.0, 4)
     sph = quadmesh.sphere(0.5, 4)
     block = hexmesh.annulus(sph, box, radial=us(3))
@@ -199,7 +199,7 @@ def test_hemisphere_high_order_nodes_lie_on_the_exact_sphere(order):
 
 
 def test_hemisphere_half_box_annulus_is_watertight():
-    from nekmeshpy.model.fields import uniform_spacing as us
+    from nekmeshpy.core.fields import uniform_spacing as us
     hb = quadmesh.half_box(3.0, 4, n_vertical=4)
     hs = quadmesh.hemisphere(0.5, 4, n_vertical=4, rim_tag="ground")
     block = hexmesh.annulus(hs, hb, radial=us(3))
@@ -331,7 +331,7 @@ def test_rectangle_far_field_pairs_with_rotated_circle():
     # per-side rectangle far field (equal counts); every outer point on the box
     inner = _aligned_circle(0.5, 20)
     outer = _far_box(2.0, inner.n_points)
-    assert len(outer) == len(inner)                  # one outer point per inner point
+    assert outer.n_points == inner.n_points          # one outer point per inner point
     # every outer point lands on the square's boundary (max(|x|,|y|) == half)
     assert np.allclose(np.max(np.abs(outer.points[:, :2]), axis=1), 2.0)
     # rough radial alignment: each outer point shares its inner point's half-plane
@@ -499,7 +499,7 @@ def test_rectangle_far_field_in_tilted_plane():
     n = np.array([1.0, 0.0, 1.0]) / np.sqrt(2.0)
     inner = linemesh.circle(0.5, 20, normal=n)
     outer = linemesh.rectangle(4.0, 4.0, inner.n_points, normal=n)
-    assert len(outer) == len(inner)
+    assert outer.n_points == inner.n_points
     # the box loop stays coplanar with inner's plane (both centered at the origin)
     assert np.max(np.abs(outer.points @ n)) < 1e-9
 
@@ -507,13 +507,13 @@ def test_rectangle_far_field_in_tilted_plane():
 # -- element tags: tagged on the loop's line elements, carried onto the section
 # boundary edges ------------------------------------------------------------
 
-def test_loop_element_tags_length_validated():
-    # a closed 3-point loop has 3 line elements; element_tags must match
-    with pytest.raises(ValueError, match="element_tags length .* must match lines"):
-        linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags=["a", "b"], loop=True)
-    # a matching count (one per line element) is accepted
-    assert linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
-                     element_tags=["a", "b", "c"], loop=True).element_tags.dense(3).tolist() == ["a", "b", "c"]
+def test_loop_element_tags_name_every_line():
+    # a closed 3-point loop has 3 line elements; one name covers them all
+    lm = linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags="a", loop=True)
+    assert lm.element_tags.dense(3).tolist() == ["a", "a", "a"]
+    with pytest.raises(TypeError, match="single tag string"):
+        linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
+                      element_tags=["a", "b", "c"], loop=True)
 
 
 def test_unnamed_rectangle_far_field_stays_untagged():
@@ -576,7 +576,7 @@ def test_element_tags_propagate_line_to_hex_faces():
 def test_ogrid_reads_boundary_element_tags():
     # the wall is named at the lowest level -- the boundary loop's element_tags --
     # with no scalar wall_tag.  The wall ring (4*n_side edges) all inherit the tag.
-    boundary = linemesh.circle(0.5, 16, element_tags=["wall"] * 16)
+    boundary = linemesh.circle(0.5, 16, element_tag="wall")
     qm = quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
     assert qm.n_edge_tags == 4 * 4
     assert set(qm.edge_tags.tags.tolist()) == {"wall"}
@@ -584,7 +584,7 @@ def test_ogrid_reads_boundary_element_tags():
 
 def test_ogrid_wall_tag_overrides_boundary_element_tags():
     # a non-empty scalar wall_tag OVERRIDES the loop's element_tags for the whole wall
-    boundary = linemesh.circle(0.5, 16, element_tags=["ring"] * 16)
+    boundary = linemesh.circle(0.5, 16, element_tag="ring")
     qm = quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3),
                         wall_tag="override")
     assert set(qm.edge_tags.tags.tolist()) == {"override"}
@@ -594,8 +594,9 @@ def test_ogrid_wall_tag_overrides_boundary_element_tags():
 def _tagged_arc(Nt, tags):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
-    return linemesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]),
-                         element_tags=tags)
+    lm = linemesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
+    return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+                    ElementTags.from_dense(tags))
 
 
 def test_half_ogrid_reads_arc_element_tags():
@@ -664,7 +665,7 @@ def test_structured_side_tags_empty_suppresses_edge_tag():
 def test_annulus_inner_tag_overrides_loop_element_tags():
     # a tagged inner loop names the inner ring at the line level; a non-empty
     # inner_tag OVERRIDES it for the whole inner ring
-    inner = linemesh.circle(0.5, 16, element_tags=["body"] * 16)
+    inner = linemesh.circle(0.5, 16, element_tag="body")
     outer = linemesh.rectangle(
         12.0, 12.0, 16, side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
     qm = quadmesh.annulus(inner, outer, geometric_spacing(4, 1.12),
@@ -685,6 +686,29 @@ def test_linemesh_rejects_2d_input():
         linemesh.loft([(0, 0), (1, 0)])
     with pytest.raises(ValueError, match=r"must be \(N,3\)"):
         linemesh.loft([(0, 0), (1, 0), (1, 1)], loop=True)
+
+
+def test_quad_must_index_shared_edges_that_exist():
+    """``quad`` indexes the shared-edge ``LineMesh``, so a stray edge id is caught
+    against that mesh's line count -- the rung-2 form of the ``lines`` -> ``points``
+    check one rung down."""
+    from nekmeshpy import QuadMesh
+    sec = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, np.linspace(0.5, 1.0, 3))
+    with pytest.raises(ValueError, match="quad must index the .* shared edges"):
+        QuadMesh(sec.lines, np.full((2, 4), 999), np.zeros((2, 4), dtype=bool))
+    with pytest.raises(ValueError, match="quad must index the .* shared edges"):
+        QuadMesh(sec.lines, -np.ones((1, 4), dtype=np.int64),
+                 np.zeros((1, 4), dtype=bool))
+
+
+def test_order_n_container_asks_for_the_interior_it_cannot_invent():
+    """At order > 1 the private nodes are geometry, so omitting them is an actionable
+    error naming a factory -- not a bare shape mismatch."""
+    from nekmeshpy import QuadMesh
+    sec = quadmesh.ogrid(linemesh.circle(1.0, 8, order=3), 2, np.linspace(0.5, 1.0, 3))
+    assert sec.order == 3
+    with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-quad private"):
+        QuadMesh(sec.lines, sec.quad, sec.flip)
 
 
 def test_structured_rejects_wrong_edge_count():
@@ -780,7 +804,7 @@ def _circle_loop(Nt, tag="wall"):
     M = 8 * Nt
     th = np.linspace(0.0, 2 * np.pi, M, endpoint=False)
     pts = np.column_stack([np.cos(th), np.sin(th), np.zeros(M)])
-    return linemesh.loft(pts, element_tags=[tag] * M, loop=True)
+    return linemesh.loft(pts, element_tags=tag, loop=True)
 
 
 def test_spined_ogrid_valid_and_tagged():
@@ -878,8 +902,8 @@ def test_spined_ogrid_matches_two_half_ogrids():
     radial = uniform_spacing(2)
     combined = quadmesh.spined_ogrid(loop, radial, center_scale=0.5)
 
-    arc1 = linemesh.loft(P[0:nh + 1, :], element_tags=["wall"] * nh)
-    arc2 = linemesh.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags=["wall"] * nh)
+    arc1 = linemesh.loft(P[0:nh + 1, :], element_tags="wall")
+    arc2 = linemesh.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags="wall")
     h1 = quadmesh.half_ogrid(arc1, _diameter_spine(arc1, 0.5, radial), radial,
                              center_scale=0.5, wall_tag="")
     h2 = quadmesh.half_ogrid(arc2, _diameter_spine(arc2, 0.5, radial), radial,

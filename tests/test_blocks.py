@@ -7,8 +7,8 @@ import pytest
 from conftest import run_example
 
 from nekmeshpy import AxisLinearField, ConstantField, export, fields, hexmesh
+from nekmeshpy.core.fields import distribution_from_field
 from nekmeshpy.hexmesh import quality
-from nekmeshpy.model.fields import distribution_from_field
 
 
 def _scaled_jac(mesh):

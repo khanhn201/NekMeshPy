@@ -14,14 +14,13 @@ from .._typing import (
     IntArray,
     Point,
     PointArray,
-    StrArray,
     Vec3,
 )
-from ..linemesh.assemble import _sweep_lattice, _sweep_path
+from ..core import frames, stations
+from ..core.fields import validate_layers
+from ..core.paths import SpacePath
+from ..core.tags import ElementTags
 from ..linemesh.shape import path_fractions
-from ..model import frames
-from ..model.fields import reject_loop_caps, validate_layers
-from ..model.paths import SpacePath
 from ..quadmesh import QuadMesh
 from ..quadmesh.lift import from_grid as quad_from_grid
 from ..quadmesh.morph import blend as quad_blend
@@ -44,8 +43,9 @@ def extrude(
     *,
     axis: Vec3 = _Z_AXIS,
     origin: Point = _ORIGIN,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
     """Sweep a single quad ``section`` a distance ``length`` along ``axis`` into a hex
     block."""
@@ -60,7 +60,8 @@ def extrude(
     # coordinates move.
     placed = translate(section, np.asarray(origin, dtype=float))
     slices = [translate(placed, d * axis_u) for d in offsets]
-    return loft(slices, first_tag=first_tag, last_tag=last_tag)
+    return loft(slices, element_tags=element_tags,
+                first_tag=first_tag, last_tag=last_tag)
 
 def annulus(
     inner: QuadMesh,
@@ -94,12 +95,10 @@ def annulus(
     # overrides.  ``None`` is "not asked for" and inherits; ``NO_TAG`` is an
     # explicit override *to* untagged, so it suppresses the surface's own tags
     # rather than falling through to them.
-    inner_caps: str | StrArray = (
-        inner_tag if inner_tag is not None
-        else (inner.element_tags.dense(inner.n_quads) if inner.element_tags else ""))
-    outer_caps: str | StrArray = (
-        outer_tag if outer_tag is not None
-        else (outer.element_tags.dense(outer.n_quads) if outer.element_tags else ""))
+    inner_caps: str | ElementTags | None = (
+        inner_tag if inner_tag is not None else inner.element_tags or None)
+    outer_caps: str | ElementTags | None = (
+        outer_tag if outer_tag is not None else outer.element_tags or None)
     return loft(shells, first_tag=inner_caps, last_tag=outer_caps)
 
 def from_grid(
@@ -137,18 +136,16 @@ def sweep(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
     """A block swept from one ``QuadMesh`` ``section`` along the curve ``path`` -- a
     round pipe bent through a 90-degree elbow or a U-turn, from one O-grid disc."""
     order = section.order
-    _, t = _sweep_lattice(fractions, order, loop=loop, name="sweep")
-    if loop:
-        reject_loop_caps("HexMesh.sweep", first_tag, last_tag)
+    _, t = stations.sweep_lattice(fractions, order, loop=loop, name="sweep")
     tv: FloatArray = t[:-1] if loop else t
-    P, T = _sweep_path(path, tangent, tv)
+    P, T = stations.sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
         section.points, P, orientation=orientation, up=up, twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,
@@ -174,12 +171,12 @@ def sweep_path(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
     """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.model.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
+    <nekmeshpy.core.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
     fractions)`` triple."""
     fr = path_fractions(path, target_length=target_length, layers=layers,
                         fractions=fractions)

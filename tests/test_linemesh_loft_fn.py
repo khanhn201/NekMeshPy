@@ -385,15 +385,12 @@ def test_loop_reproduces_the_circle_factory(order):
     assert np.allclose(ring.interior, ref.interior, atol=1e-15)
 
 
-def test_loop_tags_one_element_per_line_including_the_seam():
+def test_loop_tags_every_line_including_the_seam():
     n = 5
-    tags = ["a", "a", "b", "b", "seam"]
     ring = linemesh.loft_fn(_circle_f(), _ring_fractions(n), loop=True,
-                            order=2, element_tags=tags)
-    assert ring.element_tags.dense(ring.n_lines).tolist() == tags        # n tags, not n+1
-    with pytest.raises(ValueError, match="element_tags length"):
-        linemesh.loft_fn(_circle_f(), _ring_fractions(n), loop=True,
-                         element_tags=tags + ["extra"])
+                            order=2, element_tags="wall")
+    # n lines, not n+1 -- the seam line is tagged like the rest
+    assert ring.element_tags.dense(ring.n_lines).tolist() == ["wall"] * n
 
 
 def test_loop_rejects_a_parametrization_that_does_not_close():
@@ -412,18 +409,17 @@ def test_loop_rejects_fewer_than_three_fractions():
 # -- tags --------------------------------------------------------------------
 
 def test_element_tags_land_on_the_elements():
-    tags = ["a", "a", "b", "b", "b"]
-    lm = linemesh.loft_fn(_collar, _uniform(5), order=2, element_tags=tags)
-    assert lm.element_tags.dense(lm.n_lines).tolist() == tags
-    assert lm.element_group_tags == ["a", "b"]
+    lm = linemesh.loft_fn(_collar, _uniform(5), order=2, element_tags="a")
+    assert lm.element_tags.dense(lm.n_lines).tolist() == ["a"] * 5
+    assert lm.element_group_tags == ["a"]
 
 
 def test_untagged_curve_stays_untagged():
     assert linemesh.loft_fn(_collar, _uniform(3)).element_group_tags == []
 
 
-def test_element_tags_length_validated():
-    with pytest.raises(ValueError, match="element_tags length"):
+def test_element_tags_must_be_one_name():
+    with pytest.raises(TypeError, match="single tag string"):
         linemesh.loft_fn(_collar, _uniform(4), element_tags=["a", "b"])
 
 

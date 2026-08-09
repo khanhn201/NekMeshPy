@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import conform, surfaces
+from nekmeshpy.core import conform, surfaces
 
 R = 1.3
 
@@ -156,7 +156,7 @@ def test_on_surface_places_every_node_on_the_surface(order):
 
 def test_on_surface_carries_element_tags():
     lm = linemesh.on_surface(surfaces.ruled(A, B, 3), cyl, order=2,
-                             element_tags=["wall"] * 3)
+                             element_tag="wall")
     assert lm.element_group_tags == ["wall"]
 
 

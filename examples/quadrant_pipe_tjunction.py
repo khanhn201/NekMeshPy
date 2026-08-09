@@ -105,7 +105,7 @@ import sys
 import numpy as np
 
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
-from nekmeshpy.model import surfaces
+from nekmeshpy.core import surfaces
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -212,7 +212,7 @@ def cyl_params(p):
 #: deliberately take the long way round (the bypass runs *behind* the pipe, from
 #: ``+PHI_W`` to ``2*pi - PHI_W``), and because morphing a leg in ``(phi, z)`` is what
 #: keeps its transition stations on the wall (see :func:`leg`).
-#: A wall curve is a :class:`~nekmeshpy.model.surfaces.SurfaceCurve`, carried as its
+#: A wall curve is a :class:`~nekmeshpy.core.surfaces.SurfaceCurve`, carried as its
 #: parametrization rather than as points, which is what keeps every derived curve
 #: exactly *on* the cylinder.
 

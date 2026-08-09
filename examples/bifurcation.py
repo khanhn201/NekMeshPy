@@ -261,7 +261,7 @@ def _arc_mesh(p, n, element_tag):
     length.  ``LineMesh.loft_fn`` evaluates ``p`` at every node -- corners *and* the
     private GLL interiors -- so no node lands on a chord."""
     return linemesh.loft_fn(p, linemesh.arclength_fractions(p, n),
-                          order=ORDER, element_tags=[element_tag] * n)
+                          order=ORDER, element_tags=element_tag)
 
 
 def _ring(p, q):
@@ -346,7 +346,7 @@ def fourier_wall(P, order, element_tag):
     M = np.asarray(P).shape[0]
     return linemesh.merge([linemesh.loft_fn(
         fourier_ring(P), np.linspace(0.0, 2.0 * np.pi, M + 1),
-        order=order, element_tags=[element_tag] * M)])
+        order=order, element_tags=element_tag)])
 
 
 # -- O-grid leg builder ------------------------------------------------------

@@ -17,7 +17,7 @@ Produces ``rectangular_pipe.re2`` and ``rectangular_pipe.vtu``.
 import logging
 
 from nekmeshpy import export, hexmesh, quadmesh
-from nekmeshpy.model.fields import geometric_spacing, symmetric_spacing
+from nekmeshpy.core.fields import geometric_spacing, symmetric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

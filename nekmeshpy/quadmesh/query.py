@@ -13,8 +13,9 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..model import frames
-from ..model.quality import QualitySummary
+from ..core import conform, frames
+from ..core.interp import corner_indices
+from ..core.quality import QualitySummary
 from .quadmesh import QuadMesh
 
 
@@ -24,9 +25,8 @@ def _boundary_mask(quads: IntArray) -> tuple[IntArray, BoolArray]:
     Q = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges: IntArray = Q[:, QuadMesh.EDGE_POINTS].reshape(-1, 2)
     keys = np.sort(edges, axis=1)
-    _, inverse, counts = np.unique(
-        keys, axis=0, return_inverse=True, return_counts=True)
-    return edges, counts[inverse.ravel()] == 1
+    _, inverse, counts = conform.unique_rows(keys, return_counts=True)
+    return edges, counts[inverse] == 1
 
 def boundary_edges(mesh: QuadMesh) -> IntArray:
     """``(K,2)`` array of ``[quad id, local edge (1-4)]`` for every edge on
@@ -75,10 +75,29 @@ def plane_normal(mesh: QuadMesh, *,
     return w
 
 
+def element_blocks(mesh: QuadMesh) -> PointArray:
+    """``(Q, (order+1)**2, 3)`` -- each quad's own node block, assembled natively from the
+    B-rep: shared corners, then the shared edge-interior nodes in element traversal order,
+    then the private per-quad interiors, each written at its lattice slot.  Nothing is
+    resampled or deduplicated.
+
+    The quad rung of :func:`linemesh.element_blocks
+    <nekmeshpy.linemesh.query.element_blocks>`, one dimension up."""
+    order = mesh.order
+    row = order + 1
+    out: PointArray = np.empty((mesh.n_quads, row * row, 3), dtype=float)
+    out[:, corner_indices(order, 2), :] = mesh.points[mesh.quads]
+    out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
+        mesh.lines.interior, mesh.quad, mesh.flip)
+    out[:, conform._interior_slots(2, order), :] = mesh.interior
+    return out
+
+
 __all__ = [
     "boundary_edges",
     "boundary_elements",
     "boundary_points",
+    "element_blocks",
     "plane_normal",
     "quality_summary",
     "scaled_jacobian",

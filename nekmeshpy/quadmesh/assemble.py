@@ -11,40 +11,24 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
-from ..linemesh import LineMesh
-from ..linemesh.assemble import _check_fraction_count, _refined_lattice, _weld
-from ..model import conform
-from ..model.conform import entity_tol
-from ..model.fields import gll_nodes, reject_loop_caps
-from ..model.tags import (
+from ..core import conform, stations
+from ..core.conform import entity_tol
+from ..core.fields import gll_nodes
+from ..core.tags import (
     EdgeTags,
     ElementTags,
     TagBuilder,
+    sweep_cap_tags,
+    sweep_element_tags,
 )
+from ..linemesh import LineMesh
+from ..linemesh.query import element_blocks as line_blocks
 from .quadmesh import (
-    NO_TAG,
     QuadMesh,
-    _coons_at,
     _quad_interior_slots,
 )
 from .query import _boundary_mask
-
-
-def _cap_tags(cap: str | Sequence[str] | StrArray | None, L: int) -> list[str]:
-    """Normalize a cap tag to one tag per section line (length ``L``): a scalar
-    ``str`` tags the whole cap, an array-like is a per-line tag, and ``None``
-    -- "no cap tag asked for" -- is ``NO_TAG`` on every line."""
-    if cap is None:
-        return [NO_TAG] * L
-    if isinstance(cap, str):
-        return [cap] * L
-    arr = np.asarray(cap, dtype=np.str_).reshape(-1)
-    if arr.shape[0] != L:
-        raise ValueError("cap tags length (%d) must match section lines (%d)"
-                         % (arr.shape[0], L))
-    return [str(x) for x in arr.tolist()]
 
 
 def loft(
@@ -52,9 +36,9 @@ def loft(
     *,
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[LineMesh]] | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """Loft a stack of conformal ``LineMesh`` profiles into a quad section (the general
     primitive behind :func:`extrude <nekmeshpy.quadmesh.lift.extrude>`, and the middle
@@ -62,13 +46,26 @@ def loft(
     <nekmeshpy.linemesh.assemble.loft>` and :func:`HexMesh.loft
     <nekmeshpy.hexmesh.assemble.loft>`)."""
     slices = list(slices)
-    if loop:
-        reject_loop_caps("QuadMesh.loft", first_tag, last_tag)
-    lines = np.asarray(slices[0].lines, dtype=np.int64).reshape(-1, 2)
-    L = lines.shape[0]
     n_prof = len(slices)
     # periodic: profile M-1 sweeps back onto profile 0, so there are M layers.
     nz = n_prof if loop else n_prof - 1
+    # A sweep with no layer builds nothing.  A closed one needs three, and the bound is
+    # about identity, not size: entities here are resolved by their corner ids, so two
+    # layers -- which span the same pair of levels twice -- would hand two genuinely
+    # different rungs the same ids.  Three layers is already a real torus given
+    # ``sweep_nodes``; the tight case is not what is being excluded.
+    if nz < 1:
+        raise ValueError(
+            "loft needs at least 2 profiles (one layer), got %d" % n_prof)
+    if loop and nz < 3:
+        raise ValueError(
+            "loft(loop=True) needs at least 3 profiles, got %d -- one layer sweeps a profile "
+            "onto itself so every element's corners repeat, and two put both layers "
+            "across the same pair of levels, which gives two distinct rungs the same "
+            "corner ids.  An entity here *is* its corners, so neither is representable."
+            % n_prof)
+    lines = np.asarray(slices[0].lines, dtype=np.int64).reshape(-1, 2)
+    L = lines.shape[0]
     S = np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3)
                   for s in slices], axis=0)              # (n_prof, nn, 3)
     nn = S.shape[1]
@@ -78,6 +75,16 @@ def loft(
     if any(s.order != order for s in slices):
         raise ValueError("loft: all slices must share the same order")
     ho = order > 1
+    # Every profile's high-order nodes are read by the *first* profile's entity ids, so
+    # matching corners is not enough -- the line tables have to be the same table.
+    for k, prof in enumerate(slices):
+        if not np.array_equal(np.asarray(prof.lines, dtype=np.int64).reshape(-1, 2),
+                              lines):
+            raise ValueError(
+                "loft: every profile must be index-paired with the first, but profile "
+                "%d stores a different line table.  Place one profile with the affine "
+                "ops (translate / rotate / transform) rather than rebuilding it per "
+                "level, or the sweep reads its nodes off the wrong lines." % k)
 
     # the intermediate profiles, if any -- one list of ``order-1`` per layer, in
     # ascending GLL-level order.  Validated here so a mis-sized stack names the
@@ -95,179 +102,126 @@ def loft(
                     "loft: sweep_nodes[%d] must hold order-1 = %d intermediate "
                     "profiles, got %d" % (i, order - 1, len(level)))
             for m in level:
-                if m.order != order or m.n_points != nn:
+                if (m.order != order or m.n_points != nn
+                        or not np.array_equal(
+                            np.asarray(m.lines, dtype=np.int64).reshape(-1, 2), lines)):
                     raise ValueError(
                         "loft: sweep_nodes[%d] profiles must match the slices "
-                        "(order %d, %d points), got order %d with %d points"
-                        % (i, order, nn, m.order, m.n_points))
+                        "(order %d, %d points, and the same line table), got order %d "
+                        "with %d points" % (i, order, nn, m.order, m.n_points))
         if not ho:
             sw = None                      # order 1 has no interior level at all
 
     a = lines[:, 0]
     b = lines[:, 1]
-    # only points actually carried by a profile line get a rung (an isolated point
-    # borders no quad, so a rung there would be a dangling edge).
-    used: IntArray = (np.unique(lines.ravel()) if L
-                      else np.zeros(0, dtype=np.int64))
+    # ``nxt[i]`` is the level layer ``i`` sweeps *to*: i+1 normally, wrapping to 0 on the
+    # closing layer of a periodic sweep -- the one place ``loop`` shows up.
+    nxt: IntArray = np.arange(1, nz + 1, dtype=np.int64) % n_prof
+    lay: IntArray = np.arange(nz, dtype=np.int64)
+    lvl: IntArray = np.arange(n_prof, dtype=np.int64)
+    # quad ``i*L + l`` is profile line ``l`` dragged across layer ``i``
+    i_idx: IntArray = np.repeat(lay, L)
+    l_idx: IntArray = np.tile(np.arange(L, dtype=np.int64), nz)
+    j_idx: IntArray = nxt[i_idx]
+    av, bv = a[l_idx], b[l_idx]
+
+    # Only points a line actually carries get a rung -- an isolated point borders no
+    # quad, so a rung there would be a dangling edge.
+    used: IntArray = (np.unique(lines.ravel()) if L else np.zeros(0, np.int64))
     nu = used.shape[0]
-    rung_slot: IntArray = np.full(nn, -1, dtype=np.int64)
-    rung_slot[used] = np.arange(nu, dtype=np.int64)
+    slot: IntArray = np.full(nn, -1, np.int64)
+    slot[used] = np.arange(nu, dtype=np.int64)
 
-    # -- grow the global edge LineMesh layer by layer -------------------
-    # level i's profile lines occupy [prof_off[i], prof_off[i]+L); the rungs of
-    # transition i->next(i) occupy [rung_off[i], rung_off[i]+nu).  ``nxt`` is the
-    # profile each layer sweeps *to*: i+1 normally, wrapping to 0 for the closing
-    # layer of a periodic sweep -- the single extra iteration below.
-    nxt: IntArray = (np.arange(1, nz + 1, dtype=np.int64) % n_prof if nz
-                     else np.zeros(0, dtype=np.int64))
-    gi: FloatArray = gll_nodes(order)[1:order] if ho else np.zeros(0)
-    prof_off: IntArray = np.empty(n_prof, dtype=np.int64)
-    rung_off: IntArray = np.empty(max(nz, 0), dtype=np.int64)
-    line_rows: list[IntArray] = []
-    inter_rows: list[PointArray] = []
-    cur = 0
+    g = gll_nodes(order)
+    row = order + 1
+    # the profiles' own curves -- the single source both node steps read from
+    curves: PointArray = np.empty((n_prof if ho else 0, L, row, 3), dtype=float)
+    for k, prof in enumerate(slices if ho else ()):
+        curves[k] = line_blocks(prof)
 
-    def _append_rung(layer: int) -> None:
-        """Append the rung block of layer ``layer`` (profile ``layer`` ->
-        ``nxt[layer]``) to the growing edge mesh -- appended exactly once per
-        layer, so the seam rung of a periodic sweep is never duplicated."""
-        nonlocal cur
-        j = int(nxt[layer])
-        rung_off[layer] = cur
-        line_rows.append(np.column_stack([layer * nn + used, j * nn + used]))
-        if ho:
-            if sw is not None:
-                # the true profile points at this layer's interior GLL levels --
-                # no blend, so a curved sweep survives.
-                inter_rows.append(np.stack(
-                    [np.asarray(m.points, dtype=float).reshape(-1, 3)[used]
-                     for m in sw[layer]], axis=1))          # (nu, order-1, 3)
-            else:
-                lo, hi = S[layer, used, :], S[j, used, :]
-                inter_rows.append(lo[:, None, :]
-                                  + gi[None, :, None] * (hi - lo)[:, None, :])
-        cur += nu
+    # -- 1. the shared edges: the global LineMesh's topology --------------------
+    # The two entity families of any sweep, at this rung.  Both are closed forms -- id
+    # ``level*L + line`` carried, ``nlev*L + layer*nu + point`` swept, two contiguous
+    # blocks that cannot collide -- so the table is written, never deduplicated.
+    carried_rows: IntArray = stations.at_levels(lines, lvl, nn)      # a profile line at a level
+    swept_rows: IntArray = np.stack([                        # a profile point, dragged
+        stations.at_levels(used, lay, nn), stations.at_levels(used, nxt, nn)], axis=1)
+    edges: IntArray = np.concatenate([carried_rows, swept_rows], axis=0)
 
-    for i in range(n_prof):
-        prof_off[i] = cur                                # merge level i's LineMesh
-        line_rows.append(lines + i * nn)
-        if ho:
-            inter_rows.append(np.asarray(slices[i].interior, dtype=float))
-        cur += L
-        if i:                                            # rungs (i-1) -> i
-            _append_rung(i - 1)
-    if loop and nz:
-        # the one extra iteration: the closing rung (M-1) -> 0.  No profile is
-        # re-appended, so the seam shares profile 0's lines and nodes outright.
-        _append_rung(nz - 1)
-    all_lines: IntArray = (np.concatenate(line_rows, axis=0) if line_rows
-                           else np.zeros((0, 2), dtype=np.int64))
-    edge_nodes: PointArray | None = (
-        np.concatenate(inter_rows, axis=0) if ho else None)
+    # -- 2. that LineMesh's interior: one write per shared edge -----------------
+    # Each edge has exactly one source, so there is no owner election.  A carried edge is
+    # the profile's own curve verbatim; a rung is the straight GLL blend of its two
+    # corners, or -- given ``sweep_nodes`` -- the intermediate profiles' own points.
+    edge_nodes: PointArray | None = None
+    if ho:
+        carried: PointArray = curves[lvl][:, :, 1:order, :]
+        if sw is not None:
+            rungs: PointArray = np.stack(
+                [np.stack([np.asarray(sw[i][k - 1].points, dtype=float)
+                           .reshape(-1, 3)[used] for k in range(1, order)], axis=1)
+                 for i in range(nz)], axis=0)
+        else:
+            Sp: PointArray = S[:, used, :]              # (n_prof, nu, 3)
+            lo, hi = Sp[lay], Sp[nxt]                   # (nz,nu,3) the rung's two ends
+            rungs = (lo[:, :, None, :]
+                     + g[1:order][None, None, :, None] * (hi - lo)[:, :, None, :])
+        edge_nodes = np.concatenate(
+            [carried.reshape(-1, order - 1, 3), rungs.reshape(-1, order - 1, 3)], axis=0)
+    lm = LineMesh(points, edges, interior=edge_nodes)
 
-    # -- quads purely by line index -------------------------------------
-    # quad row for (layer i, line l) = i*L + l; corners [a_i, b_i, b_{i+1}, a_{i+1}].
-    # local edge 1 = level-i profile line l (forward), 2 = rung at b (forward),
-    # 3 = level-(i+1) profile line l (reversed), 4 = rung at a (reversed).
-    i_idx: IntArray = np.repeat(np.arange(nz, dtype=np.int64), L)
-    l_idx = np.tile(np.arange(L, dtype=np.int64), nz)
-    j_idx: IntArray = nxt[i_idx] if nz else i_idx        # the swept-to profile
-    av = a[l_idx]
-    bv = b[l_idx]
+    # -- 3. the quads, as indices into that LineMesh ----------------------------
+    # corners [a_i, b_i, b_j, a_j]; local edges [carried at i, rung at b, carried at j,
+    # rung at a].  Sides 3 / 4 traverse their stored edge backwards, hence the flip row.
     quad: IntArray = np.stack([
-        prof_off[i_idx] + l_idx,
-        rung_off[i_idx] + rung_slot[bv],
-        prof_off[j_idx] + l_idx,
-        rung_off[i_idx] + rung_slot[av]], axis=1)
-    flip: BoolArray = np.tile(
-        np.array([False, False, True, True]), (nz * L, 1))
-    # quad ``i*L + l`` inherits profile line ``l``'s tag
-    etags: ElementTags = slices[0].element_tags.gather(l_idx)
-    if element_tags is not None:
-        # the orthogonal (per-layer) tag axis: a non-empty layer tag overrides the
-        # profile's line tag on every quad of that layer.
-        layer_tags: StrArray = np.asarray(
-            element_tags, dtype=np.str_).reshape(-1)
-        if layer_tags.shape[0] != nz:
-            raise ValueError(
-                "loft: element_tags is per layer, so it needs %d entries, got %d"
-                % (nz, layer_tags.shape[0]))
-        etags = etags.overlay(ElementTags.blocks(layer_tags, L))
+        i_idx * L + l_idx,
+        n_prof * L + i_idx * nu + slot[bv],
+        j_idx * L + l_idx,
+        n_prof * L + i_idx * nu + slot[av]], axis=1)
+    flip: BoolArray = np.tile(np.array([False, False, True, True]), (nz * L, 1))
 
-    # order-N: without ``sweep_nodes`` each column quad is a transfinite (Coons)
-    # patch -- curved along the profile line (from the slices' own points + private
-    # interior nodes), straight along the sweep between consecutive slices.  Its
-    # boundary already lives on the merged/rung lines, so the patch is evaluated only
-    # at the private interior slots.
+    # -- 4. the private per-quad interior ---------------------------------------
+    # Without ``sweep_nodes`` a column quad is *ruled*: curved along the profile line,
+    # straight along the sweep.  A transfinite (Coons) patch would give the same surface
+    # -- with rungs this straight its left/right terms cancel the bilinear exactly -- so
+    # the two level curves alone are the whole answer.  With ``sweep_nodes`` every level
+    # is a genuine profile and the block is a pure gather.  Either way the boundary
+    # already lives on the shared edges, so only the private slots are evaluated.
     interior: PointArray | None = None
     if ho:
-        g = gll_nodes(order)
-        row = order + 1
-
-        def _line_nodes(m: LineMesh) -> PointArray:
-            """That profile's ``(L, order+1, 3)`` per-line node curve, assembled
-            natively from the shared corner points and its private interiors."""
-            P: PointArray = np.asarray(m.points, dtype=float).reshape(-1, 3)
-            out: PointArray = np.empty((L, row, 3), dtype=float)
-            out[:, 0, :] = P[a]
-            out[:, order, :] = P[b]
-            out[:, 1:order, :] = np.asarray(m.interior, dtype=float)
-            return out
-
-        # each profile's own high-order curve, assembled natively from the shared
-        # corner points and that profile's private interior nodes
-        Scur: PointArray = np.empty((n_prof, L, row, 3), dtype=float)
-        Scur[:, :, 0, :] = S[:, a, :]
-        Scur[:, :, order, :] = S[:, b, :]
-        Scur[:, :, 1:order, :] = np.stack(
-            [np.asarray(s.interior, dtype=float) for s in slices], axis=0)
         islots = _quad_interior_slots(order)
         if sw is not None:
-            # every node of every sweep level is a genuine profile point, so the
-            # element block is a straight gather out of them -- no patch, nothing
-            # interpolated in either direction.
             lev: PointArray = np.empty((nz, row, L, row, 3), dtype=float)
-            if nz:
-                lev[:, 0] = Scur[np.arange(nz, dtype=np.int64)]
-                lev[:, order] = Scur[nxt]
-                for k in range(1, order):
-                    lev[:, k] = np.stack(
-                        [_line_nodes(sw[i][k - 1]) for i in range(nz)], axis=0)
+            lev[:, 0] = curves[lay]
+            lev[:, order] = curves[nxt]
+            for k in range(1, order):
+                lev[:, k] = np.stack(
+                    [line_blocks(sw[i][k - 1]) for i in range(nz)], axis=0)
             interior = lev[i_idx[:, None], (islots // row)[None, :],
                            l_idx[:, None], (islots % row)[None, :], :]
         else:
-            bottom = Scur[i_idx, l_idx]                 # (Q,row,3) a->b at i
-            top = Scur[j_idx, l_idx]                    # (Q,row,3) a->b at next(i)
-            a_lo, a_hi = S[i_idx, av], S[j_idx, av]     # (Q,3) sweep at a
-            b_lo, b_hi = S[i_idx, bv], S[j_idx, bv]     # (Q,3) sweep at b
-            gg = g[None, :, None]
-            left = a_lo[:, None, :] + gg * (a_hi - a_lo)[:, None, :]   # (Q,row,3)
-            right = b_lo[:, None, :] + gg * (b_hi - b_lo)[:, None, :]
-            interior = _coons_at(bottom, top, left, right, g,
-                                 islots % row, islots // row)
+            iu = islots % row                           # along the profile line
+            gv = g[islots // row][None, :, None]        # along the sweep
+            interior = ((1.0 - gv) * curves[i_idx, l_idx][:, iu, :]
+                        + gv * curves[j_idx, l_idx][:, iu, :])
 
-    # tagged boundary point -> swept wall edge: vertex 0 -> side 4, vertex 1 -> 2
+    # a tagged boundary point names its swept wall edge on every layer: profile vertex
+    # 1 -> quad side 4, vertex 2 -> side 2.
     bb = TagBuilder(EdgeTags)
     for l0, side, tag in slices[0].point_tags:
-        if tag == NO_TAG:
-            continue
-        qside = 4 if side == 1 else 2
-        for ii in range(nz):
-            bb.add(ii * L + l0, qside, tag)
-    # caps: scalar tags the whole cap, an array tags per section line.  A periodic
-    # sweep has no near/far cap edge at all, so it emits no cap row (and rejected
-    # the tags above).
-    if not loop:
-        first_caps = _cap_tags(first_tag, L)
-        last_caps = _cap_tags(last_tag, L)
-        for l0 in range(L):
-            bb.add_if_tagged(l0, 1, first_caps[l0])
-        if nz:
-            for l0 in range(L):
-                bb.add_if_tagged((nz - 1) * L + l0, 3, last_caps[l0])
-    lm = LineMesh(points, all_lines, interior=edge_nodes)
-    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags,
-)
+        bb.add_if_tagged(lay * L + l0, 4 if side == 1 else 2, tag)
+    # a cap edge *is* a profile line, so with no argument it inherits that line's own
+    # element tag -- except on a closed sweep, where the "caps" are the interior seam
+    # and only an explicit tag names them.
+    closed = ElementTags.empty()
+    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
+                                L, "QuadMesh.loft")
+    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+                               L, "QuadMesh.loft")
+    cap: IntArray = np.arange(L, dtype=np.int64)
+    bb.add_if_tagged(cap, 1, first_caps)
+    bb.add_if_tagged((nz - 1) * L + cap, 3, last_caps)
+    etags = sweep_element_tags(element_tags, nz, L, "QuadMesh.loft")
+    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags)
 
 
 def _loft_evaluated(
@@ -276,9 +230,9 @@ def _loft_evaluated(
     order: int,
     *,
     loop: bool = False,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
     name: str = "loft_fn",
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
@@ -336,18 +290,16 @@ def loft_fn(
     *,
     loop: bool = False,
     order: int | None = None,
-    element_tags: StrArray | Sequence[str] | None = None,
-    first_tag: str | Sequence[str] | StrArray | None = None,
-    last_tag: str | Sequence[str] | StrArray | None = None,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
     """Loft a section from a **parametrized family of profiles** -- :func:`loft
     <nekmeshpy.quadmesh.assemble.loft>` with the slices evaluated rather than handed in,
     so **every** node (the corners *and* the sweep-direction high-order nodes) comes
     from calling ``f`` and nothing is blended along the sweep."""
     fr: FloatArray = np.atleast_1d(np.asarray(fractions, dtype=float))
-    _check_fraction_count(fr, loop=loop, name="loft_fn")
-    if loop:
-        reject_loop_caps("QuadMesh.loft_fn", first_tag, last_tag)
+    stations.check_fraction_count(fr, loop=loop, name="loft_fn")
     if order is None:
         # The node lattice the profiles are sampled on is a function of the order, so
         # the order has to be settled before the sweep can start -- and ``f`` is the
@@ -361,7 +313,7 @@ def loft_fn(
                 "Pass order= explicitly only if you also fix f." % (fr[0], type(probe)))
         order = probe.order
 
-    t: FloatArray = _refined_lattice(fr, order)
+    t: FloatArray = stations.refined_lattice(fr, order)
     profs: list[LineMesh] = [f(float(v)) for v in t]
     return _loft_evaluated(profs, t, order, loop=loop,
                            element_tags=element_tags,
@@ -381,7 +333,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     for m in meshes:
         edges, mask = _boundary_mask(m.quads)
         seams.append(np.unique(edges[mask]))
-    points, point_id = _weld(pos, seams, tol)
+    points, point_id = conform.weld_points(pos, seams, tol)
 
     quad_list: list[IntArray] = []
     bnd_list: list[EdgeTags] = []

@@ -13,8 +13,8 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..model import affine
-from ..model.tags import PointTags
+from ..core import affine
+from ..core.tags import PointTags
 from .linemesh import LineMesh
 
 

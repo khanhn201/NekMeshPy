@@ -9,42 +9,42 @@ behind the B-rep) — is internal; see
 ## `model.mesh`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.mesh
+.. automodule:: nekmeshpy.core.mesh
    :members:
 ```
 
 ## `model.physical`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.physical
+.. automodule:: nekmeshpy.core.physical
    :members:
 ```
 
 ## `model.topology`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.topology
+.. automodule:: nekmeshpy.core.topology
    :members:
 ```
 
 ## `model.quality`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.quality
+.. automodule:: nekmeshpy.core.quality
    :members:
 ```
 
 ## `model.affine`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.affine
+.. automodule:: nekmeshpy.core.affine
    :members:
 ```
 
 ## `model.frames`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.frames
+.. automodule:: nekmeshpy.core.frames
    :members:
 ```
 
@@ -56,7 +56,7 @@ renders those through `typing`'s own docstring, which does not survive `-n`. The
 module docstring describes the two forms.
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.paths
+.. automodule:: nekmeshpy.core.paths
    :members:
    :exclude-members: Move
 ```
@@ -68,7 +68,7 @@ reason as `paths.Move`: it is a `typing` alias, and autodoc renders those throug
 `typing`'s own docstring, which does not survive `-n`.
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.surfaces
+.. automodule:: nekmeshpy.core.surfaces
    :members:
    :exclude-members: SurfaceMap
 ```
@@ -76,13 +76,13 @@ reason as `paths.Move`: it is a `typing` alias, and autodoc renders those throug
 ## `model.fields`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.fields
+.. automodule:: nekmeshpy.core.fields
    :members:
 ```
 
 ## `model.tags`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.model.tags
+.. automodule:: nekmeshpy.core.tags
    :members:
 ```

@@ -11,11 +11,11 @@ import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, hex_from_entities, run_example
+from conftest import GOLDEN, curved, run_example
 
-from nekmeshpy import HexMesh, hexmesh, quadmesh
+from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
+from nekmeshpy.core.interp import corner_indices, hex_face_indices
 from nekmeshpy.io import export
-from nekmeshpy.model.interp import corner_indices, hex_face_indices
 
 GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
@@ -28,6 +28,28 @@ def _shell(order, n_face=2, n_radial=2):
     sphere = quadmesh.sphere(1.0, n_face, order=order)
     return hexmesh.annulus(sphere, cube,
                            radial=np.linspace(0.0, 1.0, n_radial + 1))
+
+
+# -- container invariants the B-rep rests on ----------------------------
+def test_hex_must_index_shared_faces_that_exist():
+    """``hex`` indexes the shared-face ``QuadMesh``, so a stray face id is caught
+    against that mesh's quad count -- the top rung of the same check ``QuadMesh`` makes
+    against its edges and ``LineMesh`` against its points."""
+    blk = _shell(1)
+    with pytest.raises(ValueError, match="hex must index the .* shared faces"):
+        HexMesh(blk.quads, np.full((2, 6), 999), np.zeros((2, 6), dtype=np.int64))
+    with pytest.raises(ValueError, match="hex must index the .* shared faces"):
+        HexMesh(blk.quads, -np.ones((1, 6), dtype=np.int64),
+                np.zeros((1, 6), dtype=np.int64))
+
+
+def test_order_n_container_asks_for_the_interior_it_cannot_invent():
+    """At order > 1 the private nodes are geometry, so omitting them is an actionable
+    error naming a factory -- not a bare shape mismatch."""
+    blk = _shell(3)
+    assert blk.order == 3
+    with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-hex private"):
+        HexMesh(blk.quads, blk.hex, blk.face_orient)
 
 
 # -- geometric truth: annulus inner wall rides the true sphere ----------
@@ -81,13 +103,11 @@ def test_from_grid_order_n_corner_consistent():
 # -- blend / merge ------------------------------------------------------
 def test_blend_morphs_hex_curved_blocks():
     a = _shell(3, n_face=1, n_radial=1)
-    # a uniformly scaled copy, built natively from a's own entity tables
-    b = hex_from_entities(a.points * 2.0, a.hexes,
-                          edge_nodes=a.edge_nodes * 2.0,
-                          face_nodes=a.face_nodes * 2.0,
-                          interior=a.interior * 2.0,
-                          face_tags=a.face_tags,
-                          order=3)
+    # a uniformly scaled copy, built natively from a's own entity tables -- same B-rep,
+    # every stored node doubled, so the two pair by index at every rung
+    lines = LineMesh(a.points * 2.0, a.edges, interior=a.edge_nodes * 2.0)
+    quads = QuadMesh(lines, a.quads.quad, a.quads.flip, a.face_nodes * 2.0)
+    b = HexMesh(quads, a.hex, a.face_orient, a.interior * 2.0, a.face_tags)
     lo, mid, hi = hexmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)

@@ -22,9 +22,9 @@ import numpy as np
 import pytest
 from conftest import assert_same_side_tags
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.model import conform, frames
-from nekmeshpy.model.fields import uniform_spacing
+from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
+from nekmeshpy.core import conform, frames
+from nekmeshpy.core.fields import uniform_spacing
 
 RP, RB, NU, NS, NR = 0.3, 1.0, 16, 4, 2
 
@@ -55,7 +55,7 @@ def straight(s):
 def disc(order=1, normal=(0, 0, 1), center=(RB, 0.0, 0.0), tag="wall"):
     """An O-grid disc of radius ``RP``, wall-tagged on the loop (the lowest rung)."""
     ring = linemesh.circle(RP, NU, center=center, normal=normal, order=order,
-                           element_tags=[tag] * NU)
+                           element_tag=tag)
     return quadmesh.ogrid(ring, NS, uniform_spacing(NR))
 
 
@@ -235,14 +235,21 @@ def test_the_wall_tag_rides_up_from_the_loop_and_the_caps_are_named():
     assert sorted(blk.face_group_tags) == ["inlet", "outlet", "wall"]
 
 
-def test_per_layer_element_tags_override_the_section_tags():
+def test_element_tags_name_the_swept_column_of_each_section_quad():
+    """``element_tags`` is per *section element*, not per layer: the tag on quad q
+    lands on every hex swept from it, at every layer."""
     sec = disc(1)
+    per_quad = ElementTags.from_dense(["hot"] + [""] * (sec.n_quads - 1))
     blk = hexmesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 4),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
-                        element_tags=["", "hot", ""])
+                        element_tags=per_quad)
     tags = blk.element_tags.dense(blk.n_hexes).reshape(3, sec.n_quads)      # hex e = layer*M + q
-    assert list(np.unique(tags[1])) == ["hot"]
-    assert list(np.unique(tags[0])) == list(np.unique(tags[2])) == [""]
+    assert list(np.unique(tags[:, 0])) == ["hot"]        # quad 0's column, every layer
+    assert list(np.unique(tags[:, 1:])) == [""]
+    # and a single string names the whole block
+    assert hexmesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 4), orientation="fixed",
+                         up=(0, 1, 0), origin=(RB, 0.0, 0.0),
+                         element_tags="fluid").element_group_tags == ["fluid"]
 
 
 # -- validation ------------------------------------------------------------------
@@ -341,7 +348,7 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
     rib = quadmesh.sweep(seg, elbow, np.linspace(0.0, 1.0, 6),
                          origin=(RB, 0.0, 0.0), normal=(0, 0, 1),
                          orientation="fixed", up=(0, 1, 0),
-                         first_tag="a", last_tag="b")
+                         element_tags="fin", first_tag="a", last_tag="b")
     nodes, _ = conform.conformal_quad(rib.points, rib.quads, rib.quad, rib.flip,
                                       rib.lines.interior, rib.interior, rib.order)
     x, y, z = nodes.T
