@@ -3,6 +3,7 @@
 import numpy as np
 
 from nekmeshpy import HexMesh, QuadMesh, TriMesh, hexmesh, linemesh, quadmesh, topology
+from nekmeshpy.core import tags as tags_mod
 
 # unit hex in Nek corner order
 _UNIT_HEX = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
@@ -107,6 +108,27 @@ def test_hexmesh_report_matches_free_function(built_mesh):
     mesh = built_mesh["mesh"]
     X, HC, _ = hexmesh.weld(mesh)
     assert hexmesh.topology_report(mesh) == topology.hex_report(X, HC)
+
+
+def test_tag_report_counts_both_disagreements(built_mesh):
+    """The carotid names every boundary face and, on top of that, two interior flux
+    planes -- one of each way ``face_tags`` and the boundary can differ."""
+    mesh = built_mesh["mesh"]
+    tags = hexmesh.tag_report(mesh)
+    rep = hexmesh.topology_report(mesh)
+    assert tags.n_rows == len(mesh.face_tags)
+    assert tags.n_untagged_boundary == 0
+    assert tags.n_tagged_interior == len(mesh.face_tags) - rep.n_boundary_faces > 0
+    assert "untagged bdry  : 0 faces" in hexmesh.report(mesh)
+    assert "interior tags  : %d rows" % tags.n_tagged_interior in hexmesh.report(mesh)
+
+
+def test_tag_report_flags_an_untagged_boundary():
+    """A lone hex with one of its six faces named: five boundary faces go uncovered."""
+    mesh = HexMesh.from_corners(
+        _UNIT_HEX, np.arange(8).reshape(1, 8),
+        face_tags=tags_mod.FaceTags(np.array([0]), np.array([5]), np.array(["bottom"])))
+    assert hexmesh.tag_report(mesh) == (1, 5, 0)
 
 
 def test_boundary_helpers_single_hex():
