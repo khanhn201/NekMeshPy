@@ -629,12 +629,20 @@ def locate_rows(haystack: IntArray, needles: IntArray, *,
 
 # -- array engine: tolerance / scatter / gather / conformal walk ---------
 def entity_tol(points: PointArray) -> float:
-    """Scale-relative coincidence tolerance for entity sharing: ``1e-9`` of the point
+    """Scale-relative coincidence tolerance for entity sharing: ``1e-8`` of the point
     cloud's bounding-box diagonal extent, falling back to ``1e-12`` for a degenerate
-    (single-point or empty) cloud."""
+    (single-point or empty) cloud.
+
+    Every rung's sharing check funnels through here, so this coefficient is the one
+    place the whole toolkit's idea of "the same point" is set.  It was ``1e-9``, which
+    is tight enough that a mesh cut from a *solved* field -- where the field came from
+    a tet mesh some other machine's gmsh built slightly differently -- could miss a
+    seam it structurally shares.  Coincidence here is a question about construction,
+    not about measurement: entities are meant to be the same object, so the number only
+    has to stay far below any real feature, and ``1e-8`` of the model extent is."""
     scale = (float(np.max(points.max(axis=0) - points.min(axis=0)))
              if points.size else 0.0)
-    return 1e-9 * scale if scale > 0 else 1e-12
+    return 1e-8 * scale if scale > 0 else 1e-12
 
 
 def _conformal_walk(points: PointArray, conn: IntArray, dim: int, order: int,

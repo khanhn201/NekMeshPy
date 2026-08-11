@@ -34,7 +34,7 @@ class Sampled(Protocol):
 M = TypeVar("M", bound=Sampled)
 
 
-def split_evaluated(profs: Sequence[M], t: FloatArray, order: int, *, loop: bool,
+def split_evaluated(profs: Sequence[M], order: int, *, loop: bool,
                     conn: Callable[[M], IntArray], noun: str, elems: str,
                     name: str) -> tuple[list[M], list[list[M]]]:
     """Validate a sweep whose slices were **evaluated** on the refined node lattice
@@ -44,26 +44,34 @@ def split_evaluated(profs: Sequence[M], t: FloatArray, order: int, *, loop: bool
     index-paired with the first, the wrap level dropped on a loop -- so the only things
     that vary are what to compare (``conn``, which doubles as the element count) and what
     to call the pieces in the errors (``noun`` / ``elems``).  Those nouns are not
-    decoration: they are what the rungs' own tests match on."""
+    decoration: they are what the rungs' own tests match on.
+
+    The lattice itself is not an argument: the slices *are* the sweep, one per lattice
+    value by construction at every caller, so passing the parameters alongside them only
+    offered a second thing to disagree with.  What remains is the one property the list
+    must have on its own -- a whole number of layers of ``order`` levels each -- and
+    positions are reported as **level indices**, which every caller shares, rather than
+    as parameter values, which only an evaluated sweep has."""
     slices = list(profs)
-    if len(slices) != t.shape[0]:
+    if not slices or (len(slices) - 1) % order:
         raise ValueError(
-            "%s: expected one %s per sweep lattice value (%d), got %d"
-            % (name, noun, t.shape[0], len(slices)))
+            "%s: expected the refined sweep lattice -- n*%d + 1 %ss for n layers of "
+            "order %d -- but got %d"
+            % (name, order, noun, order, len(slices)))
     nz = (len(slices) - 1) // order
     ref = slices[0]
     ref_conn = conn(ref)
     for k, m in enumerate(slices):
         if m.order != order:
             raise ValueError(
-                "%s: f(%g) returned an order-%d %s, but order=%d was requested"
-                % (name, t[k], m.order, noun, order))
+                "%s: level %d is an order-%d %s, but order=%d was requested"
+                % (name, k, m.order, noun, order))
         if m.n_points != ref.n_points or not np.array_equal(conn(m), ref_conn):
             raise ValueError(
                 "%s: every %s must be index-paired and conformal with the first, but "
-                "f(%g) returned %d points / %d %s against f(%g)'s %d / %d.  Place one "
-                "%s with the affine ops rather than rebuilding it per parameter."
-                % (name, noun, t[k], m.n_points, conn(m).shape[0], elems, t[0],
+                "level %d has %d points / %d %s against level 0's %d / %d.  Place one "
+                "%s with the affine ops rather than rebuilding it per level."
+                % (name, noun, k, m.n_points, conn(m).shape[0], elems,
                    ref.n_points, ref_conn.shape[0], noun))
 
     if loop:
@@ -76,9 +84,9 @@ def split_evaluated(profs: Sequence[M], t: FloatArray, order: int, *, loop: bool
         if gap > tol:
             raise ValueError(
                 "%s(loop=True) needs the last fraction to map back to the first %s, "
-                "but f(%g) and f(%g) are %g apart (tolerance %g).  Pass the trailing "
-                "wrap value as the final fraction, or use loop=False."
-                % (name, noun, t[-1], t[0], gap, tol))
+                "but the wrap level and level 0 are %g apart (tolerance %g).  Pass the "
+                "trailing wrap value as the final fraction, or use loop=False."
+                % (name, noun, gap, tol))
         slices = slices[:-1]
 
     return (slices[::order],

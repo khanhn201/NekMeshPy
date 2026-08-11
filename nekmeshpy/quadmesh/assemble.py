@@ -227,7 +227,6 @@ def loft(
 
 def _loft_evaluated(
     profs: Sequence[LineMesh],
-    t: FloatArray,
     order: int,
     *,
     loop: bool = False,
@@ -239,7 +238,7 @@ def _loft_evaluated(
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
     node lattice rather than handed in: validate, close the loop, split, delegate."""
     slices, sweep_nodes = stations.split_evaluated(
-        profs, t, order, loop=loop, conn=lambda m: np.asarray(m.lines, dtype=np.int64).reshape(-1, 2),
+        profs, order, loop=loop, conn=lambda m: np.asarray(m.lines, dtype=np.int64).reshape(-1, 2),
         noun="profile", elems="lines", name=name)
     return loft(slices, loop=loop,
                 sweep_nodes=sweep_nodes if order > 1 else None,
@@ -298,7 +297,7 @@ def loft_spline(
         np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
     fitted = [LineMesh(P[k], lines, I[k], ref.point_tags, ref.element_tags)
               for k in range(t.shape[0])]
-    return _loft_evaluated(fitted, t, order, loop=loop, element_tags=element_tags,
+    return _loft_evaluated(fitted, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="loft_spline")
 
 
@@ -333,7 +332,7 @@ def loft_fn(
 
     t: FloatArray = stations.refined_lattice(fr, order)
     profs: list[LineMesh] = [f(float(v)) for v in t]
-    return _loft_evaluated(profs, t, order, loop=loop,
+    return _loft_evaluated(profs, order, loop=loop,
                            element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag)
 

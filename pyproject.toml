@@ -26,7 +26,12 @@ plot = ["matplotlib>=3.4"]
 io = ["meshio>=5.0"]
 test = ["pytest>=7.0"]
 dev = ["ruff>=0.5", "mypy>=1.0", "pytest>=7.0"]
-all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0"]
+# gmsh is used by no toolkit module -- only by ``examples/femoral.py``, which tet-meshes
+# the interior of its own surface to solve conduction in the volume.  It is in ``all``
+# rather than left to the reader because ``tests/test_examples.py`` runs every example,
+# and an example CI cannot run is an example that rots.
+mesh = ["gmsh>=4.11"]
+all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0", "gmsh>=4.11"]
 # docs also pulls in matplotlib/meshio so autodoc can import io.viz / io.export
 docs = [
     "sphinx>=7",
