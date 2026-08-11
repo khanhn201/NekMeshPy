@@ -57,7 +57,7 @@ def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
         return quality.scaled_jacobian_ho(mesh, mesh.order)
     return quality.scaled_jacobian(mesh.points, mesh.hexes)
 
-def quality_summary(mesh: HexMesh, *, high_order: bool = False) -> QualitySummary:
+def quality_summary(mesh: HexMesh, *, high_order: bool = True) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` for the
     ``high_order`` flag)."""
     from . import quality
@@ -123,7 +123,7 @@ def report(mesh: HexMesh) -> str:
     from ..core import topology
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
-    lines.append(quality.format_report(quality.summary(mesh.points, mesh.hexes)))
+    lines.append(quality.format_report(quality_summary(mesh)))
     for name in mesh.face_group_tags:
         n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))

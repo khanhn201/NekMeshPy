@@ -164,7 +164,7 @@ def sweep(
     profs: list[LineMesh] = [line_transform(profile, M, o) for M, o in places]
     if loop:
         profs.append(profs[0])          # the seam profile *is* the first placement
-    return _loft_evaluated(profs, t, order, loop=loop, element_tags=element_tags,
+    return _loft_evaluated(profs, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="sweep")
 
 

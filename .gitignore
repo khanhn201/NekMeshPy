@@ -41,18 +41,25 @@ docs/reference/generated/
 *~
 .DS_Store
 
+# Example caches (rebuildable: an example rebuilds one when its knobs change).
+# Scoped to the cache files themselves -- examples/data/ also holds tracked *inputs*,
+# like the carotid's car.vtx/car.tri.
+examples/data/femoral_*.npz
+
 # Generated mesh outputs (byte-identity references live under tests/golden/)
 /*.re2
 /*.rea
 /*.vtk
 /*.vtu
 /*.msh
+/*.stl
 /*.png
 examples/*.re2
 examples/*.rea
 examples/*.vtk
 examples/*.vtu
 examples/*.msh
+examples/*.stl
 examples/*.png
 /*.f[0-9][0-9][0-9][0-9][0-9]
 /*.nek5000

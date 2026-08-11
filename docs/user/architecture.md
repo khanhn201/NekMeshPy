@@ -12,7 +12,7 @@ NekMeshPy is split into **two layers**:
 ## Data flow
 
 ```
-example scripts (examples/):  carotid.py   circular_pipe.py / rectangular_pipe.py   flow_past_*.py
+example scripts (examples/):  carotid.py / femoral.py   circular_pipe.py / rectangular_pipe.py   flow_past_*.py
                                      │ compose the toolkit primitives below │
                                      ▼                                      ▼
 TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft/annulus/merge/from_grid──▶ HexMesh

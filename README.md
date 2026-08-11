@@ -66,7 +66,8 @@ report-returning functions hand back **NamedTuples** rather than dicts —
 Full meshers live in [`examples/`](examples), run from the repo root:
 
 ```bash
-PYTHONPATH=. python examples/carotid.py        # carotid vessel (car case)
+PYTHONPATH=. python examples/carotid.py            # carotid vessel (car case)
+PYTHONPATH=. python examples/femoral.py            # femoral-style T-junction, surface and all
 PYTHONPATH=. python examples/circular_pipe.py      # all-hex O-grid pipe
 PYTHONPATH=. python examples/rectangular_pipe.py   # structured duct
 PYTHONPATH=. python examples/flow_past_cylinder.py # external flow around a body
