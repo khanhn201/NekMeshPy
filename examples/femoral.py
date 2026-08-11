@@ -113,8 +113,8 @@ NEAR_LEN = 2.0                # the uniform run, in leg **diameters** out from t
                               # something -- the crater, the rim, the three-way weld --
                               # and constant layer thickness across it is what draws the
                               # trough; the legs beyond are diameters of nothing much.
-N_UNIFORM = 32                # layers in that uniform run
-N_GRADED = 40                 # layers from there out to the outlet.  Their growth is not
+N_UNIFORM = 24                # layers in that uniform run
+N_GRADED = 30                 # layers from there out to the outlet.  Their growth is not
                               # a knob: it is solved for, so the first graded layer equals
                               # the uniform one and the last lands on the cap.  One
                               # grading across the whole leg cannot serve both ends --
@@ -1375,26 +1375,33 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     half = quadmesh.half_ogrid(
         linemesh.loft(flat_a, order=ORDER, element_tags="wall"),
         linemesh.loft(flat_s, order=ORDER), radial, center_scale=center_scale)
+    # the parameter positions, kept before the lift overwrites them -- ``pin_curve``
+    # finds its nodes by where they sit in the *parameter* plane, which is the only
+    # place it can recognize them, and after the lift they are model coordinates
+    uv_pts = half.points[:, :2].copy()
     lift_section(dm, half)
     # Restore the shared curves exactly.  The arc and the spine bound *two* interfaces,
     # and each one's triangulation renders them slightly differently -- by the ~0.003 the
     # two soups disagree about the triple curve.  Reconstructing them is therefore never
     # bit-identical between the halves, and ``merge`` rejects a shared edge whose interior
-    # nodes differ by more than 1e-8.  They are shared data: put them back.
-    pin_curve(half, flat_a, arc)
-    pin_curve(half, flat_s, spine)
+    # nodes differ by more than the entity tolerance.  They are shared data: put them back.
+    pin_curve(half, uv_pts, flat_a, arc)
+    pin_curve(half, uv_pts, flat_s, spine)
     return half
 
 
-def pin_curve(sec, flat, curve):
+def pin_curve(sec, uv, flat, curve):
     """Put a boundary curve's own nodes back, corners and curved nodes alike.
 
     ``flat`` is where that curve sits in the parameter plane, which is exactly where
     ``half_ogrid`` placed it, so its nodes are found by matching coordinates rather than
-    by trusting an index convention."""
+    by trusting an index convention.  ``uv`` is the section's own parameter positions,
+    which is what those coordinates have to be matched against: they are the same numbers
+    only *before* ``lift_section`` replaces them with model coordinates, and matching a
+    lifted point against a parameter one silently finds nothing at all."""
     from scipy.spatial import cKDTree
     tree = cKDTree(flat[:, :2])
-    d, j = tree.query(sec.points[:, :2])
+    d, j = tree.query(uv[:, :2])
     on = d < 1e-12
     sec.points[on] = curve.points[j[on]]
     if not sec.lines.interior.size:

@@ -63,7 +63,12 @@ def test_quality_module_matches_mesh(built_mesh):
     assert np.allclose(sj, hexmesh.scaled_jacobian(mesh))
     stats = quality.summary(X, HC)
     assert stats.n_inverted == 0
-    assert hexmesh.quality_summary(mesh) == stats
+    # ``quality.summary`` reads corners -- it is handed points and connectivity, and a
+    # welded array carries no curved nodes to read.  ``hexmesh.quality_summary``
+    # defaults to the curved reading, so the two agree only when asked the same
+    # question, and on this order-3 carotid they genuinely differ (0.121 vs 0.093).
+    assert hexmesh.quality_summary(mesh, high_order=False) == stats
+    assert hexmesh.quality_summary(mesh).min <= stats.min
 
 
 # -- validate_layers: an int is n uniform layers ------------------------------
