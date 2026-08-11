@@ -107,7 +107,7 @@ DELAUNAY_ROUNDS = 20          # edge-flip sweeps toward the surface Delaunay con
 RELAX_PASSES = 30             # relaxation sweeps over the junction, to take the shear out
 RELAX_RADIUS = 15.0            # ... within this far of the seam.  0 passes disables.
 SPLIT_TOL = 0.50              # wall/interior cut-off when splitting an interface               # ... over this distance from the junction
-N_HALF = 16                   # half-ring resolution; MULTIPLE OF 4
+N_HALF = 12                   # half-ring resolution; MULTIPLE OF 4
 NEAR_LEN = 1.5                # the uniform run, in leg **diameters** out from the
                               # junction.  The junction is where the wall actually does
                               # something -- the crater, the rim, the three-way weld --
@@ -127,10 +127,10 @@ MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
 CENTER_SCALE = 0.7            # inner square-core size (fraction of diameter)
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layers (first 0, last 1.0)
 PROJECT_TO_STL = True
-SNAP_MAX = 0.10               # farthest a node may be carried onto the analytic wall.
+SNAP_MAX = 0.20               # farthest a node may be carried onto the analytic wall.
                               # Beyond this it is not being projected, it is being moved
                               # somewhere unrelated to its neighbours -- leave it be.
-SNAP_AMBIG = 0.02             # when the crater and the branch tube are this close to
+SNAP_AMBIG = 0.10             # when the crater and the branch tube are this close to
                               # equidistant the side is a coin toss, and the two choices
                               # tear the surface between adjacent nodes.  Leave those be
                               # too: near the corner, not snapping beats snapping wrong.
