@@ -6,6 +6,21 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 
+#: The two regions a flux plane separates. They exist only to give the plane a
+#: direction: a measurement surface is named once, and which of its two sides the row
+#: is written from is read from the region of the element that owns it.
+FLUX_UPSTREAM = "flux_upstream"
+FLUX_DOWNSTREAM = "flux_downstream"
+
+
+def _flux_sides(code: str) -> dict[str, str | None]:
+    """``{region: code}`` writing a flux plane from its upstream side only.
+
+    An untagged element gets the code too, so a mesh that never named the two sides
+    still exports the plane -- from both of them, which is the plain reading of a face
+    that is named but has no direction to distinguish its sides by."""
+    return {FLUX_UPSTREAM: code, FLUX_DOWNSTREAM: None, "": code}
+
 
 @dataclass(frozen=True)
 class PhysicalGroup:
@@ -131,8 +146,12 @@ class PhysicalGroups:
             PhysicalGroup("trunk_outlet", 2, 2, "v  "),
             PhysicalGroup("top_outlet_1", 3, 2, "int"),
             PhysicalGroup("top_outlet_2", 4, 2, "O  "),
-            PhysicalGroup("flux_1",       5, 2, "f1 "),
-            PhysicalGroup("flux_2",       6, 2, "f2 "),
+            # A flux plane is *interior*, so it is one shared face with a hex on each
+            # side and reconstructs to a row for each. Flux through it has a direction,
+            # so only the upstream side is written -- the downstream one is the same
+            # measurement counted backwards.
+            PhysicalGroup("flux_1", 5, 2, side_codes=_flux_sides("f1 ")),
+            PhysicalGroup("flux_2", 6, 2, side_codes=_flux_sides("f2 ")),
         ])
 
     @classmethod
@@ -154,6 +173,6 @@ class PhysicalGroups:
             PhysicalGroup("trunk_outlet", tag_trunk, 2, "v  "),
             PhysicalGroup("top_outlet_1", tag_top1,  2, "int"),
             PhysicalGroup("top_outlet_2", tag_top2,  2, "O  "),
-            PhysicalGroup("flux_1",       tag_f1,    2, "f1 "),
-            PhysicalGroup("flux_2",       tag_f2,    2, "f2 "),
+            PhysicalGroup("flux_1", tag_f1, 2, side_codes=_flux_sides("f1 ")),
+            PhysicalGroup("flux_2", tag_f2, 2, side_codes=_flux_sides("f2 ")),
         ])

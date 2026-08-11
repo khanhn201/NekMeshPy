@@ -86,9 +86,10 @@ def test_re2_boundary_content_matches_golden(built_mesh):
     got = read_re2_boundary(built_mesh["re2"])
     want = read_re2_boundary(os.path.join(GOLDEN, "carotid.re2"))
     assert got == want
-    # 1840 named faces, but 2000 rows: the two flux planes are *interior*, so each of
-    # their faces is carried by two hexes and reconstructs to a row for each
-    assert sum(got.values()) == 2000
+    # 1840 named faces and 1840 rows. The two flux planes are *interior*, so each of
+    # their faces is carried by two hexes -- but flux has a direction, so only the
+    # upstream side is written (see PhysicalGroups.nek_default).
+    assert sum(got.values()) == 1840
     assert {code for _, _, code in got} == {"W  ", "O  ", "v  ", "f1 ", "f2 ", "int"}
 
 

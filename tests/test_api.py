@@ -32,12 +32,19 @@ def test_physical_group_pads_code():
 
 
 def test_to_mesh_groups(built_mesh):
-    m = export.to_mesh(built_mesh["mesh"])
+    m = export.to_mesh(built_mesh["mesh"], PhysicalGroups.nek_default())
     assert m.cells["hexahedron"].shape == (7200, 8)
-    # 1840 boundary faces + both sides of the two interior flux planes
-    assert m.cells["quad"].shape == (2000, 4)
+    assert m.cells["quad"].shape == (1840, 4)
     assert set(m.cell_sets) >= {"wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"}
     assert m.cell_sets["wall"]["quad"].size == 1440
+
+
+def test_to_mesh_without_groups_cannot_orient_an_interior_plane(built_mesh):
+    """With no registry there is no side rule, so a named *interior* face contributes
+    the row each of its two hexes carries -- 160 more than the directed export. Which
+    side a measurement plane belongs to is a property of the groups, not the mesh."""
+    m = export.to_mesh(built_mesh["mesh"])
+    assert m.cells["quad"].shape == (2000, 4)
 
 
 def test_section_smoothing_registry_extensible():

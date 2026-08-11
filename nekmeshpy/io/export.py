@@ -41,15 +41,11 @@ GroupSpec = Union[str, Mapping[str, Union[str, None]]]
 GroupsArg = Union[PhysicalGroups, Mapping[str, GroupSpec], None]
 
 
-def _rows_as_lists(mesh: HexMesh) -> tuple[list[list[int]], list[str]]:
-    """``face_tag_rows`` as plain lists, for the row-at-a-time paint loops below."""
-    rows, names = face_tag_rows(mesh)
-    return rows.tolist(), names.tolist()
-
-
-def _coded_rows(mesh: HexMesh, g: PhysicalGroups
-                ) -> list[tuple[int, int, str]]:
-    """``(element, face, code)`` for every boundary row the ``.re2`` should carry.
+def _export_rows(mesh: HexMesh, g: PhysicalGroups
+                 ) -> list[tuple[int, int, str, str]]:
+    """``(element, face, name, code)`` for every boundary row this mesh exports -- the
+    one definition every writer here shares, so a face the ``.re2`` omits is not in the
+    ``.vtu``'s cell sets either.
 
     This is where an asymmetric condition is resolved. A named face reconstructs to one
     row per hex carrying it, and each row's code is read against the **region** of the
@@ -58,18 +54,17 @@ def _coded_rows(mesh: HexMesh, g: PhysicalGroups
     which is how a face gets a condition from one side only."""
     rows, names = face_tag_rows(mesh)
     regions = mesh.element_tags.dense(mesh.hex.shape[0])
-    out: list[tuple[int, int, str]] = []
+    out: list[tuple[int, int, str, str]] = []
     for (elem, face), name in zip(rows.tolist(), names.tolist()):
         grp = g.get(name)
         if grp is None:
             _log.warning("unknown boundary name: %s", name)
-            code = "   "
-        else:
-            got = grp.code_for_side(str(regions[elem]))
-            if got is None:
-                continue
-            code = got
-        out.append((int(elem), int(face), code))
+            out.append((int(elem), int(face), name, "   "))
+            continue
+        code = grp.code_for_side(str(regions[elem]))
+        if code is None:
+            continue
+        out.append((int(elem), int(face), name, code))
     return out
 
 
@@ -95,8 +90,7 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     g = _as_groups(mesh, groups)
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
-    rows, names = face_tag_rows(mesh)
-    for (elem, face), name in zip(rows.tolist(), names.tolist()):
+    for elem, face, name, _code in _export_rows(mesh, g):
         conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
         name_rows.append(name)
     quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
@@ -147,7 +141,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
     re2 has no high-order format, so only the 8 corners of each hex are emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    bnd = _coded_rows(mesh, g)
+    bnd = _export_rows(mesh, g)
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
@@ -160,7 +154,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
         fid.write(struct.pack("<d", float(len(bnd))))
-        for elem0, face, code in bnd:
+        for elem0, face, _name, code in bnd:
             buf2: FloatArray = np.zeros(8, dtype="<f8")
             buf2[0] = float(elem0 + 1)
             buf2[1] = float(face)
@@ -311,12 +305,10 @@ def _hex_arrays(mesh: HexMesh,
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
-        for (elem, face), name in zip(*_rows_as_lists(mesh)):
+        for elem, face, name, _code in _export_rows(mesh, g):
             grp = g.get(name)
-            if grp is None:
-                _log.warning("unknown boundary name: %s", name)
-                continue
-            bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+            if grp is not None:
+                bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
         return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
     order = mesh.order
     perm = _lagrange_hex_perm(order)
@@ -326,12 +318,10 @@ def _hex_arrays(mesh: HexMesh,
         mesh.quads.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    for (elem, face), name in zip(*_rows_as_lists(mesh)):
+    for elem, face, name, _code in _export_rows(mesh, g):
         grp = g.get(name)
-        if grp is None:
-            _log.warning("unknown boundary name: %s", name)
-            continue
-        bc[conn_ho[elem, face_idx[face]]] = grp.tag
+        if grp is not None:
+            bc[conn_ho[elem, face_idx[face]]] = grp.tag
     nodes = _to_equispaced(nodes, conn_ho, order, 3)
     return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
 

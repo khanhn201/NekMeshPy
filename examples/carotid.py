@@ -26,6 +26,7 @@ from nekmeshpy import (
     trimesh,
     viz,
 )
+from nekmeshpy.core.physical import FLUX_DOWNSTREAM, FLUX_UPSTREAM
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -459,8 +460,15 @@ for leg in range(3):
     # opening cap = leg outlet; seam end is interior.  With a flux plane, split
     # the leg there (a cap of the downstream segment); merge re-joins them.
     if flux_name and 0 < off < len(slices) - 1:
-        blocks.append(hexmesh.loft(slices[:off + 1], first_tag=outlet_name[leg]))
-        blocks.append(hexmesh.loft(slices[off:], first_tag=flux_name))
+        # The flux plane is the seam between the two, so it is an *interior* face with
+        # a hex on each side. Flux has a direction, so the two segments are named as
+        # regions and the plane is written from the upstream one only -- the other row
+        # would be the same measurement counted backwards. Slices run outlet -> seam,
+        # so ``slices[off:]`` is the upstream side.
+        blocks.append(hexmesh.loft(slices[:off + 1], first_tag=outlet_name[leg],
+                                   element_tags=FLUX_DOWNSTREAM))
+        blocks.append(hexmesh.loft(slices[off:], first_tag=flux_name,
+                                   element_tags=FLUX_UPSTREAM))
     else:
         blocks.append(hexmesh.loft(slices, first_tag=outlet_name[leg]))
 
