@@ -151,7 +151,7 @@ def test_edge_tags_follow_their_edges_through_the_rewind():
     got = quadmesh.mirror(section, NORMAL)
     assert len(got.edge_tags) == len(section.edge_tags)
     rows = got.edge_tags.select(got.edge_tags.mask_for("wall"))
-    corners = got.lines.lines[rows.ids]
+    corners = got.line_mesh.lines[rows.ids]
     assert np.allclose(np.linalg.norm(got.points[corners][..., :2], axis=-1), 1.0)
 
 

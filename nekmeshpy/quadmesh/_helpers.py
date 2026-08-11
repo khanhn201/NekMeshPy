@@ -79,7 +79,7 @@ def _elevate(qm: QuadMesh, order: int,
         conform.entity_tol(points), "QuadMesh._elevate")
     # the edge table is rebuilt here, so the tags are carried onto the new ids
     # rather than reused: local edge ``qm.quad[q, s]`` becomes ``elem_edges[q, s]``
-    mine: IntArray = np.full(qm.lines.n_lines, -1, dtype=np.int64)
+    mine: IntArray = np.full(qm.line_mesh.n_lines, -1, dtype=np.int64)
     mine[np.asarray(qm.quad, dtype=np.int64).ravel()] = np.asarray(
         elem_edges, dtype=np.int64).ravel()
     lm = LineMesh(points, edges, interior=edge_nodes,

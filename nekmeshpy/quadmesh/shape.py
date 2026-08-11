@@ -806,7 +806,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
         lm = line_loft(pts, interior=interior, order=o)
         if tags is None:
             return lm
-        return LineMesh(lm.vertices, lm.lines, lm.interior,
+        return LineMesh(lm.point_mesh, lm.lines, lm.interior,
                         ElementTags.from_dense(tags))
     arc1 = _arc(bpts[0:nh + 1, :], inner[0:nh], None if seg is None else seg[0:nh])
     arc2 = _arc(np.vstack([bpts[nh:M, :], bpts[0:1, :]]), inner[nh:M],
@@ -904,9 +904,9 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
     etags = ElementTags.uniform(cube.n_quads, element_tag)
     # the cube's B-rep is reused verbatim (same topology, same edge numbering); only
     # the node coordinates move, so there is nothing to re-derive or reconcile.
-    lines = LineMesh(project(cube.points), cube.lines.lines,
-                     interior=project(cube.lines.interior) if order > 1 else None)
-    return QuadMesh(lines, cube.quad, cube.flip,
+    lines = LineMesh(project(cube.points), cube.line_mesh.lines,
+                     interior=project(cube.line_mesh.interior) if order > 1 else None)
+    return QuadMesh(lines, cube.quad, cube.orient,
                     project(cube.interior) if order > 1 else None,
                     element_tags=etags)
 
@@ -975,9 +975,9 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
         return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
 
     etags = ElementTags.uniform(cube.n_quads, element_tag)
-    lines = LineMesh(project(cube.points), cube.lines.lines,
-                     interior=project(cube.lines.interior) if order > 1 else None)
-    qm = QuadMesh(lines, cube.quad, cube.flip,
+    lines = LineMesh(project(cube.points), cube.line_mesh.lines,
+                     interior=project(cube.line_mesh.interior) if order > 1 else None)
+    qm = QuadMesh(lines, cube.quad, cube.orient,
                   project(cube.interior) if order > 1 else None,
                   element_tags=etags)
     return _tag_rim(qm, rim_tag)

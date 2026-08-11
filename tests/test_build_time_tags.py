@@ -50,7 +50,7 @@ def test_edge_tags_are_stored_on_the_shared_edges_they_name():
     # the tag rides an edge id, so the geometry is read straight off ``lines``
     named = dict(qm.edge_tags)
     eid = next(e for e, t in named.items() if t == "bottom")
-    assert np.allclose(qm.points[qm.lines.lines[eid], 1], 0.0)     # bottom -> y=0
+    assert np.allclose(qm.points[qm.line_mesh.lines[eid], 1], 0.0)     # bottom -> y=0
 
 
 def test_mismatched_ids_and_names_raises():
@@ -101,7 +101,7 @@ def test_quadmesh_merge_carries_edge_tags_onto_the_merged_edges():
     assert set(m.edge_tags.tags.tolist()) == {"a_bottom", "b_bottom"}
     # each name still sits on a y=0 edge after the point weld rebuilt the edge table
     for eid, _ in m.edge_tags:
-        assert np.allclose(m.points[m.lines.lines[eid], 1], 0.0)
+        assert np.allclose(m.points[m.line_mesh.lines[eid], 1], 0.0)
 
 
 def _box(lo, hi, tags):

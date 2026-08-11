@@ -66,7 +66,7 @@ def test_quad_from_grid_edge_tags_land_on_correct_sides():
     qm = quadmesh.from_grid(P, side_tags={"x_min": "west", "y_max": "north"})
     assert qm.edge_group_tags == ["north", "west"]
     for eid, name in qm.edge_tags:
-        mid = qm.points[qm.lines.lines[eid]].mean(axis=0)
+        mid = qm.points[qm.line_mesh.lines[eid]].mean(axis=0)
         if name == "west":
             assert np.isclose(mid[0], 0.0)                  # x_min edge
         else:

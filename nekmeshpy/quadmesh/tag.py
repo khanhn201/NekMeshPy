@@ -27,7 +27,7 @@ def retag_element(mesh: QuadMesh, mapping: Mapping[str, str]) -> QuadMesh:
     two, and two keys may share an image, which merges those regions. A key that
     names no tag on this mesh raises -- a rename matching nothing is a typo, and a
     mis-named region is not visible again until the solver reads it."""
-    return QuadMesh(mesh.lines, mesh.quad, mesh.flip, mesh.interior,
+    return QuadMesh(mesh.line_mesh, mesh.quad, mesh.orient, mesh.interior,
                     mesh.element_tags.renamed(mapping, "quadmesh.retag_element"))
 
 
@@ -38,8 +38,8 @@ def retag_edge(mesh: QuadMesh, mapping: Mapping[str, str]) -> QuadMesh:
     Renaming a tag to ``NO_TAG`` **drops** its rows rather than storing an empty name:
     a side-tag table is a named subset, so leaving it is leaving the table. That is
     how a boundary name that has stopped meaning anything is retired."""
-    return QuadMesh(linemesh.retag_element(mesh.lines, mapping),
-                    mesh.quad, mesh.flip, mesh.interior, mesh.element_tags)
+    return QuadMesh(linemesh.retag_element(mesh.line_mesh, mapping),
+                    mesh.quad, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 def tag_edges(mesh: QuadMesh, rows: IntArray,
@@ -57,14 +57,14 @@ def tag_edges(mesh: QuadMesh, rows: IntArray,
     edge_of: IntArray = np.asarray(mesh.quad, dtype=np.int64)
     r: IntArray = np.asarray(rows, dtype=np.int64).reshape(-1, 2)
     names: StrArray = np.asarray(tags, dtype=np.str_).reshape(-1)
-    named = np.asarray(mesh.edge_tags.dense(mesh.lines.n_lines), dtype=object)
+    named = np.asarray(mesh.edge_tags.dense(mesh.line_mesh.n_lines), dtype=object)
     for (q, side), nm in zip(r, names):
         if nm:
             named[edge_of[int(q), int(side) - 1]] = str(nm)
     return QuadMesh(
-        LineMesh(mesh.lines.vertices, mesh.lines.lines, mesh.lines.interior,
+        LineMesh(mesh.line_mesh.point_mesh, mesh.line_mesh.lines, mesh.line_mesh.interior,
                  ElementTags.from_dense(np.asarray(named, dtype=np.str_))),
-        mesh.quad, mesh.flip, mesh.interior, mesh.element_tags)
+        mesh.quad, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 __all__ = [

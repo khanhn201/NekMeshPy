@@ -96,19 +96,28 @@ is `trimesh.ops.*`.
 
 ## The B-rep ladder *is* the storage
 
-Each container holds the rung below plus what it privately owns — `LineMesh` (`points`,
-`lines`, `interior (L,N-1,3)`); `QuadMesh` (a `lines` *`LineMesh` of the shared edges* +
-`quad`/`flip` + `interior (Q,(N-1)²,3)`); `HexMesh` (a `quads` *`QuadMesh` of the shared
-faces* + `hex`/`face_orient` + `interior (E,(N-1)³,3)`).
+Each container holds the rung below plus what it privately owns — `LineMesh` (a
+`point_mesh` *`PointMesh` of the shared points* + `lines` + `interior (L,N-1,3)`);
+`QuadMesh` (a `line_mesh` *`LineMesh` of the shared edges* + `quad`/`orient` +
+`interior (Q,(N-1)²,3)`); `HexMesh` (a `quad_mesh` *`QuadMesh` of the shared faces* +
+`hex`/`orient` + `interior (E,(N-1)³,3)`).
+
+**The slot names say which of three roles they play**, so the same word never means two
+things: `<rung>_mesh` is the stored container one rung down; the **singular** `line` /
+`quad` / `hex` is this rung's incidence into it; the **plural** `lines` / `quads` /
+`hexes` is the derived corner connectivity; and `points` is always the `(N,3)`
+coordinates. At the line rung a point *is* its own corner, so `line` and `lines` are
+one table under both names.
 
 `points` / `quads` / `hexes` are **derived read-only views**, so corner consistency is
 structural and `mesh.points[:] = X` propagates for free. Conformality is likewise
 structural: a shared edge or face is *one stored object* referenced by every incident
 element, resolved by corner ids rather than coordinate search (`core/conform.py`).
 
-Constructors share one argument order: `(rung below, incidence, [orientation,] interior,
-side_tags, element_tags)`. A line element has no orientation bit, so `LineMesh` has no
-`flip` slot.
+Constructors share one argument order: `(rung below, incidence, [orientation,]
+interior, element_tags)` — `LineMesh(point_mesh, lines, …)`, `QuadMesh(line_mesh, quad,
+orient, …)`, `HexMesh(quad_mesh, hex, orient, …)`. A line element has no orientation
+bit, so `LineMesh` has no `orient` slot.
 
 **No container takes or stores `order`** — it derives all the way down: `HexMesh.order`
 → `quads.order` → `lines.order` → **`interior.shape[1] + 1`**. A mesh cannot disagree
@@ -172,8 +181,8 @@ mesh was flawless locally and corner-inverted on CI.
 
 **A rung's side tags *are* the rung below's `element_tags`.** There is one table type,
 `ElementTags` from `core/tags.py`, and a mesh reads the one under it through a named
-property: `HexMesh.face_tags` is `quads.element_tags`, `QuadMesh.edge_tags` is
-`lines.element_tags`, `LineMesh.point_tags` is `vertices.element_tags` on the
+property: `HexMesh.face_tags` is `quad_mesh.element_tags`, `QuadMesh.edge_tags` is
+`line_mesh.element_tags`, `LineMesh.point_tags` is `point_mesh.element_tags` on the
 `PointMesh` the ladder bottoms out on. A tag is addressed by **entity id**, never by
 `(element, side)`.
 

@@ -172,7 +172,7 @@ def test_order_one_equals_a_plain_loft_of_the_same_sections(loop):
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.hexes, want.hexes)
     assert np.array_equal(got.hex, want.hex)
-    assert np.array_equal(got.face_orient, want.face_orient)
+    assert np.array_equal(got.orient, want.orient)
     assert np.array_equal(got.element_tags.ids, want.element_tags.ids)
     assert np.array_equal(got.element_tags.tags, want.element_tags.tags)
 
@@ -318,8 +318,8 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft(flipped):
     got = hexmesh.loft(slices, sweep_nodes=sweep)
     want = hexmesh.loft(slices)
     assert np.allclose(got.interior, want.interior, atol=1e-14)
-    assert np.allclose(got.quads.interior, want.quads.interior, atol=1e-14)
-    assert np.allclose(got.quads.lines.interior, want.quads.lines.interior,
+    assert np.allclose(got.quad_mesh.interior, want.quad_mesh.interior, atol=1e-14)
+    assert np.allclose(got.quad_mesh.line_mesh.interior, want.quad_mesh.line_mesh.interior,
                        atol=1e-14)
 
 

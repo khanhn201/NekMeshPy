@@ -133,9 +133,9 @@ def test_edge_nodes_canonical_between_incident_quads(order):
     # every unique edge is referenced by some quad
     assert set(np.unique(qm.quad).tolist()) == set(range(qm.edges.shape[0]))
     # gather/scatter round-trip: at least one quad traverses an edge anti-canonically
-    assert qm.flip.any()
-    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.flip)
-    back = conform.scatter_edge_nodes(local, qm.quad, qm.flip, qm.edges.shape[0],
+    assert qm.orient.any()
+    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.orient)
+    back = conform.scatter_edge_nodes(local, qm.quad, qm.orient, qm.edges.shape[0],
                                       conform.entity_tol(qm.points), "test")
     assert np.allclose(back, qm.edge_nodes, atol=1e-12)
 
@@ -147,12 +147,12 @@ def test_non_conforming_edge_nodes_rejected(order):
     are a loud error, never a silent weld."""
     qm = quadmesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
                             2, 2, order=order)
-    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.flip)
+    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.orient)
     # perturb every edge-interior node of quad 0 -- at least one of its edges is
     # internal (shared), so the incident copies now disagree beyond tol
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order edge"):
-        conform.scatter_edge_nodes(local, qm.quad, qm.flip, qm.edges.shape[0],
+        conform.scatter_edge_nodes(local, qm.quad, qm.orient, qm.edges.shape[0],
                                    conform.entity_tol(qm.points), "QuadMesh.test")
 
 
@@ -213,15 +213,15 @@ def test_quadmesh_brep_storage(order):
                             interior=src.interior, order=order)
 
     # B-rep fields: a real LineMesh holding the shared edges + per-quad edge indices.
-    assert isinstance(qm.lines, LineMesh)
-    assert qm.lines.order == order
+    assert isinstance(qm.line_mesh, LineMesh)
+    assert qm.line_mesh.order == order
     assert qm.quad.shape == (2, 4) and qm.quad.dtype == np.int64
-    assert qm.flip.shape == (2, 4) and qm.flip.dtype == bool
+    assert qm.orient.shape == (2, 4) and qm.orient.dtype == bool
     # the two quads share exactly one edge
     assert len(set(qm.quad[0].tolist()) & set(qm.quad[1].tolist())) == 1
 
     # .points is a live view of the shared corners (single source of truth)
-    assert qm.points is qm.lines.points
+    assert qm.points is qm.line_mesh.points
     # .quads is the lossless inverse of the edge decomposition
     assert np.array_equal(qm.quads, src.quads)
     # the conformal walk reproduces the source block exactly (flip handling included)
@@ -240,7 +240,7 @@ def test_quadmesh_brep_shares_edge_nodes_across_incident_quads():
     e = shared.pop()
     # its interior nodes are stored once on the edge LineMesh
     assert qm.edge_nodes.shape == (qm.edges.shape[0], order - 1, 3)
-    assert np.array_equal(qm.edge_nodes[e], qm.lines.interior[e])
+    assert np.array_equal(qm.edge_nodes[e], qm.line_mesh.interior[e])
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -430,9 +430,9 @@ def test_hex_does_not_care_what_order_its_edges_are_stored_in(order):
     lines = LineMesh(hm.points, hm.edges[sigma],
                      interior=hm.edge_nodes[sigma])
     inv = np.argsort(sigma)
-    faces = quadmesh.QuadMesh(lines, inv[hm.quads.quad], hm.quads.flip,
+    faces = quadmesh.QuadMesh(lines, inv[hm.quad_mesh.quad], hm.quad_mesh.orient,
                               hm.face_nodes)
-    relabelled = HexMesh(faces, hm.hex, hm.face_orient, hm.interior)
+    relabelled = HexMesh(faces, hm.hex, hm.orient, hm.interior)
     assert not np.array_equal(relabelled._elem_edges, hm._elem_edges)
     assert np.allclose(curved(relabelled), curved(hm), atol=1e-12)
 
@@ -483,11 +483,11 @@ def test_shared_hex_face_resolves_to_same_nodes(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_non_conforming_hex_face_rejected(order):
     hm = _shell(order)
-    local = conform.gather_face_nodes(hm.face_nodes, hm.hex, hm.face_orient)
+    local = conform.gather_face_nodes(hm.face_nodes, hm.hex, hm.orient)
     # perturb every face-interior node of hex 0; its shared faces now disagree
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order face"):
-        conform.scatter_face_nodes(local, hm.hex, hm.face_orient, hm.faces.shape[0],
+        conform.scatter_face_nodes(local, hm.hex, hm.orient, hm.faces.shape[0],
                                    conform.entity_tol(hm.points), "HexMesh.test")
 
 
@@ -513,9 +513,9 @@ def test_hex_entity_gather_scatter_round_trip(order):
         conform.scatter_edge_nodes(e_local, hm._elem_edges, hm._edge_flip,
                                    hm.edges.shape[0], tol, "test"),
         hm.edge_nodes, atol=1e-12)
-    f_local = conform.gather_face_nodes(hm.face_nodes, hm.hex, hm.face_orient)
+    f_local = conform.gather_face_nodes(hm.face_nodes, hm.hex, hm.orient)
     assert np.allclose(
-        conform.scatter_face_nodes(f_local, hm.hex, hm.face_orient,
+        conform.scatter_face_nodes(f_local, hm.hex, hm.orient,
                                    hm.faces.shape[0], tol, "test"),
         hm.face_nodes, atol=1e-12)
 

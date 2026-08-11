@@ -66,12 +66,12 @@ def conformal(mesh):
         return conform.conformal_line(mesh.points, mesh.lines, mesh.interior,
                                       mesh.order)
     if isinstance(mesh, QuadMesh):
-        return conform.conformal_quad(mesh.points, mesh.quads, mesh.quad, mesh.flip,
-                                      mesh.lines.interior, mesh.interior, mesh.order)
+        return conform.conformal_quad(mesh.points, mesh.quads, mesh.quad, mesh.orient,
+                                      mesh.line_mesh.interior, mesh.interior, mesh.order)
     assert isinstance(mesh, HexMesh)
     return conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient, mesh.quads.interior,
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient, mesh.quad_mesh.interior,
         mesh.interior, mesh.order)
 
 

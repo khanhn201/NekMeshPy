@@ -128,9 +128,9 @@ def test_tag_report_flags_an_untagged_boundary():
     """A lone hex with one of its six faces named: five boundary faces go uncovered."""
     mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
     mesh = hexmesh.HexMesh(
-        quadmesh.QuadMesh(mesh.quads.lines, mesh.quads.quad, mesh.quads.flip, None,
+        quadmesh.QuadMesh(mesh.quad_mesh.line_mesh, mesh.quad_mesh.quad, mesh.quad_mesh.orient, None,
                           tags_mod.ElementTags([int(mesh.hex[0, 4])], ["bottom"])),
-        mesh.hex, mesh.face_orient)
+        mesh.hex, mesh.orient)
     assert hexmesh.tag_report(mesh) == (1, 5, 0)
 
 

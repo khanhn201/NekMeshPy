@@ -105,14 +105,14 @@ def test_quad_loft_loop_builds_a_closed_torus_surface(order):
     assert torus.n_points == NSEC * NRING
 
     # every stored line is referenced by exactly two quads -> zero free edges
-    counts = np.bincount(torus.quad.ravel(), minlength=torus.lines.n_lines)
+    counts = np.bincount(torus.quad.ravel(), minlength=torus.line_mesh.n_lines)
     assert int(np.sum(counts == 1)) == 0        # free boundary edges
     assert int(np.sum(counts == 0)) == 0        # unreferenced lines
     assert np.all(counts == 2)
 
     # zero duplicate lines: the seam rung was appended once
-    key = np.sort(torus.lines.lines, axis=1)
-    assert np.unique(key, axis=0).shape[0] == torus.lines.n_lines
+    key = np.sort(torus.line_mesh.lines, axis=1)
+    assert np.unique(key, axis=0).shape[0] == torus.line_mesh.n_lines
 
     # every corner pair shared by two quads resolves to the SAME line index
     seen = {}
@@ -123,7 +123,7 @@ def test_quad_loft_loop_builds_a_closed_torus_surface(order):
             pair = (min(u, v), max(u, v))
             lid = int(torus.quad[e, k])
             assert seen.setdefault(pair, lid) == lid
-    assert len(seen) == torus.lines.n_lines
+    assert len(seen) == torus.line_mesh.n_lines
 
     # the surface really is a torus: every point at distance RSEC from the ring
     axis_r = np.hypot(torus.points[:, 0], torus.points[:, 2])
@@ -139,10 +139,10 @@ def test_quad_loft_loop_beats_repeating_the_first_profile():
     repeated = quadmesh.loft([*profiles, profiles[0]], loop=False)
     assert closed.n_quads == repeated.n_quads
     assert closed.n_points < repeated.n_points
-    assert closed.lines.n_lines < repeated.lines.n_lines
+    assert closed.line_mesh.n_lines < repeated.line_mesh.n_lines
     # ... and the repeated stack is *not* closed: it has free cap edges
     counts = np.bincount(repeated.quad.ravel(),
-                         minlength=repeated.lines.n_lines)
+                         minlength=repeated.line_mesh.n_lines)
     assert int(np.sum(counts == 1)) == 2 * NRING
 
 

@@ -191,7 +191,7 @@ def test_the_container_still_rejects_an_out_of_range_element():
     sec = quadmesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
     blk = hexmesh.extrude(sec, length=1.0, layers=2)
     with pytest.raises(ValueError, match="element_tags names element"):
-        HexMesh(blk.quads, blk.hex, blk.face_orient, None,
+        HexMesh(blk.quad_mesh, blk.hex, blk.orient, None,
                 ElementTags([blk.n_hexes], ["fluid"]))
 
 
@@ -298,7 +298,7 @@ def test_retag_element_leaves_a_shared_word_in_the_side_table(built_mesh):
     holding to."""
     mesh = built_mesh["mesh"]
     assert "wall" in mesh.face_tags.group_tags
-    collided = hexmesh.HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
+    collided = hexmesh.HexMesh(mesh.quad_mesh, mesh.hex, mesh.orient, mesh.interior,
                                ElementTags.uniform(mesh.hex.shape[0], "wall"))
     got = hexmesh.retag_element(collided, {"wall": "fluid"})
     assert got.element_tags.group_tags == ["fluid"]

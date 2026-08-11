@@ -25,7 +25,7 @@ that closes the sweep back onto the first profile — see
 [Concepts](../user/concepts.md).
 
 Its stored state is the **B-rep**: a `quads` `QuadMesh` of the shared faces, `hex`
-`(E,6)` face incidence, `face_orient` `(E,6)` D4 codes and `interior`
+`(E,6)` face incidence, `orient` `(E,6)` D4 codes and `interior`
 `(E,(order-1)**3,3)`. `points` `(P,3)` and `hexes` `(E,8)` (Nek point order) are
 **derived read-only views** over it, so corner consistency is structural rather than
 maintained — see [Concepts](../user/concepts.md#high-order-order-n-elements).
@@ -42,7 +42,8 @@ enforces it, but `first_tag`/`last_tag` default to the bounding slice's own
 condition. Renaming either vocabulary without touching the other is what
 `retag_element` / `retag_face` are for.
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
-`quad`/`flip`/`interior`, its `edge_tags` reading through to `lines.element_tags`);
+`quad`/`orient`/`interior`, its `edge_tags` reading through to
+`line_mesh.element_tags`);
 `LineMesh` does the same onto a `PointMesh`, which is the ladder's bottom rung and
 carries nothing but coordinates and their tags. `weld()` returns a `WeldResult` NamedTuple —
 `.points` (the **live** array), `.hexes`, `.n_points`; the name is historical, since

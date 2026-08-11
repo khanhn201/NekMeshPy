@@ -55,16 +55,16 @@ def blend(a: QuadMesh, b: QuadMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     # the edge tags ride the blended ``lines`` themselves -- ``LineMesh.blend`` keeps
     # ``a``'s point tags but drops its element tags, so they are put back here
-    return [QuadMesh(LineMesh(lm.vertices, lm.lines, lm.interior,
-                              a.lines.element_tags),
-                     a.quad, a.flip,
+    return [QuadMesh(LineMesh(lm.point_mesh, lm.lines, lm.interior,
+                              a.line_mesh.element_tags),
+                     a.quad, a.orient,
                      (1.0 - t) * ai + t * bi if ho else None)
-            for t, lm in zip(fr, line_blend(a.lines, b.lines, fr))]
+            for t, lm in zip(fr, line_blend(a.line_mesh, b.line_mesh, fr))]
 
 
 def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
-    return QuadMesh(line_affine(mesh.lines, matrix, offset), mesh.quad, mesh.flip,
+    return QuadMesh(line_affine(mesh.line_mesh, matrix, offset), mesh.quad, mesh.orient,
                     affine.apply(mesh.interior, matrix, offset),
                     element_tags=mesh.element_tags)
 
@@ -112,7 +112,7 @@ def _rewind(mesh: QuadMesh) -> QuadMesh:
     n = mesh.order - 1
     perm: IntArray = (np.arange(n * n, dtype=np.int64).reshape(n, n).T.ravel()
                       if n else np.zeros(0, dtype=np.int64))
-    return QuadMesh(mesh.lines, mesh.quad[:, ::-1], ~mesh.flip[:, ::-1],
+    return QuadMesh(mesh.line_mesh, mesh.quad[:, ::-1], ~mesh.orient[:, ::-1],
                     mesh.interior[:, perm, :], mesh.element_tags)
 
 
@@ -139,11 +139,11 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     point ``i`` takes ``target``'s point ``sigma[i]``, and every shared-edge and
     per-quad interior node follows its relabelled corners."""
     if not (np.array_equal(structure.quad, target.quad)
-            and np.array_equal(structure.flip, target.flip)):
+            and np.array_equal(structure.orient, target.orient)):
         raise ValueError(
             "reindex: structure and target must share identical quad/flip incidence; "
             "they are two samplings of one recipe, not two different meshes")
-    if not np.array_equal(structure.lines.lines, target.lines.lines):
+    if not np.array_equal(structure.line_mesh.lines, target.line_mesh.lines):
         raise ValueError(
             "reindex: structure and target must share identical edge connectivity")
     s: IntArray = np.asarray(sigma, dtype=np.int64).ravel()
@@ -160,16 +160,16 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     # same unordered pair and copy its interior, reversed when the two traverse it the
     # other way.  Both sides are lexsorted on the sorted pair and paired positionally,
     # which needs no packed key -- and so has no bound on the point count.
-    te: IntArray = np.asarray(target.lines.lines, dtype=np.int64)
-    se: IntArray = s[np.asarray(structure.lines.lines, dtype=np.int64)]
+    te: IntArray = np.asarray(target.line_mesh.lines, dtype=np.int64)
+    se: IntArray = s[np.asarray(structure.line_mesh.lines, dtype=np.int64)]
     tidx = conform.locate_rows(te, se, who="reindex", what="edge")
     rev = te[tidx, 0] != se[:, 0]
-    new_ei: PointArray = np.asarray(target.lines.interior, dtype=float)[tidx].copy()
+    new_ei: PointArray = np.asarray(target.line_mesh.interior, dtype=float)[tidx].copy()
     new_ei[rev] = new_ei[rev][:, ::-1]
     new_lines = LineMesh(PointMesh(target.points[s],
-                                   target.lines.point_tags.gather(s)),
-                         structure.lines.lines, new_ei,
-                         target.lines.element_tags)
+                                   target.line_mesh.point_tags.gather(s)),
+                         structure.line_mesh.lines, new_ei,
+                         target.line_mesh.element_tags)
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.
@@ -178,7 +178,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
                                 who="reindex", what="quad")
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
-    return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,
+    return QuadMesh(new_lines, structure.quad, structure.orient, new_qi,
                     target.element_tags)
 
 

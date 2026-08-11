@@ -151,9 +151,9 @@ count — use `n_lines` / `n_quads` / `n_hexes` for that.
 Not tables of their own. **A rung's side tags *are* the rung below's `element_tags`**,
 read through under the name of the entity they name:
 
-- `LineMesh.point_tags` → `vertices.element_tags`, over **point** ids.
-- `QuadMesh.edge_tags` → `lines.element_tags`, over **edge** ids.
-- `HexMesh.face_tags` → `quads.element_tags`, over **face** ids.
+- `LineMesh.point_tags` → `point_mesh.element_tags`, over **point** ids.
+- `QuadMesh.edge_tags` → `line_mesh.element_tags`, over **edge** ids.
+- `HexMesh.face_tags` → `quad_mesh.element_tags`, over **face** ids.
 
 The B-rep already stores each entity exactly once, so naming it is naming that one
 object rather than naming it once per incident element. That makes tag consistency
@@ -546,9 +546,15 @@ the nodes it privately owns, and the familiar corner arrays are read off that:
 
 | rung | stored state | derived views |
 |---|---|---|
-| `LineMesh` | `points (P,3)`, `lines (L,2)` (**required**), `interior (L,N-1,3)` | — |
-| `QuadMesh` | `lines` — a **`LineMesh` of the shared edges**, whose `interior` holds the edge nodes — plus `quad (Q,4)` edge incidence, `flip (Q,4)`, `interior (Q,(N-1)²,3)` | `points`, `quads (Q,4)` |
-| `HexMesh` | `quads` — a **`QuadMesh` of the shared faces**, whose `interior` holds the face nodes and whose `lines.interior` holds the edge nodes — plus `hex (E,6)` face incidence, `face_orient (E,6)` D4 codes, `interior (E,(N-1)³,3)` | `points`, `hexes (E,8)` |
+| `LineMesh` | `point_mesh` — a **`PointMesh` of the shared points**, holding the `(P,3)` coordinates and their tags — plus `lines (L,2)` (**required**), `interior (L,N-1,3)` | `points`, `line` |
+| `QuadMesh` | `line_mesh` — a **`LineMesh` of the shared edges**, whose `interior` holds the edge nodes — plus `quad (Q,4)` edge incidence, `orient (Q,4)`, `interior (Q,(N-1)²,3)` | `points`, `quads (Q,4)` |
+| `HexMesh` | `quad_mesh` — a **`QuadMesh` of the shared faces**, whose `interior` holds the face nodes and whose `line_mesh.interior` holds the edge nodes — plus `hex (E,6)` face incidence, `orient (E,6)` D4 codes, `interior (E,(N-1)³,3)` | `points`, `hexes (E,8)` |
+
+Three slot names, three roles, and no word does two jobs: **`<rung>_mesh`** is the
+stored container one rung down, the **singular** `line` / `quad` / `hex` is this rung's
+incidence into it, and the **plural** `lines` / `quads` / `hexes` is the derived corner
+connectivity. `points` is always the `(N,3)` coordinates. At the line rung a point *is*
+its own corner, so `line` and `lines` are one table reachable under both names.
 
 `points` / `quads` / `hexes` are **derived, read-only** views over that storage.
 A `HexMesh`'s points *are* its shared-face `QuadMesh`'s points, which *are* its

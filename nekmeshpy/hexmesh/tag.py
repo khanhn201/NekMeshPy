@@ -30,7 +30,7 @@ def retag_element(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
 
     The region vocabulary and the boundary-condition vocabulary are different tables,
     so renaming one never disturbs the other even where they share a word."""
-    return HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
+    return HexMesh(mesh.quad_mesh, mesh.hex, mesh.orient, mesh.interior,
                    mesh.element_tags.renamed(mapping, "hexmesh.retag_element"))
 
 
@@ -50,8 +50,8 @@ def retag_face(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
         mesh = hexmesh.retag_face(mesh, {"inlet": "", "outlet": ""})
 
     :func:`tag_report <nekmeshpy.hexmesh.query.tag_report>` is what finds those."""
-    return HexMesh(quadmesh.retag_element(mesh.quads, mapping),
-                   mesh.hex, mesh.face_orient, mesh.interior, mesh.element_tags)
+    return HexMesh(quadmesh.retag_element(mesh.quad_mesh, mapping),
+                   mesh.hex, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 def tag_faces(mesh: HexMesh, faces: IntArray,
@@ -69,16 +69,16 @@ def tag_faces(mesh: HexMesh, faces: IntArray,
 
     ``tags`` is one name for all of them or one per face; ``NO_TAG`` names nothing, and
     a face already named is overwritten."""
-    named = np.asarray(mesh.face_tags.dense(mesh.quads.n_quads), dtype=object)
+    named = np.asarray(mesh.face_tags.dense(mesh.quad_mesh.n_quads), dtype=object)
     ids: IntArray = np.asarray(faces, dtype=np.int64).reshape(-1)
     names: StrArray = (np.full(ids.shape[0], tags) if isinstance(tags, str)
                        else np.asarray(tags, dtype=np.str_).reshape(-1))
     hit = names != ""
     named[ids[hit]] = names[hit]
-    q = mesh.quads
-    return HexMesh(QuadMesh(q.lines, q.quad, q.flip, q.interior,
+    q = mesh.quad_mesh
+    return HexMesh(QuadMesh(q.line_mesh, q.quad, q.orient, q.interior,
                             ElementTags.from_dense(np.asarray(named, dtype=np.str_))),
-                   mesh.hex, mesh.face_orient, mesh.interior, mesh.element_tags)
+                   mesh.hex, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 __all__ = [

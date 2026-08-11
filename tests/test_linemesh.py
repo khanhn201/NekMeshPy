@@ -314,7 +314,7 @@ def test_merge_does_not_weld_interior_points():
 
 def _quad_edge_mid(qm, edge_id):
     """A tag names a shared edge, so its geometry comes straight off ``lines``."""
-    return qm.points[qm.lines.lines[edge_id]].mean(axis=0)
+    return qm.points[qm.line_mesh.lines[edge_id]].mean(axis=0)
 
 
 def test_extrude_line_to_quad_carries_element_and_edge_tags():

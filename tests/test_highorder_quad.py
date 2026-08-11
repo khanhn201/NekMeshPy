@@ -107,7 +107,7 @@ def test_structured_stamps_its_edges_high_order_nodes(order):
 def _edge_chord_deviation(qm):
     """Per shared edge, the max distance of its interior nodes from the straight
     chord between its two corners -- 0 for a straight-subdivided edge."""
-    lm = qm.lines
+    lm = qm.line_mesh
     a = lm.points[lm.lines[:, 0]]
     b = lm.points[lm.lines[:, 1]]
     d = b - a
@@ -118,7 +118,7 @@ def _edge_chord_deviation(qm):
 
 def _on_radius(qm, r):
     """Mask of shared edges whose *both* corners sit at radius ``r`` (the wall)."""
-    lm = qm.lines
+    lm = qm.line_mesh
     rc = np.linalg.norm(lm.points[:, :2], axis=1)
     return np.isclose(rc, r, atol=1e-9)[lm.lines].all(axis=1)
 
@@ -153,7 +153,7 @@ def test_half_ogrid_interior_edges_are_curved(order):
     assert dev[wall].max() > 1e-3
     assert dev[~wall].max() > 0.3 * dev[wall].max()
     # and the wall nodes still land on the exact circle
-    lm = qm.lines
+    lm = qm.line_mesh
     wr = np.linalg.norm(lm.interior[wall].reshape(-1, 3)[:, :2], axis=1)
     assert np.allclose(wr, r, atol=1e-9)
 

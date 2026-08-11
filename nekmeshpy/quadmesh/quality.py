@@ -42,7 +42,7 @@ def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
     """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample."""
     from ..core import conform
     nodes, conn_ho = conform.conformal_quad(
-        mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
+        mesh.points, mesh.quads, mesh.quad, mesh.orient, mesh.line_mesh.interior,
         mesh.interior, order)
     block: PointArray = nodes[conn_ho]
     return block

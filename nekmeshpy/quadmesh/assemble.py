@@ -404,7 +404,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     interior: PointArray | None = None
     if order > 1:
         local: PointArray = np.concatenate(
-            [conform.gather_edge_nodes(m.lines.interior, m.quad, m.flip)
+            [conform.gather_edge_nodes(m.line_mesh.interior, m.quad, m.orient)
              for m in meshes], axis=0)                     # (Q,4,order-1,3)
         edge_nodes = conform.scatter_edge_nodes(
             local, elem_edges, flip, edges.shape[0],
@@ -417,7 +417,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     etag_off = 0
     edge_tag_list: list[ElementTags] = []
     for m in meshes:
-        mine: IntArray = np.full(m.lines.n_lines, -1, dtype=np.int64)
+        mine: IntArray = np.full(m.line_mesh.n_lines, -1, dtype=np.int64)
         mine[np.asarray(m.quad, dtype=np.int64).ravel()] = np.asarray(
             elem_edges[etag_off:etag_off + m.n_quads], dtype=np.int64).ravel()
         edge_tag_list.append(m.edge_tags.renumber(mine))
@@ -436,13 +436,13 @@ def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
     preserved: the shared edge-interior and private per-quad nodes ride along."""
     kept, new_quad_of = conform.renumber_map(keep)
     quad: IntArray = mesh.quad[kept]
-    edge_keep: BoolArray = np.zeros(mesh.lines.n_lines, dtype=bool)
+    edge_keep: BoolArray = np.zeros(mesh.line_mesh.n_lines, dtype=bool)
     if quad.size:
         edge_keep[np.unique(quad)] = True
-    sub_lines, new_edge_of = line_subset(mesh.lines, edge_keep)
+    sub_lines, new_edge_of = line_subset(mesh.line_mesh, edge_keep)
     # the edge tags ride ``sub_lines`` -- ``line_subset`` already carried them onto
     # the compacted edge numbering, which is the whole of it
-    return (QuadMesh(sub_lines, new_edge_of[quad], mesh.flip[kept],
+    return (QuadMesh(sub_lines, new_edge_of[quad], mesh.orient[kept],
                      mesh.interior[kept],
                      mesh.element_tags.gather(kept)),
             new_quad_of)

@@ -65,7 +65,7 @@ def test_wall_nodes_lie_on_the_true_arc(order):
     """The high-order wall nodes are the arc's own, not a chord subdivision."""
     n = 4
     q = _disc(n, order)[0]
-    lm = q.lines
+    lm = q.line_mesh
     rp = np.linalg.norm(lm.points, axis=1)
     on_wall = ((np.abs(rp[lm.lines[:, 0]] - R) < 1e-12)
                & (np.abs(rp[lm.lines[:, 1]] - R) < 1e-12))
@@ -91,7 +91,7 @@ def test_a_bowed_seam_is_meshed_exactly(order):
     arc = linemesh.arc(R, 2 * n, start_theta=0.0, end_theta=np.pi / 2, order=order)
     q = quadmesh.quadrant_ogrid(arc, s1, s2, RADIAL, center_scale=CS)
     # every node of the mesh that sits on the bowed seam's line must satisfy the curve
-    lm = q.lines
+    lm = q.line_mesh
     seam_pts = s1.points
     lo = np.array([np.argmin(np.linalg.norm(lm.points - p, axis=1)) for p in seam_pts])
     idx = {(min(a, b), max(a, b)): k for k, (a, b) in enumerate(lm.lines)}

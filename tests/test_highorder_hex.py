@@ -37,9 +37,9 @@ def test_hex_must_index_shared_faces_that_exist():
     against its edges and ``LineMesh`` against its points."""
     blk = _shell(1)
     with pytest.raises(ValueError, match="hex must index the .* shared faces"):
-        HexMesh(blk.quads, np.full((2, 6), 999), np.zeros((2, 6), dtype=np.int64))
+        HexMesh(blk.quad_mesh, np.full((2, 6), 999), np.zeros((2, 6), dtype=np.int64))
     with pytest.raises(ValueError, match="hex must index the .* shared faces"):
-        HexMesh(blk.quads, -np.ones((1, 6), dtype=np.int64),
+        HexMesh(blk.quad_mesh, -np.ones((1, 6), dtype=np.int64),
                 np.zeros((1, 6), dtype=np.int64))
 
 
@@ -49,7 +49,7 @@ def test_order_n_container_asks_for_the_interior_it_cannot_invent():
     blk = _shell(3)
     assert blk.order == 3
     with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-hex private"):
-        HexMesh(blk.quads, blk.hex, blk.face_orient)
+        HexMesh(blk.quad_mesh, blk.hex, blk.orient)
 
 
 # -- geometric truth: annulus inner wall rides the true sphere ----------
@@ -106,8 +106,8 @@ def test_blend_morphs_hex_curved_blocks():
     # a uniformly scaled copy, built natively from a's own entity tables -- same B-rep,
     # every stored node doubled, so the two pair by index at every rung
     lines = LineMesh(a.points * 2.0, a.edges, interior=a.edge_nodes * 2.0)
-    quads = QuadMesh(lines, a.quads.quad, a.quads.flip, a.face_nodes * 2.0)
-    b = HexMesh(quads, a.hex, a.face_orient, a.interior * 2.0)
+    quads = QuadMesh(lines, a.quad_mesh.quad, a.quad_mesh.orient, a.face_nodes * 2.0)
+    b = HexMesh(quads, a.hex, a.orient, a.interior * 2.0)
     lo, mid, hi = hexmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)

@@ -87,7 +87,7 @@ def test_a_subset_drops_the_points_nothing_kept_touches():
 def test_select_by_tag_takes_exactly_the_tagged_elements():
     section = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, RADIAL)
     tagged = quadmesh.QuadMesh(
-        section.lines, section.quad, section.flip, section.interior,
+        section.line_mesh, section.quad, section.orient, section.interior,
         ElementTags(np.arange(0, section.n_quads, 3),
                     np.full(len(np.arange(0, section.n_quads, 3)), "core")))
     got = quadmesh.select(tagged, "core")

@@ -62,8 +62,8 @@ def disc(order=1, normal=(0, 0, 1), center=(RB, 0.0, 0.0), tag="wall"):
 def hex_nodes(b):
     """Every conformal node of the block, corners and high-order alike."""
     nodes, _ = conform.conformal_hex(b.points, b.hexes, b._elem_edges, b._edge_flip,
-                                     b.quads.lines.interior, b.hex, b.face_orient,
-                                     b.quads.interior, b.interior, b.order)
+                                     b.quad_mesh.line_mesh.interior, b.hex, b.orient,
+                                     b.quad_mesh.interior, b.interior, b.order)
     return nodes
 
 
@@ -349,8 +349,8 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
                          origin=(RB, 0.0, 0.0), normal=(0, 0, 1),
                          orientation="fixed", up=(0, 1, 0),
                          element_tags="fin", first_tag="a", last_tag="b")
-    nodes, _ = conform.conformal_quad(rib.points, rib.quads, rib.quad, rib.flip,
-                                      rib.lines.interior, rib.interior, rib.order)
+    nodes, _ = conform.conformal_quad(rib.points, rib.quads, rib.quad, rib.orient,
+                                      rib.line_mesh.interior, rib.interior, rib.order)
     x, y, z = nodes.T
     assert np.max(np.abs(y)) < 1e-14                      # stayed in the xz plane
     r = np.hypot(x, z)

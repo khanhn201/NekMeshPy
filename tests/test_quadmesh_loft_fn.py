@@ -46,8 +46,8 @@ def _ring_fractions(n=NV):
 
 def _nodes(qm):
     """Every conformal node of the section, corners and high-order alike."""
-    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.flip,
-                                      qm.lines.interior, qm.interior, qm.order)
+    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.orient,
+                                      qm.line_mesh.interior, qm.interior, qm.order)
     return nodes
 
 
@@ -137,7 +137,7 @@ def test_order_one_equals_a_plain_loft_of_the_same_profiles(loop):
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.quads, want.quads)
     assert np.array_equal(got.quad, want.quad)
-    assert np.array_equal(got.flip, want.flip)
+    assert np.array_equal(got.orient, want.orient)
 
 
 def test_open_sweep_has_the_expected_shape_and_caps():
@@ -247,4 +247,4 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft():
     got = quadmesh.loft(slices, sweep_nodes=sweep)
     want = quadmesh.loft(slices)
     assert np.allclose(got.interior, want.interior, atol=1e-14)
-    assert np.allclose(got.lines.interior, want.lines.interior, atol=1e-14)
+    assert np.allclose(got.line_mesh.interior, want.line_mesh.interior, atol=1e-14)

@@ -16,7 +16,7 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
     """A section's boundary as a ``LineMesh``, carrying the section's **own** nodes."""
     # a tag names a shared *edge*, so the quads carrying it are looked up rather than
     # stored: an edge on the boundary has one, an interior one has both of its own.
-    named: StrArray = mesh.edge_tags.dense(mesh.lines.n_lines)
+    named: StrArray = mesh.edge_tags.dense(mesh.line_mesh.n_lines)
     if tag is None:
         sel: IntArray = boundary_edges(mesh)
     else:

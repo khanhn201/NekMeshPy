@@ -22,7 +22,7 @@ def retag_element(mesh: LineMesh, mapping: Mapping[str, str]) -> LineMesh:
     two, and two keys may share an image, which merges those regions. A key that
     names no tag on this mesh raises -- a rename matching nothing is a typo, and a
     mis-named region is not visible again until the solver reads it."""
-    return LineMesh(mesh.vertices, mesh.lines, mesh.interior,
+    return LineMesh(mesh.point_mesh, mesh.lines, mesh.interior,
                     mesh.element_tags.renamed(mapping, "linemesh.retag_element"))
 
 
@@ -33,7 +33,7 @@ def retag_point(mesh: LineMesh, mapping: Mapping[str, str]) -> LineMesh:
     Renaming a tag to ``""`` **drops** its rows rather than storing an empty name: a
     side-tag table is a named subset, so leaving it is leaving the table. That is how
     a boundary name that has stopped meaning anything is retired."""
-    return LineMesh(pointmesh.retag_element(mesh.vertices, mapping),
+    return LineMesh(pointmesh.retag_element(mesh.point_mesh, mapping),
                     mesh.lines, mesh.interior, mesh.element_tags)
 
 

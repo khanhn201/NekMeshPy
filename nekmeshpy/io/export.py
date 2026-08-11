@@ -192,8 +192,8 @@ def to_fld(mesh: HexMesh, filename: str, *,
     order = mesh.order
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, order)
     blocks = nodes[conn_ho]                       # (E, (order+1)**3, 3), i fastest
     nel = blocks.shape[0]
     lx1 = order + 1
@@ -331,8 +331,8 @@ def _hex_arrays(mesh: HexMesh,
     perm = _lagrange_hex_perm(order)
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
     for elem, face, name, _code in _export_rows(mesh, g):
@@ -366,7 +366,7 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
         Q, m, _ = blocks.shape
         return blocks.reshape(Q * m, 3), _unwelded(Q, m), _VTK_QUAD
     nodes, conn_ho = conform.conformal_quad(
-        mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
+        mesh.points, mesh.quads, mesh.quad, mesh.orient, mesh.line_mesh.interior,
         mesh.interior, mesh.order)
     perm = _lagrange_quad_perm(mesh.order)
     nodes = _to_equispaced(nodes, conn_ho, mesh.order, 2)

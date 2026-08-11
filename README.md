@@ -2,11 +2,9 @@
 
 [![docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://khanhn201.github.io/NekMeshPy/)
 
-An all-hex meshing **toolkit** with Nek5000/NekRS export: composable primitives
-— a shared-point mesh model, named physical groups, `HexMesh` factories,
-smoothing / surface operations, sizing fields, quality + topology checks, and
-meshio I/O. Concrete meshers (carotid vessel, pipes, external-flow domains)
-are built on the toolkit and live in [`examples/`](examples), not the library.
+Conformal high order all-hex meshing
+
+**Insert cool meshes here**
 
 ## Documentation
 
@@ -27,9 +25,6 @@ pip install -e ".[all]"       # + matplotlib, meshio, pytest
 ```
 
 ## Quick start
-
-Driven from Python — no config file or CLI. Mesh containers are pure data;
-operations on a finished mesh are free functions taking the mesh first.
 
 ```python
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
@@ -54,12 +49,6 @@ assert block.is_conforming()                   # no hanging-point / T-junction f
 print(block)                       # <HexMesh 5945 points, 5280 hexes, order 1, ...>
 print(block.quality_summary().min) # a QualitySummary NamedTuple, not a dict
 ```
-
-Every container has a `__repr__` that names its size, order and tag vocabulary, and the
-report-returning functions hand back **NamedTuples** rather than dicts —
-`quality_summary()` a `QualitySummary` (`n_elements`/`min`/`max`/`mean`/`median`/
-`n_inverted`/`n_poor`), `topology_report()` a `TopologyReport` — so a typo in
-`stats.n_inverted` is a `mypy` error instead of a `KeyError` at runtime.
 
 ## Examples
 
@@ -156,9 +145,9 @@ full `lx1³` GLL block per element.
 **The B-rep ladder is the storage.** There is no per-element node block anywhere and
 no `.curved` facade: each container holds the rung below it plus what it privately
 owns — `LineMesh` (`points`, `lines`, `interior (L,N-1,3)`); `QuadMesh` (a `lines`
-*`LineMesh` of the shared edges* + `quad`/`flip` incidence + `interior
+*`LineMesh` of the shared edges* + `quad`/`orient` incidence + `interior
 (Q,(N-1)²,3)`); `HexMesh` (a `quads` *`QuadMesh` of the shared faces* + `hex` /
-`face_orient` incidence + `interior (E,(N-1)³,3)`). `points` / `quads` / `hexes` are
+`orient` incidence + `interior (E,(N-1)³,3)`). `points` / `quads` / `hexes` are
 **derived read-only views** over it, so corner consistency is structural and
 `mesh.points[:] = X` propagates everywhere for free. Conformality is likewise
 structural: a shared edge or face is *one stored object* referenced by every incident
@@ -215,10 +204,5 @@ tags byte-for-byte — so a golden diff from a refactor is a bug.
 ## Roadmap
 
 - [ ] Periodic boundary
-- [ ] Function based operations
-- [ ] Rework tagging system
 - [ ] Rework smoothing
-- [x] High-order / curved elements — `order=N` on the factories (GLL nodes, curved
-  `.vtu` + Nek field file; `.re2` stays linear). See
-  [`examples/high_order_*.py`](examples).
-- [ ] Solid–fluid conjugate mesh
+- [ ] GUI?

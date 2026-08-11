@@ -60,8 +60,8 @@ def _wall_nodes(mesh):
     geometry, which is exactly the failure mode worth guarding here."""
     nodes, conn = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, mesh.order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, mesh.order)
     ids = [conn[e][interp.hex_face_indices(s, mesh.order)]
            for e, s, tag in face_rows(mesh)
            if tag == "wall"]
@@ -76,8 +76,8 @@ def _volume(mesh):
     o = mesh.order
     nodes, conn = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, o)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, o)
     blk = nodes[conn].reshape(-1, o + 1, o + 1, o + 1, 3)
     g = fields.gll_nodes(o)
     d = fields.lagrange_derivative_matrix(g, g)

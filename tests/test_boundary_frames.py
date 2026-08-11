@@ -138,8 +138,8 @@ def test_the_row_fit_reproduces_the_hex_read_where_the_frames_coincide(order):
     agree with :func:`gather_face_nodes` node for node -- the cross-check that the new
     path is the old one, not merely a different one."""
     block = _pipe(order)[2]
-    local = conform.gather_face_nodes(block.face_nodes, block.hex, block.face_orient)
-    canonical = np.asarray(block.quads.quads, dtype=np.int64)
+    local = conform.gather_face_nodes(block.face_nodes, block.hex, block.orient)
+    canonical = np.asarray(block.quad_mesh.quads, dtype=np.int64)
     for f in range(6):
         if not np.array_equal(conform._FACE_CORNER_UV[f], conform._CCW_UV):
             continue

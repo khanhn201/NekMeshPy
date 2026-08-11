@@ -44,7 +44,7 @@ def boundary_face_ids(mesh: HexMesh) -> BoolArray:
     :func:`tag_report` counts."""
     return np.asarray(
         np.bincount(np.asarray(mesh.hex, dtype=np.int64).ravel(),
-                    minlength=mesh.quads.n_quads) == 1, dtype=bool)
+                    minlength=mesh.quad_mesh.n_quads) == 1, dtype=bool)
 
 def _boundary_points(hexes: IntArray) -> IntArray:
     faces, mask = _boundary_mask(hexes)
@@ -79,7 +79,7 @@ def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     Built from the sparse side: the flat ``hex`` face ids are argsorted once and the
     named ids located in them, so nothing the size of ``(E,6)`` in strings is ever
     materialised (at chimera's 438k elements that array alone would be ~170 MB)."""
-    named = mesh.quads.element_tags
+    named = mesh.quad_mesh.element_tags
     if not len(named):
         return np.zeros((0, 2), dtype=np.int64), _empty_str()
     flat: IntArray = np.asarray(mesh.hex, dtype=np.int64).ravel()
@@ -239,7 +239,7 @@ def element_blocks(mesh: HexMesh) -> PointArray:
     out[:, conform._edge_slots(3, order)[:, 1:-1], :] = conform.gather_edge_nodes(
         mesh.edge_nodes, mesh._elem_edges, mesh._edge_flip)
     out[:, conform._face_interior_slots(order), :] = conform.gather_face_nodes(
-        mesh.face_nodes, mesh.hex, mesh.face_orient)
+        mesh.face_nodes, mesh.hex, mesh.orient)
     out[:, conform._interior_slots(3, order), :] = mesh.interior
     return out
 

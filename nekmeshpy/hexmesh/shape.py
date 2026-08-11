@@ -113,8 +113,8 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
             "1 node on exactly three, got %d and %d"
             % (who, corners.shape[0], centres.shape[0]))
     order = qm.order
-    nodes, conn = conform.conformal_quad(qm.points, quads, qm.quad, qm.flip,
-                                         qm.lines.interior, qm.interior, order)
+    nodes, conn = conform.conformal_quad(qm.points, quads, qm.quad, qm.orient,
+                                         qm.line_mesh.interior, qm.interior, order)
     blocks: PointArray = nodes[conn]
     sides = _side_map(quads)
     c = int(centres[0])
