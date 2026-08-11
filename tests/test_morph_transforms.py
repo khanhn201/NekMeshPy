@@ -231,13 +231,12 @@ def test_reverse_is_an_involution(order):
 def test_reverse_remaps_element_and_point_tags_to_the_same_physical_points():
     chain = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
                           first_tag="in", last_tag="out")
-    lm = LineMesh(chain.points, chain.lines, chain.interior, chain.point_tags,
+    lm = LineMesh(chain.vertices, chain.lines, chain.interior,
                   ElementTags.from_dense(["a", "b"]))
     out = linemesh.reverse(lm)
     assert out.element_tags.dense(out.n_lines).tolist() == ["b", "a"]
     # the tag that named the x=0 end still names it after the relabel
-    tagged = {t: out.points[out.lines[e, s - 1]].tolist()
-              for e, s, t in out.point_tags}
+    tagged = {t: out.points[i].tolist() for i, t in out.point_tags}
     assert tagged["in"] == [0.0, 0.0, 0.0]
     assert tagged["out"] == [2.0, 0.0, 0.0]
 
@@ -276,7 +275,7 @@ def test_a_reversed_rings_per_segment_tags_stay_on_their_segments():
     """The order-1 face of the same defect, and the quieter one: the rotation shifted
     every per-segment wall tag by one segment without erroring."""
     ring = linemesh.circle(1.0, 8)
-    named = LineMesh(ring.points, ring.lines, ring.interior, ring.point_tags,
+    named = LineMesh(ring.vertices, ring.lines, ring.interior,
                      ElementTags(np.arange(8),
                                  np.array(["s%d" % k for k in range(8)])))
     rev = linemesh.reverse(named)
@@ -300,6 +299,6 @@ def test_line_loft_caps_are_one_name_each():
     reduces to a single string here -- and anything else is refused outright."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
     scalar = linemesh.loft(P, first_tag="in", last_tag="out")
-    assert list(scalar.point_tags) == [(0, 1, "in"), (1, 2, "out")]
+    assert list(scalar.point_tags) == [(0, "in"), (2, "out")]
     with pytest.raises(TypeError, match="single tag string"):
         linemesh.loft(P, first_tag=["in"])

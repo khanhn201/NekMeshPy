@@ -86,7 +86,8 @@ def test_line_loft_end_point_tags():
     """``first_tag``/``last_tag`` name the 1-D end caps: the chain's two end points."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
     lm = linemesh.loft(P, first_tag="inlet", last_tag="outlet")
-    assert lm.point_tags.rows.tolist() == [[0, 1], [1, 2]]
+    # the two end points themselves, not one line's view of each
+    assert list(lm.point_tags) == [(0, "inlet"), (2, "outlet")]
     assert lm.point_group_tags == ["inlet", "outlet"]
 
 

@@ -15,7 +15,8 @@ from .._typing import (
 from ..core import conform, stations
 from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
-from ..core.tags import ElementTags, PointTags, TagBuilder, element_mask
+from ..core.tags import ElementTags, element_mask, welded_element_tags
+from ..pointmesh import PointMesh
 from .linemesh import LineMesh
 from .query import boundary_points
 
@@ -61,17 +62,20 @@ def loft(
     else:
         lines = np.column_stack([idx[:-1], idx[1:]])
 
+    # ``first`` / ``last`` name the chain's two end **points**, so they are tags on
+    # the rung below -- written into a dense per-point row rather than as two
+    # (line, side) rows.  On a ``loop`` both name the same point (the seam), and the
+    # later write wins: one point cannot carry two names.
     first = _one_tag(first_tag, "first_tag")
     last = _one_tag(last_tag, "last_tag")
-    bnd = PointTags.empty()
-    if first or last:
-        bb = TagBuilder(PointTags)
-        L = lines.shape[0]
-        if first and L:
-            bb.add(0, 1, first)
-        if last and L:
-            bb.add(L - 1, 2, last)
-        bnd = bb.build_ordered()
+    ptags = ElementTags.empty()
+    if (first or last) and lines.shape[0]:
+        named = np.full(pts.shape[0], "", dtype=object)
+        if first:
+            named[lines[0, 0]] = first
+        if last:
+            named[lines[-1, 1]] = last
+        ptags = ElementTags.from_dense(np.asarray(named, dtype=np.str_))
 
     if order > 1 and interior is None:
         # straight GLL blend between each line's two endpoints -- the same
@@ -82,7 +86,7 @@ def loft(
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
     tag = _one_tag(element_tags, "element_tags")
     etags = ElementTags.uniform(lines.shape[0], tag) if tag else ElementTags.empty()
-    return LineMesh(pts, lines, interior, bnd, etags)
+    return LineMesh(PointMesh(pts, ptags), lines, interior, etags)
 
 
 def loft_spline(
@@ -190,20 +194,23 @@ def merge(meshes: Sequence[LineMesh], *,
     points, point_id = conform.weld_points(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
-    bnd_list: list[PointTags] = []
+    ptag_list: list[ElementTags] = []
     etag_list: list[ElementTags] = []
     noff = loff = 0
     for m, c in zip(meshes, counts):
         line_list.append(point_id[m.lines + noff])   # local -> welded id
         # ids shift by this block's offset; sides stay local to their element
         etag_list.append(m.element_tags.offset(loff))
-        bnd_list.append(m.point_tags.offset(loff))
+        # a point tag rides its point through the weld -- and two blocks welding on a
+        # named end land both names on the one surviving point, which is where the
+        # merge's own conflict rule lives
+        ptag_list.append(m.point_tags.renumber(point_id[noff:noff + c]))
         noff += c
         loff += m.n_lines
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
     etags = ElementTags.concat(etag_list)
-    bnd = PointTags.concat(bnd_list)
+    ptags = welded_element_tags(ptag_list, "LineMesh.merge")
 
     # order-N: welding only touches endpoints (corners, which are re-numbered into
     # the merged points), and every high-order node of a line is *private*, so the
@@ -216,7 +223,7 @@ def merge(meshes: Sequence[LineMesh], *,
     if meshes:
         interior = np.concatenate([m.interior for m in meshes], axis=0)
 
-    return LineMesh(points, lines, interior, bnd, etags)
+    return LineMesh(PointMesh(points, ptags), lines, interior, etags)
 
 def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
     """``(the kept lines as a LineMesh, new_line_of)`` -- the rung-1 half of every
@@ -230,8 +237,9 @@ def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
     used: IntArray = np.unique(lines) if lines.size else np.zeros(0, np.int64)
     new_point_of: IntArray = np.full(mesh.n_points, -1, dtype=np.int64)
     new_point_of[used] = np.arange(used.shape[0], dtype=np.int64)
-    return (LineMesh(mesh.points[used], new_point_of[lines], mesh.interior[kept],
-                     mesh.point_tags.renumber(new_line_of),
+    return (LineMesh(PointMesh(mesh.points[used],
+                               mesh.point_tags.renumber(new_point_of)),
+                     new_point_of[lines], mesh.interior[kept],
                      mesh.element_tags.gather(kept)),
             new_line_of)
 

@@ -15,6 +15,7 @@ from .core.tags import (
 from .hexmesh import HexMesh, smoothing
 from .io import export, viz
 from .linemesh import LineMesh
+from .pointmesh import PointMesh
 from .quadmesh import NO_TAG, QuadMesh
 from .quadmesh.smoothing import (
     SECTION_METHODS,
@@ -25,6 +26,7 @@ from .trimesh import TriMesh
 
 __all__ = [
     "LineMesh",
+    "PointMesh",
     "TriMesh",
     "trimesh",
     "QuadMesh",

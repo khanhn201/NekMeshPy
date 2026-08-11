@@ -787,7 +787,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
         lm = line_loft(pts, interior=interior, order=o)
         if tags is None:
             return lm
-        return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+        return LineMesh(lm.vertices, lm.lines, lm.interior,
                         ElementTags.from_dense(tags))
     arc1 = _arc(bpts[0:nh + 1, :], inner[0:nh], None if seg is None else seg[0:nh])
     arc2 = _arc(np.vstack([bpts[nh:M, :], bpts[0:1, :]]), inner[nh:M],

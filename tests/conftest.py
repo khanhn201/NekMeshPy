@@ -10,6 +10,8 @@ in ``tests/golden/`` (a frozen snapshot of the validated results).
 
 import os
 import runpy
+import struct
+from collections import Counter
 
 import matplotlib
 import numpy as np
@@ -125,11 +127,41 @@ def read_re2_coords(path):
     return num_elem, coords, rest
 
 
+def read_re2_boundary(path):
+    """The ``.re2`` boundary block decoded into a ``Counter`` of
+    ``(element (1-based), face, code)`` -- the block's *content*, freed of its row order.
+
+    The byte comparison in ``test_re2_boundary_block_identical`` is the stricter check
+    and stays, but it also pins something that is not part of the contract: which order
+    the rows happen to be written in. This is the part that must survive a refactor of
+    how tags are stored, so it is asserted separately and can outlive a regenerated
+    baseline."""
+    with open(path, "rb") as f:
+        hdr = f.read(80)
+        f.read(4)
+        num_elem = int(hdr.split()[1])
+        np.fromfile(f, dtype="<f8", count=num_elem * 25)
+        rest = f.read()
+    n_bnd = int(np.frombuffer(rest[:16], dtype="<f8")[1])
+    rows = np.frombuffer(rest[16:16 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
+    # a code rides in the 8 bytes of one double; Nek's own field is 3 chars, so the
+    # rest are the NUL padding ``_str_to_double`` left there
+    return Counter(
+        (int(r[0]), int(r[1]),
+         struct.pack("<d", r[7]).decode("ascii", "replace").rstrip("\x00"))
+        for r in rows)
+
+
 def assert_same_side_tags(a, b):
     """The two side-tag tables carry the same rows in the same order.
 
     The tables set ``eq=False`` (the generated ``__eq__`` would compare ndarray
-    fields and raise), so equality is spelt column by column."""
+    fields and raise), so equality is spelt column by column -- and the columns differ
+    by rung as the tags fold onto the shared entity: a table addressed by
+    ``(element, side)`` still has both, one addressed by entity id has only ``ids``."""
+    assert np.array_equal(a.tags, b.tags)
+    if hasattr(a, "ids") or hasattr(b, "ids"):
+        assert np.array_equal(a.ids, b.ids)
+        return
     assert np.array_equal(a.elements, b.elements)
     assert np.array_equal(a.sides, b.sides)
-    assert np.array_equal(a.tags, b.tags)

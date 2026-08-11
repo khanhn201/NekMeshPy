@@ -6,7 +6,7 @@ import numpy as np
 
 from .._typing import IntArray, PointArray
 from ..core import conform
-from ..core.tags import ElementTags, PointTags
+from ..core.tags import ElementTags
 from ..linemesh import LineMesh
 from .quadmesh import QuadMesh
 from .query import boundary_edges
@@ -44,8 +44,7 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
         elem = ElementTags.from_dense(
             np.asarray([named.get((int(e), int(s)), "") for e, s in sel],
                        dtype=np.str_))
-    return LineMesh(mesh.points[gids], local, en, PointTags.empty(), elem,
-)
+    return LineMesh(mesh.points[gids], local, en, elem)
 
 
 __all__ = ["boundary_mesh"]

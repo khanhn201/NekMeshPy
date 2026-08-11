@@ -9,6 +9,7 @@ from .._typing import IntArray, PointArray
 from ..core import conform
 from ..core.tags import EdgeTags, ElementTags
 from ..linemesh import LineMesh
+from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from .hexmesh import HexMesh
 from .query import boundary_faces
@@ -97,8 +98,8 @@ def _templated(mesh: HexMesh, tag: str | None, poly: IntArray, gids: IntArray,
     tl = template.lines
     en, fn = _high_order_nodes(mesh, g[np.asarray(template.quads, dtype=np.int64)],
                                g[np.asarray(tl.lines, dtype=np.int64)])
-    lines = LineMesh(mesh.points[g], tl.lines, en, tl.point_tags, tl.element_tags,
-)
+    lines = LineMesh(PointMesh(mesh.points[g], tl.point_tags), tl.lines, en,
+                     tl.element_tags)
     _log_pairing(tag, float(np.max(dist)))
     return QuadMesh(lines, template.quad, template.flip, fn, template.edge_tags,
                     template.element_tags)

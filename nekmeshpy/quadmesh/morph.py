@@ -20,6 +20,7 @@ from ..core.tags import EdgeTags
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
+from ..pointmesh import PointMesh
 from .quadmesh import QuadMesh
 
 
@@ -166,9 +167,10 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     rev = te[tidx, 0] != se[:, 0]
     new_ei: PointArray = np.asarray(target.lines.interior, dtype=float)[tidx].copy()
     new_ei[rev] = new_ei[rev][:, ::-1]
-    new_lines = LineMesh(target.points[s], structure.lines.lines, new_ei,
-                         target.lines.point_tags, target.lines.element_tags,
-)
+    new_lines = LineMesh(PointMesh(target.points[s],
+                                   target.lines.point_tags.gather(s)),
+                         structure.lines.lines, new_ei,
+                         target.lines.element_tags)
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.

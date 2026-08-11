@@ -16,6 +16,7 @@ from conftest import conformal
 from nekmeshpy import (
     ElementTags,
     LineMesh,
+    PointMesh,
     PointTags,
     QuadMesh,
     hexmesh,
@@ -107,10 +108,10 @@ def test_boundary_points_are_open_ends():
 
 
 def test_tagged_boundary_points_via_boundaries():
-    # side 1 -> local vertex 0, side 2 -> local vertex 1 of the referenced line
-    lm = LineMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [[0, 1], [1, 2]],
-                  point_tags=PointTags.from_pairs([[0, 1], [1, 2]],
-                                                  ["start", "end"]))
+    # a point tag names the point itself, not one line's view of it
+    lm = LineMesh(PointMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                            ElementTags([0, 2], ["start", "end"])),
+                  [[0, 1], [1, 2]])
     assert lm.n_point_tags == 2
     assert lm.point_group_tags == ["end", "start"]
 
@@ -290,9 +291,8 @@ def test_merge_two_arcs_close_into_a_loop():
 def test_merge_open_chains_stay_open_and_carry_tags():
     # two collinear open chains meeting at (1,0,0); the shared point welds but the
     # far ends stay degree-1, so the result is still open.
-    a = LineMesh([(0, 0, 0), (1, 0, 0)], [[0, 1]],
-                 point_tags=PointTags.from_pairs([[0, 1]], ["start"]),
-                 element_tags=ElementTags.uniform(1, "a"))
+    a = LineMesh(PointMesh([(0, 0, 0), (1, 0, 0)], ElementTags([0], ["start"])),
+                 [[0, 1]], element_tags=ElementTags.uniform(1, "a"))
     b = linemesh.loft([(1, 0, 0), (2, 0, 0)], element_tags="b")
     m = linemesh.merge([a, b])
     assert linemesh.boundary_points(m).tolist() == [0, 2]       # the two far ends survive
@@ -321,9 +321,9 @@ def _quad_edge_mid(qm, row):
 def test_extrude_line_to_quad_carries_element_and_edge_tags():
     # an open line along +x, tagged per element, with tagged end points; sweep
     # along +y into a quad strip and check both tag chains land correctly.
-    line = LineMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [[0, 1], [1, 2]],
-                    point_tags=PointTags.from_pairs([[0, 1], [1, 2]],
-                                                    ["start", "end"]),
+    line = LineMesh(PointMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                              ElementTags([0, 2], ["start", "end"])),
+                    [[0, 1], [1, 2]],
                     element_tags=ElementTags.from_dense(["seg0", "seg1"]))
     # the swept quads are new elements, so the profile's tags reach them only by
     # being asked for -- one ElementTags over the profile's lines

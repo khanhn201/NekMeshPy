@@ -11,6 +11,7 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
+    StrArray,
 )
 from ..core import conform, stations
 from ..core.fields import gll_nodes
@@ -25,6 +26,7 @@ from ..core.tags import (
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _subset as line_subset
 from ..linemesh.query import element_blocks as line_blocks
+from ..pointmesh import PointMesh
 from .quadmesh import (
     QuadMesh,
     _quad_interior_slots,
@@ -205,11 +207,19 @@ def loft(
             interior = ((1.0 - gv) * curves[i_idx, l_idx][:, iu, :]
                         + gv * curves[j_idx, l_idx][:, iu, :])
 
-    # a tagged boundary point names its swept wall edge on every layer: profile vertex
-    # 1 -> quad side 4, vertex 2 -> side 2.
+    # a tagged profile point names the wall edge swept from it, on every layer: it
+    # rides quad side 4 of the line leaving that point and side 2 of the line arriving
+    # at it.  Those two are the *same* swept edge seen from adjacent quads, so a point
+    # interior to the chain names it from both -- an end point, which is all any
+    # factory here tags, has one incident line and so yields the single row it always
+    # did.
     bb = TagBuilder(EdgeTags)
-    for l0, side, tag in slices[0].point_tags:
-        bb.add_if_tagged(lay * L + l0, 4 if side == 1 else 2, tag)
+    pnames: StrArray = slices[0].point_tags.dense(slices[0].n_points)
+    conn: IntArray = np.asarray(slices[0].lines, dtype=np.int64)
+    for side, vertex in ((4, 0), (2, 1)):
+        for l0 in np.flatnonzero(pnames[conn[:, vertex]] != ""):
+            bb.add_if_tagged(lay * L + int(l0), side,
+                             str(pnames[conn[int(l0), vertex]]))
     # a cap edge *is* a profile line, so with no argument it inherits that line's own
     # element tag -- except on a closed sweep, where the "caps" are the interior seam
     # and only an explicit tag names them.
@@ -295,7 +305,8 @@ def loft_spline(
         t, loop=loop)
     I: PointArray = stations.spline_levels(
         np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
-    fitted = [LineMesh(P[k], lines, I[k], ref.point_tags, ref.element_tags)
+    fitted = [LineMesh(PointMesh(P[k], ref.point_tags), lines, I[k],
+                       ref.element_tags)
               for k in range(t.shape[0])]
     return _loft_evaluated(fitted, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="loft_spline")

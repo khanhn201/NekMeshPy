@@ -23,6 +23,7 @@ from ..core.tags import (
     sweep_element_tags,
 )
 from ..linemesh import LineMesh
+from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from ..quadmesh.assemble import _subset as quad_subset
 from ..quadmesh.query import element_blocks as quad_blocks
@@ -431,7 +432,7 @@ def loft_spline(
         t, loop=loop)
     F: PointArray = stations.spline_levels(
         np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
-    fitted = [QuadMesh(LineMesh(P[k], edges, E[k], ref.lines.point_tags,
+    fitted = [QuadMesh(LineMesh(PointMesh(P[k], ref.lines.point_tags), edges, E[k],
                                 ref.lines.element_tags),
                        ref.quad, ref.flip, F[k], ref.edge_tags, ref.element_tags)
               for k in range(t.shape[0])]

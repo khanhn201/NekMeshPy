@@ -7,6 +7,7 @@ generated from source docstrings.
 ```{toctree}
 :maxdepth: 2
 
+pointmesh
 linemesh
 trimesh
 quadmesh
