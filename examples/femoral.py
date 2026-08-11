@@ -107,14 +107,14 @@ DELAUNAY_ROUNDS = 20          # edge-flip sweeps toward the surface Delaunay con
 RELAX_PASSES = 30             # relaxation sweeps over the junction, to take the shear out
 RELAX_RADIUS = 15.0            # ... within this far of the seam.  0 passes disables.
 SPLIT_TOL = 0.50              # wall/interior cut-off when splitting an interface               # ... over this distance from the junction
-N_HALF = 16                   # half-ring resolution; MULTIPLE OF 4
-NEAR_LEN = 2.0                # the uniform run, in leg **diameters** out from the
+N_HALF = 12                   # half-ring resolution; MULTIPLE OF 4
+NEAR_LEN = 1.5                # the uniform run, in leg **diameters** out from the
                               # junction.  The junction is where the wall actually does
                               # something -- the crater, the rim, the three-way weld --
                               # and constant layer thickness across it is what draws the
                               # trough; the legs beyond are diameters of nothing much.
 N_UNIFORM = 24                # layers in that uniform run
-N_GRADED = 30                 # layers from there out to the outlet.  Their growth is not
+N_GRADED = 40                 # layers from there out to the outlet.  Their growth is not
                               # a knob: it is solved for, so the first graded layer equals
                               # the uniform one and the last lands on the cap.  One
                               # grading across the whole leg cannot serve both ends --
@@ -124,8 +124,8 @@ N_GRADED = 30                 # layers from there out to the outlet.  Their grow
 FLUX_OFFSET = 2               # hex layers in from the outlet cap to the flux plane
                               # (0 = off).  Splitting the loft there is what names it.
 MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
-CENTER_SCALE = 0.5            # inner square-core size (fraction of diameter)
-RADIAL = np.array([0.0, 0.4, 0.7, 0.9, 1.0])   # O-ring layers (first 0, last 1.0)
+CENTER_SCALE = 0.7            # inner square-core size (fraction of diameter)
+RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layers (first 0, last 1.0)
 PROJECT_TO_STL = True
 SNAP_MAX = 0.05               # farthest a node may be carried onto the analytic wall.
                               # Beyond this it is not being projected, it is being moved
@@ -134,10 +134,16 @@ SNAP_AMBIG = 0.02             # when the crater and the branch tube are this clo
                               # equidistant the side is a coin toss, and the two choices
                               # tear the surface between adjacent nodes.  Leave those be
                               # too: near the corner, not snapping beats snapping wrong.
-ORDER = 3                     # the wall is genuinely curved above 1: each station's
+ORDER = 2                     # the wall is genuinely curved above 1: each station's
                               # ring is refit as a Fourier series and meshed with
                               # ``loft_fn``, so its nodes sit on that loop, not on chords
 FOURIER_KEEP = 0.5            # fraction of the rFFT modes kept in the wall refit
+RIM_KEEP = 0.5                # ditto for a *station's* wall ring, which is the boundary
+                              # of a marching-tets isosurface and so wanders along the
+                              # pipe by about a tet.  Lower than FOURIER_KEEP because
+                              # this is removing tet-scale noise, not resolving a shape:
+                              # the ring is a near-circle and its real content is in the
+                              # first few modes.
 SMOOTHING_METHOD = None       # both relaxers move corners only and reject order > 1
 UNTANGLE = True               # run ``hexmesh.smooth``'s point-local untangler on the
                               # welded mesh.  It searches each bad point's neighbourhood
@@ -1193,6 +1199,44 @@ def seam_pieces(P, TET, U, wall_pts, n_half, radial, center_scale, fine):
     return arcs, linemesh.loft(spine_pts, order=ORDER), raw
 
 
+def _rim_target(sec, uv_pts, rim):
+    """Where a station's wall ring **should** be, as a function of parameter position.
+
+    A station is the boundary of a marching-tets isosurface, so its wall ring inherits
+    the tet mesh's own facets: it wanders back and forth along the pipe by about a tet,
+    which is the squiggle visible between consecutive stations on the wall.  Snapping it
+    to the wall does not remove that -- snapping moves a point *onto* the surface, and a
+    ring that wobbles along the wall is already on it.
+
+    So low-pass the ring first, as a closed curve in its own index parameter, and snap
+    the smoothed curve.  ``fourier_ring`` gives it back in closed form, which means the
+    curved rim nodes can be evaluated *on* it rather than interpolated between corners --
+    the sagitta argument this function already makes for sampling.
+
+    Refitting a ring is what ``wall_loop`` deliberately does not do, for a good reason:
+    it would slide the wall corners onto a different surface from the interior they are
+    attached to.  That objection is answered here rather than avoided, because this
+    displacement is the one the caller carries inward."""
+    if rim.size < 8:
+        return lambda P, uv: snap_to_wall(P)      # too few samples to low-pass
+    ruv = uv_pts[rim]
+    o = np.argsort(np.arctan2(ruv[:, 1], ruv[:, 0]))
+    ang = np.arctan2(ruv[o, 1], ruv[o, 0])
+    M = rim.size
+    tpar = 2.0 * np.pi * np.arange(M) / M
+    p = fourier_ring(sec.points[rim[o]], keep=RIM_KEEP)
+    # the ring's parameter runs with its angle, so a node anywhere on the rim -- corner
+    # or curved -- finds its place on the refit curve by its own angle
+    ang_x = np.concatenate([ang - 2.0 * np.pi, ang, ang + 2.0 * np.pi])
+    t_x = np.concatenate([tpar - 2.0 * np.pi, tpar, tpar + 2.0 * np.pi])
+
+    def at(P, uv):
+        a = np.arctan2(uv[:, 1], uv[:, 0])
+        return snap_to_wall(p(np.interp(a, ang_x, t_x)))
+
+    return at
+
+
 def blend_to_wall(sec, uv_pts, uv_edge, uv_face, power=1.0):
     """Put the wall rim on the **analytic** wall and carry the correction inward.
 
@@ -1215,8 +1259,9 @@ def blend_to_wall(sec, uv_pts, uv_edge, uv_face, power=1.0):
     it by the sagitta -- six times further.  A field built from corners alone does not know
     that error exists, and moves the curved nodes by the wrong amount."""
     rim = quadmesh.boundary_points(sec)
+    wall_at = _rim_target(sec, uv_pts, rim)
     src_uv = [uv_pts[rim]]
-    src_d = [snap_to_wall(sec.points[rim]) - sec.points[rim]]
+    src_d = [wall_at(sec.points[rim], uv_pts[rim]) - sec.points[rim]]
 
     inter = sec.lines.interior
     on = np.zeros(0, bool)
@@ -1226,8 +1271,9 @@ def blend_to_wall(sec, uv_pts, uv_edge, uv_face, power=1.0):
         if on.any():
             wall_edges = inter[on]
             q = wall_edges.reshape(-1, 3)
-            src_uv.append(uv_edge[on].reshape(-1, 2))
-            src_d.append(snap_to_wall(q) - q)
+            uvq = uv_edge[on].reshape(-1, 2)
+            src_uv.append(uvq)
+            src_d.append(wall_at(q, uvq) - q)
 
     ruv, disp = np.vstack(src_uv), np.vstack(src_d)
     ang = np.arctan2(ruv[:, 1], ruv[:, 0])
@@ -1379,7 +1425,11 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     # finds its nodes by where they sit in the *parameter* plane, which is the only
     # place it can recognize them, and after the lift they are model coordinates
     uv_pts = half.points[:, :2].copy()
+    uv_edge = (half.lines.interior[..., :2].copy()
+               if half.lines.interior.size else None)
+    uv_face = half.interior[..., :2].copy() if half.interior.size else None
     lift_section(dm, half)
+    was = (half.points.copy(), half.lines.interior.copy(), half.interior.copy())
     # Restore the shared curves exactly.  The arc and the spine bound *two* interfaces,
     # and each one's triangulation renders them slightly differently -- by the ~0.003 the
     # two soups disagree about the triple curve.  Reconstructing them is therefore never
@@ -1387,7 +1437,92 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     # nodes differ by more than the entity tolerance.  They are shared data: put them back.
     pin_curve(half, uv_pts, flat_a, arc)
     pin_curve(half, uv_pts, flat_s, spine)
+    carry_pins(half, was, uv_pts, uv_edge, uv_face)
     return half
+
+
+def _half_disc_boundary(uv):
+    """``(s, dist)`` for parameter points in the closed half-disc.
+
+    ``s`` walks the boundary once -- the unit semicircle from ``(1,0)`` to ``(-1,0)``
+    over ``[0, pi]``, then the diameter back over ``[pi, pi+2]`` -- taken at the node's
+    *nearest* boundary point, and ``dist`` is how far it is from there.  One coordinate
+    for both bounding curves is the whole point: the arc and the spine are pinned by the
+    same mechanism, so a carry that treats them separately would need two weights and a
+    rule for the corner where they meet, and this needs neither."""
+    u, v = uv[:, 0], np.maximum(uv[:, 1], 0.0)
+    r = np.hypot(u, v)
+    d_arc, d_dia = 1.0 - r, v
+    on_arc = d_arc <= d_dia
+    s = np.where(on_arc, np.arctan2(v, u), np.pi + (u + 1.0))
+    return s, np.minimum(d_arc, d_dia)
+
+
+#: Half the inradius reciprocal: ``min(1-r, v)`` peaks at 0.5 inside the unit half-disc
+#: (at ``u=0, v=0.5``, where the two distances meet), so this normalizes the weight to
+#: reach 0 exactly at the point furthest from both bounding curves.
+_HALF_DISC_INRADIUS = 0.5
+
+
+def carry_pins(sec, was, uv_pts, uv_edge, uv_face, power=1.0):
+    """Carry what :func:`pin_curve` moved inward, instead of stopping at the curve.
+
+    Pinning alone is the trap :func:`blend_to_wall` documents one rung down: the arc and
+    the spine land on the shared data, the interior they are attached to does not move,
+    and the layer between the two shears.  Measured, pinning without this: curved scaled
+    Jacobian min -0.3036 -> -0.9348 and 4 inverted elements -> 8.
+
+    So take the displacement the pins applied, read it along the boundary at each node's
+    nearest boundary point, and weight it by how far in that node sits -- 1 on either
+    bounding curve, 0 at the point furthest from both.  The pinned nodes keep their exact
+    positions; everything else follows them by as much as it should.  Sampled at the
+    curved nodes as well as the corners, for the reason ``blend_to_wall`` gives: a curved
+    node sits on a facet chord and is off by the sagitta, several times further than the
+    corners it lies between, so a field built from corners alone moves it by the wrong
+    amount."""
+    pts0, edge0, face0 = was
+    d_pts = sec.points - pts0
+    d_edge = sec.lines.interior - edge0 if edge0.size else np.zeros((0, 0, 3))
+
+    src_uv = [uv_pts[np.abs(d_pts).any(axis=1)]]
+    src_d = [d_pts[np.abs(d_pts).any(axis=1)]]
+    if d_edge.size and uv_edge is not None:
+        moved = np.abs(d_edge).any(axis=(1, 2))
+        if moved.any():
+            src_uv.append(uv_edge[moved].reshape(-1, 2))
+            src_d.append(d_edge[moved].reshape(-1, 3))
+    if not sum(a.shape[0] for a in src_uv):
+        return sec
+
+    buv, bd = np.vstack(src_uv), np.vstack(src_d)
+    bs, _ = _half_disc_boundary(buv)
+    o = np.argsort(bs)
+    bs, bd = bs[o], bd[o]
+    period = np.pi + 2.0
+    bs_x = np.concatenate([bs - period, bs, bs + period])
+    bd_x = np.vstack([bd, bd, bd])
+
+    def carried(uv):
+        s, dist = _half_disc_boundary(uv)
+        w = np.clip(1.0 - dist / _HALF_DISC_INRADIUS, 0.0, 1.0) ** power
+        d = np.column_stack([np.interp(s, bs_x, bd_x[:, k]) for k in range(3)])
+        return w[:, None] * d
+
+    # the pinned nodes are already exact; everything else follows them
+    keep = np.abs(d_pts).any(axis=1)
+    add = carried(uv_pts)
+    add[keep] = 0.0
+    sec.points[:] = sec.points + add
+
+    if d_edge.size and uv_edge is not None:
+        moved = np.abs(d_edge).any(axis=(1, 2))
+        add = carried(uv_edge.reshape(-1, 2)).reshape(d_edge.shape)
+        add[moved] = 0.0
+        sec.lines.interior[:] = sec.lines.interior + add
+    if sec.interior.size and uv_face is not None:
+        sec.interior[:] = sec.interior + carried(
+            uv_face.reshape(-1, 2)).reshape(sec.interior.shape)
+    return sec
 
 
 def pin_curve(sec, uv, flat, curve):
