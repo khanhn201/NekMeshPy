@@ -169,6 +169,14 @@ locally and failed CI for exactly that. Delete `examples/data/femoral_tets.npz` 
 before believing any quality number. This is why femoral is in `SLOW` (316 s cold, and CI
 is always cold) rather than in the default run.
 
+That non-determinism reaches the test suite: on one unchanged commit femoral's
+inverted-element check went 3 passes and 2 failures (min scaled Jacobian -0.988,
+-0.989), so it is in `NONDETERMINISTIC_QUALITY` — a **non-strict** xfail, unlike
+`KNOWN_INVERTED` next to it, because passing is the ordinary outcome and must not be an
+error either. It is marked so a draw of the dice cannot redden an unrelated change, not
+because the defect is accepted: the fix is the layer thickness below, and when the
+mesher no longer depends on the draw the entry comes out.
+
 What makes the mesher independent of that draw is **layer thickness**, not tolerance.
 `snap_to_wall` moves a node a fixed distance, so the distortion is that distance
 *relative to its layer* — which makes the uniform run's length the stability knob, per
