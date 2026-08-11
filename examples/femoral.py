@@ -107,13 +107,13 @@ DELAUNAY_ROUNDS = 20          # edge-flip sweeps toward the surface Delaunay con
 RELAX_PASSES = 30             # relaxation sweeps over the junction, to take the shear out
 RELAX_RADIUS = 15.0            # ... within this far of the seam.  0 passes disables.
 SPLIT_TOL = 0.50              # wall/interior cut-off when splitting an interface               # ... over this distance from the junction
-N_HALF = 12                   # half-ring resolution; MULTIPLE OF 4
+N_HALF = 16                   # half-ring resolution; MULTIPLE OF 4
 NEAR_LEN = 1.5                # the uniform run, in leg **diameters** out from the
                               # junction.  The junction is where the wall actually does
                               # something -- the crater, the rim, the three-way weld --
                               # and constant layer thickness across it is what draws the
                               # trough; the legs beyond are diameters of nothing much.
-N_UNIFORM = 24                # layers in that uniform run
+N_UNIFORM = 16                # layers in that uniform run
 N_GRADED = 40                 # layers from there out to the outlet.  Their growth is not
                               # a knob: it is solved for, so the first graded layer equals
                               # the uniform one and the last lands on the cap.  One
@@ -127,7 +127,7 @@ MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
 CENTER_SCALE = 0.7            # inner square-core size (fraction of diameter)
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layers (first 0, last 1.0)
 PROJECT_TO_STL = True
-SNAP_MAX = 0.05               # farthest a node may be carried onto the analytic wall.
+SNAP_MAX = 0.10               # farthest a node may be carried onto the analytic wall.
                               # Beyond this it is not being projected, it is being moved
                               # somewhere unrelated to its neighbours -- leave it be.
 SNAP_AMBIG = 0.02             # when the crater and the branch tube are this close to
