@@ -101,11 +101,14 @@ def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray
 
 
 def _apply_smoothing(qm: QuadMesh, smoothing_method: str | None) -> QuadMesh:
-    """Reposition ``qm``'s interior points in place (``None`` = no smoothing)."""
-    if smoothing_method is not None:
-        from . import smoothing
-        smoothing.set_section_smoothing(qm, smoothing_method)
-    return qm
+    """``qm`` with its interior points repositioned (``None`` = no smoothing).
+
+    Returns a new section -- the smoothers build one rather than writing through the
+    live ``points`` -- so the result has to be taken, not assumed."""
+    if smoothing_method is None:
+        return qm
+    from . import smoothing
+    return smoothing.set_section_smoothing(qm, smoothing_method)
 
 
 def _check_boundary(obj: LineMesh, name: str, min_pts: int) -> PointArray:

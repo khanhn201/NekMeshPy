@@ -97,6 +97,27 @@ def reverse(mesh: LineMesh) -> LineMesh:
 )
 
 
+def reposition(mesh: LineMesh, points: PointArray) -> LineMesh:
+    """The same mesh at new coordinates: same connectivity, same tags, new points.
+
+    The general form of the affine placements above, for a caller that has computed
+    positions rather than a map -- a smoother, a projection onto a surface, a solve.
+    It returns a new mesh rather than writing into ``points``, which is what keeps
+    every operation in the toolkit non-mutating; the live array is still there for a
+    caller who deliberately wants the in-place escape hatch.
+
+    The private high-order ``interior`` nodes ride along **unchanged**, so this is for
+    order 1 or for a caller that has already placed them: moving corners alone leaves
+    curved nodes where they were."""
+    X: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
+    if X.shape[0] != mesh.n_points:
+        raise ValueError(
+            "reposition: expected %d points to match the mesh, got %d"
+            % (mesh.n_points, X.shape[0]))
+    return LineMesh(PointMesh(X, mesh.point_tags), mesh.lines, mesh.interior,
+                    mesh.element_tags)
+
+
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
     return LineMesh(PointMesh(affine.apply(mesh.points, matrix, offset),
@@ -155,6 +176,7 @@ def mirror(mesh: LineMesh, normal: Vec3 | Sequence[float],
 
 __all__ = [
     "blend",
+    "reposition",
     "mirror",
     "reverse",
     "rotate",

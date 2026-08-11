@@ -19,6 +19,7 @@ from ..core.paths import SpacePath
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
+from ..linemesh.morph import reposition as line_reposition
 from ..pointmesh import PointMesh
 from .quadmesh import QuadMesh
 
@@ -60,6 +61,22 @@ def blend(a: QuadMesh, b: QuadMesh,
                      a.quad, a.orient,
                      (1.0 - t) * ai + t * bi if ho else None)
             for t, lm in zip(fr, line_blend(a.line_mesh, b.line_mesh, fr))]
+
+
+def reposition(mesh: QuadMesh, points: PointArray) -> QuadMesh:
+    """The same mesh at new coordinates: same connectivity, same tags, new points.
+
+    The general form of the affine placements above, for a caller that has computed
+    positions rather than a map -- a smoother, a projection onto a surface, a solve.
+    It returns a new mesh rather than writing into ``points``, which is what keeps
+    every operation in the toolkit non-mutating; the live array is still there for a
+    caller who deliberately wants the in-place escape hatch.
+
+    The private high-order ``interior`` nodes ride along **unchanged**, so this is for
+    order 1 or for a caller that has already placed them: moving corners alone leaves
+    curved nodes where they were."""
+    return QuadMesh(line_reposition(mesh.line_mesh, points), mesh.quad, mesh.orient,
+                    mesh.interior, mesh.element_tags)
 
 
 def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh:
@@ -206,6 +223,7 @@ def place_on_path(section: QuadMesh, path: SpacePath,
 
 __all__ = [
     "blend",
+    "reposition",
     "mirror",
     "place_on_path",
     "reindex",

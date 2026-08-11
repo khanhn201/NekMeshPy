@@ -492,7 +492,9 @@ for leg in range(3):
 mesh = hexmesh.merge(blocks)
 
 if SMOOTH_ITERS > 0:
-    smoothing.smooth(mesh, surf, smooth_iters=SMOOTH_ITERS, smooth_lambda=SMOOTH_LAMBDA,
+    # takes the result: the smoother builds a new mesh rather than writing through
+    # this one's live points
+    mesh = smoothing.smooth(mesh, surf, smooth_iters=SMOOTH_ITERS, smooth_lambda=SMOOTH_LAMBDA,
                      wall="wall", project_to_stl=PROJECT_TO_STL)
 
 print(hexmesh.report(mesh))

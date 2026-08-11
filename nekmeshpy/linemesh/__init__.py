@@ -2,7 +2,7 @@
 
 from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .linemesh import LineMesh
-from .morph import blend, mirror, reverse, rotate, scale, transform, translate
+from .morph import blend, mirror, reposition, reverse, rotate, scale, transform, translate
 from .query import (
     boundary_elements,
     boundary_points,
@@ -33,6 +33,7 @@ __all__ = [
     "length",
     "mirror",
     "remove",
+    "reposition",
     "retag_element",
     "retag_point",
     "select",
