@@ -29,8 +29,10 @@ LIBRARY_ONLY = {"tjunction_lib.py", "coil_lib.py", "femoral_vol.py"}
 
 #: Wall-clock over ~10 s on a warm machine, so they are deselected from a default run
 #: (``-m "not slow"`` in ``addopts``) and run explicitly by one CI job.  Measured:
-#: chimera 57 s, chimera_full 138 s.
-SLOW = {"chimera.py", "chimera_full.py"}
+#: chimera 57 s, chimera_full 138 s, femoral 316 s.  ``femoral`` caches its surfaces and
+#: its tet solve under ``examples/data/``, but CI starts cold every time, so it pays the
+#: full 316 s -- and would pay it once per Python version if it were not deselected here.
+SLOW = {"chimera.py", "chimera_full.py", "femoral.py"}
 
 #: Examples known to build an inverted element, as a strict xfail so that fixing one
 #: fails this test and forces the entry out.  Empty, and worth keeping that way: the
