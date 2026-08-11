@@ -53,6 +53,45 @@ attaches four independent end stubs -- one per (pipe, end) -- each its own
 A's own local frame and carried over by the same rotation that turns pipe A into
 pipe B (:func:`to_b`), so the branch/crotch geometry is still never derived twice.
 
+The solid jacket
+----------------
+
+Each hairpin's **straight run** -- the ``LOOP_LEN`` stretch between its two U-turns,
+the only part of the loop that is parallel to nothing but itself -- carries a solid
+block welded onto the outboard half of the tube wall: in cross-section, the region
+between the pipe's own semicircle and half of a rectangle ``BR_SPACING`` tall.
+
+The block overhangs the run by ``SOLID_EXT`` at each end. The tube is already turning
+there, so over an overhang the semicircle no longer bounds fluid at all -- it bounds
+an empty cylindrical void, named ``"insulated"`` like any other external face of the
+jacket, which the departing tube passes through without ever touching the material
+around it (:func:`solid_run` has the argument). That is why the jacket is three
+extrusions and not one.
+
+The two regions are ``element_tags`` -- ``"fluid"`` and ``"solid"``, every element
+carrying exactly one, so ``hexmesh.select(mesh, "solid")`` and its complement
+partition the mesh. That vocabulary is deliberately disjoint from the ``face_tags``
+in ``GROUPS`` (``"wall"`` / ``"inlet"`` / ``"outlet"`` / ``"insulated"``), which are
+boundary conditions: the two tables are different slots on the container and a name
+shared between them would only read as if they were the same thing.
+
+The height is the point. Junction ``i``'s jacket spans ``z in Z_J[i] +- BR_SPACING/2``
+and junctions are ``BR_SPACING`` apart, so consecutive jackets meet face to face and
+weld into one continuous slab -- and because ``END_MARGIN`` happens to equal
+``BR_SPACING / 2``, a unit's slab reaches exactly its own end plane and the slab runs
+unbroken across the whole chain too. (Those two must stay equal: a larger
+``END_MARGIN`` would leave a gap between units, a smaller one would make neighbouring
+slabs *overlap*.)
+
+Fluid and solid are two independent ``QuadMesh`` sections extruded separately and
+joined by the same ``hexmesh.merge`` weld as everything else, but the weld has nothing
+to do: :data:`SOLID_FR` samples the interface semicircle at the *fluid disc's own* arc
+fractions (``FQ_FR``), so every interface node -- curved ones included -- is already
+bit-coincident. The section is built in the arm's frame on the ``-y`` side and carried
+onto the straight run by :func:`to_run`, the same half turn :func:`bend`'s sweep
+applies over its first U-turn; that is what puts the jacket **outboard** (``+y``), the
+only side of the run that is clear of the hairpin's own U-turns.
+
 There is exactly one ``"inlet"`` -- pipe A's minus end on the first unit -- and
 exactly one ``"outlet"``: pipe B's plus end on the last unit does not stop there at
 all, but folds back through :func:`outlet_return`'s U-turn and runs alongside the
@@ -71,6 +110,7 @@ import numpy as np
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import paths, surfaces
 from nekmeshpy.core.paths import turtle_path
+from nekmeshpy.core.tags import ElementTags, PointTags
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -121,10 +161,29 @@ N_LOOP = max(1, round(LOOP_LEN / BEND_CELL))          # layers along the straigh
 
 RETURN_BEND_R = 3.3             # radius of the last copy's pipe-A return U-turn
 
+SOLID_W = BR_SPACING / 2.0      # how far the jacket reaches out past the pipe axis
+N_SOLID = 4                     # jacket radial layers, tube wall -> outer face
+SOLID_EXT = R_BEND + 2.0*R_BRANCH   # jacket overhang past each end of the straight run
+
+#: The two ``element_tags`` -- **regions**, not boundary conditions. Every element
+#: carries exactly one, so the conjugate split reads straight off ``element_tags``:
+#: ``hexmesh.select(mesh, SOLID_TAG)`` and ``select(mesh, FLUID_TAG)`` partition the
+#: mesh. Leaving the fluid untagged would have distinguished the two just as well, but
+#: only by convention: ``element_tags`` is sparse, so a missing row cannot say whether
+#: an element was classified and found to be fluid or simply never looked at.
+#: :func:`label_fluid` fills the fluid side in once the chain is built.
+FLUID_TAG = "fluid"
+SOLID_TAG = "solid"
+
+#: The jacket's own external faces. A ``face_tags`` name, kept distinct from
+#: :data:`SOLID_TAG` because it is a boundary condition -- it belongs to :data:`GROUPS`
+#: alongside ``"wall"`` / ``"inlet"`` / ``"outlet"``, not to the region vocabulary.
+INSULATED_TAG = "insulated"
+
 N_COPIES = 5                    # number of chimera units chained along z
 
 OUT_NAME = "chimera"
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
+GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "insulated": "I  "}
 
 N = N_QUAD
 #: The three shape parameters of the quadrant construction, chosen for this
@@ -487,18 +546,114 @@ def bend(z0):
                               origin=(X_MID, 0.0, z0))
 
 
+#: Branch angles of the semicircle the jacket wraps, descending ``0 -> -180`` degrees:
+#: the ``-y`` half of the branch opening in the arm's own frame, which :func:`to_run`
+#: carries to the outboard ``+y`` side of the straight run.  Cut from the fluid disc's
+#: own arc sampling rather than resampled, which is what makes the interface node
+#: identical instead of tolerance welded.  The two half-quadrant splits really are
+#: nodes: the footprint's arc length is even in ``t``, so each quadrant's middle node
+#: lands exactly on the ``y = 0`` plane.
+SOLID_FR = np.concatenate([FQ_FR[0][N_QUAD:], FQ_FR[1][1:], FQ_FR[2][1:N_QUAD + 1]])
+
+
+def to_run(m):
+    """Carry a section built in the arm's frame onto the hairpin's straight run --
+    the half turn :func:`bend`'s own sweep has applied by the time it gets there, so
+    a section handed through here lands on exactly the frame the fluid disc does."""
+    return quadmesh.rotate(m, np.pi, axis=(0.0, 0.0, 1.0), center=(X_MID, R_BEND, 0.0))
+
+
+def solid_section(z0, minus_tag, plus_tag, inner_tag=quadmesh.NO_TAG):
+    """The jacket's cross-section on the straight run at height ``z0``: the pipe's own
+    semicircle lofted out to half a ``BR_SPACING`` tall rectangle.
+
+    ``minus_tag`` / ``plus_tag`` name the two ``z`` faces -- where this junction's
+    jacket meets its neighbours', so ``NO_TAG`` everywhere but at the chain's two
+    extreme ends. The remaining external edges are named here: the outer face and, via
+    the inner ring's ``point_tags``, the two strips left in the ``y`` plane the
+    semicircle is cut on. ``inner_tag`` names the semicircle itself, which is
+    ``NO_TAG`` over the straight run -- it welds onto the tube's own ``"wall"`` faces,
+    which already name that side -- and :data:`INSULATED_TAG` over the two overhangs,
+    where the tube has curved away and left the void's surface external."""
+    ring = linemesh.translate(linemesh.loft_fn(opening, SOLID_FR, order=ORDER),
+                              (ARM_LEN, 0.0, z0))
+    inner = linemesh.LineMesh(
+        ring.points, ring.lines, ring.interior,
+        point_tags=PointTags(np.array([0, ring.n_lines - 1]), np.array([1, 2]),
+                             np.array([INSULATED_TAG, INSULATED_TAG])))
+
+    n = 2 * N_QUAD
+    h = BR_SPACING / 2.0
+    #: The half-rectangle's four corners, in the ring's own order: the semicircle's
+    #: two ends and its two quadrant corners map to them, so the outer polyline is cut
+    #: ``n/2 | n | n/2`` and every radial line springs from a node of the fluid disc.
+    corner = [(X_MID, 0.0, z0 + h), (X_MID, -SOLID_W, z0 + h),
+              (X_MID, -SOLID_W, z0 - h), (X_MID, 0.0, z0 - h)]
+
+    def seg(a, b, k):
+        s = np.linspace(0.0, 1.0, k + 1)[:-1, None]
+        return (1.0 - s) * np.asarray(a) + s * np.asarray(b)
+
+    outer = linemesh.loft(np.vstack([seg(corner[0], corner[1], n // 2),
+                                     seg(corner[1], corner[2], n),
+                                     seg(corner[2], corner[3], n // 2),
+                                     [corner[3]]]), order=ORDER)
+    face = np.array([plus_tag] * (n // 2) + [INSULATED_TAG] * n
+                    + [minus_tag] * (n // 2))
+    tagged = np.flatnonzero(face != quadmesh.NO_TAG)
+
+    rings = linemesh.blend(inner, outer, np.linspace(0.0, 1.0, N_SOLID + 1))
+    return to_run(quadmesh.loft(rings, first_tag=inner_tag,
+                                last_tag=ElementTags(tagged, face[tagged])))
+
+
+#: Layers in each overhang, at the same target cell length as the hairpin itself.
+N_SOLID_EXT = max(1, round(SOLID_EXT / BEND_CELL))
+
+
+def solid_run(z0, minus_tag=quadmesh.NO_TAG, plus_tag=quadmesh.NO_TAG):
+    """One junction's solid jacket: :func:`solid_section` run back along the straight
+    stretch of the hairpin and ``SOLID_EXT`` past each of its ends.
+
+    Three blocks rather than one graded extrude, because they differ in what the
+    semicircle bounds. Over the middle stretch it is the fluid interface, so it is
+    left untagged and lands on the same ``N_LOOP`` stations :data:`_STATION_FR` gives
+    the tube there -- the run is straight, so a plain extrude hits them exactly. Over
+    the two overhangs the tube has peeled off into its U-turn and the semicircle
+    bounds an empty cylindrical void instead, so it is named :data:`INSULATED_TAG`.
+
+    The tube does re-enter the slab's ``y`` range on its way round, but only ever
+    *inside* that void: a point on a circle of radius ``r <= R_BRANCH`` about a centre
+    ``d`` short of the void's axis is at ``r**2 - 2 r d cos(theta) + d**2`` from that
+    axis, which is below ``R_BRANCH**2`` whenever ``r cos(theta) > d`` puts it past
+    the axis at all. So the overhangs never eat into the fluid."""
+    mid = solid_section(z0, minus_tag, plus_tag)
+    ext = solid_section(z0, minus_tag, plus_tag, INSULATED_TAG)
+    return [hexmesh.extrude(quadmesh.translate(ext, (SOLID_EXT, 0.0, 0.0)), SOLID_EXT,
+                            N_SOLID_EXT, axis=(-1.0, 0.0, 0.0),
+                            element_tags=SOLID_TAG, first_tag=INSULATED_TAG),
+            hexmesh.extrude(mid, LOOP_LEN, N_LOOP, axis=(-1.0, 0.0, 0.0),
+                            element_tags=SOLID_TAG),
+            hexmesh.extrude(quadmesh.translate(ext, (-LOOP_LEN, 0.0, 0.0)), SOLID_EXT,
+                            N_SOLID_EXT, axis=(-1.0, 0.0, 0.0),
+                            element_tags=SOLID_TAG, last_tag=INSULATED_TAG)]
+
+
 #: Junction centres within one unit, evenly spaced and centred on ``z = 0``.
 Z_J = (np.arange(N_BR) - (N_BR - 1) / 2.0) * BR_SPACING
 
 
-def build_chimera(a_minus, a_plus, b_minus, b_plus, *, b_plus_return=False):
+def build_chimera(a_minus, a_plus, b_minus, b_plus, *, b_plus_return=False,
+                  solid_minus=quadmesh.NO_TAG, solid_plus=quadmesh.NO_TAG):
     """One full chimera unit -- pipe A, its rotation pipe B, and every hairpin bend
     between them -- centred on its own local ``z = 0``. Each argument is one open
     end's ``(tag, run)`` pair from :func:`end_spec`, so a dead-end and a
     through-connection at the same nominal joint genuinely differ in how far they
     reach, rather than only in how they are tagged. ``b_plus_return`` swaps pipe
     B's plain ``+z`` stub for :func:`outlet_return`'s U-turn, for the chain's last
-    copy only -- ``b_plus`` is then unused.
+    copy only -- ``b_plus`` is then unused. ``solid_minus`` / ``solid_plus`` name the
+    outermost jackets' ``z`` faces, external only at the two ends of the whole chain --
+    everywhere else a jacket welds into its neighbour's, within the unit and across it.
 
     The junction chain is built once with both its outermost ends left bare
     (:func:`leg`'s ``run <= 0`` case), and pipe B still comes for free as a rotation
@@ -512,10 +667,15 @@ def build_chimera(a_minus, a_plus, b_minus, b_plus, *, b_plus_return=False):
         for i in range(N_BR)])
     pipe_b = to_b(pipe_a)
     bends = [bend(z0) for z0 in Z_J]
+    jackets = [block
+               for i, z0 in enumerate(Z_J)
+               for block in solid_run(z0,
+                                      solid_minus if i == 0 else quadmesh.NO_TAG,
+                                      solid_plus if i == N_BR - 1 else quadmesh.NO_TAG)]
     b_plus_stub = to_b(outlet_return()) if b_plus_return else to_b(end_stub(1, *b_plus))
     stubs = [end_stub(-1, *a_minus), end_stub(1, *a_plus),
              to_b(end_stub(-1, *b_minus)), b_plus_stub]
-    return hexmesh.merge([pipe_a, pipe_b, *bends, *stubs])
+    return hexmesh.merge([pipe_a, pipe_b, *bends, *jackets, *stubs])
 
 
 # -- the chain of copies --------------------------------------------------------
@@ -539,6 +699,22 @@ def end_spec(is_extreme, extreme_name, is_connector):
     return "wall", full - GAP
 
 
+def label_fluid(m):
+    """Name every element the jacket did not claim :data:`FLUID_TAG`, leaving the mesh
+    fully partitioned into its two regions.
+
+    Done once on the finished chain rather than threaded through each fluid block:
+    ``hexmesh.tetra``, which fills the two crotches of every junction, takes no tag
+    argument, so there is no one fluid-side call site to hand it to -- and stamping
+    the complement here means a fluid block added later is named without being
+    remembered. ``element_tags`` is pure data on the container, so this is a rebuild
+    of the same B-rep with a denser tag table, not a mutation."""
+    named = np.full(m.hex.shape[0], FLUID_TAG, dtype="<U16")
+    named[m.element_tags.ids] = m.element_tags.tags
+    return hexmesh.HexMesh(m.quads, m.hex, m.face_orient, m.interior, m.face_tags,
+                           ElementTags(np.arange(named.size), named))
+
+
 copies = []
 for _k in range(N_COPIES):
     _is_first, _is_last = _k == 0, _k == N_COPIES - 1
@@ -552,10 +728,12 @@ for _k in range(N_COPIES):
                           end_spec(_is_last, "wall", _connector_after == "A"),
                           end_spec(_is_first, "wall", _connector_before == "B"),
                           end_spec(_is_last, "outlet", _connector_after == "B"),
-                          b_plus_return=_is_last)
+                          b_plus_return=_is_last,
+                          solid_minus=INSULATED_TAG if _is_first else quadmesh.NO_TAG,
+                          solid_plus=INSULATED_TAG if _is_last else quadmesh.NO_TAG)
     copies.append(hexmesh.translate(_unit, (0.0, 0.0, 2.0 * L_HALF * _k)))
 
-mesh = hexmesh.merge(copies)
+mesh = label_fluid(hexmesh.merge(copies))
 
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))

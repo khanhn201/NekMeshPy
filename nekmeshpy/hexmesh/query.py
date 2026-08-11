@@ -117,9 +117,42 @@ def is_conforming(mesh: HexMesh) -> bool:
     """``True`` if the mesh has no hanging points (no T-junctions)."""
     return topology_report(mesh).conformal
 
+class TagReport(NamedTuple):
+    """How a mesh's ``face_tags`` table lines up with its **topological** boundary.
+
+    The two are independent by design -- ``boundary`` is what connectivity says, a
+    side-tag table is a named subset that may also name interior planes -- so they can
+    disagree in exactly two ways, and both are worth seeing. An
+    :attr:`n_untagged_boundary` above zero means the export has open faces no boundary
+    condition covers; an :attr:`n_tagged_interior` above zero means it will write
+    boundary conditions onto faces that are not on the boundary at all. Either can be
+    deliberate (a flux-measurement plane is a tagged interior face; so is a conjugate
+    fluid/solid interface that keeps the fluid's wall condition), so these are counts
+    to recognise, not assertions."""
+
+    #: Rows in ``face_tags``. Rows, not faces: two rows naming the same face count twice.
+    n_rows: int
+    #: Faces on the topological boundary that no row names.
+    n_untagged_boundary: int
+    #: Rows naming a face that is **not** on the topological boundary.
+    n_tagged_interior: int
+
+
+def tag_report(mesh: HexMesh) -> TagReport:
+    """Cross-check ``face_tags`` against the topological boundary (see
+    :class:`TagReport <nekmeshpy.hexmesh.query.TagReport>`)."""
+    _, on_boundary = _boundary_mask(mesh.hexes)
+    ft = mesh.face_tags
+    named: BoolArray = np.zeros(on_boundary.size, dtype=bool)
+    named[6 * ft.elements + ft.sides - 1] = True
+    return TagReport(len(ft),
+                     int(np.count_nonzero(on_boundary & ~named)),
+                     int(np.count_nonzero(named & ~on_boundary)))
+
 def report(mesh: HexMesh) -> str:
     """Human-readable summary: element/point counts, scaled-Jacobian quality,
-    per-name tagged-face counts, and the topology report."""
+    per-name tagged-face counts cross-checked against the boundary
+    (:func:`tag_report <nekmeshpy.hexmesh.query.tag_report>`), and the topology report."""
     from ..core import topology
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
@@ -127,6 +160,9 @@ def report(mesh: HexMesh) -> str:
     for name in mesh.face_group_tags:
         n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))
+    tags = tag_report(mesh)
+    lines.append("  %-14s : %d faces" % ("untagged bdry", tags.n_untagged_boundary))
+    lines.append("  %-14s : %d rows" % ("interior tags", tags.n_tagged_interior))
     lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.hexes)))
     return "\n".join(lines)
 
@@ -203,6 +239,7 @@ def centroid(mesh: HexMesh, *, high_order: bool = False) -> Point:
 
 
 __all__ = [
+    "TagReport",
     "WeldResult",
     "bounds",
     "boundary_elements",
@@ -217,6 +254,7 @@ __all__ = [
     "quality_summary",
     "report",
     "scaled_jacobian",
+    "tag_report",
     "topology_report",
     "volume",
     "weld",
