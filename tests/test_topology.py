@@ -107,7 +107,7 @@ def test_carotid_mesh_is_watertight(built_mesh):
 
 def test_hexmesh_report_matches_free_function(built_mesh):
     mesh = built_mesh["mesh"]
-    X, HC, _ = hexmesh.weld(mesh)
+    X, HC = mesh.points, mesh.hexes
     assert hexmesh.topology_report(mesh) == topology.hex_report(X, HC)
 
 

@@ -81,9 +81,6 @@ nitpick_ignore_regex = [
     (r"py:.*", r"meshio.*"),
     (r"py:.*", r"'?(" + "|".join(_TYPE_ALIASES) + r")'?"),
     (r"py:.*", r"GroupsArg"),
-    # WeldResult is a NamedTuple in the private hexmesh._query; its fields are
-    # documented on ``weld`` itself, and the module is deliberately not autodoc'd.
-    (r"py:.*", r"(nekmeshpy\.hexmesh\._query\.)?WeldResult"),
     (r"py:.*", r"nekmeshpy\..*\.[A-Z]$"),  # single-letter TypeVars (F, ...)
 ]
 

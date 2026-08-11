@@ -45,10 +45,7 @@ condition. Renaming either vocabulary without touching the other is what
 `quad`/`orient`/`interior`, its `edge_tags` reading through to
 `line_mesh.element_tags`);
 `LineMesh` does the same onto a `PointMesh`, which is the ladder's bottom rung and
-carries nothing but coordinates and their tags. `weld()` returns a `WeldResult` NamedTuple —
-`.points` (the **live** array), `.hexes`, `.n_points`; the name is historical, since
-a `HexMesh` is already stored shared-point and nothing is welded or copied. Exporters
-expand via `points[hexes]`. Coordinates may be repositioned in place — writing
+carries nothing but coordinates and their tags. Exporters expand via `points[hexes]`. Coordinates may be repositioned in place — writing
 `mesh.points[:] = X` hits the single source of truth and every rung sees it —
 but topology is fixed.
 

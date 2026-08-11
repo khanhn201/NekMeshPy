@@ -677,8 +677,8 @@ def components(mesh: HexMesh) -> list[HexMesh]:
     """The mesh split into its connected pieces -- one ``HexMesh`` per group of hexes
     reachable through shared corner points, in the order their first hex appears.
 
-    What :func:`weld <nekmeshpy.hexmesh.query.weld>` and
-    :func:`topology_report <nekmeshpy.hexmesh.query.topology_report>` tell you *about*
+    What :func:`topology_report <nekmeshpy.hexmesh.query.topology_report>` tells you
+    *about*
     (a mesh that turned out to be two bodies), this hands you as meshes."""
     n, labels = conform.element_components(mesh.hexes, mesh.n_points)
     return [_subset(mesh, labels == c)[0] for c in range(n)]

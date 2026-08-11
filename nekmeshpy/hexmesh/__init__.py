@@ -31,7 +31,6 @@ from .query import (
     tag_report,
     topology_report,
     volume,
-    weld,
 )
 from .shape import tetra
 from .tag import retag_element, retag_face, tag_faces
@@ -88,5 +87,4 @@ __all__ = [
     "topology_report",
     "transform",
     "translate",
-    "weld",
 ]

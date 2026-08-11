@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 from conftest import GOLDEN, read_re2_boundary, read_re2_coords
 
-from nekmeshpy import hexmesh
 from nekmeshpy.hexmesh import quality
 
 # Residual is scipy.spsolve vs MATLAB backslash; ~2.7e-13 observed.
@@ -46,7 +45,8 @@ def test_tag_face_counts(built_mesh):
 
 
 def test_scaled_jacobian_quality(built_mesh):
-    X, HC, _ = hexmesh.weld(built_mesh["mesh"])
+    mesh = built_mesh["mesh"]
+    X, HC = mesh.points, mesh.hexes
     sj = quality.scaled_jacobian(X, HC)
     # values for the order-3 pipeline whose wall is refit analytically before meshing:
     # each private station ring as a truncated-Fourier loop (``fourier_ring``) and each

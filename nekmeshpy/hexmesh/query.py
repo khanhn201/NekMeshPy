@@ -115,30 +115,11 @@ def quality_summary(mesh: HexMesh, *, high_order: bool = True) -> QualitySummary
     return quality.summary(mesh.points, mesh.hexes)
 
 
-class WeldResult(NamedTuple):
-    """The flat shared-point view of a ``HexMesh`` returned by :func:`weld
-    <nekmeshpy.hexmesh.query.weld>`."""
-
-    #: The mesh's **live** ``(P,3)`` coordinate array.  Assigning into it
-    #: (``points[:] = X``) repositions the mesh at every rung; rebinding does not.
-    points: PointArray
-    #: ``(E,8)`` corner connectivity in Nek order, indexing :attr:`points`.
-    hexes: IntArray
-    #: Number of points, i.e. ``points.shape[0]``.
-    n_points: int
-
-
-def weld(mesh: HexMesh) -> WeldResult:
-    """Shared-point view of the mesh (see :class:`WeldResult`); the live positions
-    array can be mutated in place to reposition the mesh."""
-    return WeldResult(mesh.points, mesh.hexes, mesh.n_points)
-
 def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     """Flag welded points: ``(is_wall, is_fixed)``.  Faces named ``wall`` are
     wall; all other tagged faces are fixed.  A point on both is treated as
     fixed."""
-    w = weld(mesh)
-    HC, nu = w.hexes, w.n_points
+    HC, nu = mesh.hexes, mesh.n_points
     is_wall: BoolArray = np.zeros(nu, dtype=bool)
     is_fixed: BoolArray = np.zeros(nu, dtype=bool)
     rows, names = face_tag_rows(mesh)
@@ -152,10 +133,9 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     return is_wall, is_fixed
 
 def topology_report(mesh: HexMesh) -> TopologyReport:
-    """Watertightness / connectivity report of the welded mesh."""
+    """Watertightness / connectivity report of the mesh."""
     from ..core import topology
-    w = weld(mesh)
-    return topology.hex_report(w.points, w.hexes)
+    return topology.hex_report(mesh.points, mesh.hexes)
 
 def is_watertight(mesh: HexMesh) -> bool:
     """``True`` if the mesh boundary is a closed, leak-tight 2-manifold and the
@@ -292,7 +272,6 @@ def centroid(mesh: HexMesh, *, high_order: bool = False) -> Point:
 __all__ = [
     "TagReport",
     "face_tag_rows",
-    "WeldResult",
     "bounds",
     "boundary_elements",
     "boundary_face_ids",
@@ -310,5 +289,4 @@ __all__ = [
     "tag_report",
     "topology_report",
     "volume",
-    "weld",
 ]

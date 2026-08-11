@@ -73,7 +73,7 @@ def test_section_smoothing_registry_extensible():
 
 def test_quality_module_matches_mesh(built_mesh):
     mesh = built_mesh["mesh"]
-    X, HC, _ = hexmesh.weld(mesh)
+    X, HC = mesh.points, mesh.hexes
     sj = quality.scaled_jacobian(X, HC)
     assert np.allclose(sj, hexmesh.scaled_jacobian(mesh))
     stats = quality.summary(X, HC)

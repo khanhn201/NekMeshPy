@@ -66,7 +66,7 @@ counts, `order`, and the two tag vocabularies — without reaching for `report()
 The report-returning reads are **NamedTuples**, reached by attribute:
 {class}`~nekmeshpy.core.quality.QualitySummary` from `quality_summary()`,
 {class}`~nekmeshpy.core.topology.TopologyReport` from `topology_report()`, and
-`WeldResult` from `weld()`.
+{class}`~nekmeshpy.hexmesh.query.TagReport` from `tag_report()`.
 
 ## Export it
 

@@ -2,8 +2,8 @@
 
 Every op returns a new container. That is easy to believe of the pure ones -- a
 ``translate`` obviously builds a new mesh -- and was for a long time untrue of the
-smoothers, which wrote through ``points`` (the mesh's own live array, which ``weld``
-hands straight back) and returned the same object. A caller could then drop the return
+smoothers, which wrote through ``points`` -- the mesh's own live array -- and
+returned the same object. A caller could then drop the return
 value and still see the effect, which is exactly what both examples did.
 
 So the checks here are of two kinds: that the ordinary operations leave their input

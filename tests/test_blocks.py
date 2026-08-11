@@ -12,7 +12,7 @@ from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    X, HC, _ = hexmesh.weld(mesh)
+    X, HC = mesh.points, mesh.hexes
     return quality.scaled_jacobian(X, HC)
 
 
