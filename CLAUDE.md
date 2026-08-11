@@ -134,8 +134,37 @@ inward, and the combinators carry it up.
 When testing curved geometry, assert on the **conformal node set**, not corners —
 corner-only passes on a mesh that is high-order in storage and linear in geometry.
 
+The same split runs through quality: `hexmesh.quality_summary` reads the **curved**
+block by default, `hexmesh.scaled_jacobian` reads **corners**. They disagree, and not
+slightly — a mesh reading `0 inverted` at the corners has been measured at 8 inverted
+and `minSJ -0.98` once its curved nodes are read. Corner-clean is not clean; say which
+reading a number came from.
+
 Order-N smoothing is not implemented: a repositioning smoother raises
 `NotImplementedError` above order 1 rather than degrading silently.
+
+## `examples/femoral.py`: the one mesher with a solver under it
+
+It builds its own surface, tet-meshes the interior with **gmsh** (the only thing in the
+repo that needs it: `[all]`, or `[mesh]` alone; the wheel also wants `libGLU`, which the
+slow-examples CI job installs), solves P1 conduction in the volume, and cuts stations as
+level sets. Caches the surfaces and the tet solve under `examples/data/` — gitignored per
+file, since that directory also holds *tracked* inputs (`car.vtx` / `car.tri`).
+
+**gmsh does not tetrahedralize the same way twice** — not across machines, not run to run
+on one. Measured: 157402 / 157446 / 157483 nodes for identical input. So a result checked
+only against the cached tet mesh is not checked at all; three configurations passed
+locally and failed CI for exactly that. Delete `examples/data/femoral_tets.npz` and rerun
+before believing any quality number. This is why femoral is in `SLOW` (316 s cold, and CI
+is always cold) rather than in the default run.
+
+What makes the mesher independent of that draw is **layer thickness**, not tolerance.
+`snap_to_wall` moves a node a fixed distance, so the distortion is that distance
+*relative to its layer* — which makes the uniform run's length the stability knob, per
+leg (`NEAR_LEN` 1.5 for the main pipe, `NEAR_LEN_BRANCH` 4.5, through `LEG_NEAR_LEN`).
+Tripling it globally is much worse: the junction stops being resolved. Widening
+`SNAP_MAX` buys wall accuracy by *trading away* that independence — at 0.20 alone the
+mesh was flawless locally and corner-inverted on CI.
 
 ## Tags
 
