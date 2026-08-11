@@ -11,10 +11,7 @@ from .._typing import (
     PointArray,
 )
 from ..core import conform
-from ..core.tags import (
-    ElementTags,
-    FaceTags,
-)
+from ..core.tags import ElementTags
 from ..linemesh.linemesh import _repr_tags
 from ..quadmesh import QuadMesh
 
@@ -55,35 +52,34 @@ class HexMesh:
 
     def __init__(
         self,
-        quads: QuadMesh,
+        quad_mesh: QuadMesh,
         hex: IntArray,
-        face_orient: IntArray,
+        orient: IntArray,
         interior: PointArray | None = None,
-        face_tags: FaceTags | None = None,
         element_tags: ElementTags | None = None,
     ) -> None:
-        """Construct from the B-rep directly: ``quads`` (a ``QuadMesh`` holding every
+        """Construct from the B-rep directly: ``quad_mesh`` (a ``QuadMesh`` holding every
         shared face -- its ``points`` are the shared corners, its ``quads`` the shared
         face connectivity, its edges / ``interior`` the shared face-boundary / interior
-        HO nodes), ``hex`` ``(E,6)`` face indices into ``quads.quads`` (Nek local-face
-        order), ``face_orient`` ``(E,6)`` D4 codes (element-local face frame ->
+        HO nodes), ``hex`` ``(E,6)`` face indices into ``quad_mesh.quads`` (Nek local-face
+        order), ``orient`` ``(E,6)`` D4 codes (element-local face frame ->
         canonical), and ``interior`` ``(E,(order-1)**3,3)`` private per-hex nodes (omit
         / ``None`` at order 1)."""
-        if not isinstance(quads, QuadMesh):
-            raise TypeError("HexMesh: quads must be a QuadMesh, got %s"
-                            % type(quads).__name__)
-        self.quads = quads
+        if not isinstance(quad_mesh, QuadMesh):
+            raise TypeError("HexMesh: quad_mesh must be a QuadMesh, got %s"
+                            % type(quad_mesh).__name__)
+        self.quad_mesh = quad_mesh
 
         self.hex: IntArray = np.asarray(hex, dtype=np.int64).reshape(-1, 6)
-        self.face_orient: IntArray = np.asarray(
-            face_orient, dtype=np.int64).reshape(-1, 6)
-        if self.face_orient.shape[0] != self.hex.shape[0]:
-            raise ValueError("HexMesh: face_orient length (%d) must match hex (%d)"
-                             % (self.face_orient.shape[0], self.hex.shape[0]))
-        F = quads.n_quads                        # the rung below: shared faces
+        self.orient: IntArray = np.asarray(
+            orient, dtype=np.int64).reshape(-1, 6)
+        if self.orient.shape[0] != self.hex.shape[0]:
+            raise ValueError("HexMesh: orient length (%d) must match hex (%d)"
+                             % (self.orient.shape[0], self.hex.shape[0]))
+        F = quad_mesh.n_quads                        # the rung below: shared faces
         if self.hex.size and (self.hex.min() < 0 or self.hex.max() >= F):
             raise ValueError(
-                "HexMesh: hex must index the %d shared faces of ``quads``; got ids in "
+                "HexMesh: hex must index the %d shared faces of ``quad_mesh``; got ids in "
                 "[%d, %d]" % (F, int(self.hex.min()), int(self.hex.max())))
         E = self.hex.shape[0]
 
@@ -103,9 +99,7 @@ class HexMesh:
                 % (E, k, self.interior.shape))
 
         self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.face_tags = FaceTags.empty() if face_tags is None else face_tags
         self.element_tags.check_within(E)
-        self.face_tags.check_within(E)
 
         # Corner connectivity is derived from the shared faces and immutable
         # post-construction (point moves don't change it), so memoize it once.
@@ -121,7 +115,7 @@ class HexMesh:
         ask and kept."""
         if self._edge_tables is None:
             self._edge_tables = conform.hex_edges_from_faces(
-                self.hex, self.face_orient, self.quads.quad, self.quads.flip)
+                self.hex, self.orient, self.quad_mesh.quad, self.quad_mesh.orient)
         return self._edge_tables
 
     @property
@@ -139,7 +133,6 @@ class HexMesh:
         cls,
         points: PointArray,
         hexes: IntArray,
-        face_tags: FaceTags | None = None,
         element_tags: ElementTags | None = None,
         *,
         order: int = 1,
@@ -162,8 +155,20 @@ class HexMesh:
         conn: IntArray = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
         quads = QuadMesh.from_corners(pts, canonical_conn)
-        return cls(quads, elem_faces, face_orient, None, face_tags,
-                   element_tags)
+        return cls(quads, elem_faces, face_orient, None, element_tags)
+
+    @property
+    def face_tags(self) -> ElementTags:
+        """The tags on the shared faces, over **face ids**.
+
+        This is ``quads``' own ``element_tags`` read through, not a table of its own:
+        rung *N*'s side tags are rung *N-1*'s element tags. A face is one stored object
+        both its hexes reference, so naming it is naming that object -- which is why
+        there is no ``(hex, side)`` here for the two sides to disagree over. The
+        ``(element, face)`` rows the ``.re2`` boundary block wants are reconstructed at
+        export from the hexes that carry each named face (see :func:`face_tag_rows
+        <nekmeshpy.hexmesh.query.face_tag_rows>`)."""
+        return self.quad_mesh.element_tags
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(E,8)`` (Nek order) recovered from the shared faces via
@@ -171,7 +176,7 @@ class HexMesh:
         ``conform.canonical_faces``, so it reproduces the connectivity the mesh was built
         from byte-for-byte."""
         return conform.hex_corners_from_faces(
-            self.quads.quads, self.hex, self.face_orient)
+            self.quad_mesh.quads, self.hex, self.orient)
 
     def __repr__(self) -> str:
         """One-line REPL summary: element / point counts, ``order``, and the tag
@@ -181,7 +186,7 @@ class HexMesh:
         try:
             return ("<HexMesh %d points, %d hexes, order %d, element_tags=%s, "
                     "face_tags=%s>"
-                    % (self.quads.lines.points.shape[0], self.hex.shape[0], self.order,
+                    % (self.quad_mesh.line_mesh.points.shape[0], self.hex.shape[0], self.order,
                        _repr_tags(self.element_group_tags),
                        _repr_tags(self.face_group_tags)))
         except Exception:                     # a repr must never break a debug session
@@ -190,14 +195,14 @@ class HexMesh:
     @property
     def order(self) -> int:
         """Global polynomial order (1 = linear)."""
-        return self.quads.order
+        return self.quad_mesh.order
 
     @property
     def points(self) -> PointArray:
         """The ``(P,3)`` shared corner points -- a live view of the shared-face
         ``QuadMesh``'s ``points`` (the single source of truth), so an in-place edit
         (``mesh.points[:] = X``) moves the shared corners for every hex."""
-        return self.quads.points
+        return self.quad_mesh.points
 
     @property
     def hexes(self) -> IntArray:
@@ -211,26 +216,26 @@ class HexMesh:
         """``(Ne,2)`` unique undirected hex edges (canonical: min corner id first) -- the
         shared edge topology (the ``edges`` of the shared-face ``QuadMesh``).  Non-empty
         at every order (edges are first-class B-rep storage)."""
-        return self.quads.edges
+        return self.quad_mesh.edges
 
     @property
     def edge_nodes(self) -> PointArray:
         """``(Ne, order-1, 3)`` shared high-order interior nodes of each unique
         :attr:`edges` entry, in canonical (min->max corner) order.  Empty at order 1."""
-        return self.quads.edge_nodes
+        return self.quad_mesh.edge_nodes
 
     @property
     def faces(self) -> IntArray:
         """``(Nf,4)`` unique hex faces (canonical: sorted corner ids) -- the shared face
         topology.  Non-empty at every order (faces are first-class B-rep storage)."""
-        return np.sort(self.quads.quads, axis=1)
+        return np.sort(self.quad_mesh.quads, axis=1)
 
     @property
     def face_nodes(self) -> PointArray:
         """``(Nf, (order-1)**2, 3)`` shared high-order interior nodes of each unique
         :attr:`faces` entry, in the canonical D4-normalized frame.  Empty at order 1; a
         shared face resolves to the same nodes from either incident hex."""
-        return self.quads.interior
+        return self.quad_mesh.interior
 
     # -- sizes -----------------------------------------------------------
     @property

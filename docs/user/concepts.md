@@ -146,22 +146,32 @@ materializes the one-slot-per-element form where a caller wants it.
 Note `len(element_tags)` is the number of **tagged** elements, not the element
 count — use `n_lines` / `n_quads` / `n_hexes` for that.
 
-### `point_tags` / `edge_tags` / `face_tags` — named sides
+### `point_tags` / `edge_tags` / `face_tags` — the rung below's element tags
 
-`(element, side, tag)` rows in one object, rather than two arrays a caller has to
-keep in step. The slot is named for the entity it names, because the "side" is the
-rung's own:
+Not tables of their own. **A rung's side tags *are* the rung below's `element_tags`**,
+read through under the name of the entity they name:
 
-- `LineMesh.point_tags` (a `PointTags`): `[elem id, side ∈ {1,2}]` → end **point** `s-1`.
-- `QuadMesh.edge_tags` (an `EdgeTags`): `[quad id, side ∈ {1..4}]` → **edge** `EDGE_POINTS[s-1]`.
-- `HexMesh.face_tags` (a `FaceTags`): `[elem id, face ∈ {1..6}]` → **face**.
+- `LineMesh.point_tags` → `point_mesh.element_tags`, over **point** ids.
+- `QuadMesh.edge_tags` → `line_mesh.element_tags`, over **edge** ids.
+- `HexMesh.face_tags` → `quad_mesh.element_tags`, over **face** ids.
+
+The B-rep already stores each entity exactly once, so naming it is naming that one
+object rather than naming it once per incident element. That makes tag consistency
+structural, the way conformality already is: a face cannot carry two contradictory
+names, because there is only one place to put a name. `merge` raises rather than
+silently keeping both when a weld would disagree, and reflections need no side remap at
+all — re-winding changes how an element *views* an entity, which a tag on the entity
+does not care about.
+
+The cost is that a genuinely two-sided condition cannot live on the entity. See
+*asymmetric conditions* below.
 
 These are **not** "the boundary". *Boundary* is reserved throughout for the
 topological domain boundary — the facets borne by exactly one element, which
 `boundary_faces()` / `boundary_edges()` / `boundary_points()` derive from
-connectivity. A side-tag table is the *named subset* of that, and the two genuinely
+connectivity. A tag table is the *named subset* of that, and the two genuinely
 differ: an extruded pipe whose wall was never named has 192 boundary faces and 0
-tagged rows.
+named ones. `hexmesh.tag_report()` counts both ways they can disagree.
 
 On `extrude`, line end-point tags become quad **edge** tags, then hex **face** tags.
 `point_group_tags` / `edge_group_tags` / `face_group_tags` are the sorted unique
@@ -175,9 +185,22 @@ parent's **own** nodes, bit for bit at any order — which is the point, since a
 built off a port has to weld back onto it, and at `order > 1` `merge` verifies shared
 high-order nodes far more tightly than any coordinate weld.
 
-Row order is meaningful and never changes implicitly — `ordered()` is the one
-explicit canonical sort. The `.re2` boundary block is written in stored order, and
-the `.vtu` writer resolves a node touched by several rows to the **last** of them.
+### Asymmetric conditions — the two sides of one face
+
+A named **interior** face is carried by two elements, and `hexmesh.face_tag_rows()`
+reconstructs a row for each — that is what the `.re2` boundary block gets. Since the
+face has one name, anything that must differ between the two sides is read from the
+**region** of the element that owns the row, i.e. from `element_tags`:
+
+```python
+GROUPS = {"wall": "W  ", "interface": {"fluid": "W  ", "solid": None}}
+```
+
+A plain string is one code from every side. A mapping is keyed by region name (`""`
+for an untagged element), and `None` writes **no row** from that side — which is how a
+conjugate fluid/solid interface keeps the fluid's wall condition and puts nothing on
+the solid. A region the mapping does not name raises. `examples/chimera.py` is the
+worked case.
 
 ### Tag at the lowest level; upper overrides lower
 
@@ -523,9 +546,15 @@ the nodes it privately owns, and the familiar corner arrays are read off that:
 
 | rung | stored state | derived views |
 |---|---|---|
-| `LineMesh` | `points (P,3)`, `lines (L,2)` (**required**), `interior (L,N-1,3)` | — |
-| `QuadMesh` | `lines` — a **`LineMesh` of the shared edges**, whose `interior` holds the edge nodes — plus `quad (Q,4)` edge incidence, `flip (Q,4)`, `interior (Q,(N-1)²,3)` | `points`, `quads (Q,4)` |
-| `HexMesh` | `quads` — a **`QuadMesh` of the shared faces**, whose `interior` holds the face nodes and whose `lines.interior` holds the edge nodes — plus `hex (E,6)` face incidence, `face_orient (E,6)` D4 codes, `interior (E,(N-1)³,3)` | `points`, `hexes (E,8)` |
+| `LineMesh` | `point_mesh` — a **`PointMesh` of the shared points**, holding the `(P,3)` coordinates and their tags — plus `lines (L,2)` (**required**), `interior (L,N-1,3)` | `points`, `line` |
+| `QuadMesh` | `line_mesh` — a **`LineMesh` of the shared edges**, whose `interior` holds the edge nodes — plus `quad (Q,4)` edge incidence, `orient (Q,4)`, `interior (Q,(N-1)²,3)` | `points`, `quads (Q,4)` |
+| `HexMesh` | `quad_mesh` — a **`QuadMesh` of the shared faces**, whose `interior` holds the face nodes and whose `line_mesh.interior` holds the edge nodes — plus `hex (E,6)` face incidence, `orient (E,6)` D4 codes, `interior (E,(N-1)³,3)` | `points`, `hexes (E,8)` |
+
+Three slot names, three roles, and no word does two jobs: **`<rung>_mesh`** is the
+stored container one rung down, the **singular** `line` / `quad` / `hex` is this rung's
+incidence into it, and the **plural** `lines` / `quads` / `hexes` is the derived corner
+connectivity. `points` is always the `(N,3)` coordinates. At the line rung a point *is*
+its own corner, so `line` and `lines` are one table reachable under both names.
 
 `points` / `quads` / `hexes` are **derived, read-only** views over that storage.
 A `HexMesh`'s points *are* its shared-face `QuadMesh`'s points, which *are* its
@@ -687,7 +716,6 @@ meshed.
   the `conform.conformal_*` walk, so a viewer renders the true curved geometry. Use
   the XML `.vtu` writer ({func}`nekmeshpy.io.export.to_vtu` / `line_to_vtu` /
   `quad_to_vtu`) — ParaView and VisIt render Lagrange cells reliably from `.vtu`.
-  See `examples/high_order_*.py`.
 - **Quality metrics are opt-in** — the defaults stay corner-based so pinned numbers
   hold. Pass `high_order=True` to `mesh.scaled_jacobian()` /
   `mesh.quality_summary()` to sample the scaled Jacobian at the block's `(N+1)^d` GLL
@@ -717,15 +745,21 @@ golden regression pinned.
 Boundaries are plain **names** during construction. Each name maps to a Nek BC
 code / integer id only at **export**, via the `groups=` argument:
 
-- a `{name: nek_code}` dict,
-- a {class}`~nekmeshpy.core.physical.PhysicalGroups` registry (presets:
-  `PhysicalGroups.nek_default()`, `.duct()`, `.from_tags()`), or
-- `None` to auto-number the mesh's distinct names.
+- a `{name: spec}` dict, where a `spec` is one code used from every side or a
+  `{region: code}` mapping (see *asymmetric conditions* above), or
+- a {class}`~nekmeshpy.core.physical.PhysicalGroups` registry.
 
 ```python
 from nekmeshpy import export
 export.to_re2(mesh, "part.re2", groups={"wall": "W  ", "inlet": "v  "})
 ```
+
+**There are no presets, and `to_re2` has no default.** A name-to-code table is a
+statement about one piece of geometry — which opening is the inlet, which surface is a
+measurement plane — so it belongs in the mesher that knows, spelled out next to the
+tags it names. `to_re2` raises without it rather than putting a code the caller never
+chose in front of the solver. The viewer writers (`to_vtu` / `to_mesh`) still accept
+`None`, which auto-numbers the mesh's distinct names: an integer id carries no physics.
 
 Every writer takes the **full output filename, extension included** — `to_re2`
 writes exactly the binary `.re2` it is given and nothing else. `.re2` element ids

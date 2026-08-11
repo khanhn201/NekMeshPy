@@ -1015,9 +1015,9 @@ def map_to_surface(section, pts, tris):
     order = section.order
     if order > 1:
         # shared edge interiors, skipping the rim's own edges
-        cnt = np.bincount(section.quad.ravel(), minlength=section.lines.n_lines)
+        cnt = np.bincount(section.quad.ravel(), minlength=section.line_mesh.n_lines)
         inner = np.flatnonzero(cnt > 1)
-        ei = section.lines.interior
+        ei = section.line_mesh.interior
         if inner.size and ei.shape[1]:
             flat = ei[inner].reshape(-1, 3)
             ei[inner] = project_to_soup(pts, tris, flat).reshape(inner.size, -1, 3)

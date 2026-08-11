@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
 from nekmeshpy import HexMesh, hexmesh, linemesh, quadmesh
 
@@ -111,7 +112,7 @@ def test_tags_follow_their_face():
         for s in range(6):
             k = tuple(sorted(int(v) for v in hexes[e][HexMesh.FACE_POINTS[s]]))
             key[k] = key.get(k, 0) + 1
-    for e, s, _tag in t.face_tags:
+    for e, s, _tag in face_rows(t):
         k = tuple(sorted(int(v) for v in hexes[e][HexMesh.FACE_POINTS[s - 1]]))
         assert key[k] == 1
 
@@ -205,7 +206,7 @@ def test_quadrant_faces_make_an_octant():
     # cuts through the ball, so they are not (and must not be).
     ids = np.unique(np.concatenate(
         [t.hexes[e][list(HexMesh.FACE_POINTS[s - 1])]
-         for e, s, tag in t.face_tags if tag == "sphere"]))
+         for e, s, tag in face_rows(t) if tag == "sphere"]))
     assert np.allclose(np.linalg.norm(t.points[ids], axis=1), 1.0, atol=1e-12)
     flat = np.setdiff1d(_boundary_nodes(t), ids)
     assert flat.size > 0

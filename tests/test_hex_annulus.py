@@ -7,6 +7,7 @@ quad surfaces and tags the inner / outer wall faces from the surfaces' per-quad
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
 from nekmeshpy import ElementTags, HexMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
@@ -64,10 +65,9 @@ def test_quad_from_grid_edge_tags_land_on_correct_sides():
     P = np.stack([X, Y, np.zeros_like(X)], axis=-1)
     qm = quadmesh.from_grid(P, side_tags={"x_min": "west", "y_max": "north"})
     assert qm.edge_group_tags == ["north", "west"]
-    for r in range(qm.n_edge_tags):
-        q, s = int(qm.edge_tags.elements[r]), int(qm.edge_tags.sides[r])
-        mid = qm.points[qm.quads[q, QuadMesh.EDGE_POINTS[s - 1]]].mean(axis=0)
-        if str(qm.edge_tags.tags[r]) == "west":
+    for eid, name in qm.edge_tags:
+        mid = qm.points[qm.line_mesh.lines[eid]].mean(axis=0)
+        if name == "west":
             assert np.isclose(mid[0], 0.0)                  # x_min edge
         else:
             assert np.isclose(mid[1], 1.0)                  # y_max edge
@@ -87,10 +87,9 @@ def test_annulus_shell_watertight_and_tagged_from_element_tags():
                                              "zp", "zm"}
     assert mesh.element_group_tags == []                    # hexes stay untagged
     # inner element_tags -> inner wall (Chebyshev radius 1.0); outer -> radius 2.0
-    for r in range(mesh.n_face_tags):
-        e, f = int(mesh.face_tags.elements[r]), int(mesh.face_tags.sides[r])
+    for e, f, name in face_rows(mesh):
         cheb = float(np.max(np.abs(_face_pts(mesh, e, f))))
-        expected = 1.0 if str(mesh.face_tags.tags[r]) == "body" else 2.0
+        expected = 1.0 if name == "body" else 2.0
         assert cheb == pytest.approx(expected)
 
 
@@ -147,7 +146,7 @@ def test_loft_per_quad_first_tag_and_scalar_last_tag():
     s0, s1 = _two_quad_slices()
     block = hexmesh.loft([s0, s1], last_tag="top",
                          first_tag=ElementTags.from_dense(["capA", "capB"]))
-    tag_at = {(e, f): t for e, f, t in block.face_tags}
+    tag_at = {(e, f): t for e, f, t in face_rows(block)}
     assert tag_at[(0, 5)] == "capA"        # per-quad bottom caps
     assert tag_at[(1, 5)] == "capB"
     assert tag_at[(0, 6)] == "top"         # scalar top cap on both columns

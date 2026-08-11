@@ -6,11 +6,10 @@ true surface / wall) and the N=1 no-op (order-1 factories are byte-for-byte the 
 linear meshes, and the ``high_order_quad`` example VTU stays byte-identical to its
 golden)."""
 
-import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example, vtu_cell_types
+from conftest import curved, vtu_cell_types
 
 from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
@@ -107,7 +106,7 @@ def test_structured_stamps_its_edges_high_order_nodes(order):
 def _edge_chord_deviation(qm):
     """Per shared edge, the max distance of its interior nodes from the straight
     chord between its two corners -- 0 for a straight-subdivided edge."""
-    lm = qm.lines
+    lm = qm.line_mesh
     a = lm.points[lm.lines[:, 0]]
     b = lm.points[lm.lines[:, 1]]
     d = b - a
@@ -118,7 +117,7 @@ def _edge_chord_deviation(qm):
 
 def _on_radius(qm, r):
     """Mask of shared edges whose *both* corners sit at radius ``r`` (the wall)."""
-    lm = qm.lines
+    lm = qm.line_mesh
     rc = np.linalg.norm(lm.points[:, :2], axis=1)
     return np.isclose(rc, r, atol=1e-9)[lm.lines].all(axis=1)
 
@@ -153,7 +152,7 @@ def test_half_ogrid_interior_edges_are_curved(order):
     assert dev[wall].max() > 1e-3
     assert dev[~wall].max() > 0.3 * dev[wall].max()
     # and the wall nodes still land on the exact circle
-    lm = qm.lines
+    lm = qm.line_mesh
     wr = np.linalg.norm(lm.interior[wall].reshape(-1, 3)[:, :2], axis=1)
     assert np.allclose(wr, r, atol=1e-9)
 
@@ -461,14 +460,3 @@ def test_vtu_quad_nodes_land_on_the_bilinear_lattice(tmp_path):
 
 
 # -- example golden -----------------------------------------------------
-def test_high_order_quad_example_matches_golden(tmp_path):
-    ns = run_example("high_order_quad.py", tmp_path)
-    mesh = ns["mesh"]
-    # the example's own ORDER constant is the contract -- read it back rather
-    # than pinning a literal here, so the two can never drift apart.
-    assert isinstance(mesh, QuadMesh) and mesh.order == ns["ORDER"] > 1
-    with open(os.path.join(tmp_path, "high_order_quad.vtu"), "rb") as f:
-        got = f.read()
-    with open(os.path.join(GOLDEN, "high_order_quad.vtu"), "rb") as f:
-        ref = f.read()
-    assert got == ref

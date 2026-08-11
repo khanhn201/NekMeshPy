@@ -220,7 +220,9 @@ blocks = [
 mesh = hexmesh.merge(blocks)
 
 if SMOOTH_ITERS > 0:
-    smoothing.smooth(mesh, wall_surface(), smooth_iters=SMOOTH_ITERS,
+    # takes the result: the smoother builds a new mesh rather than writing through
+    # this one's live points
+    mesh = smoothing.smooth(mesh, wall_surface(), smooth_iters=SMOOTH_ITERS,
                      smooth_lambda=SMOOTH_LAMBDA, wall="wall",
                      project_to_stl=True)
 

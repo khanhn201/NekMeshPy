@@ -83,7 +83,7 @@ def auto_params(R_MAIN, R_BRANCH):
 def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                      RADIAL=None, CENTER_SCALE=0.7,
                      order=2, PHI_W=None, CAP_TIP_BIAS=None,
-                     N_TRANS=5, N_BRANCH=4, ORIGIN=None):
+                     N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag=""):
     RADIAL = _RADIAL_DEFAULT if RADIAL is None else RADIAL
     # each of the three defaults to the ratio-dependent choice; pass one explicitly to
     # override just that one
@@ -202,7 +202,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                               quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca,
                                                  order=order, tip_bias=tip_bias,
                                                  mids=mids, element_tag="wall")],
-                             center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN))
+                             center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN),
+                             element_tag=element_tag)
 
     def leg(composite, walls, sign):
         z = sign * Z_NEAR
@@ -217,7 +218,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
         plain = station(1.0)
         transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                                     order=order)
+                                     order=order, element_tags=element_tag or None)
         return transition, plain
 
     def branch():
@@ -229,7 +230,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                                            (1.0 - t[i]) * ORIGIN + t[i] * c_open, RADIAL,
                                            center_scale=CENTER_SCALE, wall_tag="wall")
                    for i in range(t.size)]
-        return hexmesh.loft(sections), sections[-1]
+        return hexmesh.loft(sections, element_tags=element_tag or None), sections[-1]
 
     trans_plus, disc_plus = leg(COMPOSITE_R, W_R, 1)
     trans_minus, disc_minus = leg(COMPOSITE_L, W_L, -1)

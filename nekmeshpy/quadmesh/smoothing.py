@@ -10,6 +10,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, IntArray
+from .morph import reposition
 from .quadmesh import QuadMesh
 
 F = TypeVar("F", bound=Callable[..., "QuadMesh"])
@@ -36,8 +37,11 @@ def _section_boundary(quads: IntArray, nu: int) -> BoolArray:
 
 
 def conduction_section(qm: QuadMesh) -> QuadMesh:
-    """Discrete-conduction map of the interior, boundary held fixed. In place."""
-    X = qm.points
+    """Discrete-conduction map of the interior, boundary held fixed.
+
+    Returns a new section: ``points`` is the mesh's own live array, so the solve runs
+    on a copy rather than writing through it."""
+    X = qm.points.copy()
     nu = X.shape[0]
     edges, _ = _section_edges(qm.quads)
     A = sp.coo_matrix((np.ones(edges.shape[0] * 2),
@@ -54,13 +58,16 @@ def conduction_section(qm: QuadMesh) -> QuadMesh:
     Lc = L.tocsc()
     rhs = -(Lc[I, :][:, B] @ X[B, :])
     X[I, :] = spla.spsolve(Lc[I, :][:, I].tocsc(), rhs)
-    return qm
+    return reposition(qm, X)
 
 
 def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMesh:
     """Winslow-type elliptic smoothing of the interior (floored, under-relaxed),
-    boundary held fixed. In place."""
-    X = qm.points
+    boundary held fixed.
+
+    Returns a new section: the sweep runs on a copy rather than through the mesh's own
+    live ``points``."""
+    X = qm.points.copy()
     nu = X.shape[0]
     edges, _ = _section_edges(qm.quads)
     adj: list[Any] = [[] for _ in range(nu)]
@@ -82,7 +89,7 @@ def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMe
             w = 1.0 / np.maximum(dist, dfloor[v])
             xn = (w @ X[nb, :]) / np.sum(w)
             X[v, :] = (1 - omega) * X[v, :] + omega * xn
-    return qm
+    return reposition(qm, X)
 
 
 # -- registry -----------------------------------------------------------

@@ -39,7 +39,7 @@ def test_reindex_with_the_identity_reproduces_the_target():
     a, b = _disc(), _disc(radius=1.3)
     out = quadmesh.reindex(a, b, _identity_sigma(a))
     assert np.array_equal(out.points, b.points)
-    assert np.array_equal(out.lines.interior, b.lines.interior)
+    assert np.array_equal(out.line_mesh.interior, b.line_mesh.interior)
     assert np.array_equal(out.interior, b.interior)
 
 
@@ -66,8 +66,8 @@ def test_reindex_carries_the_structures_numbering():
     a, b = _disc(), _disc(radius=1.3)
     out = quadmesh.reindex(a, b, _shift_sigma(a))
     assert np.array_equal(out.quad, a.quad)
-    assert np.array_equal(out.flip, a.flip)
-    assert np.array_equal(out.lines.lines, a.lines.lines)
+    assert np.array_equal(out.orient, a.orient)
+    assert np.array_equal(out.line_mesh.lines, a.line_mesh.lines)
 
 
 def test_reindex_result_can_be_blended_against_the_structure():
@@ -85,8 +85,8 @@ def test_reindex_moves_the_high_order_nodes_with_their_edges(order):
     a, b = _disc(order=order), _disc(radius=1.3, order=order)
     out = quadmesh.reindex(a, b, _shift_sigma(a))
     assert out.order == order
-    assert np.array_equal(np.sort(out.lines.interior.reshape(-1, 3), axis=0),
-                          np.sort(b.lines.interior.reshape(-1, 3), axis=0))
+    assert np.array_equal(np.sort(out.line_mesh.interior.reshape(-1, 3), axis=0),
+                          np.sort(b.line_mesh.interior.reshape(-1, 3), axis=0))
 
 
 def test_reindex_rejects_a_non_permutation():

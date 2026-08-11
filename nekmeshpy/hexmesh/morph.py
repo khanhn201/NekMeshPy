@@ -14,9 +14,10 @@ from .._typing import (
     Vec3,
 )
 from ..core import affine, conform
-from ..core.tags import FaceTags
+from ..quadmesh import QuadMesh
 from ..quadmesh.morph import _affine as quad_affine
 from ..quadmesh.morph import blend as quad_blend
+from ..quadmesh.morph import reposition as quad_reposition
 from .hexmesh import HexMesh
 
 
@@ -52,18 +53,36 @@ def blend(a: HexMesh, b: HexMesh,
     ho = a.order > 1
     ai, bi = a.interior, b.interior
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
-    return [HexMesh(faces, a.hex, a.face_orient,
-                (1.0 - t) * ai + t * bi if ho else None,
-                a.face_tags)
-            for t, faces in zip(fr, quad_blend(a.quads, b.quads, fr))]
+    # the face tags ride the blended ``quads`` themselves -- ``QuadMesh.blend`` keeps
+    # ``a``'s edge tags but drops its element tags, so they are put back here
+    return [HexMesh(QuadMesh(faces.line_mesh, faces.quad, faces.orient, faces.interior,
+                             a.quad_mesh.element_tags),
+                    a.hex, a.orient,
+                    (1.0 - t) * ai + t * bi if ho else None)
+            for t, faces in zip(fr, quad_blend(a.quad_mesh, b.quad_mesh, fr))]
+
+
+def reposition(mesh: HexMesh, points: PointArray) -> HexMesh:
+    """The same mesh at new coordinates: same connectivity, same tags, new points.
+
+    The general form of the affine placements above, for a caller that has computed
+    positions rather than a map -- a smoother, a projection onto a surface, a solve.
+    It returns a new mesh rather than writing into ``points``, which is what keeps
+    every operation in the toolkit non-mutating; the live array is still there for a
+    caller who deliberately wants the in-place escape hatch.
+
+    The private high-order ``interior`` nodes ride along **unchanged**, so this is for
+    order 1 or for a caller that has already placed them: moving corners alone leaves
+    curved nodes where they were."""
+    return HexMesh(quad_reposition(mesh.quad_mesh, points), mesh.hex, mesh.orient,
+                   mesh.interior, mesh.element_tags)
 
 
 def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
-    return HexMesh(quad_affine(mesh.quads, matrix, offset), mesh.hex,
-                   mesh.face_orient, affine.apply(mesh.interior, matrix, offset),
-                   mesh.face_tags, mesh.element_tags,
-)
+    return HexMesh(quad_affine(mesh.quad_mesh, matrix, offset), mesh.hex,
+                   mesh.orient, affine.apply(mesh.interior, matrix, offset),
+                   mesh.element_tags)
 
 
 def transform(mesh: HexMesh, matrix: FloatArray,
@@ -118,14 +137,11 @@ def _rewind(mesh: HexMesh) -> HexMesh:
     hexes: IntArray = mesh.hexes[:, _REWIND_CORNERS]
     elem_faces: IntArray = mesh.hex[:, _REWIND_FACES]
     orient: IntArray = conform.face_frame_code(
-        hexes[:, conform._LOCAL_FACES], mesh.quads.quads[elem_faces])
+        hexes[:, conform._LOCAL_FACES], mesh.quad_mesh.quads[elem_faces])
     n = mesh.order - 1
     perm: IntArray = (np.arange(n ** 3, dtype=np.int64).reshape(n, n, n)[::-1].ravel()
                       if n else np.zeros(0, dtype=np.int64))
-    ft = mesh.face_tags
-    return HexMesh(mesh.quads, elem_faces, orient, mesh.interior[:, perm, :],
-                   FaceTags(ft.elements, np.where(ft.sides >= 5, 11 - ft.sides,
-                                                  ft.sides), ft.tags).ordered(),
+    return HexMesh(mesh.quad_mesh, elem_faces, orient, mesh.interior[:, perm, :],
                    mesh.element_tags)
 
 
@@ -154,6 +170,7 @@ def mirror(mesh: HexMesh, normal: Vec3 | Sequence[float],
 
 __all__ = [
     "blend",
+    "reposition",
     "mirror",
     "rotate",
     "scale",

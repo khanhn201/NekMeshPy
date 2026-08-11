@@ -11,7 +11,8 @@ from .._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..trimesh import TriMesh, ops
 from . import quality
 from .hexmesh import HexMesh
-from .query import _unique_edges, classify_points, weld
+from .morph import reposition
+from .query import _unique_edges, classify_points
 
 _log = logging.getLogger("nekmeshpy")
 
@@ -42,7 +43,9 @@ def smooth(
     qfloor = quality_floor or 0.2
     Oxyz, Otri = surface.points, surface.tris
 
-    X, HC, nu = weld(mesh)
+    # a copy: ``points`` is the mesh's own live array, and a smoother that wrote into
+    # it would be the one operation in the toolkit that mutates its input
+    X, HC, nu = mesh.points.copy(), mesh.hexes, mesh.n_points
     he = np.array([[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
                    [0, 4], [1, 5], [2, 6], [3, 7]], dtype=np.int64)
     E = _unique_edges(HC, he)
@@ -124,8 +127,7 @@ def smooth(
     if np.min(sj) <= 0:
         _log.warning("  %d element(s) still non-positive after smoothing",
                      int(np.sum(sj <= 0)))
-    mesh.points[:] = X
-    return mesh
+    return reposition(mesh, X)
 
 
 # -- helpers (module-private) -------------------------------------------

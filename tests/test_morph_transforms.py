@@ -43,8 +43,8 @@ def _tables(mesh):
     if isinstance(mesh, LineMesh):
         return [mesh.points, mesh.interior]
     if isinstance(mesh, QuadMesh):
-        return [mesh.interior, *_tables(mesh.lines)]
-    return [mesh.interior, *_tables(mesh.quads)]
+        return [mesh.interior, *_tables(mesh.line_mesh)]
+    return [mesh.interior, *_tables(mesh.quad_mesh)]
 
 
 @pytest.fixture(params=[1, 3], ids=["order1", "order3"])
@@ -157,12 +157,12 @@ def test_quad_and_hex_delegate_to_the_rung_below(order):
     quad map must equal the line map on that mesh; likewise hex -> quad."""
     ring, section, block = _meshes(order)
     v = (0.0, 1.0, -0.5)
-    assert np.array_equal(quadmesh.translate(section, v).lines.points,
-                          linemesh.translate(section.lines, v).points)
-    assert np.array_equal(quadmesh.translate(section, v).lines.interior,
-                          linemesh.translate(section.lines, v).interior)
-    assert np.array_equal(hexmesh.rotate(block, 0.2).quads.points,
-                          quadmesh.rotate(block.quads, 0.2).points)
+    assert np.array_equal(quadmesh.translate(section, v).line_mesh.points,
+                          linemesh.translate(section.line_mesh, v).points)
+    assert np.array_equal(quadmesh.translate(section, v).line_mesh.interior,
+                          linemesh.translate(section.line_mesh, v).interior)
+    assert np.array_equal(hexmesh.rotate(block, 0.2).quad_mesh.points,
+                          quadmesh.rotate(block.quad_mesh, 0.2).points)
 
 
 def test_extrude_is_a_stack_of_translations(order):
@@ -231,13 +231,12 @@ def test_reverse_is_an_involution(order):
 def test_reverse_remaps_element_and_point_tags_to_the_same_physical_points():
     chain = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
                           first_tag="in", last_tag="out")
-    lm = LineMesh(chain.points, chain.lines, chain.interior, chain.point_tags,
+    lm = LineMesh(chain.point_mesh, chain.lines, chain.interior,
                   ElementTags.from_dense(["a", "b"]))
     out = linemesh.reverse(lm)
     assert out.element_tags.dense(out.n_lines).tolist() == ["b", "a"]
     # the tag that named the x=0 end still names it after the relabel
-    tagged = {t: out.points[out.lines[e, s - 1]].tolist()
-              for e, s, t in out.point_tags}
+    tagged = {t: out.points[i].tolist() for i, t in out.point_tags}
     assert tagged["in"] == [0.0, 0.0, 0.0]
     assert tagged["out"] == [2.0, 0.0, 0.0]
 
@@ -276,14 +275,14 @@ def test_a_reversed_rings_per_segment_tags_stay_on_their_segments():
     """The order-1 face of the same defect, and the quieter one: the rotation shifted
     every per-segment wall tag by one segment without erroring."""
     ring = linemesh.circle(1.0, 8)
-    named = LineMesh(ring.points, ring.lines, ring.interior, ring.point_tags,
+    named = LineMesh(ring.point_mesh, ring.lines, ring.interior,
                      ElementTags(np.arange(8),
                                  np.array(["s%d" % k for k in range(8)])))
     rev = linemesh.reverse(named)
     section = quadmesh.ogrid(rev, 2, 2)
     where = dict(zip(rev.element_tags.tags.tolist(), rev.element_tags.ids.tolist()))
-    for e, side, tag in section.edge_tags:
-        mid = section.points[section.quads[e][[side - 1, side % 4]]].mean(axis=0)
+    for eid, tag in section.edge_tags:
+        mid = section.points[section.line_mesh.lines[eid]].mean(axis=0)
         assert np.allclose(mid, rev.points[rev.lines[where[tag]]].mean(axis=0))
 
 
@@ -300,6 +299,6 @@ def test_line_loft_caps_are_one_name_each():
     reduces to a single string here -- and anything else is refused outright."""
     P = np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]])
     scalar = linemesh.loft(P, first_tag="in", last_tag="out")
-    assert list(scalar.point_tags) == [(0, 1, "in"), (1, 2, "out")]
+    assert list(scalar.point_tags) == [(0, "in"), (2, "out")]
     with pytest.raises(TypeError, match="single tag string"):
         linemesh.loft(P, first_tag=["in"])

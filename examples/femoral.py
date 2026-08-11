@@ -41,7 +41,6 @@ import sys
 import numpy as np
 
 from nekmeshpy import (
-    PhysicalGroups,
     TriMesh,
     export,
     fields,
@@ -178,7 +177,6 @@ EXPORT_RE2 = True
 EXPORT_VTK = True
 PLOT = False
 
-GROUPS = PhysicalGroups.nek_default()
 # the flux planes are interior surfaces, so they carry Nek's own ``f1``/``f2`` codes
 # rather than a flow condition -- naming a plane is not constraining it
 NAMES = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  ",
@@ -1270,7 +1268,7 @@ def blend_to_wall(sec, uv_pts, uv_edge, uv_face, power=1.0):
     src_uv = [uv_pts[rim]]
     src_d = [wall_at(sec.points[rim], uv_pts[rim]) - sec.points[rim]]
 
-    inter = sec.lines.interior
+    inter = sec.line_mesh.interior
     on = np.zeros(0, bool)
     wall_edges = np.zeros((0,) + inter.shape[1:])
     if inter.size and uv_edge is not None:
@@ -1326,7 +1324,7 @@ def lift_section(dm, sec):
     sections mapped through different parametrizations then disagree about a shared edge,
     which is what stops the seam halves merging.  Each array is lifted from its own planar
     values, so all three land on the surface together."""
-    for arr in (sec.lines.interior, sec.interior):
+    for arr in (sec.line_mesh.interior, sec.interior):
         if arr.size:
             arr[:] = dm.lift(arr[..., :2].reshape(-1, 2)).reshape(arr.shape)
     sec.points[:] = dm.lift(sec.points[:, :2])
@@ -1367,8 +1365,8 @@ def map_section(pts, tris, ring_ids, seam_loop, frac, *, radial, center_scale):
     # the parameter positions, kept before the lift overwrites them -- the O-grid's own
     # radial coordinate, which is what weights the wall correction inward
     uv_pts = sec.points[:, :2].copy()
-    uv_edge = (sec.lines.interior[..., :2].copy()
-               if sec.lines.interior.size else None)
+    uv_edge = (sec.line_mesh.interior[..., :2].copy()
+               if sec.line_mesh.interior.size else None)
     uv_face = sec.interior[..., :2].copy() if sec.interior.size else None
     lift_section(dm, sec)
     return (blend_to_wall(sec, uv_pts, uv_edge, uv_face)
@@ -1432,11 +1430,11 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     # finds its nodes by where they sit in the *parameter* plane, which is the only
     # place it can recognize them, and after the lift they are model coordinates
     uv_pts = half.points[:, :2].copy()
-    uv_edge = (half.lines.interior[..., :2].copy()
-               if half.lines.interior.size else None)
+    uv_edge = (half.line_mesh.interior[..., :2].copy()
+               if half.line_mesh.interior.size else None)
     uv_face = half.interior[..., :2].copy() if half.interior.size else None
     lift_section(dm, half)
-    was = (half.points.copy(), half.lines.interior.copy(), half.interior.copy())
+    was = (half.points.copy(), half.line_mesh.interior.copy(), half.interior.copy())
     # Restore the shared curves exactly.  The arc and the spine bound *two* interfaces,
     # and each one's triangulation renders them slightly differently -- by the ~0.003 the
     # two soups disagree about the triple curve.  Reconstructing them is therefore never
@@ -1489,7 +1487,7 @@ def carry_pins(sec, was, uv_pts, uv_edge, uv_face, power=1.0):
     amount."""
     pts0, edge0, face0 = was
     d_pts = sec.points - pts0
-    d_edge = sec.lines.interior - edge0 if edge0.size else np.zeros((0, 0, 3))
+    d_edge = sec.line_mesh.interior - edge0 if edge0.size else np.zeros((0, 0, 3))
 
     src_uv = [uv_pts[np.abs(d_pts).any(axis=1)]]
     src_d = [d_pts[np.abs(d_pts).any(axis=1)]]
@@ -1525,7 +1523,7 @@ def carry_pins(sec, was, uv_pts, uv_edge, uv_face, power=1.0):
         moved = np.abs(d_edge).any(axis=(1, 2))
         add = carried(uv_edge.reshape(-1, 2)).reshape(d_edge.shape)
         add[moved] = 0.0
-        sec.lines.interior[:] = sec.lines.interior + add
+        sec.line_mesh.interior[:] = sec.line_mesh.interior + add
     if sec.interior.size and uv_face is not None:
         sec.interior[:] = sec.interior + carried(
             uv_face.reshape(-1, 2)).reshape(sec.interior.shape)
@@ -1546,7 +1544,7 @@ def pin_curve(sec, uv, flat, curve):
     d, j = tree.query(uv[:, :2])
     on = d < 1e-12
     sec.points[on] = curve.points[j[on]]
-    if not sec.lines.interior.size:
+    if not sec.line_mesh.interior.size:
         return
     ends = np.asarray(sec.edges)
     a, b = j[ends[:, 0]], j[ends[:, 1]]
@@ -1554,7 +1552,7 @@ def pin_curve(sec, uv, flat, curve):
     for k in np.flatnonzero(good):
         i = min(int(a[k]), int(b[k]))
         nodes = curve.interior[i]
-        sec.lines.interior[k] = nodes if a[k] < b[k] else nodes[::-1]
+        sec.line_mesh.interior[k] = nodes if a[k] < b[k] else nodes[::-1]
 
 
 def level_section(walker, level, seam_loop, *, radial, center_scale):

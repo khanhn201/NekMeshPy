@@ -7,9 +7,11 @@ from collections import Counter
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
-from nekmeshpy import NO_TAG, EdgeTags, HexMesh, QuadMesh, hexmesh, quadmesh
+from nekmeshpy import NO_TAG, ElementTags, HexMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
+from nekmeshpy.quadmesh.tag import tag_edges
 
 # a unit square, one quad, CCW: side 1 (0,1) bottom, 2 (1,2) right, 3 (2,3) top,
 # 4 (3,0) left -- edge tags are (quad id, side, tag) rows.
@@ -22,7 +24,7 @@ _SQUARE_BND_TAGS = ["bottom", "right", "top", "left"]
 def _face_centroids(mesh):
     """(K,3) centroid of every tagged face."""
     out = []
-    for e, f, _tag in mesh.face_tags:
+    for e, f, _tag in face_rows(mesh):
         out.append(mesh.points[mesh.hexes[e, HexMesh.FACE_POINTS[f - 1]]].mean(axis=0))
     return np.array(out).reshape(-1, 3)
 
@@ -33,27 +35,32 @@ def _edge_points(mesh, row):
     return mesh.quads[q, QuadMesh.EDGE_POINTS[s - 1]]
 
 
-def test_edge_tags_stored_as_quad_side_rows_with_names():
-    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
-                  edge_tags=EdgeTags.from_pairs(_SQUARE_BND, _SQUARE_BND_TAGS))
-    assert qm.edge_tags.rows.shape == (4, 2)
+def _tagged_square():
+    """The unit square with its four boundary edges named, authored the way a factory
+    does -- in ``(quad, side)`` rows, which ``tag_edges`` resolves onto the shared
+    edges those rows point at."""
+    return tag_edges(QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS),
+                     _SQUARE_BND, _SQUARE_BND_TAGS)
+
+
+def test_edge_tags_are_stored_on_the_shared_edges_they_name():
+    qm = _tagged_square()
     assert qm.n_edge_tags == 4
     assert qm.edge_group_tags == ["bottom", "left", "right", "top"]
-    # side 1 (pts 0-1) is named "bottom"
-    row = next(r for r in range(4) if list(qm.edge_tags.rows[r]) == [0, 1])
-    assert qm.edge_tags.tags[row] == "bottom"
-    assert np.allclose(qm.points[_edge_points(qm, row), 1], 0.0)   # bottom -> y=0
+    # the tag rides an edge id, so the geometry is read straight off ``lines``
+    named = dict(qm.edge_tags)
+    eid = next(e for e, t in named.items() if t == "bottom")
+    assert np.allclose(qm.points[qm.line_mesh.lines[eid], 1], 0.0)     # bottom -> y=0
 
 
-def test_mismatched_rows_and_names_raises():
-    """Desynchronized rows and names are rejected by the table, not the container."""
+def test_mismatched_ids_and_names_raises():
+    """Desynchronized ids and names are rejected by the table, not the container."""
     with pytest.raises(ValueError, match="same length"):
-        EdgeTags.from_pairs(_SQUARE_BND, ["only", "two"])
+        ElementTags([0, 1], ["only"])
 
 
 def test_loft_propagates_per_edge_tags_to_side_faces():
-    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
-                  edge_tags=EdgeTags.from_pairs(_SQUARE_BND, _SQUARE_BND_TAGS))
+    qm = _tagged_square()
     blk = hexmesh.extrude(qm, length=1.0, layers=uniform_spacing(1),
                           first_tag="inlet", last_tag="outlet")
     counts = Counter(blk.face_tags.tags.tolist())
@@ -65,8 +72,9 @@ def test_loft_propagates_per_edge_tags_to_side_faces():
 
 def test_no_boundary_suppresses_a_swept_face():
     # name three edges "wall"; the right edge (side 2) is declared NO_TAG
-    qm = QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS,
-                  edge_tags=EdgeTags.from_pairs([[0, 1], [0, 3], [0, 4], [0, 2]], ["wall", "wall", "wall", NO_TAG]))
+    qm = tag_edges(QuadMesh.from_corners(_SQUARE_PTS, _SQUARE_QUADS),
+                   [[0, 1], [0, 3], [0, 4], [0, 2]],
+                   ["wall", "wall", "wall", NO_TAG])
     blk = hexmesh.extrude(qm, length=1.0, layers=uniform_spacing(2))
     names = blk.face_tags.tags.tolist()
     assert "" not in names                       # NO_TAG never emitted
@@ -82,16 +90,18 @@ def test_untagged_section_tags_only_caps():
     assert Counter(blk.face_tags.tags.tolist()) == {"inlet": 1, "outlet": 1}
 
 
-def test_quadmesh_merge_concats_and_offsets_edge_tags():
-    a = QuadMesh.from_corners([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], _SQUARE_QUADS,
-                 edge_tags=EdgeTags.from_pairs([[0, 1]], ["a_bottom"]))
-    b = QuadMesh.from_corners([[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], _SQUARE_QUADS,
-                 edge_tags=EdgeTags.from_pairs([[0, 1]], ["b_bottom"]))
+def test_quadmesh_merge_carries_edge_tags_onto_the_merged_edges():
+    a = tag_edges(QuadMesh.from_corners(
+        [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], _SQUARE_QUADS),
+        [[0, 1]], ["a_bottom"])
+    b = tag_edges(QuadMesh.from_corners(
+        [[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], _SQUARE_QUADS),
+        [[0, 1]], ["b_bottom"])
     m = quadmesh.merge([a, b])
     assert set(m.edge_tags.tags.tolist()) == {"a_bottom", "b_bottom"}
-    # each name still sits on a y=0 edge after the point weld + quad-id offset
-    for r in range(m.n_edge_tags):
-        assert np.allclose(m.points[_edge_points(m, r), 1], 0.0)
+    # each name still sits on a y=0 edge after the point weld rebuilt the edge table
+    for eid, _ in m.edge_tags:
+        assert np.allclose(m.points[m.line_mesh.lines[eid], 1], 0.0)
 
 
 def _box(lo, hi, tags):
@@ -116,5 +126,6 @@ def test_no_boundary_seam_keeps_merge_a_plain_concatenate():
     z = _face_centroids(mesh)[:, 2]
     assert not np.any(np.isclose(z, 1.0))
     # the true outer caps are present and correctly placed
-    assert np.all(np.isclose(z[mesh.face_tags.tags == "bottom"], 0.0))
-    assert np.all(np.isclose(z[mesh.face_tags.tags == "top"], 2.0))
+    names = np.array([t for _, _, t in face_rows(mesh)])
+    assert np.all(np.isclose(z[names == "bottom"], 0.0))
+    assert np.all(np.isclose(z[names == "top"], 2.0))

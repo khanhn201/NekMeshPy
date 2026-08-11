@@ -6,6 +6,7 @@ import logging
 from collections.abc import Sequence
 
 from ..hexmesh import HexMesh
+from ..hexmesh.query import face_tag_rows
 
 _log = logging.getLogger("nekmeshpy")
 
@@ -33,12 +34,13 @@ def plot(
     alphas = [0.5, 1, 1, 1]
     fig = plt.figure(figsize=(7.8, 8.8))
     ax = fig.add_subplot(111, projection="3d")
+    all_rows, all_names = face_tag_rows(mesh)
     handles = []
     for ti, name in enumerate(names):
-        rows = mesh.face_tags.select(mesh.face_tags.mask_for(name))
-        if not len(rows):
+        rows = all_rows[all_names == name]
+        if not rows.shape[0]:
             continue
-        polys = [elements[e, mesh.FACE_POINTS[s - 1, :], :] for e, s, _ in rows]
+        polys = [elements[e, mesh.FACE_POINTS[s - 1, :], :] for e, s in rows.tolist()]
         pc = Poly3DCollection(polys, facecolor=colors[ti % len(colors)],
                               edgecolor=(0.15, 0.15, 0.15),
                               linewidths=0.2, alpha=alphas[ti % len(alphas)])

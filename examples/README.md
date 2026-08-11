@@ -23,9 +23,6 @@ PYTHONPATH=. python examples/flow_past_plate.py        # external flow: thin pla
 PYTHONPATH=. python examples/flow_past_half_cylinder.py # external flow: half-cylinder bump
 PYTHONPATH=. python examples/flow_past_sphere.py       # external flow: sphere (cubed-sphere)
 PYTHONPATH=. python examples/flow_past_hemisphere.py   # external flow: hemisphere on ground
-PYTHONPATH=. python examples/high_order_curve.py       # order-2 circle: nodes on the true arc
-PYTHONPATH=. python examples/high_order_quad.py        # order-2 cubed-sphere surface
-PYTHONPATH=. python examples/high_order_hex.py         # order-2 spherical shell (curved volume)
 ```
 
 Each writes native Nek5000/NekRS `.re2` plus a `.vtu` for ParaView; `carotid.py`
@@ -48,9 +45,6 @@ also writes a Nek field file (`carotid0.f00001`) carrying its high-order GLL nod
 | `flow_past_half_cylinder.py` | `quadmesh.structured` over four tagged edges, the bottom one a welded semicircular bump → span-`loft` (caps `front`/`back`) |
 | `flow_past_sphere.py` | `hexmesh.annulus` between a closed sphere surface and a closed cube surface (six `quadmesh.from_grid` patches → `quadmesh.merge`, per-patch `element_tag`) — wall faces tagged from the surfaces' per-quad `element_tags` (body → `sphere`; far field → `inlet`/`outlet`/…) |
 | `flow_past_hemisphere.py` | five-patch half cubed-sphere on the ground, each `half_box(patch_tags=…)` → `merge` (body → `hemisphere`) |
-| `high_order_curve.py` | `linemesh.circle(order=ORDER)` — every arc node placed on the true circle; `.vtu` `VTK_LAGRANGE_CURVE` |
-| `high_order_quad.py` | `quadmesh.sphere(order=ORDER)` — all `(N+1)²` surface nodes on the true sphere; `.vtu` `VTK_LAGRANGE_QUADRILATERAL` |
-| `high_order_hex.py` | `hexmesh.annulus(sphere, cube)` shell over two `order=ORDER` surfaces — curved inner wall on the true sphere; `.re2` stays linear, `.vtu` `VTK_LAGRANGE_HEXAHEDRON` |
 
 The 2-D section meshers (`quadmesh.ogrid` / `structured` / `half_ogrid` /
 `quadrant_ogrid` / `spined_ogrid` / `annulus`) are toolkit primitives; the scripts supply a boundary and sweep/stack
@@ -72,7 +66,7 @@ welded away by `merge` stay untagged.
 
 ## High-order (order-N) elements
 
-The `high_order_*.py` trio show spectral-element output: pass `order=N` to a
+Every mesher here is high order. Pass `order=N` to a
 factory (`linemesh.circle`, `quadmesh.sphere`/`box`, `hexmesh.annulus`, …) and each
 element carries `(N+1)` Gauss–Lobatto–Legendre nodes per parametric direction
 (line `N+1`, quad `(N+1)²`, hex `(N+1)³`), placed on the **true** geometry the

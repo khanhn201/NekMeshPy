@@ -195,7 +195,7 @@ def test_hemisphere_pairs_with_half_box_by_index():
 def test_hemisphere_high_order_nodes_lie_on_the_exact_sphere(order):
     R = 1.25
     hs = quadmesh.hemisphere(R, 3, n_vertical=2, order=order)
-    for block in (hs.points, hs.lines.interior.reshape(-1, 3),
+    for block in (hs.points, hs.line_mesh.interior.reshape(-1, 3),
                   hs.interior.reshape(-1, 3)):
         if block.size:
             assert np.max(np.abs(np.linalg.norm(block, axis=1) - R)) < 1e-13
@@ -600,7 +600,7 @@ def _tagged_arc(Nt, tags):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
     lm = linemesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
-    return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+    return LineMesh(lm.point_mesh, lm.lines, lm.interior,
                     ElementTags.from_dense(tags))
 
 
@@ -700,9 +700,9 @@ def test_quad_must_index_shared_edges_that_exist():
     from nekmeshpy import QuadMesh
     sec = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, np.linspace(0.5, 1.0, 3))
     with pytest.raises(ValueError, match="quad must index the .* shared edges"):
-        QuadMesh(sec.lines, np.full((2, 4), 999), np.zeros((2, 4), dtype=bool))
+        QuadMesh(sec.line_mesh, np.full((2, 4), 999), np.zeros((2, 4), dtype=bool))
     with pytest.raises(ValueError, match="quad must index the .* shared edges"):
-        QuadMesh(sec.lines, -np.ones((1, 4), dtype=np.int64),
+        QuadMesh(sec.line_mesh, -np.ones((1, 4), dtype=np.int64),
                  np.zeros((1, 4), dtype=bool))
 
 
@@ -713,7 +713,7 @@ def test_order_n_container_asks_for_the_interior_it_cannot_invent():
     sec = quadmesh.ogrid(linemesh.circle(1.0, 8, order=3), 2, np.linspace(0.5, 1.0, 3))
     assert sec.order == 3
     with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-quad private"):
-        QuadMesh(sec.lines, sec.quad, sec.flip)
+        QuadMesh(sec.line_mesh, sec.quad, sec.orient)
 
 
 def test_structured_rejects_wrong_edge_count():

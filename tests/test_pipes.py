@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from conftest import run_example
+from conftest import face_rows, run_example
 from scipy import integrate
 
 from nekmeshpy import hexmesh, topology
@@ -11,7 +11,7 @@ from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(*hexmesh.weld(mesh)[:2])
+    return quality.scaled_jacobian(mesh.points, mesh.hexes)
 
 
 def _tag_count(mesh, name):
@@ -43,7 +43,7 @@ def test_circular_pipe_tjunction(tmp_path):
     mesh = run_example("circular_pipe_tjunction.py", tmp_path)["mesh"]
     # three legs welded into one conformal, watertight block at the junction
     assert hexmesh.is_watertight(mesh) and hexmesh.is_conforming(mesh)
-    assert topology.hex_report(*hexmesh.weld(mesh)[:2]).n_components == 1
+    assert topology.hex_report(mesh.points, mesh.hexes).n_components == 1
     # wall + three circular openings, each opening the same face count
     assert _tag_count(mesh, "wall") > 0
     for name in ("outlet", "branch"):
@@ -60,10 +60,10 @@ def _wall_nodes(mesh):
     geometry, which is exactly the failure mode worth guarding here."""
     nodes, conn = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, mesh.order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, mesh.order)
     ids = [conn[e][interp.hex_face_indices(s, mesh.order)]
-           for e, s, tag in mesh.face_tags
+           for e, s, tag in face_rows(mesh)
            if tag == "wall"]
     return nodes[np.unique(np.concatenate(ids))]
 
@@ -76,8 +76,8 @@ def _volume(mesh):
     o = mesh.order
     nodes, conn = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, o)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, o)
     blk = nodes[conn].reshape(-1, o + 1, o + 1, o + 1, 3)
     g = fields.gll_nodes(o)
     d = fields.lagrange_derivative_matrix(g, g)
@@ -95,7 +95,7 @@ def test_quadrant_pipe_tjunction(tmp_path):
     mesh = ns["mesh"]
     # the whole point of the reference topology: one quadrant of the main pipe *is*
     # a quadrant of the branch, so the junction welds into a single closed block.
-    rep = topology.hex_report(*hexmesh.weld(mesh)[:2])
+    rep = topology.hex_report(mesh.points, mesh.hexes)
     assert rep.watertight and rep.conformal
     assert rep.n_components == 1
     assert rep.n_open_edges == 0 and rep.n_hanging_points == 0

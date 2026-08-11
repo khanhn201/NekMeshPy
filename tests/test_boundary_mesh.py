@@ -27,13 +27,13 @@ ORDERS = [1, 2, 3]
 
 def _hex_nodes(m):
     return conform.conformal_hex(m.points, m.hexes, m._elem_edges, m._edge_flip,
-                                 m.quads.lines.interior, m.hex, m.face_orient,
-                                 m.quads.interior, m.interior, m.order)[0]
+                                 m.quad_mesh.line_mesh.interior, m.hex, m.orient,
+                                 m.quad_mesh.interior, m.interior, m.order)[0]
 
 
 def _quad_nodes(m):
-    return conform.conformal_quad(m.points, m.quads, m.quad, m.flip,
-                                  m.lines.interior, m.interior, m.order)[0]
+    return conform.conformal_quad(m.points, m.quads, m.quad, m.orient,
+                                  m.line_mesh.interior, m.interior, m.order)[0]
 
 
 def _line_nodes(m):
@@ -102,7 +102,7 @@ def test_extracted_surface_can_be_built_back_onto_its_parent():
     block = _block(2)
     port = hexmesh.boundary_mesh(block, "outlet")
     stub = hexmesh.extrude(port, 0.5, 2, axis=(0.0, 0.0, 1.0), last_tag="outlet")
-    block.face_tags = block.face_tags.select(~block.face_tags.mask_for("outlet"))
+    block = hexmesh.retag_face(block, {"outlet": ""})
     rep = hexmesh.topology_report(hexmesh.merge([block, stub]))
     assert rep.watertight and rep.conformal and rep.n_components == 1
 
@@ -119,7 +119,7 @@ def test_template_keeps_its_numbering_and_takes_the_parents_coordinates(order):
     template = quadmesh.translate(_section(order), (0.0, 0.0, 2.0))   # the outlet plane
     surf = hexmesh.boundary_mesh(block, "outlet", template=template)
     assert np.array_equal(surf.quad, template.quad)
-    assert np.array_equal(surf.flip, template.flip)
+    assert np.array_equal(surf.orient, template.orient)
     assert _all_on(_hex_nodes(block), _quad_nodes(surf)) == 0.0
 
 

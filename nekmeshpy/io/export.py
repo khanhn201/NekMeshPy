@@ -17,7 +17,7 @@ from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
 from ..core.physical import PhysicalGroup, PhysicalGroups
 from ..hexmesh import HexMesh
-from ..hexmesh.query import weld as hex_weld
+from ..hexmesh.query import face_tag_rows
 from ..linemesh import LineMesh
 from ..quadmesh import QuadMesh
 
@@ -32,11 +32,48 @@ _VTK_LAGRANGE_HEXAHEDRON = 72
 _log = logging.getLogger("nekmeshpy")
 
 # accepted types for the ``groups`` export parameter
-GroupsArg = Union[PhysicalGroups, Mapping[str, str], None]
+#: What ``groups=`` accepts. A value is either one code used from every side, or a
+#: ``{region: code}`` mapping read against the ``element_tags`` of the element each row
+#: is written for -- see :attr:`PhysicalGroup.side_codes
+#: <nekmeshpy.core.physical.PhysicalGroup.side_codes>`.
+GroupSpec = Union[str, Mapping[str, Union[str, None]]]
+GroupsArg = Union[PhysicalGroups, Mapping[str, GroupSpec], None]
+
+
+def _export_rows(mesh: HexMesh, g: PhysicalGroups
+                 ) -> list[tuple[int, int, str, str]]:
+    """``(element, face, name, code)`` for every boundary row this mesh exports -- the
+    one definition every writer here shares, so a face the ``.re2`` omits is not in the
+    ``.vtu``'s cell sets either.
+
+    This is where an asymmetric condition is resolved. A named face reconstructs to one
+    row per hex carrying it, and each row's code is read against the **region** of the
+    hex that owns it, so the two sides of a conjugate interface can differ even though
+    the face has a single name. A region whose code is ``None`` contributes no row,
+    which is how a face gets a condition from one side only."""
+    rows, names = face_tag_rows(mesh)
+    regions = mesh.element_tags.dense(mesh.hex.shape[0])
+    out: list[tuple[int, int, str, str]] = []
+    for (elem, face), name in zip(rows.tolist(), names.tolist()):
+        grp = g.get(name)
+        if grp is None:
+            _log.warning("unknown boundary name: %s", name)
+            out.append((int(elem), int(face), name, "   "))
+            continue
+        code = grp.code_for_side(str(regions[elem]))
+        if code is None:
+            continue
+        out.append((int(elem), int(face), name, code))
+    return out
 
 
 def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
-    """Normalise the ``groups`` argument to a ``PhysicalGroups``."""
+    """Normalise the ``groups`` argument to a ``PhysicalGroups``.
+
+    ``None`` enumerates the mesh's own tag vocabulary into integer ids. That is enough
+    for a *viewer* -- ``.vtu`` paints ``bc_id`` by id, and an id carries no physics --
+    but not for ``.re2``, which writes Nek BC **codes**, so :func:`to_re2` requires the
+    mapping rather than inventing one."""
     if isinstance(groups, PhysicalGroups):
         return groups
     if groups is None:
@@ -44,19 +81,20 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
         return PhysicalGroups(
             PhysicalGroup(name, i + 1) for i, name in enumerate(names))
     return PhysicalGroups(
-        PhysicalGroup(name, i + 1, 2, code)
-        for i, (name, code) in enumerate(groups.items()))
+        PhysicalGroup(name, i + 1, 2, spec) if isinstance(spec, str)
+        else PhysicalGroup(name, i + 1, 2, side_codes=spec)
+        for i, (name, spec) in enumerate(groups.items()))
 
 
 # -- generic mesh view --------------------------------------------------
 def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
-    X, HC, _ = hex_weld(mesh)          # WeldResult unpacks as (points, hexes, n)
+    X, HC = mesh.points, mesh.hexes
     g = _as_groups(mesh, groups)
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
-    for elem, face, name in mesh.face_tags:
+    for elem, face, name, _code in _export_rows(mesh, g):
         conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
         name_rows.append(name)
     quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
@@ -101,13 +139,25 @@ def _str_to_double(s: str) -> float:
     return struct.unpack("<d", bytes(b))[0]
 
 
-def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
+def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg) -> HexMesh:
     """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
     included -- nothing is appended). The mesh is written **linear** at any order: Nek's
-    re2 has no high-order format, so only the 8 corners of each hex are emitted."""
+    re2 has no high-order format, so only the 8 corners of each hex are emitted.
+
+    ``groups`` is **required**: this is the one writer that emits Nek BC codes, and a
+    default would put a code the caller never chose in front of the solver. It is where
+    a mesher states what its named surfaces physically *are*, so it belongs in the
+    mesher, visible next to the tags it names."""
+    if groups is None:
+        raise ValueError(
+            "to_re2 needs groups=: a name -> Nek BC code mapping for %s. The .re2 "
+            "boundary block is boundary *conditions*, so there is no default that "
+            "would not be a guess -- spell the mapping out where the tags are named, "
+            'e.g. groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "}.'
+            % (", ".join(repr(n) for n in mesh.face_group_tags) or "no named faces"))
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    face_tags = mesh.face_tags
+    bnd = _export_rows(mesh, g)
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
@@ -119,16 +169,12 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             fid.write(elements[i, :, 1].astype("<f8").tobytes())
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
-        fid.write(struct.pack("<d", float(len(face_tags))))
-        for elem0, face, name in face_tags:
+        fid.write(struct.pack("<d", float(len(bnd))))
+        for elem0, face, _name, code in bnd:
             buf2: FloatArray = np.zeros(8, dtype="<f8")
             buf2[0] = float(elem0 + 1)
             buf2[1] = float(face)
-            grp = g.get(name)
-            if grp is not None:
-                buf2[7] = _str_to_double(grp.code)
-            else:
-                _log.warning("unknown boundary name: %s", name)
+            buf2[7] = _str_to_double(code)
             fid.write(buf2.tobytes())
     return mesh
 
@@ -145,8 +191,8 @@ def to_fld(mesh: HexMesh, filename: str, *,
     order = mesh.order
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, order)
     blocks = nodes[conn_ho]                       # (E, (order+1)**3, 3), i fastest
     nel = blocks.shape[0]
     lx1 = order + 1
@@ -275,27 +321,23 @@ def _hex_arrays(mesh: HexMesh,
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
-        for elem, face, name in mesh.face_tags:
+        for elem, face, name, _code in _export_rows(mesh, g):
             grp = g.get(name)
-            if grp is None:
-                _log.warning("unknown boundary name: %s", name)
-                continue
-            bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+            if grp is not None:
+                bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
         return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
     order = mesh.order
     perm = _lagrange_hex_perm(order)
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    for elem, face, name in mesh.face_tags:
+    for elem, face, name, _code in _export_rows(mesh, g):
         grp = g.get(name)
-        if grp is None:
-            _log.warning("unknown boundary name: %s", name)
-            continue
-        bc[conn_ho[elem, face_idx[face]]] = grp.tag
+        if grp is not None:
+            bc[conn_ho[elem, face_idx[face]]] = grp.tag
     nodes = _to_equispaced(nodes, conn_ho, order, 3)
     return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
 
@@ -323,7 +365,7 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
         Q, m, _ = blocks.shape
         return blocks.reshape(Q * m, 3), _unwelded(Q, m), _VTK_QUAD
     nodes, conn_ho = conform.conformal_quad(
-        mesh.points, mesh.quads, mesh.quad, mesh.flip, mesh.lines.interior,
+        mesh.points, mesh.quads, mesh.quad, mesh.orient, mesh.line_mesh.interior,
         mesh.interior, mesh.order)
     perm = _lagrange_quad_perm(mesh.order)
     nodes = _to_equispaced(nodes, conn_ho, mesh.order, 2)
@@ -443,8 +485,7 @@ def summary(mesh: HexMesh) -> None:
               mesh.hexes.shape[0], len(mesh.face_tags))
     for name in mesh.face_group_tags:
         _log.info("  %-14s: %d faces", name, mesh.face_tags.count(name))
-    w = hex_weld(mesh)
-    rep = topology.hex_report(w.points, w.hexes)
+    rep = topology.hex_report(mesh.points, mesh.hexes)
     _log.info("  watertight=%s  conformal=%s  components=%d  "
               "non-manifold faces=%d  hanging points=%d",
               rep.watertight, rep.conformal, rep.n_components,

@@ -18,9 +18,8 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, read_re2_coords
+from conftest import GOLDEN, read_re2_boundary, read_re2_coords
 
-from nekmeshpy import hexmesh
 from nekmeshpy.hexmesh import quality
 
 # Residual is scipy.spsolve vs MATLAB backslash; ~2.7e-13 observed.
@@ -31,7 +30,7 @@ def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
     assert mesh.hexes.shape == (7200, 8)         # (N,8) shared-point connectivity
     assert mesh.points.shape == (8137, 3)
-    assert len(mesh.face_tags) == 1840
+    assert len(mesh.face_tags) == 1840           # named *faces*, one tag each
 
 
 def test_tag_face_counts(built_mesh):
@@ -46,7 +45,8 @@ def test_tag_face_counts(built_mesh):
 
 
 def test_scaled_jacobian_quality(built_mesh):
-    X, HC, _ = hexmesh.weld(built_mesh["mesh"])
+    mesh = built_mesh["mesh"]
+    X, HC = mesh.points, mesh.hexes
     sj = quality.scaled_jacobian(X, HC)
     # values for the order-3 pipeline whose wall is refit analytically before meshing:
     # each private station ring as a truncated-Fourier loop (``fourier_ring``) and each
@@ -72,6 +72,25 @@ def test_re2_boundary_block_identical(built_mesh):
     _, _, bnd = read_re2_coords(built_mesh["re2"])
     _, _, gbnd = read_re2_coords(os.path.join(GOLDEN, "carotid.re2"))
     assert bnd == gbnd           # BC block is exact integers/codes
+
+
+def test_re2_boundary_content_matches_golden(built_mesh):
+    """The same boundary rows, compared as a multiset rather than as bytes.
+
+    Weaker than the byte check above and deliberately kept alongside it: the bytes
+    also pin the *order* the rows are written in, which is a property of how tags
+    happen to be stored rather than of the mesh. This assertion is the part that has
+    to hold across a change to that storage, so it is worth being able to point at on
+    its own -- and it is what says a regenerated baseline still describes the same
+    boundary."""
+    got = read_re2_boundary(built_mesh["re2"])
+    want = read_re2_boundary(os.path.join(GOLDEN, "carotid.re2"))
+    assert got == want
+    # 1840 named faces and 1840 rows. The two flux planes are *interior*, so each of
+    # their faces is carried by two hexes -- but flux has a direction, so only the
+    # upstream side is written (see the example's own GROUPS).
+    assert sum(got.values()) == 1840
+    assert {code for _, _, code in got} == {"W  ", "O  ", "v  ", "f1 ", "f2 ", "int"}
 
 
 #: VTU ``DataArray`` type -> the little-endian numpy dtype it decodes to.

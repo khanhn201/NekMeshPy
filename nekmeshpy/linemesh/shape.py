@@ -224,7 +224,7 @@ def rectangle(width: float, height: float, n: int, *,
     lm = loft(pts, loop=True, order=order)
     if tags is None:
         return lm
-    return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+    return LineMesh(lm.point_mesh, lm.lines, lm.interior,
                     ElementTags.from_dense(tags))
 
 __all__ = [

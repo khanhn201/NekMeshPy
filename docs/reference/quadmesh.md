@@ -50,4 +50,7 @@ Every operation is a free function in one of these namespaces --
 
 .. automodule:: nekmeshpy.quadmesh.query
    :members:
+
+.. automodule:: nekmeshpy.quadmesh.tag
+   :members:
 ```

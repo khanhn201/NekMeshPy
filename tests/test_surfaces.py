@@ -32,8 +32,8 @@ def _line_nodes(m):
 
 
 def _quad_nodes(m):
-    return conform.conformal_quad(m.points, m.quads, m.quad, m.flip,
-                                  m.lines.interior, m.interior, m.order)[0]
+    return conform.conformal_quad(m.points, m.quads, m.quad, m.orient,
+                                  m.line_mesh.interior, m.interior, m.order)[0]
 
 
 def _off_cylinder(nodes):

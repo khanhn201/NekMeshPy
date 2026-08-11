@@ -11,20 +11,21 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
+    StrArray,
 )
 from ..core import conform, stations
 from ..core.fields import gll_nodes
 from ..core.tags import (
-    EdgeTags,
     ElementTags,
-    TagBuilder,
     element_mask,
     sweep_cap_tags,
     sweep_element_tags,
+    welded_element_tags,
 )
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _subset as line_subset
 from ..linemesh.query import element_blocks as line_blocks
+from ..pointmesh import PointMesh
 from .quadmesh import (
     QuadMesh,
     _quad_interior_slots,
@@ -168,7 +169,49 @@ def loft(
                      + g[1:order][None, None, :, None] * (hi - lo)[:, :, None, :])
         edge_nodes = np.concatenate(
             [carried.reshape(-1, order - 1, 3), rungs.reshape(-1, order - 1, 3)], axis=0)
-    lm = LineMesh(points, edges, interior=edge_nodes)
+    # -- 2b. the edge tags, written onto the shared edges themselves ------------
+    # Both families are closed forms, so a tag lands on an id rather than on some
+    # quad's view of an id.  A tagged profile point names the edge *swept* from it, one
+    # per layer; a cap edge **is** a profile line carried to the bounding level, so with
+    # no argument it inherits that line's own element tag -- except on a closed sweep,
+    # where the "caps" are the interior seam and only an explicit tag names them.  On a
+    # loop the two caps are the same edges and the later write wins: one edge, one name.
+    enamed = np.full(edges.shape[0], "", dtype=object)
+
+    def _name(ids: IntArray, names: StrArray) -> None:
+        hit = names != ""
+        enamed[np.asarray(ids, dtype=np.int64)[hit]] = names[hit]
+
+    pnames: StrArray = slices[0].point_tags.dense(nn)
+    for p0 in slices[0].point_tags.ids:
+        if slot[p0] >= 0:
+            enamed[n_prof * L + lay * nu + slot[p0]] = pnames[p0]
+    closed = ElementTags.empty()
+    cap: IntArray = np.arange(L, dtype=np.int64)
+    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
+                                L, "QuadMesh.loft")
+    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+                               L, "QuadMesh.loft")
+    if loop:
+        # a closed sweep's two "caps" are the *same* seam edges, approached from either
+        # side.  Naming each differently used to give two (quad, side) rows on one
+        # edge; there is one name per edge now, so the disagreement has to be refused
+        # rather than resolved by whichever happens to be written second.
+        clash = np.flatnonzero((first_caps != "") & (last_caps != "")
+                               & (first_caps != last_caps))
+        if clash.size:
+            raise ValueError(
+                "QuadMesh.loft: on a loop the first and last caps are the same seam "
+                "edges, so they cannot be named differently -- got %r and %r on "
+                "section line %d. Name the seam once, or leave one side untagged."
+                % (str(first_caps[clash[0]]), str(last_caps[clash[0]]),
+                   int(clash[0])))
+    _name(cap, first_caps)
+    _name(nxt[nz - 1] * L + cap, last_caps)
+
+    lm = LineMesh(points, edges, interior=edge_nodes,
+                  element_tags=ElementTags.from_dense(
+                      np.asarray(enamed, dtype=np.str_)))
 
     # -- 3. the quads, as indices into that LineMesh ----------------------------
     # corners [a_i, b_i, b_j, a_j]; local edges [carried at i, rung at b, carried at j,
@@ -205,24 +248,8 @@ def loft(
             interior = ((1.0 - gv) * curves[i_idx, l_idx][:, iu, :]
                         + gv * curves[j_idx, l_idx][:, iu, :])
 
-    # a tagged boundary point names its swept wall edge on every layer: profile vertex
-    # 1 -> quad side 4, vertex 2 -> side 2.
-    bb = TagBuilder(EdgeTags)
-    for l0, side, tag in slices[0].point_tags:
-        bb.add_if_tagged(lay * L + l0, 4 if side == 1 else 2, tag)
-    # a cap edge *is* a profile line, so with no argument it inherits that line's own
-    # element tag -- except on a closed sweep, where the "caps" are the interior seam
-    # and only an explicit tag names them.
-    closed = ElementTags.empty()
-    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
-                                L, "QuadMesh.loft")
-    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
-                               L, "QuadMesh.loft")
-    cap: IntArray = np.arange(L, dtype=np.int64)
-    bb.add_if_tagged(cap, 1, first_caps)
-    bb.add_if_tagged((nz - 1) * L + cap, 3, last_caps)
     etags = sweep_element_tags(element_tags, nz, L, "QuadMesh.loft")
-    return QuadMesh(lm, quad, flip, interior, bb.build_ordered(), etags)
+    return QuadMesh(lm, quad, flip, interior, etags)
 
 
 def _loft_evaluated(
@@ -295,7 +322,8 @@ def loft_spline(
         t, loop=loop)
     I: PointArray = stations.spline_levels(
         np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
-    fitted = [LineMesh(P[k], lines, I[k], ref.point_tags, ref.element_tags)
+    fitted = [LineMesh(PointMesh(P[k], ref.point_tags), lines, I[k],
+                       ref.element_tags)
               for k in range(t.shape[0])]
     return _loft_evaluated(fitted, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="loft_spline")
@@ -353,19 +381,15 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     points, point_id = conform.weld_points(pos, seams, tol)
 
     quad_list: list[IntArray] = []
-    bnd_list: list[EdgeTags] = []
     etag_list: list[ElementTags] = []
     noff = qoff = 0
     for m, c in zip(meshes, counts):
         quad_list.append(point_id[m.quads + noff])   # local -> welded id
-        # ids shift by this block's offset; sides stay local to their element
         etag_list.append(m.element_tags.offset(qoff))
-        bnd_list.append(m.edge_tags.offset(qoff))
         noff += c
         qoff += m.n_quads
     quads = np.concatenate(quad_list, axis=0) if quad_list else np.zeros((0, 4), np.int64)
     etags = ElementTags.concat(etag_list)
-    bnd = EdgeTags.concat(bnd_list).ordered()
 
     # order-N: the private per-quad interiors just concatenate, but the shared edge
     # tables must be rebuilt against the *merged* topology -- gather each block's
@@ -380,14 +404,27 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     interior: PointArray | None = None
     if order > 1:
         local: PointArray = np.concatenate(
-            [conform.gather_edge_nodes(m.lines.interior, m.quad, m.flip)
+            [conform.gather_edge_nodes(m.line_mesh.interior, m.quad, m.orient)
              for m in meshes], axis=0)                     # (Q,4,order-1,3)
         edge_nodes = conform.scatter_edge_nodes(
             local, elem_edges, flip, edges.shape[0],
             conform.entity_tol(points), "QuadMesh.merge")
         interior = np.concatenate([m.interior for m in meshes], axis=0)
-    lm = LineMesh(points, edges, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, bnd, etags)
+    # An edge tag rides the edge, so it has to wait for the merged edge table: block
+    # ``m``'s local edge ``m.quad[q, s]`` is merged edge ``elem_edges[qoff + q, s]``,
+    # which is the whole map.  Two blocks welding onto one shared edge can each name
+    # it, so the combine is the weld's own conflict rule rather than a concatenation.
+    etag_off = 0
+    edge_tag_list: list[ElementTags] = []
+    for m in meshes:
+        mine: IntArray = np.full(m.line_mesh.n_lines, -1, dtype=np.int64)
+        mine[np.asarray(m.quad, dtype=np.int64).ravel()] = np.asarray(
+            elem_edges[etag_off:etag_off + m.n_quads], dtype=np.int64).ravel()
+        edge_tag_list.append(m.edge_tags.renumber(mine))
+        etag_off += m.n_quads
+    lm = LineMesh(points, edges, interior=edge_nodes,
+                  element_tags=welded_element_tags(edge_tag_list, "QuadMesh.merge"))
+    return QuadMesh(lm, elem_edges, flip, interior, etags)
 
 def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
     """``(the kept quads as a QuadMesh, new_quad_of)`` -- the quad rung of
@@ -399,13 +436,14 @@ def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
     preserved: the shared edge-interior and private per-quad nodes ride along."""
     kept, new_quad_of = conform.renumber_map(keep)
     quad: IntArray = mesh.quad[kept]
-    edge_keep: BoolArray = np.zeros(mesh.lines.n_lines, dtype=bool)
+    edge_keep: BoolArray = np.zeros(mesh.line_mesh.n_lines, dtype=bool)
     if quad.size:
         edge_keep[np.unique(quad)] = True
-    sub_lines, new_edge_of = line_subset(mesh.lines, edge_keep)
-    return (QuadMesh(sub_lines, new_edge_of[quad], mesh.flip[kept],
+    sub_lines, new_edge_of = line_subset(mesh.line_mesh, edge_keep)
+    # the edge tags ride ``sub_lines`` -- ``line_subset`` already carried them onto
+    # the compacted edge numbering, which is the whole of it
+    return (QuadMesh(sub_lines, new_edge_of[quad], mesh.orient[kept],
                      mesh.interior[kept],
-                     mesh.edge_tags.renumber(new_quad_of),
                      mesh.element_tags.gather(kept)),
             new_quad_of)
 

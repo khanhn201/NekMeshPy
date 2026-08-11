@@ -39,8 +39,8 @@ def _ho_block(mesh: HexMesh, order: int) -> PointArray:
     from ..core import conform
     nodes, conn_ho = conform.conformal_hex(
         mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
-        mesh.quads.interior, mesh.interior, order)
+        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.quad_mesh.interior, mesh.interior, order)
     block: PointArray = nodes[conn_ho]
     return block
 

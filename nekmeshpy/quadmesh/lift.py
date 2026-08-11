@@ -17,13 +17,14 @@ from .._typing import (
 from ..core import frames, stations
 from ..core.fields import validate_layers
 from ..core.paths import SpacePath
-from ..core.tags import ElementTags, PointTags, TagBuilder
+from ..core.tags import ElementTags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
 from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
 from ..linemesh.shape import path_fractions
+from ..pointmesh import PointMesh
 from ._helpers import _apply_smoothing, _check_boundary
 from .assemble import _loft_evaluated, loft
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
@@ -105,8 +106,7 @@ def from_grid(
 ) -> QuadMesh:
     """Build quads from a structured point grid ``P`` ``(ni+1,nj+1,3)``."""
     P = np.asarray(P, dtype=float)
-    ni1, nj1, _ = P.shape
-    ni = ni1 - 1
+    _, nj1, _ = P.shape
     tags = {s: n for s, n in (side_tags or {}).items() if n}
     for side in tags:
         _GRID_SIDES[side]        # reject an unknown side name (KeyError)
@@ -114,13 +114,12 @@ def from_grid(
     # -- the column profile, shared by every level -----------------------
     # tagged profile end points -> the two swept walls (loft: vertex 1 -> quad side
     # 4, vertex 2 -> side 2), which is exactly x_min / x_max.
-    pbb = TagBuilder(PointTags)
+    pnamed = np.full(P.shape[0], "", dtype=object)
     for side in ("x_min", "x_max"):
         if side in tags:
-            # loft carries profile end point side 1 -> quad side 4, side 2 -> 2
-            vertex = 1 if _GRID_SIDES[side][1] == 4 else 2
-            pbb.add(0 if vertex == 1 else ni - 1, vertex, tags[side])
-    pbnd_t = pbb.build()
+            # loft carries the profile's first point onto quad side 4, its last onto 2
+            pnamed[0 if _GRID_SIDES[side][1] == 4 else -1] = tags[side]
+    pbnd_t = ElementTags.from_dense(np.asarray(pnamed, dtype=np.str_))
     # each profile is itself a ``LineMesh.loft`` of its ``i`` points: the rung below
     # builds the open ``i = 0..ni`` chain and, at order > 1, each segment's private
     # interior as the straight GLL blend of its two endpoints.  ``loft`` here builds
@@ -128,7 +127,7 @@ def from_grid(
     # patch of the two, so a flat grid cell stays exact.
     def _profile(j: int) -> LineMesh:
         lm = line_loft(P[:, j, :], order=order)
-        return LineMesh(lm.points, lm.lines, lm.interior, pbnd_t)
+        return LineMesh(PointMesh(lm.points, pbnd_t), lm.lines, lm.interior)
     slices = [_profile(j) for j in range(nj1)]
     # the loft *is* the result: its sweep-major numbering is carried up unchanged.
     return loft(slices, element_tags=element_tag or None,

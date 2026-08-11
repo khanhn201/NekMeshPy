@@ -47,4 +47,7 @@ Every operation is a free function in one of these namespaces --
 
 .. automodule:: nekmeshpy.hexmesh.query
    :members:
+
+.. automodule:: nekmeshpy.hexmesh.tag
+   :members:
 ```

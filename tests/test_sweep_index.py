@@ -58,9 +58,10 @@ def _relabel_lines(m):
 def _relabel_edges(m):
     """The same ``QuadMesh``, same corners and geometry, shared edges renumbered."""
     from nekmeshpy import LineMesh, QuadMesh
-    sigma = np.random.default_rng(0).permutation(m.lines.n_lines)
-    lines = LineMesh(m.points, m.lines.lines[sigma], interior=m.lines.interior[sigma])
-    return QuadMesh(lines, np.argsort(sigma)[m.quad], m.flip, m.interior)
+    sigma = np.random.default_rng(0).permutation(m.line_mesh.n_lines)
+    lines = LineMesh(m.points, m.line_mesh.lines[sigma],
+                     interior=m.line_mesh.interior[sigma])
+    return QuadMesh(lines, np.argsort(sigma)[m.quad], m.orient, m.interior)
 
 
 def test_loft_rejects_slices_that_are_not_index_paired():
@@ -137,8 +138,8 @@ def test_a_tight_loop_closes_a_torus(order, n_prof):
     assert qm.n_quads == n_prof * 8
     # a one-layer loop would leave every quad with two corners, not four
     assert all(len(set(row.tolist())) == 4 for row in np.asarray(qm.quads))
-    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.flip,
-                                      qm.lines.interior, qm.interior, qm.order)
+    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.orient,
+                                      qm.line_mesh.interior, qm.interior, qm.order)
     tube = np.hypot(np.hypot(nodes[:, 0], nodes[:, 1]) - R, nodes[:, 2])
     assert np.max(np.abs(tube - a)) < 1e-12
 
@@ -166,9 +167,9 @@ def test_quad_loft_edges_match_a_dedup_of_its_own_corners(n_prof, loop):
         pytest.skip("a closed sweep needs at least two layers")
     qm = quadmesh.loft(_profiles(n_prof, loop), loop=loop)
     want_e, want_i, want_f = conform.unique_edges(np.asarray(qm.quads, np.int64), 2)
-    assert qm.lines.n_lines == want_e.shape[0]
+    assert qm.line_mesh.n_lines == want_e.shape[0]
     # numbering is free; the partition into entities is not
-    assert np.array_equal(np.sort(qm.lines.lines[qm.quad], axis=2),
+    assert np.array_equal(np.sort(qm.line_mesh.lines[qm.quad], axis=2),
                           np.sort(want_e[want_i], axis=2))
     # ... and the stored flip must agree with the traversal it claims
     assert np.array_equal(qm.quads, qm._derive_corners())
@@ -180,8 +181,8 @@ def test_curved_nodes_survive_the_closed_form(order, loop):
     """The node-level check: every conformal node of a curved sweep sits on the true
     cylinder, which fails the moment an entity's nodes land in the wrong frame."""
     qm = quadmesh.loft(_profiles(4, loop, order=order), loop=loop)
-    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.flip,
-                                      qm.lines.interior, qm.interior, qm.order)
+    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.orient,
+                                      qm.line_mesh.interior, qm.interior, qm.order)
     assert np.max(np.abs(np.hypot(nodes[:, 0], nodes[:, 1]) - 1.0)) < 1e-12
 
 
@@ -193,7 +194,7 @@ def test_isolated_points_get_no_rung():
     slices = [linemesh.translate(prof, (0.0, 0.0, z)) for z in (0.0, 1.0)]
     qm = quadmesh.loft(slices)
     referenced = np.unique(qm.quad)
-    assert referenced.shape[0] == qm.lines.n_lines      # no unreferenced edge
+    assert referenced.shape[0] == qm.line_mesh.n_lines      # no unreferenced edge
 
 
 # -- the hex rung: the gate step 3 has to pass ---------------------------------
@@ -238,7 +239,7 @@ def test_hex_loft_face_tables_round_trip_to_its_own_corners(loop, down):
     container recovers the very corners the loft built."""
     _, _, blk = _shell(1, nz=4, loop=loop, down=down)
     assert np.array_equal(blk.hexes, conform.hex_corners_from_faces(
-        blk.quads.quads, blk.hex, blk.face_orient))
+        blk.quad_mesh.quads, blk.hex, blk.orient))
 
 
 @pytest.mark.parametrize("order", [2, 3, 4])
@@ -322,7 +323,7 @@ def test_hex_loft_entity_partition_matches_a_dedup(loop, down):
     assert blk.edges.shape[0] == want_e.shape[0]
     assert np.array_equal(np.sort(blk.edges[blk._elem_edges], axis=2),
                           np.sort(want_e[want_i], axis=2))
-    assert blk.quads.n_quads == conform.canonical_faces(hexes)[0].shape[0]
+    assert blk.quad_mesh.n_quads == conform.canonical_faces(hexes)[0].shape[0]
 
 
 @pytest.mark.parametrize("loop", [False, True])
@@ -337,6 +338,6 @@ def test_hex_loft_leaves_no_entity_an_element_does_not_carry(loop):
               for z in _levels(3, loop)]
     blk = hexmesh.loft(slices, loop=loop)
     assert np.unique(blk._elem_edges).shape[0] == blk.edges.shape[0]
-    assert np.unique(blk.hex).shape[0] == blk.quads.n_quads
+    assert np.unique(blk.hex).shape[0] == blk.quad_mesh.n_quads
     assert blk.edges.shape[0] == conform.unique_edges(
         np.asarray(blk.hexes, np.int64), 3)[0].shape[0]

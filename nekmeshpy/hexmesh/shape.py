@@ -10,9 +10,10 @@ import numpy as np
 from .._typing import IntArray, Point, PointArray
 from ..core import conform
 from ..core.interp import coons_grid
-from ..core.tags import PointTags
+from ..core.tags import ElementTags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
+from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from ..quadmesh.assemble import loft as quad_loft
 from .assemble import loft as hex_loft
@@ -112,8 +113,8 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
             "1 node on exactly three, got %d and %d"
             % (who, corners.shape[0], centres.shape[0]))
     order = qm.order
-    nodes, conn = conform.conformal_quad(qm.points, quads, qm.quad, qm.flip,
-                                         qm.lines.interior, qm.interior, order)
+    nodes, conn = conform.conformal_quad(qm.points, quads, qm.quad, qm.orient,
+                                         qm.line_mesh.interior, qm.interior, order)
     blocks: PointArray = nodes[conn]
     sides = _side_map(quads)
     c = int(centres[0])
@@ -210,19 +211,20 @@ def _face_tag(qm: QuadMesh, who: str) -> str:
     return str(names[0]) if names else ""
 
 
-def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
+def _block(lat: PointArray, order: int, tags: tuple[str, str, str],
+           element_tag: str) -> HexMesh:
     """A hex block from its full ``(ni*N+1, nj*N+1, nk*N+1, 3)`` node lattice."""
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
-    bnd = PointTags.from_pairs([[0, 1]], [ti]) if ti else None
+    bnd = ElementTags([0], [ti]) if ti else None
 
     def profile(j: int, k: int) -> LineMesh:
         col: PointArray = lat[:, j, k, :]
         inner = (None if o == 1 else
                  np.stack([col[i * o + 1:i * o + o] for i in range(nl)], axis=0))
         lm = line_loft(col[::o], interior=inner, order=o)
-        return LineMesh(lm.points, lm.lines, lm.interior, bnd)
+        return LineMesh(PointMesh(lm.points, bnd), lm.lines, lm.interior)
 
     def section(k: int) -> QuadMesh:
         return quad_loft([profile(j * o, k) for j in range(nm + 1)],
@@ -234,7 +236,7 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str]) -> HexMesh:
     return hex_loft([section(k * o) for k in range(nn + 1)],
                     sweep_nodes=None if o == 1 else
                     [[section(k * o + m) for m in range(1, o)] for k in range(nn)],
-                    first_tag=tk)
+                    first_tag=tk, element_tags=element_tag or None)
 
 
 def _match(a: PointArray, b: PointArray, tol: float) -> bool:
@@ -263,8 +265,12 @@ def _orient(a: tuple[PointArray, str], b: tuple[PointArray, str],
 
 
 def tetra(faces: Sequence[QuadMesh], *,
-          center: Point | Sequence[float] | None = None) -> HexMesh:
-    """Mesh the curvilinear **tetrahedron** enclosed by four triangular ``faces``."""
+          center: Point | Sequence[float] | None = None,
+          element_tag: str = "") -> HexMesh:
+    """Mesh the curvilinear **tetrahedron** enclosed by four triangular ``faces``.
+
+    ``element_tag`` names all four octants, so a tetra filling a corner of a larger
+    region can carry that region's name like any other block does."""
     who = "HexMesh.tetra"
     fs = list(faces)
     if len(fs) != 4:
@@ -319,7 +325,7 @@ def tetra(faces: Sequence[QuadMesh], *,
         # is pc's and k = 0 is pa's, matching the f[(axis, 0)] assignment above.  The
         # tags come back from _orient with their patches, because it is free to swap
         # the two it is handed.
-        blocks.append(_block(_coons3(f), order, (tb, tc, ta)))
+        blocks.append(_block(_coons3(f), order, (tb, tc, ta), element_tag))
     return merge(blocks)
 
 __all__ = [

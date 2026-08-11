@@ -29,6 +29,19 @@ elements, a couple of minutes -- for two short capped stubs carrying its exact
 inlet/outlet disc pattern, so the manifold's own geometry can be checked in
 seconds.  Set it ``False`` for the whole thing.
 
+Fluid and solid
+---------------
+
+Only ``chimera.py`` contributes solid: the jacket around each hairpin's straight
+run, which arrives with the rest of the chain since this file runs that script
+whole rather than reproducing it.  Nothing here is near it -- the manifold sits
+below ``z = -17.5`` at ``y <= 6.6`` and the slab lives at ``y >= 10`` -- so it
+comes through untouched.  Two things here have to not undo it: chimera's stale
+inlet/outlet tags are dropped at the merge, and its ``"insulated"`` faces must
+survive that; and every block this file builds names itself ``"fluid"`` at its
+own call site, so the region partition covers the assembly rather than stopping
+at chimera's boundary.  In ``FAST`` mode there is no chimera and so no solid.
+
 Three seam techniques earn their keep here, all for the same reason -- pieces
 built by *different* constructions have to meet exactly, and at ``order > 1``
 ``HexMesh.merge`` verifies shared high-order edge/face nodes to
@@ -83,6 +96,16 @@ n_slices = 3
 
 R_MAIN = 1.2     # == chimera's R_MAIN
 R_BR = 0.5       # == chimera's R_BRANCH
+
+# == chimera's own names.  The regions are element_tags (every element carries one,
+# manifold included); SOLID_FACE_TAG is a face_tags / GROUPS name, deliberately not
+# the same string as the "solid" region -- see chimera.py's own note.
+FLUID_TAG = "fluid"
+SOLID_FACE_TAG = "insulated"
+#: chimera's conjugate interface, which arrives with the chain.  Its two sides want
+#: different conditions and a face carries one name, so the asymmetry is keyed by the
+#: region of the element each exported row belongs to -- see GROUPS below.
+INTERFACE_TAG = "interface"
 
 L1 = 2.5 * R_MAIN     # T1 main half-length
 H1 = 2.5 * R_MAIN     # T1 branch length
@@ -162,7 +185,8 @@ AXIS_T1 = (1.0, -1.0, 1.0)
 def build_t1(mirror=False):
     tj = build_tjunction(R_MAIN, R_MAIN * T1_RATIO, H1, order=ORDER, N_QUAD=2,
                          RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         N_TRANS=n_slices, N_BRANCH=n_slices, Z_NEAR=L1)
+                         N_TRANS=n_slices, N_BRANCH=n_slices, Z_NEAR=L1,
+                         element_tag=FLUID_TAG)
     ang, axis = ROT_T1, AXIS_T1
     core, da, db, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
@@ -214,7 +238,8 @@ def xz_path(moves, start_xz, heading, y_fixed):
 def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, last_tag=""):
     path = xz_path(moves, (start_pt3[0], start_pt3[2]), heading2d, y_fixed)
     return hexmesh.sweep_path(section, path, layers=n_layers, orientation="fixed",
-                              up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag)
+                              up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag,
+                              element_tags=FLUID_TAG)
 
 
 BEND_R1 = 2.0 * R_MAIN
@@ -293,7 +318,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     chi_port = quadmesh.port(chi_disc, outward=(0.0, 0.0, -1.0))
     print("  [%s] end %s" % (tag, end_port))
     print("  [%s] tgt %s" % (tag, chi_port))
-    adapter = hexmesh.adapter(end_port, chi_port, layers=2)
+    adapter = hexmesh.adapter(end_port, chi_port, layers=2, element_tags=FLUID_TAG)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
     # The inlet/outlet risers themselves bend to z- (away from chimera, which
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
@@ -379,7 +404,8 @@ N2_BRANCH = max(2, int(round(H2_BRANCH / 2.0)))   # ~2.0-long layers, as the coi
 def build_t2(mirror=False):
     tj = build_tjunction(R_MAIN, R_BR, H2_BRANCH, order=ORDER, N_QUAD=2,
                          RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         N_TRANS=n_slices, N_BRANCH=N2_BRANCH)
+                         N_TRANS=n_slices, N_BRANCH=N2_BRANCH,
+                         element_tag=FLUID_TAG)
     ang, axis = ROT_T2, AXIS_T2
     core, dm, dp, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
@@ -433,7 +459,8 @@ def place_t2(source_disc, t2_y, mirror=False):
     # it from the centroid line is what lets it check the two really do face each
     # other, and that they are the same size.
     conn = hexmesh.bridge(quadmesh.port(source_disc, outward=(0.0, -1.0, 0.0)),
-                          quadmesh.port(db, outward=(0.0, 1.0, 0.0)))
+                          quadmesh.port(db, outward=(0.0, 1.0, 0.0)),
+                          element_tags=FLUID_TAG)
     return core, conn, da, dbr, t2_center
 
 
@@ -459,7 +486,8 @@ def t2_chain(source_disc, mirror):
         levels.append({"core": core, "conn": conn, "da": da, "dbr": dbr, "ctr": ctr})
         src = da
     levels[-1]["dead"] = hexmesh.extrude(levels[-1]["da"], 1.5 * R_BR, 2,
-                                         axis=(0.0, -1.0, 0.0), last_tag="wall")
+                                         axis=(0.0, -1.0, 0.0), last_tag="wall",
+                                         element_tags=FLUID_TAG)
     return levels
 
 
@@ -599,7 +627,8 @@ def build_coil(dbr_i, dbr_o):
     inflow_moves = moves_in + COIL_MOVES
     path = xz_path(inflow_moves, (ci[0], ci[2]), 0.0, ci[1])
     inflow = hexmesh.sweep_path(dbr_i, path, target_length=COIL_TARGET_LEN,
-                                orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci)
+                                orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci,
+                                element_tags=FLUID_TAG)
     assert hexmesh.is_conforming(inflow), "coil sweep produced a non-conforming mesh"
     conn_o = build_bend_mesh(dbr_o, co, moves_out, np.pi, co[1], n_slices)
 
@@ -608,7 +637,8 @@ def build_coil(dbr_i, dbr_o):
     # landing GAP_Z apart by construction -- hexmesh.bridge (same tool as the
     # T1-to-T2 joins above) closes that last short gap.
     joint = hexmesh.bridge(_end_section(dbr_o, moves_out, np.pi, co[1]),
-                           _end_section(dbr_i, inflow_moves, 0.0, ci[1]), layers=3)
+                           _end_section(dbr_i, inflow_moves, 0.0, ci[1]), layers=3,
+                           element_tags=FLUID_TAG)
     return [inflow, conn_o, joint]
 
 
@@ -636,15 +666,19 @@ for nm, conn, disc in (("in", conn_chi_in[-1], chi_out_disc),
 manifold = pieces3
 
 if chi_mesh is not None:
-    # chimera's own inlet/outlet faces are welded away into interior planes
-    # here, so their tags must go (the combined mesh's inlet/outlet are the
-    # riser tops); a stale tagged interior face would export as a bogus BC.
-    chi_mesh.face_tags = chi_mesh.face_tags.select(
-        chi_mesh.face_tags.mask_for("wall"))
+    # chimera's own inlet/outlet faces are welded away into interior planes here,
+    # so their names must go (the combined mesh's inlet/outlet are the riser tops);
+    # a stale tagged interior face would export as a bogus BC.  Retiring the two by
+    # name leaves every other row alone -- including the jacket's own "insulated"
+    # exterior, which nothing here touches and which a keep-only-"wall" filter would
+    # have stripped, dropping 39k boundary faces to no BC at all.
+    chi_mesh = hexmesh.retag_face(chi_mesh, {"inlet": "", "outlet": ""})
     mesh_out = hexmesh.merge([*manifold, chi_mesh], tol=0.005)
 else:
-    chi_in_cap = hexmesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
-    chi_out_cap = hexmesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall")
+    chi_in_cap = hexmesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
+                                 element_tags=FLUID_TAG)
+    chi_out_cap = hexmesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
+                                  element_tags=FLUID_TAG)
     mesh_out = hexmesh.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
 
 _rep_out = hexmesh.topology_report(mesh_out)
@@ -655,7 +689,8 @@ print(_rep_out)
 
 mesh = mesh_out
 OUT_NAME = "chimera_full"
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
+GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", SOLID_FACE_TAG: "I  ",
+          INTERFACE_TAG: {"fluid": "W  ", "solid": None}}
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 export.to_fld(mesh, OUT_NAME + ".f00000")

@@ -1,9 +1,8 @@
 """1-D mesh container (:class:`LineMesh`), its operations, and its shape factories."""
 
-from . import assemble, morph, query, shape
 from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .linemesh import LineMesh
-from .morph import blend, mirror, reverse, rotate, scale, transform, translate
+from .morph import blend, mirror, reposition, reverse, rotate, scale, transform, translate
 from .query import (
     boundary_elements,
     boundary_points,
@@ -23,6 +22,7 @@ from .shape import (
     rectangle,
     sweep_fractions,
 )
+from .tag import retag_element, retag_point
 
 __all__ = [
     "bounds",
@@ -33,6 +33,9 @@ __all__ = [
     "length",
     "mirror",
     "remove",
+    "reposition",
+    "retag_element",
+    "retag_point",
     "select",
     "LineMesh",
     "arc",
@@ -57,6 +60,7 @@ __all__ = [
     "scale",
     "shape",
     "sweep_fractions",
+    "tag",
     "transform",
     "translate",
 ]

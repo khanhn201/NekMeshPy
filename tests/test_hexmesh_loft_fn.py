@@ -17,7 +17,7 @@ always produced, which is what keeps the goldens frozen.
 
 import numpy as np
 import pytest
-from conftest import conformal
+from conftest import conformal, face_rows
 
 from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 
@@ -172,7 +172,7 @@ def test_order_one_equals_a_plain_loft_of_the_same_sections(loop):
     assert np.array_equal(got.points, want.points)
     assert np.array_equal(got.hexes, want.hexes)
     assert np.array_equal(got.hex, want.hex)
-    assert np.array_equal(got.face_orient, want.face_orient)
+    assert np.array_equal(got.orient, want.orient)
     assert np.array_equal(got.element_tags.ids, want.element_tags.ids)
     assert np.array_equal(got.element_tags.tags, want.element_tags.tags)
 
@@ -230,9 +230,9 @@ def test_side_and_cap_boundary_tags_survive_the_element_tags():
     blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 3), order=1,
                           element_tags="a", first_tag="inlet", last_tag="outlet")
     assert set(blk.face_group_tags) == {"wall", "inlet", "outlet"}
-    b = blk.face_tags
+    rows = face_rows(blk)
     # caps land on faces 5/6 of the first / last layer, the wall on side faces
-    sides = lambda nm: set(np.unique(b.select(b.mask_for(nm)).sides))  # noqa: E731
+    sides = lambda nm: {f for _, f, t in rows if t == nm}  # noqa: E731
     assert sides("inlet") == {5}
     assert sides("outlet") == {6}
     assert sides("wall") <= {1, 2, 3, 4}
@@ -318,8 +318,8 @@ def test_straight_sweep_nodes_reproduce_the_plain_loft(flipped):
     got = hexmesh.loft(slices, sweep_nodes=sweep)
     want = hexmesh.loft(slices)
     assert np.allclose(got.interior, want.interior, atol=1e-14)
-    assert np.allclose(got.quads.interior, want.quads.interior, atol=1e-14)
-    assert np.allclose(got.quads.lines.interior, want.quads.lines.interior,
+    assert np.allclose(got.quad_mesh.interior, want.quad_mesh.interior, atol=1e-14)
+    assert np.allclose(got.quad_mesh.line_mesh.interior, want.quad_mesh.line_mesh.interior,
                        atol=1e-14)
 
 

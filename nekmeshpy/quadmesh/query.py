@@ -89,7 +89,7 @@ def element_blocks(mesh: QuadMesh) -> PointArray:
     out: PointArray = np.empty((mesh.n_quads, row * row, 3), dtype=float)
     out[:, corner_indices(order, 2), :] = mesh.points[mesh.quads]
     out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
-        mesh.lines.interior, mesh.quad, mesh.flip)
+        mesh.line_mesh.interior, mesh.quad, mesh.orient)
     out[:, conform._interior_slots(2, order), :] = mesh.interior
     return out
 
