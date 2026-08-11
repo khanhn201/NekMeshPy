@@ -27,7 +27,8 @@ def blend(a: QuadMesh, b: QuadMesh,
           fractions: FloatArray | Sequence[float]) -> list[QuadMesh]:
     """Linearly morph between two conformal sections ``a`` and ``b`` (identical
     ``quads``, equal point count), one section per fraction ``t`` with points ``(1-t)*a
-    + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``."""
+    + t*b`` -- ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each section returned
+    carries ``a``'s ``edge_tags`` and empty ``element_tags``."""
     A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
     if A.shape[0] != B.shape[0]:

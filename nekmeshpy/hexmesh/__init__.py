@@ -1,7 +1,7 @@
 """3-D hex mesh container (``HexMesh``), its operations, and constrained smoothing."""
 
 from . import assemble, lift, lower, morph, query, shape
-from .assemble import components, loft, loft_fn, merge, remove, select
+from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .hexmesh import HexMesh
 from .lift import (
     adapter,
@@ -62,6 +62,7 @@ __all__ = [
     "lift",
     "loft",
     "loft_fn",
+    "loft_spline",
     "lower",
     "merge",
     "morph",

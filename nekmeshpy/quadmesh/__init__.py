@@ -1,7 +1,7 @@
 """2-D quad mesh container (``QuadMesh``), its operations, and smoothing."""
 
 from . import assemble, lift, lower, morph, query, shape
-from .assemble import components, loft, loft_fn, merge, remove, select
+from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
 from .lower import boundary_mesh
 from .morph import (
@@ -77,6 +77,7 @@ __all__ = [
     "lift",
     "loft",
     "loft_fn",
+    "loft_spline",
     "lower",
     "merge",
     "morph",

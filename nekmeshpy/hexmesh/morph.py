@@ -24,7 +24,8 @@ def blend(a: HexMesh, b: HexMesh,
           fractions: FloatArray | Sequence[float]) -> list[HexMesh]:
     """Linearly morph between two conformal blocks ``a`` and ``b`` (identical ``hexes``,
     equal point count), one block per fraction ``t`` with points ``(1-t)*a + t*b`` --
-    ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``."""
+    ``t=0`` reproduces ``a``, ``t=1`` reproduces ``b``.  Each block returned carries
+    ``a``'s ``face_tags`` and empty ``element_tags``."""
     A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
     if A.shape[0] != B.shape[0]:

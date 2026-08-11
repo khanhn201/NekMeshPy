@@ -53,6 +53,11 @@ explicitly:
   it does on `linemesh.loft`: the last fraction is the wrap back to the first point,
   so `n+1` fractions give `n` points and `n` lines. See
   [true geometry vs straight subdivision](#true-geometry-vs-straight-subdivision).
+- `linemesh.loft_spline(points, loop=False, order=1, element_tags=…)` — `linemesh.loft`
+  with the high-order interior nodes read off a **cubic spline through the whole point
+  chain** instead of their own element's chord. The corners are the points given,
+  untouched, and nothing is resampled; only the private `interior` moves. Use it when
+  the points are all there is — for a curve you can write down, `loft_fn` is exact.
 - `linemesh.circle(radius, n, center=…, normal=…, start_theta=0.0)` — closed ring
   in the plane with the given `normal` (default `+z`); `start_theta` rotates the
   first point off `+e1`.
@@ -209,6 +214,7 @@ filled in place with its true shape.
 | {func}`quadmesh.extrude <nekmeshpy.quadmesh.lift.extrude>` / {func}`quadmesh.loft <nekmeshpy.quadmesh.assemble.loft>` | sweep/stack a `LineMesh` one dimension down into a quad strip |
 | {func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` | carry **one** `LineMesh` profile along a curved path by a moving frame — the curved generalization of `extrude` |
 | {func}`quadmesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` | the same sweep with the profiles **evaluated**: `f(t) -> LineMesh` is called at every node level of the sweep lattice, so a swept curved surface is exact at `order > 1` instead of straight between the corner levels |
+| {func}`quadmesh.loft_spline <nekmeshpy.quadmesh.assemble.loft_spline>` | the same sweep with the intermediate profiles **fitted** rather than evaluated: a cubic spline through the whole stack, for when there is no parametrization to call |
 | {func}`quadmesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>` | structured `(ni+1,nj+1)` quad grid (itself a {func}`quadmesh.loft <nekmeshpy.quadmesh.assemble.loft>` of the grid's column profiles, each itself a {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>` of that column's `i` points, whose **sweep-major, `i`-fastest** numbering it carries up unchanged — `points == P.transpose(1,0,2).reshape(-1,3)`); `element_tag` fills the per-quad tags |
 
 `ogrid` / `annulus` build a straight-chord initial guess and rely on
@@ -224,6 +230,7 @@ directly. (`ogrid` / `half_ogrid` are ICEM/Pointwise terms; the rest follow gmsh
 | {func}`hexmesh.sweep <nekmeshpy.hexmesh.lift.sweep>` | carry **one** section along a *curved* path by a moving frame — a round pipe bent through a 90° elbow or a U-turn, from one O-grid disc |
 | {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` | recombine a stack of pre-positioned conformal profiles — the general case behind `extrude` |
 | {func}`hexmesh.loft_fn <nekmeshpy.hexmesh.assemble.loft_fn>` | the same stack with the sections **evaluated**: `f(t) -> QuadMesh` is called at every node level of the sweep lattice, so the sweep is exact at `order > 1` |
+| {func}`hexmesh.loft_spline <nekmeshpy.hexmesh.assemble.loft_spline>` | the same stack with the intermediate sections **fitted** by a cubic spline through the stack, for when there is no parametrization to call |
 | {func}`hexmesh.annulus <nekmeshpy.hexmesh.lift.annulus>` | fill the shell between two **closed `QuadMesh` surfaces**, paired **by index** (e.g. `sphere = R*normalize(cube.points)` on `cube.quads`) |
 | {func}`hexmesh.merge <nekmeshpy.hexmesh.assemble.merge>` | stitch blocks, welding coincident **boundary** points only |
 | {func}`hexmesh.from_grid <nekmeshpy.hexmesh.lift.from_grid>` | structured `i×j×k` block (itself a {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` of the grid's `k`-sections, each a {func}`quadmesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>`, whose numbering it carries up unchanged — `i` fastest, `k` slowest, `points == P.transpose(2,1,0,3).reshape(-1,3)`); `face_tags` maps a side `x_min`…`z_max` to a name |
@@ -352,6 +359,32 @@ what *decides* the node lattice `f` is sampled on.
 `sweep_nodes[i]` = the `order-1` profiles lying strictly between slice `i` and the
 slice it sweeps to; `loft_fn` is exactly that argument with the profiles evaluated
 for you.
+
+### The fitted sweep: `loft_spline`
+
+`loft_fn` needs a parametrization. When there is none — the profiles were cut off a
+scan, solved for, or read out of another mesh — `loft_spline` fits the intermediate
+levels instead of asking for them: a **cubic spline through the whole stack** in the
+level index, evaluated on the same sweep lattice `loft` would subdivide straight.
+
+| rung | fitted through |
+|---|---|
+| {func}`linemesh.loft_spline <nekmeshpy.linemesh.assemble.loft_spline>` | the points given, so a chain around a bend comes out bent rather than faceted |
+| {func}`quadmesh.loft_spline <nekmeshpy.quadmesh.assemble.loft_spline>` | every node block a profile stores — its points *and* its `interior` |
+| {func}`hexmesh.loft_spline <nekmeshpy.hexmesh.assemble.loft_spline>` | all three blocks a section stores — corners, shared-edge interiors, face interiors |
+
+It takes `loft`'s arguments, numbering and tags unchanged, and it **interpolates**: every
+slice handed in comes back verbatim as a level, so this adds curvature *between* slices
+without moving any. At `order 1` it is `loft`, node for node. `loop=True` closes the
+spline periodically, so the seam layer is no smoother or rougher than any other. Like
+`loft_fn`, the quad and hex rungs need the slices **index-paired** — build one and place
+it with the affine ops — and say so with a `ValueError` naming the offending slice.
+
+A torus lofted from 8 exact rings at order 3 sits 0.157 off the true surface at its worst
+node; the same rings through `loft_spline` sit 0.0019 off, ~83× closer. It is a fit, not a
+parametrization, so it does not converge to the exact surface the way `loft_fn` does —
+reach for `loft_fn` or `sweep` when a closed form exists, and for `loft_spline` when the
+slices are all there is.
 
 ### The rigid sweep: `sweep`
 

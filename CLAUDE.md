@@ -67,7 +67,7 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 
 | module | Δ | contents |
 |---|---|---|
-| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `merge` — n-ary; `select` / `remove` / `components` — the inverse |
+| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge` — n-ary; `select` / `remove` / `components` — the inverse |
 | `lift.py` | +1 | `extrude` / `sweep` / `annulus` / `from_grid`; `adapter` / `bridge` hex-only |
 | `lower.py` | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
 | `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
@@ -126,7 +126,9 @@ from 8 exact circular profiles lands ~90% of the tube radius off.
 
 The escapes: `loft_fn` (evaluates your parametrization on the **whole** node lattice),
 `sweep` (carries one profile along a curved path by a moving frame), or handing `loft`
-its intermediate profiles as `sweep_nodes=`. Region fills carry their walls' curvature
+its intermediate profiles as `sweep_nodes=`. With no parametrization to call, `loft_spline`
+fits those intermediate profiles with a cubic through the whole stack — it interpolates,
+so every slice handed in comes back verbatim. Region fills carry their walls' curvature
 inward, and the combinators carry it up.
 
 When testing curved geometry, assert on the **conformal node set**, not corners —

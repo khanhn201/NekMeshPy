@@ -85,6 +85,41 @@ def loft(
     return LineMesh(pts, lines, interior, bnd, etags)
 
 
+def loft_spline(
+    points: PointArray,
+    *,
+    loop: bool = False,
+    element_tags: str | None = None,
+    first_tag: str | None = None,
+    last_tag: str | None = None,
+    order: int = 1,
+) -> LineMesh:
+    """:func:`loft <nekmeshpy.linemesh.assemble.loft>` with the high-order nodes read off
+    a **cubic spline through the whole stack** instead of the chord of their own element.
+
+    Same arguments, same numbering, same tags -- and the corners are the points given,
+    untouched, because the spline interpolates them.  Only the private ``interior`` nodes
+    differ: ``loft`` places them on the straight line between their element's two
+    endpoints, which is the "high order in storage, linear in geometry" trap, while here
+    they sit on a curve fitted through the neighbouring points as well.  A chain of points
+    around a bend comes out bent rather than faceted.
+
+    Nothing is resampled: this is not a smoother, and it does not move what it was
+    given."""
+    pts: PointArray = np.asarray(points, dtype=float)
+    nz = pts.shape[0] if loop else pts.shape[0] - 1
+    if order < 2 or nz < 1:
+        return loft(pts, loop=loop, element_tags=element_tags, first_tag=first_tag,
+                    last_tag=last_tag, order=order)
+    fr: FloatArray = np.arange(nz + 1, dtype=float)
+    t: FloatArray = stations.refined_lattice(fr, order)
+    P: PointArray = stations.spline_levels(pts, t, loop=loop)
+    slot: IntArray = (np.arange(nz)[:, None] * order
+                      + np.arange(1, order)[None, :])        # (nz, order-1)
+    return loft(pts, loop=loop, interior=P[slot], element_tags=element_tags,
+                first_tag=first_tag, last_tag=last_tag, order=order)
+
+
 def _eval_curve(f: Callable[[FloatArray], PointArray], t: FloatArray) -> PointArray:
     """``f(t)`` as a validated ``(len(t), 3)`` array."""
     P: PointArray = np.asarray(f(t), dtype=float)
@@ -234,6 +269,7 @@ __all__ = [
     "components",
     "loft",
     "loft_fn",
+    "loft_spline",
     "merge",
     "remove",
     "select",

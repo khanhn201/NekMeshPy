@@ -376,6 +376,70 @@ def _loft_evaluated(
                 first_tag=first_tag, last_tag=last_tag)
 
 
+def loft_spline(
+    slices: Sequence[QuadMesh],
+    *,
+    loop: bool = False,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
+) -> HexMesh:
+    """:func:`loft <nekmeshpy.hexmesh.assemble.loft>` with the sweep-direction nodes read
+    off a **cubic spline through the whole stack** of sections, rather than blended
+    straight between the two bounding a layer.
+
+    Same arguments, same numbering, same tags, and the sections given come back verbatim
+    as the levels -- the spline interpolates them, so this adds curvature between sections
+    without moving any.  It is the automatic form of ``loft(..., sweep_nodes=...)``: where
+    that asks the caller for the intermediate sections, this fits them.  All three node
+    blocks a section stores are fitted -- its shared corners, its shared edges' interiors
+    and its faces' own -- so the block is curved along the sweep at every node, not only
+    on the skeleton.
+
+    Reach for it when a sweep has a feature that turns sharply across a handful of
+    sections: ``loft`` cuts the corner with a chord however high the order, and refining
+    the order alone will not fix that -- the nodes it adds land on the same chord."""
+    prof = list(slices)
+    order = prof[0].order if prof else 1
+    nz = len(prof) if loop else len(prof) - 1
+    if order < 2 or nz < 1:
+        return loft(prof, loop=loop, element_tags=element_tags,
+                    first_tag=first_tag, last_tag=last_tag)
+    fr: FloatArray = np.arange(nz + 1, dtype=float)
+    t: FloatArray = stations.refined_lattice(fr, order)
+
+    ref = prof[0]
+    edges: IntArray = np.asarray(ref.lines.lines, dtype=np.int64).reshape(-1, 2)
+    quads: IntArray = np.asarray(ref.quads, dtype=np.int64).reshape(-1, 4)
+    # checked before the stack, so a mismatch names the section rather than failing
+    # inside numpy with a shape it cannot explain
+    for k, m in enumerate(prof):
+        if (m.order != order or m.n_points != ref.n_points
+                or not np.array_equal(
+                    np.asarray(m.quads, dtype=np.int64).reshape(-1, 4), quads)
+                or not np.array_equal(
+                    np.asarray(m.lines.lines, dtype=np.int64).reshape(-1, 2), edges)):
+            raise ValueError(
+                "loft_spline: every section must be index-paired with the first, but "
+                "section %d stores a different order / point count / quad or shared-edge "
+                "table.  Place one section with the affine ops (translate / rotate / "
+                "transform) rather than rebuilding it per level." % k)
+    P: PointArray = stations.spline_levels(
+        np.stack([np.asarray(s.lines.points, dtype=float).reshape(-1, 3)
+                  for s in prof]), t, loop=loop)
+    E: PointArray = stations.spline_levels(
+        np.stack([np.asarray(s.lines.interior, dtype=float) for s in prof]),
+        t, loop=loop)
+    F: PointArray = stations.spline_levels(
+        np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
+    fitted = [QuadMesh(LineMesh(P[k], edges, E[k], ref.lines.point_tags,
+                                ref.lines.element_tags),
+                       ref.quad, ref.flip, F[k], ref.edge_tags, ref.element_tags)
+              for k in range(t.shape[0])]
+    return _loft_evaluated(fitted, t, order, loop=loop, element_tags=element_tags,
+                           first_tag=first_tag, last_tag=last_tag, name="loft_spline")
+
+
 def loft_fn(
     f: Callable[[float], QuadMesh],
     fractions: FloatArray,
@@ -589,6 +653,7 @@ __all__ = [
     "components",
     "loft",
     "loft_fn",
+    "loft_spline",
     "merge",
     "remove",
     "select",
