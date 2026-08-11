@@ -73,12 +73,14 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 | `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
 | `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` / `weld` |
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
+| `tag.py` | 0 | `retag_element`; `retag_point` / `retag_edge` / `retag_face` — rename the tag vocabulary, geometry untouched |
 
 **`loft`, `merge`, `select`/`remove`/`components` and `boundary_mesh` are the only
 operations that manufacture a global index space** — `select` and its kin are `merge`
 run backwards, and sit beside it for that reason. To place a new operation: *invents a
 numbering?* → `assemble` (unless it is boundary extraction → `lower`); *changes rung?* →
-`lift`/`lower`; *neither?* → `morph`.
+`lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`. `morph` is for the
+*geometry* at delta 0, which is why a retag is not in it.
 
 A reflection has determinant −1, so `mirror` is the coordinate map **plus** a re-winding
 of the connectivity — never `transform` with a reflection matrix, which inverts every
@@ -181,6 +183,16 @@ rows the last one's tag.
 
 `element_tags` is sparse (`ids + tags`), so an untagged mesh stores nothing and `len()`
 is the *tagged* count.
+
+**Only the top rung's `element_tags` names a region.** A section's element is a piece of
+some volume's *surface*, so its `element_tags` should be the boundary name that face will
+carry one rung up (`"wall"`, `"inlet"`) — never `"fluid"` / `"solid"`. Not enforced, but
+the mechanism punishes getting it wrong: `first_tag`/`last_tag` default to the bounding
+slice's own `element_tags`, so a section tagged `"fluid"` silently exports its caps as a
+`"fluid"` **boundary condition**. Region names live at the top rung, where an element
+really is a piece of the domain; `hexmesh.extrude(..., element_tags="fluid")` is safe
+precisely because a hex's own `element_tags` never becomes a face tag. `retag_element`
+and `retag_face` are separate for the same reason — see the `tag.py` row above.
 
 **`loft`'s three tag arguments are the same shape at every rung**: `element_tags` names
 the *swept* elements — one string for all of them, or an `ElementTags` over **one

@@ -381,3 +381,126 @@ def test_add_if_tagged_drops_the_untagged_rows_of_an_array():
     assert got.elements.tolist() == [0, 2]
     assert got.tags.tolist() == ["a", "c"]
     assert len(bb) == 2
+
+
+# -- renaming: the tag.py rung operations --------------------------------
+def test_renamed_applies_simultaneously_and_can_widen():
+    """The map is read off the *original* tags, so a swap is a swap rather than two
+    sequential overwrites collapsing both groups onto one -- and the result is re-sized
+    to the new names, not written into the old array's fixed width."""
+    t = EdgeTags([0, 1, 2, 3], [1, 2, 3, 4], ["a", "b", "a", "wall"])
+    got = t.renamed({"a": "b", "b": "a"})
+    assert got.tags.tolist() == ["b", "a", "b", "wall"]
+    assert t.renamed({"a": "a_much_longer_region_name"}).tags.tolist() == [
+        "a_much_longer_region_name", "b", "a_much_longer_region_name", "wall"]
+
+
+def test_renamed_merges_and_keeps_row_order():
+    """Two keys may share an image. Row order is untouched -- ``.re2`` writes rows in
+    it, so a rename must not become a re-sort."""
+    t = FaceTags([4, 0, 2], [6, 1, 3], ["inlet", "outlet", "wall"])
+    got = t.renamed({"inlet": "open", "outlet": "open"})
+    assert list(got) == [(4, 6, "open"), (0, 1, "open"), (2, 3, "wall")]
+
+
+def test_renamed_to_no_tag_drops_side_rows_but_keeps_the_rest():
+    t = FaceTags([0, 1, 2], [1, 2, 3], ["inlet", "wall", "outlet"])
+    got = t.renamed({"inlet": "", "outlet": ""})
+    assert list(got) == [(1, 2, "wall")]
+
+
+def test_renamed_to_no_tag_untags_elements():
+    t = ElementTags([0, 2, 5], ["fluid", "solid", "fluid"])
+    got = t.renamed({"fluid": ""})
+    assert got.ids.tolist() == [2] and got.tags.tolist() == ["solid"]
+
+
+def test_renamed_rejects_a_key_that_names_nothing():
+    """A rename matching nothing is almost always a typo, and a mis-spelled boundary
+    name is not visible again until the solver reads it."""
+    t = EdgeTags([0], [1], ["wall"])
+    with pytest.raises(ValueError, match="nothing is tagged 'wal'"):
+        t.renamed({"wal": "wall"}, "quadmesh.retag_edge")
+    assert t.renamed({}).tags.tolist() == ["wall"]
+    assert EdgeTags.empty().renamed({}).tags.tolist() == []
+
+
+def _ladder():
+    """One mesh per rung, each carrying **both** tables, built by lifting the one
+    below -- so the side tags a rung renames really are the ones it inherited.
+
+    Tagged the way the rungs are meant to be: a section's ``element_tags`` is the
+    *boundary* name the face it becomes will carry one rung up ("cap"), never a region
+    name.  A region ("fluid") belongs to the top rung alone, because only there is an
+    element a piece of the domain rather than a piece of some domain's surface."""
+    ln = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
+                       element_tags="wall", first_tag="inlet", last_tag="outlet")
+    quad = quadmesh.extrude(ln, 1.0, 2, axis=(0, 1, 0), element_tags="cap")
+    return {linemesh: ln, quadmesh: quad,
+            hexmesh: hexmesh.extrude(quad, 1.0, 2, axis=(0, 0, 1),
+                                     element_tags="fluid")}
+
+
+@pytest.mark.parametrize("rung, retag_side, side_slot", [
+    (linemesh, "retag_point", "point_tags"),
+    (quadmesh, "retag_edge", "edge_tags"),
+    (hexmesh, "retag_face", "face_tags"),
+])
+def test_retag_side_is_geometry_preserving_at_every_rung(rung, retag_side, side_slot):
+    """Each rung's ``tag.py`` renames its own side table and touches nothing else --
+    that is the whole reason these are not in ``morph``."""
+    mesh = _ladder()[rung]
+    before = getattr(mesh, side_slot).group_tags
+    assert "inlet" in before
+    got = getattr(rung, retag_side)(mesh, {"inlet": "supply"})
+
+    assert getattr(got, side_slot).group_tags == sorted(
+        "supply" if t == "inlet" else t for t in before)
+    assert len(getattr(got, side_slot)) == len(getattr(mesh, side_slot))
+    assert np.array_equal(got.points, mesh.points)
+    assert got.order == mesh.order
+    assert got.element_tags.group_tags == mesh.element_tags.group_tags
+    assert getattr(mesh, side_slot).group_tags == before      # original untouched
+
+
+@pytest.mark.parametrize("rung", [linemesh, quadmesh, hexmesh])
+def test_retag_element_at_every_rung(rung):
+    mesh = _ladder()[rung]
+    side_slot = {linemesh: "point_tags", quadmesh: "edge_tags",
+                 hexmesh: "face_tags"}[rung]
+    before = getattr(mesh, side_slot).group_tags
+    old = mesh.element_tags.group_tags[0]
+    got = rung.retag_element(mesh, {old: "renamed"})
+
+    assert got.element_tags.group_tags == ["renamed"]
+    assert len(got.element_tags) == len(mesh.element_tags)
+    assert np.array_equal(got.points, mesh.points)
+    assert getattr(got, side_slot).group_tags == before
+
+
+def test_retag_element_leaves_a_shared_word_in_the_side_table(built_mesh):
+    """The region table and the side table are different slots, so a word they happen
+    to share is renamed in one and not the other.  Contrived here -- a section's
+    ``element_tags`` should be the boundary name it becomes, not a region -- but the
+    two vocabularies are only kept apart by convention, so the separation is worth
+    holding to."""
+    mesh = built_mesh["mesh"]
+    assert "wall" in mesh.face_tags.group_tags
+    collided = hexmesh.HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
+                               mesh.face_tags,
+                               ElementTags.uniform(mesh.hex.shape[0], "wall"))
+    got = hexmesh.retag_element(collided, {"wall": "fluid"})
+    assert got.element_tags.group_tags == ["fluid"]
+    assert got.face_tags.group_tags == mesh.face_tags.group_tags
+
+
+def test_retag_face_drops_a_name_welded_shut(built_mesh):
+    """Renaming to ``NO_TAG`` retires a boundary name without disturbing the rows
+    around it -- what ``tag_report`` flags after a weld makes a tagged face interior."""
+    mesh = built_mesh["mesh"]
+    assert "trunk_outlet" in mesh.face_tags.group_tags
+    n_drop = mesh.face_tags.count("trunk_outlet")
+    got = hexmesh.retag_face(mesh, {"trunk_outlet": ""})
+    assert "trunk_outlet" not in got.face_tags.group_tags
+    assert len(got.face_tags) == len(mesh.face_tags) - n_drop
+    assert hexmesh.tag_report(got).n_untagged_boundary == n_drop

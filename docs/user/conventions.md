@@ -33,7 +33,13 @@ Alongside it are `face_tags`, a `FaceTags` table of `(element id, face (1–6), 
 rows, plus `element_tags`, an `ElementTags` naming only the hexes that carry a region
 tag (inherited from the swept quad). `face_tags` is *not* "the boundary": it is the
 named subset of sides, while `boundary_faces()` derives the topological domain
-boundary from connectivity.
+boundary from connectivity. A **region** name (`"fluid"`, `"solid"`) belongs to the top
+rung's `element_tags` only: one rung down an element is a piece of a *surface*, so its
+`element_tags` should be the boundary name that face will carry once lifted. Nothing
+enforces it, but `first_tag`/`last_tag` default to the bounding slice's own
+`element_tags`, so a section tagged `"fluid"` exports its caps as a `"fluid"` boundary
+condition. Renaming either vocabulary without touching the other is what
+`retag_element` / `retag_face` are for.
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
 `quad`/`flip`/`interior`, `edge_tags` rows `[quad id, side (1–4)]`, side `s` =
 edge `EDGE_POINTS[s-1]`); `LineMesh` carries `point_tags` with side ∈ {1,2}. `weld()` returns a `WeldResult` NamedTuple —
