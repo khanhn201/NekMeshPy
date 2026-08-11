@@ -16,7 +16,6 @@ import os
 import numpy as np
 
 from nekmeshpy import (
-    PhysicalGroups,
     TriMesh,
     export,
     hexmesh,
@@ -26,7 +25,6 @@ from nekmeshpy import (
     trimesh,
     viz,
 )
-from nekmeshpy.core.physical import FLUX_DOWNSTREAM, FLUX_UPSTREAM
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -444,8 +442,27 @@ rings, A1, A2, spine = seam_rings(V, faces, gloops, N_HALF)
 
 outlet_name = ["trunk_outlet", "top_outlet_1", "top_outlet_2"]
 levels = np.linspace(0, 1, N_SLICES + 2)[1:-1]
-# name -> Nek BC code / integer id, applied only at export (byte-exact reference)
-GROUPS = PhysicalGroups.nek_default()
+
+#: The two regions a flux plane separates. They exist only to give the plane a
+#: direction: a measurement surface is one shared face with one name, and which of its
+#: two sides the exported row is written from is read from the region of the element
+#: that owns it.
+FLUX_UPSTREAM, FLUX_DOWNSTREAM = "flux_upstream", "flux_downstream"
+
+#: name -> Nek BC code, applied only at export (byte-exact reference).
+#:
+#: The flux planes are **interior**, so each of their faces has a hex on either side
+#: and reconstructs to a row for each. Flux through a surface has a direction, so only
+#: the upstream side is written -- the downstream row would be the same measurement
+#: counted backwards. Anything else is one code from every side.
+GROUPS = {
+    "wall": "W  ",
+    "trunk_outlet": "v  ",
+    "top_outlet_1": "int",
+    "top_outlet_2": "O  ",
+    "flux_1": {FLUX_UPSTREAM: "f1 ", FLUX_DOWNSTREAM: None},
+    "flux_2": {FLUX_UPSTREAM: "f2 ", FLUX_DOWNSTREAM: None},
+}
 
 blocks = []
 for leg in range(3):

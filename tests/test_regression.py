@@ -88,7 +88,7 @@ def test_re2_boundary_content_matches_golden(built_mesh):
     assert got == want
     # 1840 named faces and 1840 rows. The two flux planes are *interior*, so each of
     # their faces is carried by two hexes -- but flux has a direction, so only the
-    # upstream side is written (see PhysicalGroups.nek_default).
+    # upstream side is written (see the example's own GROUPS).
     assert sum(got.values()) == 1840
     assert {code for _, _, code in got} == {"W  ", "O  ", "v  ", "f1 ", "f2 ", "int"}
 

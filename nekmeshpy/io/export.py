@@ -69,7 +69,12 @@ def _export_rows(mesh: HexMesh, g: PhysicalGroups
 
 
 def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
-    """Normalise the ``groups`` argument to a ``PhysicalGroups``."""
+    """Normalise the ``groups`` argument to a ``PhysicalGroups``.
+
+    ``None`` enumerates the mesh's own tag vocabulary into integer ids. That is enough
+    for a *viewer* -- ``.vtu`` paints ``bc_id`` by id, and an id carries no physics --
+    but not for ``.re2``, which writes Nek BC **codes**, so :func:`to_re2` requires the
+    mapping rather than inventing one."""
     if isinstance(groups, PhysicalGroups):
         return groups
     if groups is None:
@@ -135,10 +140,22 @@ def _str_to_double(s: str) -> float:
     return struct.unpack("<d", bytes(b))[0]
 
 
-def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh:
+def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg) -> HexMesh:
     """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
     included -- nothing is appended). The mesh is written **linear** at any order: Nek's
-    re2 has no high-order format, so only the 8 corners of each hex are emitted."""
+    re2 has no high-order format, so only the 8 corners of each hex are emitted.
+
+    ``groups`` is **required**: this is the one writer that emits Nek BC codes, and a
+    default would put a code the caller never chose in front of the solver. It is where
+    a mesher states what its named surfaces physically *are*, so it belongs in the
+    mesher, visible next to the tags it names."""
+    if groups is None:
+        raise ValueError(
+            "to_re2 needs groups=: a name -> Nek BC code mapping for %s. The .re2 "
+            "boundary block is boundary *conditions*, so there is no default that "
+            "would not be a guess -- spell the mapping out where the tags are named, "
+            'e.g. groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "}.'
+            % (", ".join(repr(n) for n in mesh.face_group_tags) or "no named faces"))
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
     bnd = _export_rows(mesh, g)

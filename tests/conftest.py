@@ -47,6 +47,7 @@ def built_mesh(tmp_path_factory):
     ns = run_example("carotid.py", out)
     return {
         "mesh": ns["mesh"],
+        "groups": ns["GROUPS"],          # the example's own name -> Nek code mapping
         "re2": os.path.join(out, "carotid.re2"),
         "vtu": os.path.join(out, "carotid.vtu"),
     }

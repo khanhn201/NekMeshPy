@@ -740,15 +740,21 @@ golden regression pinned.
 Boundaries are plain **names** during construction. Each name maps to a Nek BC
 code / integer id only at **export**, via the `groups=` argument:
 
-- a `{name: nek_code}` dict,
-- a {class}`~nekmeshpy.core.physical.PhysicalGroups` registry (presets:
-  `PhysicalGroups.nek_default()`, `.duct()`, `.from_tags()`), or
-- `None` to auto-number the mesh's distinct names.
+- a `{name: spec}` dict, where a `spec` is one code used from every side or a
+  `{region: code}` mapping (see *asymmetric conditions* above), or
+- a {class}`~nekmeshpy.core.physical.PhysicalGroups` registry.
 
 ```python
 from nekmeshpy import export
 export.to_re2(mesh, "part.re2", groups={"wall": "W  ", "inlet": "v  "})
 ```
+
+**There are no presets, and `to_re2` has no default.** A name-to-code table is a
+statement about one piece of geometry — which opening is the inlet, which surface is a
+measurement plane — so it belongs in the mesher that knows, spelled out next to the
+tags it names. `to_re2` raises without it rather than putting a code the caller never
+chose in front of the solver. The viewer writers (`to_vtu` / `to_mesh`) still accept
+`None`, which auto-numbers the mesh's distinct names: an integer id carries no physics.
 
 Every writer takes the **full output filename, extension included** — `to_re2`
 writes exactly the binary `.re2` it is given and nothing else. `.re2` element ids

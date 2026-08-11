@@ -6,21 +6,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 
-#: The two regions a flux plane separates. They exist only to give the plane a
-#: direction: a measurement surface is named once, and which of its two sides the row
-#: is written from is read from the region of the element that owns it.
-FLUX_UPSTREAM = "flux_upstream"
-FLUX_DOWNSTREAM = "flux_downstream"
-
-
-def _flux_sides(code: str) -> dict[str, str | None]:
-    """``{region: code}`` writing a flux plane from its upstream side only.
-
-    An untagged element gets the code too, so a mesh that never named the two sides
-    still exports the plane -- from both of them, which is the plain reading of a face
-    that is named but has no direction to distinguish its sides by."""
-    return {FLUX_UPSTREAM: code, FLUX_DOWNSTREAM: None, "": code}
-
 
 @dataclass(frozen=True)
 class PhysicalGroup:
@@ -73,7 +58,14 @@ class PhysicalGroup:
 
 
 class PhysicalGroups:
-    """Bidirectional registry of :class:`PhysicalGroup` entries."""
+    """Bidirectional registry of :class:`PhysicalGroup` entries.
+
+    There are deliberately **no presets** here. A name-to-code table is a statement
+    about one piece of geometry -- which opening is the inlet, which surface is a
+    measurement plane -- so it belongs in the mesher that knows, next to the tags it
+    names, where a reader meets it at the same time as the mesh. A built-in
+    ``nek_default()`` put the carotid's own vocabulary in the toolkit and let two other
+    examples inherit a mapping neither of them stated."""
 
     def __init__(self, groups: Iterable[PhysicalGroup] = ()) -> None:
         self._by_tag: dict[int, PhysicalGroup] = {}
@@ -136,43 +128,3 @@ class PhysicalGroups:
     def __repr__(self) -> str:
         items = ", ".join("%s=%d(%r)" % (g.name, g.tag, g.code) for g in self)
         return "PhysicalGroups(%s)" % items
-
-    # -- presets ---------------------------------------------------------
-    @classmethod
-    def nek_default(cls) -> "PhysicalGroups":
-        """The original built-in tag->code table."""
-        return cls([
-            PhysicalGroup("wall",         1, 2, "W  "),
-            PhysicalGroup("trunk_outlet", 2, 2, "v  "),
-            PhysicalGroup("top_outlet_1", 3, 2, "int"),
-            PhysicalGroup("top_outlet_2", 4, 2, "O  "),
-            # A flux plane is *interior*, so it is one shared face with a hex on each
-            # side and reconstructs to a row for each. Flux through it has a direction,
-            # so only the upstream side is written -- the downstream one is the same
-            # measurement counted backwards.
-            PhysicalGroup("flux_1", 5, 2, side_codes=_flux_sides("f1 ")),
-            PhysicalGroup("flux_2", 6, 2, side_codes=_flux_sides("f2 ")),
-        ])
-
-    @classmethod
-    def duct(cls, wall: int = 1, inlet: int = 2, outlet: int = 3) -> "PhysicalGroups":
-        """Wall / inlet / outlet registry for a duct or pipe (codes ``W``/``v``/``O``)."""
-        return cls([
-            PhysicalGroup("wall",   wall,   2, "W  "),
-            PhysicalGroup("inlet",  inlet,  2, "v  "),
-            PhysicalGroup("outlet", outlet, 2, "O  "),
-        ])
-
-    @classmethod
-    def from_tags(cls, tag_wall: int = 1, tag_trunk: int = 2, tag_top1: int = 3,
-                  tag_top2: int = 4, tag_f1: int = 5, tag_f2: int = 6
-                  ) -> "PhysicalGroups":
-        """Build the carotid registry from explicit boundary tags."""
-        return cls([
-            PhysicalGroup("wall",         tag_wall,  2, "W  "),
-            PhysicalGroup("trunk_outlet", tag_trunk, 2, "v  "),
-            PhysicalGroup("top_outlet_1", tag_top1,  2, "int"),
-            PhysicalGroup("top_outlet_2", tag_top2,  2, "O  "),
-            PhysicalGroup("flux_1", tag_f1, 2, side_codes=_flux_sides("f1 ")),
-            PhysicalGroup("flux_2", tag_f2, 2, side_codes=_flux_sides("f2 ")),
-        ])
