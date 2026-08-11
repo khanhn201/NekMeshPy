@@ -113,6 +113,13 @@ NEAR_LEN = 1.5                # the uniform run, in leg **diameters** out from t
                               # something -- the crater, the rim, the three-way weld --
                               # and constant layer thickness across it is what draws the
                               # trough; the legs beyond are diameters of nothing much.
+NEAR_LEN_BRANCH = 4.5         # ...except down the branch, which gets three times the run
+                              # for the same layer count, so its layers are three times
+                              # thicker.  A node carried onto the wall moves a fixed
+                              # distance, so what decides whether that distortion matters
+                              # is how big it is *relative to the layer* -- and the branch
+                              # is where the snap has furthest to reach, off the crater
+                              # and round the rim.
 N_UNIFORM = 16                # layers in that uniform run
 N_GRADED = 40                 # layers from there out to the outlet.  Their growth is not
                               # a knob: it is solved for, so the first graded layer equals
@@ -1022,8 +1029,8 @@ def leg_arclength(walker, seed, n=400):
     return us, np.asarray(s, dtype=float)
 
 
-def leg_levels(walker, seed, diameter):
-    """The stations of one leg: **uniform** for ``NEAR_LEN`` diameters out from the
+def leg_levels(walker, seed, diameter, near_len):
+    """The stations of one leg: **uniform** for ``near_len`` diameters out from the
     junction, then **geometric** the rest of the way to the outlet.
 
     One grading across the whole leg cannot serve both ends.  Fine enough at the junction
@@ -1036,7 +1043,7 @@ def leg_levels(walker, seed, diameter):
     since ``ogrid_leg`` supplies the cap and the seam itself."""
     us, s = leg_arclength(walker, seed)
     total = float(s[-1])
-    near = min(NEAR_LEN * diameter, 0.8 * total)
+    near = min(near_len * diameter, 0.8 * total)
     h = near / N_UNIFORM
     q = _growth_ratio(h, total - near, N_GRADED)
     d = np.concatenate([
@@ -1701,6 +1708,7 @@ opening_name = ["inlet", "branch", "outlet"]
 # carrying a name rather than a gap in the mesh
 FLUX_NAME = {"branch": "flux_1", "outlet": "flux_2"}
 LEG_DIAMETER = [2.0 * R_MAIN, 2.0 * R_BRANCH, 2.0 * R_MAIN]
+LEG_NEAR_LEN = [NEAR_LEN, NEAR_LEN_BRANCH, NEAR_LEN]   # leg 2 is the branch
 
 # the three openings, in the same order as the legs -- each leg is closed off with the
 # one its conduction field is pinned to zero on
@@ -1712,8 +1720,9 @@ for leg in (1, 2, 3):
     Pl, Tl, u = leg_field_vol(P, TET, Uvol, caps, leg)
     walker = fvol.FieldWalker(Pl, Tl, u)
     pr, qr = LEG_ARCS[leg]
+    near_len = LEG_NEAR_LEN[leg - 1]
     levels, ratio = leg_levels(walker, seam_loops[leg].points.mean(axis=0),
-                               LEG_DIAMETER[leg - 1])
+                               LEG_DIAMETER[leg - 1], near_len)
     slices = ogrid_leg(walker, levels, cap_loops[leg - 1],
                        (arcs[pr], arcs[qr]), spine,
                        (raw[pr][:2], raw[qr][:2]),
@@ -1721,7 +1730,7 @@ for leg in (1, 2, 3):
     name = opening_name[leg - 1]
     flux, off, joint = FLUX_NAME.get(name, ""), FLUX_OFFSET, N_GRADED
     print("  %-7s: %d slices = %d uniform over %.3gD + %d graded (ratio %.4f)%s"
-          % (name, len(slices), N_UNIFORM, NEAR_LEN, N_GRADED, ratio,
+          % (name, len(slices), N_UNIFORM, near_len, N_GRADED, ratio,
              ", flux plane %d in" % off if flux else ""))
     # Lofted in pieces, not in one run.  The uniform and graded halves meet at a genuine
     # change of layer thickness, and ``loft_spline`` fits a cubic through the *whole*
