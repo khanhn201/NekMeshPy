@@ -110,7 +110,8 @@ import numpy as np
 from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import paths, surfaces
 from nekmeshpy.core.paths import turtle_path
-from nekmeshpy.core.tags import ElementTags, PointTags
+from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.pointmesh import PointMesh
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -171,7 +172,8 @@ SOLID_EXT = R_BEND + 2.0*R_BRANCH   # jacket overhang past each end of the strai
 #: mesh. Leaving the fluid untagged would have distinguished the two just as well, but
 #: only by convention: ``element_tags`` is sparse, so a missing row cannot say whether
 #: an element was classified and found to be fluid or simply never looked at.
-#: :func:`label_fluid` fills the fluid side in once the chain is built.
+#: Both are applied where the block is built, never stamped on afterwards, so a block
+#: added later has to state which region it joins rather than defaulting into one.
 FLUID_TAG = "fluid"
 SOLID_TAG = "solid"
 
@@ -180,10 +182,22 @@ SOLID_TAG = "solid"
 #: alongside ``"wall"`` / ``"inlet"`` / ``"outlet"``, not to the region vocabulary.
 INSULATED_TAG = "insulated"
 
+#: The conjugate interface: the tube wall the jacket welded onto, which is one shared
+#: face between a ``"fluid"`` hex and a ``"solid"`` one. It has to be named apart from
+#: the rest of the wall because its **two sides want different conditions** -- and a
+#: face carries one name, so the asymmetry lives in :data:`GROUPS`, keyed by the region
+#: of the element each exported row belongs to.
+INTERFACE_TAG = "interface"
+
 N_COPIES = 5                    # number of chimera units chained along z
 
 OUT_NAME = "chimera"
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "insulated": "I  "}
+GROUPS = {
+    "wall": "W  ", "inlet": "v  ", "outlet": "O  ", "insulated": "I  ",
+    # the fluid side keeps the tube's own no-slip wall; the solid side writes nothing,
+    # so the interface exports exactly the rows it did when it was plain "wall"
+    "interface": {"fluid": "W  ", "solid": None},
+}
 
 N = N_QUAD
 #: The three shape parameters of the quadrant construction, chosen for this
@@ -381,7 +395,8 @@ def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
                           quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca, order=ORDER,
                                              tip_bias=tip_bias, mids=mids,
                                              element_tag="wall")],
-                         center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN))
+                         center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN),
+                         element_tag=FLUID_TAG)
 
 
 # -- build ----------------------------------------------------------------------
@@ -404,13 +419,13 @@ def leg(composite, walls, sign, run):
             wall_tag="wall")
 
     transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                                 order=ORDER)
+                                 order=ORDER, element_tags=FLUID_TAG)
     if run <= 0.0:
         return [transition]
 
     n_run = max(1, round(run / AXIAL_CELL))
     return [transition,
-            hexmesh.extrude(station(1.0), run, n_run,
+            hexmesh.extrude(station(1.0), run, n_run, element_tags=FLUID_TAG,
                             axis=(0.0, 0.0, float(sign)))]
 
 
@@ -431,7 +446,7 @@ def end_stub(sign, tag, run):
     """The independent straight run past a unit's outermost junction, on the
     ``sign`` end, tagged ``tag`` at its far face."""
     n_run = max(1, round(run / AXIAL_CELL))
-    return hexmesh.extrude(end_disc(sign), run, n_run,
+    return hexmesh.extrude(end_disc(sign), run, n_run, element_tags=FLUID_TAG,
                            axis=(0.0, 0.0, float(sign)), last_tag=tag)
 
 
@@ -456,7 +471,8 @@ def outlet_return():
                                  np.linspace(breaks[0], 1.0, n_run + 1)[1:]])
     return hexmesh.sweep_path(end_disc(1), path, fractions=station_fr,
                               orientation="fixed", up=(1.0, 0.0, 0.0),
-                              origin=(0.0, 0.0, z0), last_tag="outlet")
+                              origin=(0.0, 0.0, z0), last_tag="outlet",
+                              element_tags=FLUID_TAG)
 
 
 def to_b(m):
@@ -484,8 +500,9 @@ def branch():
                                        (1.0 - t[i]) * ORIGIN + t[i] * C_OPEN, RADIAL,
                                        center_scale=CENTER_SCALE, wall_tag="wall")
                for i in range(t.size)]
-    return [hexmesh.loft(sections),
-            hexmesh.extrude(OPENING_DISC, ARM_LEN, N_ARM, axis=(1.0, 0.0, 0.0))]
+    return [hexmesh.loft(sections, element_tags=FLUID_TAG),
+            hexmesh.extrude(OPENING_DISC, ARM_LEN, N_ARM, axis=(1.0, 0.0, 0.0),
+                            element_tags=FLUID_TAG)]
 
 
 def build_junction(z0, run_minus, run_plus):
@@ -543,7 +560,7 @@ def bend(z0):
     section = quadmesh.translate(OPENING_DISC, (ARM_LEN, 0.0, z0))
     return hexmesh.sweep_path(section, path, fractions=_STATION_FR,
                               orientation="fixed", up=(0.0, 0.0, 1.0),
-                              origin=(X_MID, 0.0, z0))
+                              origin=(X_MID, 0.0, z0), element_tags=FLUID_TAG)
 
 
 #: Branch angles of the semicircle the jacket wraps, descending ``0 -> -180`` degrees:
@@ -577,10 +594,13 @@ def solid_section(z0, minus_tag, plus_tag, inner_tag=quadmesh.NO_TAG):
     where the tube has curved away and left the void's surface external."""
     ring = linemesh.translate(linemesh.loft_fn(opening, SOLID_FR, order=ORDER),
                               (ARM_LEN, 0.0, z0))
+    # the semicircle's two ends -- the strips left in the y plane it is cut on.  A
+    # point tag names the point itself now, so these are point ids, not (line, side).
     inner = linemesh.LineMesh(
-        ring.points, ring.lines, ring.interior,
-        point_tags=PointTags(np.array([0, ring.n_lines - 1]), np.array([1, 2]),
-                             np.array([INSULATED_TAG, INSULATED_TAG])))
+        PointMesh(ring.points,
+                  ElementTags(np.array([0, ring.n_points - 1]),
+                              np.array([INSULATED_TAG, INSULATED_TAG]))),
+        ring.lines, ring.interior)
 
     n = 2 * N_QUAD
     h = BR_SPACING / 2.0
@@ -699,22 +719,6 @@ def end_spec(is_extreme, extreme_name, is_connector):
     return "wall", full - GAP
 
 
-def label_fluid(m):
-    """Name every element the jacket did not claim :data:`FLUID_TAG`, leaving the mesh
-    fully partitioned into its two regions.
-
-    Done once on the finished chain rather than threaded through each fluid block:
-    ``hexmesh.tetra``, which fills the two crotches of every junction, takes no tag
-    argument, so there is no one fluid-side call site to hand it to -- and stamping
-    the complement here means a fluid block added later is named without being
-    remembered. ``element_tags`` is pure data on the container, so this is a rebuild
-    of the same B-rep with a denser tag table, not a mutation."""
-    named = np.full(m.hex.shape[0], FLUID_TAG, dtype="<U16")
-    named[m.element_tags.ids] = m.element_tags.tags
-    return hexmesh.HexMesh(m.quads, m.hex, m.face_orient, m.interior, m.face_tags,
-                           ElementTags(np.arange(named.size), named))
-
-
 copies = []
 for _k in range(N_COPIES):
     _is_first, _is_last = _k == 0, _k == N_COPIES - 1
@@ -733,7 +737,16 @@ for _k in range(N_COPIES):
                           solid_plus=INSULATED_TAG if _is_last else quadmesh.NO_TAG)
     copies.append(hexmesh.translate(_unit, (0.0, 0.0, 2.0 * L_HALF * _k)))
 
-mesh = label_fluid(hexmesh.merge(copies))
+mesh = hexmesh.merge(copies)
+
+#: The jacket welds onto the tube's ``"wall"`` faces, which makes them *interior* --
+#: a wall face with a hex on both sides is, here, exactly the conjugate interface.
+#: Naming it from that definition rather than from the geometry means it cannot drift
+#: from what the jacket actually covers, and ``tag_report`` is the same reading.
+_named = mesh.face_tags
+_interface = _named.ids[(_named.tags == "wall")
+                        & ~hexmesh.boundary_face_ids(mesh)[_named.ids]]
+mesh = hexmesh.tag_faces(mesh, _interface, INTERFACE_TAG)
 
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))

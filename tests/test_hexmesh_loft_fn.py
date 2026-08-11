@@ -17,7 +17,7 @@ always produced, which is what keeps the goldens frozen.
 
 import numpy as np
 import pytest
-from conftest import conformal
+from conftest import conformal, face_rows
 
 from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 
@@ -230,9 +230,9 @@ def test_side_and_cap_boundary_tags_survive_the_element_tags():
     blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 3), order=1,
                           element_tags="a", first_tag="inlet", last_tag="outlet")
     assert set(blk.face_group_tags) == {"wall", "inlet", "outlet"}
-    b = blk.face_tags
+    rows = face_rows(blk)
     # caps land on faces 5/6 of the first / last layer, the wall on side faces
-    sides = lambda nm: set(np.unique(b.select(b.mask_for(nm)).sides))  # noqa: E731
+    sides = lambda nm: {f for _, f, t in rows if t == nm}  # noqa: E731
     assert sides("inlet") == {5}
     assert sides("outlet") == {6}
     assert sides("wall") <= {1, 2, 3, 4}

@@ -102,7 +102,7 @@ def test_extracted_surface_can_be_built_back_onto_its_parent():
     block = _block(2)
     port = hexmesh.boundary_mesh(block, "outlet")
     stub = hexmesh.extrude(port, 0.5, 2, axis=(0.0, 0.0, 1.0), last_tag="outlet")
-    block.face_tags = block.face_tags.select(~block.face_tags.mask_for("outlet"))
+    block = hexmesh.retag_face(block, {"outlet": ""})
     rep = hexmesh.topology_report(hexmesh.merge([block, stub]))
     assert rep.watertight and rep.conformal and rep.n_components == 1
 

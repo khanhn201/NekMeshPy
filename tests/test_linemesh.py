@@ -16,7 +16,7 @@ from conftest import conformal
 from nekmeshpy import (
     ElementTags,
     LineMesh,
-    PointTags,
+    PointMesh,
     QuadMesh,
     hexmesh,
     linemesh,
@@ -90,11 +90,11 @@ def test_element_tags_is_one_name_for_every_lofted_line():
         linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b"])
 
 
-def test_boundary_table_columns_must_match_in_length():
-    """The pairing is now structural: the table itself refuses a ragged build,
-    so a LineMesh can no longer be given desynchronized rows and names."""
+def test_point_table_columns_must_match_in_length():
+    """The pairing is structural: the table itself refuses a ragged build, so a
+    LineMesh can no longer be given desynchronized ids and names."""
     with pytest.raises(ValueError, match="same length"):
-        PointTags.from_pairs([[0, 1]], ["a", "b"])
+        ElementTags([0], ["a", "b"])
 
 
 # -- topological queries -----------------------------------------------------
@@ -107,10 +107,10 @@ def test_boundary_points_are_open_ends():
 
 
 def test_tagged_boundary_points_via_boundaries():
-    # side 1 -> local vertex 0, side 2 -> local vertex 1 of the referenced line
-    lm = LineMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [[0, 1], [1, 2]],
-                  point_tags=PointTags.from_pairs([[0, 1], [1, 2]],
-                                                  ["start", "end"]))
+    # a point tag names the point itself, not one line's view of it
+    lm = LineMesh(PointMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                            ElementTags([0, 2], ["start", "end"])),
+                  [[0, 1], [1, 2]])
     assert lm.n_point_tags == 2
     assert lm.point_group_tags == ["end", "start"]
 
@@ -290,9 +290,8 @@ def test_merge_two_arcs_close_into_a_loop():
 def test_merge_open_chains_stay_open_and_carry_tags():
     # two collinear open chains meeting at (1,0,0); the shared point welds but the
     # far ends stay degree-1, so the result is still open.
-    a = LineMesh([(0, 0, 0), (1, 0, 0)], [[0, 1]],
-                 point_tags=PointTags.from_pairs([[0, 1]], ["start"]),
-                 element_tags=ElementTags.uniform(1, "a"))
+    a = LineMesh(PointMesh([(0, 0, 0), (1, 0, 0)], ElementTags([0], ["start"])),
+                 [[0, 1]], element_tags=ElementTags.uniform(1, "a"))
     b = linemesh.loft([(1, 0, 0), (2, 0, 0)], element_tags="b")
     m = linemesh.merge([a, b])
     assert linemesh.boundary_points(m).tolist() == [0, 2]       # the two far ends survive
@@ -313,17 +312,17 @@ def test_merge_does_not_weld_interior_points():
 
 # -- line -> quad tag ladder -------------------------------------------------
 
-def _quad_edge_mid(qm, row):
-    q, s = int(qm.edge_tags.elements[row]), int(qm.edge_tags.sides[row])
-    return qm.points[qm.quads[q, QuadMesh.EDGE_POINTS[s - 1]]].mean(axis=0)
+def _quad_edge_mid(qm, edge_id):
+    """A tag names a shared edge, so its geometry comes straight off ``lines``."""
+    return qm.points[qm.lines.lines[edge_id]].mean(axis=0)
 
 
 def test_extrude_line_to_quad_carries_element_and_edge_tags():
     # an open line along +x, tagged per element, with tagged end points; sweep
     # along +y into a quad strip and check both tag chains land correctly.
-    line = LineMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)], [[0, 1], [1, 2]],
-                    point_tags=PointTags.from_pairs([[0, 1], [1, 2]],
-                                                    ["start", "end"]),
+    line = LineMesh(PointMesh([(0, 0, 0), (1, 0, 0), (2, 0, 0)],
+                              ElementTags([0, 2], ["start", "end"])),
+                    [[0, 1], [1, 2]],
                     element_tags=ElementTags.from_dense(["seg0", "seg1"]))
     # the swept quads are new elements, so the profile's tags reach them only by
     # being asked for -- one ElementTags over the profile's lines
@@ -338,8 +337,8 @@ def test_extrude_line_to_quad_carries_element_and_edge_tags():
     # boundary-point tags land on the correct side-wall edges: "start" at x=0,
     # "end" at x=2; caps "near" at y=0, "far" at y=1.  Assert by edge geometry.
     tag_of = {}
-    for r in range(qm.n_edge_tags):
-        tag_of.setdefault(str(qm.edge_tags.tags[r]), []).append(_quad_edge_mid(qm, r))
+    for eid, name in qm.edge_tags:
+        tag_of.setdefault(name, []).append(_quad_edge_mid(qm, eid))
     assert np.isclose(np.array(tag_of["start"])[:, 0], 0.0).all()
     assert np.isclose(np.array(tag_of["end"])[:, 0], 2.0).all()
     assert np.isclose(np.array(tag_of["near"])[:, 1], 0.0).all()

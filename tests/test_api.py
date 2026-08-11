@@ -6,6 +6,7 @@ import numpy as np
 
 from nekmeshpy import (
     SECTION_METHODS,
+    PhysicalGroup,
     PhysicalGroups,
     export,
     hexmesh,
@@ -17,12 +18,18 @@ from nekmeshpy import (
 from nekmeshpy.hexmesh import quality
 
 
-def test_physical_groups_default_codes():
-    g = PhysicalGroups.nek_default()
+def test_physical_groups_is_a_registry_with_no_presets():
+    """The registry stores what a mesher tells it and knows nothing on its own: a
+    name-to-code table is a statement about one piece of geometry, so it lives in the
+    mesher next to the tags it names."""
+    g = PhysicalGroups([PhysicalGroup("wall", 1, 2, "W  "),
+                        PhysicalGroup("outlet", 4, 2, "O  ")])
     assert g.code_for(1) == "W  "
-    assert g.name_for(4) == "top_outlet_2"
+    assert g.name_for(4) == "outlet"
     assert g.tag_for("wall") == 1
-    assert len(g) == 6
+    assert len(g) == 2
+    assert not [m for m in dir(PhysicalGroups) if m in
+                ("nek_default", "duct", "from_tags")]
 
 
 def test_physical_group_pads_code():
@@ -32,11 +39,19 @@ def test_physical_group_pads_code():
 
 
 def test_to_mesh_groups(built_mesh):
-    m = export.to_mesh(built_mesh["mesh"])
+    m = export.to_mesh(built_mesh["mesh"], built_mesh["groups"])
     assert m.cells["hexahedron"].shape == (7200, 8)
     assert m.cells["quad"].shape == (1840, 4)
     assert set(m.cell_sets) >= {"wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"}
     assert m.cell_sets["wall"]["quad"].size == 1440
+
+
+def test_to_mesh_without_groups_cannot_orient_an_interior_plane(built_mesh):
+    """With no registry there is no side rule, so a named *interior* face contributes
+    the row each of its two hexes carries -- 160 more than the directed export. Which
+    side a measurement plane belongs to is a property of the groups, not the mesh."""
+    m = export.to_mesh(built_mesh["mesh"])
+    assert m.cells["quad"].shape == (2000, 4)
 
 
 def test_section_smoothing_registry_extensible():

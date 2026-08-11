@@ -10,7 +10,8 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..core.tags import ElementTags, PointTags
+from ..core.tags import ElementTags
+from ..pointmesh import PointMesh
 
 
 def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
@@ -23,34 +24,37 @@ def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
 
 
 class LineMesh:
-    """A 1-D mesh: an ``(N,3)`` point array with ``(L,2)`` line connectivity, a sparse
-    per-line ``element_tags``, and a ``point_tags`` table of tagged end points (``side``
-    1-2)."""
+    """A 1-D mesh: a :class:`PointMesh <nekmeshpy.pointmesh.pointmesh.PointMesh>` of the shared
+    points with ``(L,2)`` line connectivity and a sparse per-line ``element_tags``.
+
+    Its **point tags are the point mesh's own element tags** -- a point is one object
+    the whole mesh shares, so naming it is naming that object, not naming it once per
+    incident line. :attr:`point_tags` reads them through."""
 
     # local line "edges": row s-1 is side s -> the single local vertex it names.
     EDGE_POINTS = np.array([[0], [1]], dtype=np.int64)
 
     def __init__(
         self,
-        points: PointArray,
+        points: PointMesh | PointArray,
         lines: IntArray,
         interior: PointArray | None = None,
-        point_tags: PointTags | None = None,
         element_tags: ElementTags | None = None,
     ) -> None:
-        """Construct from arrays: ``points`` ``(N,3)`` (must be 3-D), the **required**
-        ``lines`` ``(L,2)`` connectivity, the per-line ``interior`` nodes, an optional
-        :class:`PointTags <nekmeshpy.core.tags.PointTags>` naming end points of lines,
-        and an optional :class:`ElementTags <nekmeshpy.core.tags.ElementTags>` naming
-        whichever lines are tagged."""
+        """Construct from the rung below: ``points`` (a ``PointMesh``, or a bare
+        ``(N,3)`` array promoted to an untagged one), the **required** ``lines``
+        ``(L,2)`` connectivity, the per-line ``interior`` nodes, and an optional
+        :class:`ElementTags <nekmeshpy.core.tags.ElementTags>` naming whichever lines
+        are tagged.
 
-        self.points: PointArray = np.asarray(points, dtype=float)
-        if self.points.ndim != 2 or self.points.shape[1] != 3:
-            raise ValueError(
-                "LineMesh: points must be (N,3) 3-D coordinates; got %s -- add a z "
-                "column (all geometry lives in 3-D)" % (self.points.shape,))
+        Passing an array is the authoring form and the one every factory building fresh
+        geometry wants -- there are no point tags to carry yet. Pass a ``PointMesh``
+        when there are: an operation rebuilding this mesh around moved coordinates has
+        to hand the tags on rather than let the promotion drop them."""
+        self.vertices: PointMesh = (points if isinstance(points, PointMesh)
+                                    else PointMesh(points))
 
-        F = self.points.shape[0]                 # the rung below: shared points
+        F = self.vertices.n_points               # the rung below: shared points
         self.lines: IntArray = np.asarray(lines, dtype=np.int64).reshape(-1, 2)
         if self.lines.size and (self.lines.min() < 0 or self.lines.max() >= F):
             raise ValueError(
@@ -68,9 +72,22 @@ class LineMesh:
                 "got %s" % (E, self.interior.shape))
 
         self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.point_tags = PointTags.empty() if point_tags is None else point_tags
         self.element_tags.check_within(E)
-        self.point_tags.check_within(E)
+
+    @property
+    def points(self) -> PointArray:
+        """The ``(N,3)`` coordinates -- a **derived view** of the point mesh's own
+        array, so ``mesh.points[:] = X`` repositions every rung built on it."""
+        return self.vertices.points
+
+    @property
+    def point_tags(self) -> ElementTags:
+        """The tags on the shared points, over **point ids**.
+
+        This is ``vertices``' own ``element_tags`` read through, not a table of its
+        own: rung *N*'s side tags are rung *N-1*'s element tags all the way up the
+        ladder, and the bottom is no exception."""
+        return self.vertices.element_tags
 
     def __repr__(self) -> str:
         """One-line REPL summary: element / point counts, ``order``, and the tag

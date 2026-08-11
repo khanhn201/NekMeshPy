@@ -1,30 +1,26 @@
-"""``model.tags`` -- the three side-tag tables and the sparse element-tag table.
+"""``core.tags`` -- the sparse element-tag table every rung stores, and the two
+vocabularies a mesh keeps in it.
 
-``PointTags`` / ``EdgeTags`` / ``FaceTags`` share one implementation, so the row
-semantics are exercised once (on ``EdgeTags``) plus a parity check that every operation
-returns the caller's own subclass.  They are deliberately *not* called "boundaries":
-they name a chosen subset of sides, which is a different set from the topological
-domain boundary that ``boundary_faces`` computes.
+There is one table now. A rung's side tags *are* the rung below's ``element_tags``, so
+what used to be three ``(element, side)`` tables -- ``PointTags`` / ``EdgeTags`` /
+``FaceTags`` -- is the same ``ElementTags`` seen one rung down, addressed by the id of
+the entity it names. It is deliberately *not* called "the boundary": it names a chosen
+subset of entities, which is a different set from the topological domain boundary that
+``boundary_faces`` computes.
 
-The sparse element-tag operations are all defined as "the sparse form of" a dense numpy
-expression, so most of these tests assert exactly that: build a random dense reference,
-run the sparse op, and compare ``dense()`` against the expression it replaces.  The
-side-tag tests concentrate on the two things the mesh's output depends on -- that
-``ordered()`` is the same permutation the old ``_order_bnd`` applied, and that nothing
-else ever reorders rows.
+Its operations are all defined as "the sparse form of" a dense numpy expression, so
+most of these tests assert exactly that: build a random dense reference, run the sparse
+op, and compare ``dense()`` against the expression it replaces.
 """
+
+from collections import Counter
 
 import numpy as np
 import pytest
+from conftest import face_rows, read_re2_boundary
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.core.tags import (
-    EdgeTags,
-    ElementTags,
-    FaceTags,
-    PointTags,
-    TagBuilder,
-)
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
+from nekmeshpy.core.tags import ElementTags
 
 VOCAB = ["", "wall", "inlet", "outlet", "a_much_longer_region_name"]
 
@@ -35,109 +31,6 @@ def random_dense(rng, n, p_tagged=0.4):
     out = np.full(n, "", dtype="<U32")
     out[pick] = rng.choice(VOCAB[1:], size=int(pick.sum()))
     return out
-
-
-# -- the side-tag tables -------------------------------------------------------
-def test_side_tags_length_mismatch_raises():
-    with pytest.raises(ValueError, match="same length"):
-        EdgeTags([0, 1], [1, 2], ["wall"])
-
-
-def test_side_tags_empty():
-    t = EdgeTags.empty()
-    assert len(t) == 0 and not t
-    assert t.group_tags == [] and t.rows.shape == (0, 2)
-    assert list(t) == []
-
-
-def test_side_tags_from_pairs_roundtrip():
-    t = EdgeTags.from_pairs([[3, 2], [0, 1]], ["b", "a"])
-    assert np.array_equal(t.elements, [3, 0])
-    assert np.array_equal(t.sides, [2, 1])
-    assert np.array_equal(t.rows, [[3, 2], [0, 1]])
-    assert list(t) == [(3, 2, "b"), (0, 1, "a")]
-
-
-def test_ordered_matches_lexsort_including_ties():
-    """``ordered()`` must be exactly the old ``_order_bnd`` permutation.
-
-    Ties on ``(element, side)`` are the case that matters: lexsort is stable, and the
-    ``.vtu`` writer resolves a repeated node to the *last* row, so a different tie order
-    would silently change exported ``bc_id``s."""
-    rng = np.random.default_rng(0)
-    for _ in range(50):
-        n = int(rng.integers(0, 40))
-        el = rng.integers(0, 5, size=n).astype(np.int64)
-        sd = rng.integers(1, 4, size=n).astype(np.int64)
-        tg = rng.choice(VOCAB[1:], size=n)
-        t = EdgeTags(el, sd, tg).ordered()
-        p = np.lexsort((sd, el))
-        assert np.array_equal(t.elements, el[p])
-        assert np.array_equal(t.sides, sd[p])
-        assert np.array_equal(t.tags, tg[p])
-
-
-def test_construction_never_reorders():
-    """Unsorted tables legitimately reach storage; only ``ordered()`` may sort."""
-    t = EdgeTags.from_pairs([[0, 1], [0, 3], [0, 4], [0, 2]], list("abcd"))
-    assert np.array_equal(t.sides, [1, 3, 4, 2])
-    assert np.array_equal(t.ordered().sides, [1, 2, 3, 4])
-    assert np.array_equal(t.ordered().tags, ["a", "d", "b", "c"])
-
-
-def test_offset_concat_select_count():
-    a = EdgeTags.from_pairs([[0, 1], [1, 2]], ["wall", "inlet"])
-    b = EdgeTags.from_pairs([[0, 3]], ["wall"])
-    m = EdgeTags.concat([a, b.offset(2)])
-    assert np.array_equal(m.elements, [0, 1, 2])
-    assert m.count("wall") == 2 and m.count("inlet") == 1
-    assert m.group_tags == ["inlet", "wall"]
-    only_wall = m.select(m.mask_for("wall"))
-    assert list(only_wall) == [(0, 1, "wall"), (2, 3, "wall")]
-    assert EdgeTags.concat([]).group_tags == []
-    assert len(EdgeTags.empty().offset(5)) == 0
-
-
-def test_as_dict_is_last_row_wins_in_row_order():
-    t = EdgeTags.from_pairs([[0, 1], [0, 1]], ["first", "second"])
-    assert t.as_dict() == {(0, 1): "second"}
-
-
-def test_side_tags_columns_are_read_only():
-    t = EdgeTags.from_pairs([[0, 1]], ["wall"])
-    with pytest.raises(ValueError):
-        t.elements[0] = 9
-
-
-def test_side_tags_repr_summarises():
-    r = repr(EdgeTags.from_pairs([[0, 1], [1, 2]], ["wall", "inlet"]))
-    assert r == "<EdgeTags 2 rows {inlet,wall}>"
-
-
-# -- TagBuilder -----------------------------------------------------
-def test_builder_preserves_insertion_order_and_duplicates():
-    bb = TagBuilder(EdgeTags)
-    bb.add(2, 1, "b")
-    bb.add(0, 1, "a")
-    bb.add(2, 1, "b")            # a genuine duplicate must survive
-    assert len(bb) == 3 and bb
-    assert list(bb.build()) == [(2, 1, "b"), (0, 1, "a"), (2, 1, "b")]
-    assert list(bb.build_ordered()) == [(0, 1, "a"), (2, 1, "b"), (2, 1, "b")]
-
-
-def test_builder_add_if_tagged_skips_empty():
-    bb = TagBuilder(EdgeTags)
-    bb.add_if_tagged(0, 1, "")
-    bb.add_if_tagged(1, 2, "wall")
-    assert list(bb.build()) == [(1, 2, "wall")]
-    assert len(TagBuilder(EdgeTags).build()) == 0
-
-
-def test_builder_extend():
-    bb = TagBuilder(EdgeTags)
-    bb.add(0, 1, "a")
-    bb.extend(EdgeTags.from_pairs([[5, 2]], ["b"]))
-    assert list(bb.build()) == [(0, 1, "a"), (5, 2, "b")]
 
 
 # -- ElementTags: construction / normalization ---------------------------
@@ -279,67 +172,17 @@ def test_group_tags_sorted_unique():
     assert t.group_tags == ["a", "b"]
 
 
-# -- the three subclasses are distinct and self-propagating ---------------
-@pytest.mark.parametrize("cls", [PointTags, EdgeTags, FaceTags])
-def test_every_operation_returns_the_callers_own_subclass(cls):
-    """A rung's table must stay its own type through every derivation -- otherwise a
-    sorted or offset table would no longer satisfy its container's annotation."""
-    t = cls.from_pairs([[1, 2], [0, 1]], ["b", "a"])
-    for got in (t.ordered(), t.offset(3), t.select(t.mask_for("a")),
-                cls.concat([t, t]), cls.empty()):
-        assert type(got) is cls
-    assert type(TagBuilder(cls).build()) is cls
-    bb = TagBuilder(cls)
-    bb.add(0, 1, "x")
-    assert type(bb.build_ordered()) is cls
-    assert repr(t).startswith("<%s 2 rows" % cls.__name__)
-
-
-def test_length_mismatch_names_the_rungs_own_type():
-    with pytest.raises(ValueError, match="FaceTags: elements"):
-        FaceTags([0, 1], [1, 2], ["wall"])
-
-
 # -- validation the table does for itself ---------------------------------
-@pytest.mark.parametrize("cls,n_sides", [(PointTags, 2), (EdgeTags, 4), (FaceTags, 6)])
-def test_side_range_is_enforced_by_the_type_with_no_mesh_present(cls, n_sides):
-    """``SIDES`` is what makes the three types worth having as separate types: the
-    valid side range is a property of the rung, so the table checks it itself rather
-    than waiting for a container to be built from it."""
-    assert cls.SIDES == n_sides
-    cls.from_pairs([[0, 1], [0, n_sides]], ["a", "b"])          # both ends are fine
-    with pytest.raises(ValueError, match=r"side %d is outside 1\.\.%d"
-                                         % (n_sides + 1, n_sides)):
-        cls.from_pairs([[0, n_sides + 1]], ["a"])
-    with pytest.raises(ValueError, match=r"side 0 is outside 1\.\.%d" % n_sides):
-        cls.from_pairs([[0, 0]], ["a"])
-    with pytest.raises(ValueError, match="negative element id"):
-        cls.from_pairs([[-1, 1]], ["a"])
-
-
-def test_a_side_valid_one_rung_up_is_rejected_one_rung_down():
-    """The check the shared base could not make: side 6 is a legal hex face and an
-    illegal quad edge, so routing an EdgeTags through a 6-sided check would pass."""
-    FaceTags.from_pairs([[0, 6]], ["top"])
-    with pytest.raises(ValueError, match=r"EdgeTags: side 6 is outside 1\.\.4"):
-        EdgeTags.from_pairs([[0, 6]], ["top"])
-
-
 def test_check_within_is_the_only_thing_needing_the_mesh():
     """Element *count* is the mesh's, not the table's -- so it is the one check a
-    container passes in, and the *only* thing it passes: what a row names is the
-    table's own business (a FaceTags row names a hex), so no noun crosses over."""
-    ft = FaceTags.from_pairs([[3, 1]], ["wall"])
-    ft.check_within(4)                                           # 0..3 -> fine
-    with pytest.raises(ValueError, match="FaceTags names element 3 but there are only "
-                                         "3 hexes"):
-        ft.check_within(3)
+    container passes in. Everything the three side-tag types used to validate for
+    themselves (a side in 1..SIDES, the rung's own noun in the message) went away with
+    them: a tag names an entity id now, and an id out of range is this same check."""
     et = ElementTags([3], ["fluid"])
-    et.check_within(4)
+    et.check_within(4)                                           # 0..3 -> fine
     with pytest.raises(ValueError, match="element_tags names element 3"):
         et.check_within(3)
-    FaceTags.empty().check_within(0)                             # empty is always fine
-    ElementTags.empty().check_within(0)
+    ElementTags.empty().check_within(0)                          # empty is always fine
 
 
 def test_the_container_still_rejects_an_out_of_range_element():
@@ -347,37 +190,178 @@ def test_the_container_still_rejects_an_out_of_range_element():
     ring = linemesh.circle(1.0, 8)
     sec = quadmesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
     blk = hexmesh.extrude(sec, length=1.0, layers=2)
-    with pytest.raises(ValueError, match="FaceTags names element"):
+    with pytest.raises(ValueError, match="element_tags names element"):
         HexMesh(blk.quads, blk.hex, blk.face_orient, None,
-                FaceTags.from_pairs([[blk.n_hexes, 1]], ["wall"]))
+                ElementTags([blk.n_hexes], ["fluid"]))
 
 
-# -- TagBuilder broadcasting -------------------------------------------
-def test_tag_builder_broadcasts_its_three_arguments():
-    """``element`` / ``side`` / ``tag`` each accept a scalar or an array and broadcast,
-    so a caller names a whole column of rows without a Python loop."""
-    from nekmeshpy.core.tags import EdgeTags, TagBuilder
-    ids = np.array([3, 5, 7])
-    bb = TagBuilder(EdgeTags)
-    bb.add(ids, 2, "wall")                      # array x scalar x scalar
-    bb.add(9, np.array([1, 3]), "in")           # scalar x array x scalar
-    bb.add(ids, 4, np.array(["a", "b", "c"]))   # array x scalar x array
-    got = bb.build()
-    assert got.elements.tolist() == [3, 5, 7, 9, 9, 3, 5, 7]
-    assert got.sides.tolist() == [2, 2, 2, 1, 3, 4, 4, 4]
-    assert got.tags.tolist() == ["wall"] * 3 + ["in", "in"] + ["a", "b", "c"]
-    assert len(bb) == 8
+# -- renaming: the tag.py rung operations --------------------------------
+def test_renamed_applies_simultaneously_and_can_widen():
+    """The map is read off the *original* tags, so a swap is a swap rather than two
+    sequential overwrites collapsing both groups onto one -- and the result is re-sized
+    to the new names, not written into the old array's fixed width."""
+    t = ElementTags([0, 1, 2, 3], ["a", "b", "a", "wall"])
+    got = t.renamed({"a": "b", "b": "a"})
+    assert got.tags.tolist() == ["b", "a", "b", "wall"]
+    assert t.renamed({"a": "a_much_longer_region_name"}).tags.tolist() == [
+        "a_much_longer_region_name", "b", "a_much_longer_region_name", "wall"]
 
 
-def test_add_if_tagged_drops_the_untagged_rows_of_an_array():
-    """A per-element tag array goes over whole -- the empty entries simply do not
-    become rows, which is what lets ``loft`` hand its cap tags straight across."""
-    from nekmeshpy.core.tags import EdgeTags, TagBuilder
-    bb = TagBuilder(EdgeTags)
-    bb.add_if_tagged(np.arange(4), 1, np.array(["a", "", "c", ""]))
-    bb.add_if_tagged(np.arange(4), 2, "")        # a scalar NO_TAG adds nothing
-    assert not TagBuilder(EdgeTags)
-    got = bb.build()
-    assert got.elements.tolist() == [0, 2]
-    assert got.tags.tolist() == ["a", "c"]
-    assert len(bb) == 2
+def test_renamed_merges_and_keeps_row_order():
+    """Two keys may share an image. Row order is untouched -- ``.re2`` writes rows in
+    it, so a rename must not become a re-sort."""
+    t = ElementTags([4, 0, 2], ["inlet", "outlet", "wall"])
+    got = t.renamed({"inlet": "open", "outlet": "open"})
+    assert list(got) == [(0, "open"), (2, "wall"), (4, "open")]
+
+
+def test_renamed_to_no_tag_drops_side_rows_but_keeps_the_rest():
+    t = ElementTags([0, 1, 2], ["inlet", "wall", "outlet"])
+    got = t.renamed({"inlet": "", "outlet": ""})
+    assert list(got) == [(1, "wall")]
+
+
+def test_renamed_to_no_tag_untags_elements():
+    t = ElementTags([0, 2, 5], ["fluid", "solid", "fluid"])
+    got = t.renamed({"fluid": ""})
+    assert got.ids.tolist() == [2] and got.tags.tolist() == ["solid"]
+
+
+def test_renamed_rejects_a_key_that_names_nothing():
+    """A rename matching nothing is almost always a typo, and a mis-spelled boundary
+    name is not visible again until the solver reads it."""
+    t = ElementTags([0], ["wall"])
+    with pytest.raises(ValueError, match="nothing is tagged 'wal'"):
+        t.renamed({"wal": "wall"}, "quadmesh.retag_edge")
+    assert t.renamed({}).tags.tolist() == ["wall"]
+    assert ElementTags.empty().renamed({}).tags.tolist() == []
+
+
+def _ladder():
+    """One mesh per rung, each carrying **both** tables, built by lifting the one
+    below -- so the side tags a rung renames really are the ones it inherited.
+
+    Tagged the way the rungs are meant to be: a section's ``element_tags`` is the
+    *boundary* name the face it becomes will carry one rung up ("cap"), never a region
+    name.  A region ("fluid") belongs to the top rung alone, because only there is an
+    element a piece of the domain rather than a piece of some domain's surface."""
+    ln = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0], [2, 0, 0]]),
+                       element_tags="wall", first_tag="inlet", last_tag="outlet")
+    quad = quadmesh.extrude(ln, 1.0, 2, axis=(0, 1, 0), element_tags="cap")
+    return {linemesh: ln, quadmesh: quad,
+            hexmesh: hexmesh.extrude(quad, 1.0, 2, axis=(0, 0, 1),
+                                     element_tags="fluid")}
+
+
+@pytest.mark.parametrize("rung, retag_side, side_slot", [
+    (linemesh, "retag_point", "point_tags"),
+    (quadmesh, "retag_edge", "edge_tags"),
+    (hexmesh, "retag_face", "face_tags"),
+])
+def test_retag_side_is_geometry_preserving_at_every_rung(rung, retag_side, side_slot):
+    """Each rung's ``tag.py`` renames its own side table and touches nothing else --
+    that is the whole reason these are not in ``morph``."""
+    mesh = _ladder()[rung]
+    before = getattr(mesh, side_slot).group_tags
+    assert "inlet" in before
+    got = getattr(rung, retag_side)(mesh, {"inlet": "supply"})
+
+    assert getattr(got, side_slot).group_tags == sorted(
+        "supply" if t == "inlet" else t for t in before)
+    assert len(getattr(got, side_slot)) == len(getattr(mesh, side_slot))
+    assert np.array_equal(got.points, mesh.points)
+    assert got.order == mesh.order
+    assert got.element_tags.group_tags == mesh.element_tags.group_tags
+    assert getattr(mesh, side_slot).group_tags == before      # original untouched
+
+
+@pytest.mark.parametrize("rung", [linemesh, quadmesh, hexmesh])
+def test_retag_element_at_every_rung(rung):
+    mesh = _ladder()[rung]
+    side_slot = {linemesh: "point_tags", quadmesh: "edge_tags",
+                 hexmesh: "face_tags"}[rung]
+    before = getattr(mesh, side_slot).group_tags
+    old = mesh.element_tags.group_tags[0]
+    got = rung.retag_element(mesh, {old: "renamed"})
+
+    assert got.element_tags.group_tags == ["renamed"]
+    assert len(got.element_tags) == len(mesh.element_tags)
+    assert np.array_equal(got.points, mesh.points)
+    assert getattr(got, side_slot).group_tags == before
+
+
+def test_retag_element_leaves_a_shared_word_in_the_side_table(built_mesh):
+    """The region table and the side table are different slots, so a word they happen
+    to share is renamed in one and not the other.  Contrived here -- a section's
+    ``element_tags`` should be the boundary name it becomes, not a region -- but the
+    two vocabularies are only kept apart by convention, so the separation is worth
+    holding to."""
+    mesh = built_mesh["mesh"]
+    assert "wall" in mesh.face_tags.group_tags
+    collided = hexmesh.HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
+                               ElementTags.uniform(mesh.hex.shape[0], "wall"))
+    got = hexmesh.retag_element(collided, {"wall": "fluid"})
+    assert got.element_tags.group_tags == ["fluid"]
+    assert got.face_tags.group_tags == mesh.face_tags.group_tags
+
+
+def test_retag_face_drops_a_name_welded_shut(built_mesh):
+    """Renaming to ``NO_TAG`` retires a boundary name without disturbing the rows
+    around it -- what ``tag_report`` flags after a weld makes a tagged face interior."""
+    mesh = built_mesh["mesh"]
+    assert "trunk_outlet" in mesh.face_tags.group_tags
+    n_drop = mesh.face_tags.count("trunk_outlet")
+    got = hexmesh.retag_face(mesh, {"trunk_outlet": ""})
+    assert "trunk_outlet" not in got.face_tags.group_tags
+    assert len(got.face_tags) == len(mesh.face_tags) - n_drop
+    assert hexmesh.tag_report(got).n_untagged_boundary == n_drop
+
+
+# -- asymmetric boundary conditions --------------------------------------
+def _two_region_block():
+    """Two stacked hexes, the interface between them named -- fluid below, solid above.
+
+    The face is one shared object with one name; what differs is the *region* on
+    either side of it, which is the only place an asymmetry can live now."""
+    g = np.zeros((2, 2, 3))
+    for i, x in enumerate((0.0, 1.0)):
+        for j, y in enumerate((0.0, 1.0)):
+            g[i, j] = (x, y, 0.0)
+    sec = quadmesh.from_grid(g)
+    lo = hexmesh.extrude(sec, 1.0, 1, axis=(0, 0, 1), element_tags="fluid")
+    hi = hexmesh.translate(
+        hexmesh.extrude(sec, 1.0, 1, axis=(0, 0, 1), element_tags="solid"), (0, 0, 1.0))
+    mesh = hexmesh.merge([lo, hi])
+    iface = mesh.face_tags.ids if len(mesh.face_tags) else None
+    assert iface is None
+    shared = np.flatnonzero(np.bincount(np.asarray(mesh.hex).ravel()) == 2)
+    return hexmesh.tag_faces(mesh, shared, "interface")
+
+
+def test_per_region_codes_split_the_two_sides_of_one_face(tmp_path):
+    """The interface is one named face carried by two hexes, so it reconstructs to two
+    rows -- and each takes its code from the region of the hex that owns it."""
+    mesh = _two_region_block()
+    assert len(mesh.face_tags) == 1                     # one face, one name
+    assert len(face_rows(mesh)) == 2                    # two hexes carry it
+
+    out = str(tmp_path / "m.re2")
+    export.to_re2(mesh, out, groups={"interface": {"fluid": "W  ", "solid": "I  "}})
+    got = read_re2_boundary(out)
+    assert got == Counter({(1, 6, "W  "): 1, (2, 5, "I  "): 1})
+
+
+def test_a_none_side_code_writes_no_row_at_all(tmp_path):
+    """How a face gets a condition from one side only -- what a conjugate interface
+    keeping just the fluid's wall needs."""
+    mesh = _two_region_block()
+    out = str(tmp_path / "m.re2")
+    export.to_re2(mesh, out, groups={"interface": {"fluid": "W  ", "solid": None}})
+    assert read_re2_boundary(out) == Counter({(1, 6, "W  "): 1})
+
+
+def test_a_region_the_codes_do_not_name_is_an_error(tmp_path):
+    mesh = _two_region_block()
+    with pytest.raises(ValueError, match="borders an element in region 'solid'"):
+        export.to_re2(mesh, str(tmp_path / "m.re2"),
+                      groups={"interface": {"fluid": "W  "}})

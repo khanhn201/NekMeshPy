@@ -41,7 +41,6 @@ import sys
 import numpy as np
 
 from nekmeshpy import (
-    PhysicalGroups,
     TriMesh,
     export,
     fields,
@@ -178,7 +177,6 @@ EXPORT_RE2 = True
 EXPORT_VTK = True
 PLOT = False
 
-GROUPS = PhysicalGroups.nek_default()
 # the flux planes are interior surfaces, so they carry Nek's own ``f1``/``f2`` codes
 # rather than a flow condition -- naming a plane is not constraining it
 NAMES = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  ",

@@ -12,10 +12,12 @@ from .._typing import (
     IntArray,
     Point,
     PointArray,
+    StrArray,
 )
 from ..core import conform, measure
 from ..core.interp import corner_indices
 from ..core.quality import QualitySummary
+from ..core.tags import _empty_str
 from ..core.topology import TopologyReport
 from .hexmesh import HexMesh
 
@@ -28,6 +30,21 @@ def _boundary_mask(hexes: IntArray) -> tuple[IntArray, BoolArray]:
     keys = np.sort(faces, axis=1)
     _, inverse, counts = conform.unique_rows(keys, return_counts=True)
     return faces, counts[inverse] == 1
+
+
+def boundary_face_ids(mesh: HexMesh) -> BoolArray:
+    """``(n_faces,)`` mask of the shared faces carried by exactly one hex.
+
+    The face-id form of :func:`boundary_faces`, and the cheaper one: the faces are
+    already deduplicated in ``quads``, so this is a bincount over the incidence rather
+    than a hash of every element's corner tuples.
+
+    It is also how a name is checked against the topology it was meant for --
+    ``face_tags.ids`` outside this mask are the tagged interior faces
+    :func:`tag_report` counts."""
+    return np.asarray(
+        np.bincount(np.asarray(mesh.hex, dtype=np.int64).ravel(),
+                    minlength=mesh.quads.n_quads) == 1, dtype=bool)
 
 def _boundary_points(hexes: IntArray) -> IntArray:
     faces, mask = _boundary_mask(hexes)
@@ -49,6 +66,38 @@ def boundary_elements(mesh: HexMesh) -> IntArray:
 def boundary_points(mesh: HexMesh) -> IntArray:
     """Sorted unique point ids lying on the domain boundary."""
     return _boundary_points(mesh.hexes)
+
+def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
+    """``((K,2) [element, local face 1-6] rows, their tags)`` for every named face,
+    lexsorted by ``(element, face)``.
+
+    The inverse of how the tags are stored. A tag names a shared face; a boundary face
+    is carried by one hex and yields one row, an **interior** one by two and yields
+    two -- which is the honest reading of "this face is named", and what lets an
+    exporter give the two sides different codes from the regions on either side.
+
+    Built from the sparse side: the flat ``hex`` face ids are argsorted once and the
+    named ids located in them, so nothing the size of ``(E,6)`` in strings is ever
+    materialised (at chimera's 438k elements that array alone would be ~170 MB)."""
+    named = mesh.quads.element_tags
+    if not len(named):
+        return np.zeros((0, 2), dtype=np.int64), _empty_str()
+    flat: IntArray = np.asarray(mesh.hex, dtype=np.int64).ravel()
+    order = np.argsort(flat, kind="stable")
+    lo = np.searchsorted(flat[order], named.ids, side="left")
+    hi = np.searchsorted(flat[order], named.ids, side="right")
+    counts: IntArray = (hi - lo).astype(np.int64)
+    bounds: list[tuple[int, int]] = list(
+        zip(np.asarray(lo, dtype=np.int64).tolist(),
+            np.asarray(hi, dtype=np.int64).tolist()))
+    picks: list[IntArray] = [np.arange(a, b, dtype=np.int64) for a, b in bounds]
+    slots: IntArray = order[np.concatenate(picks) if picks
+                            else np.zeros(0, dtype=np.int64)]
+    rows: IntArray = np.column_stack([slots // 6, slots % 6 + 1])
+    tags: StrArray = np.repeat(named.tags, counts)
+    p = np.lexsort((rows[:, 1], rows[:, 0]))
+    return rows[p], tags[p]
+
 
 def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
     """Per-hex minimum scaled Jacobian ``(n_hexes,)``."""
@@ -92,7 +141,8 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     HC, nu = w.hexes, w.n_points
     is_wall: BoolArray = np.zeros(nu, dtype=bool)
     is_fixed: BoolArray = np.zeros(nu, dtype=bool)
-    for elem, face, tag in mesh.face_tags:
+    rows, names = face_tag_rows(mesh)
+    for (elem, face), tag in zip(rows.tolist(), names.tolist()):
         ids = HC[elem, HexMesh.FACE_POINTS[face - 1, :]]
         if tag == wall:
             is_wall[ids] = True
@@ -130,21 +180,22 @@ class TagReport(NamedTuple):
     fluid/solid interface that keeps the fluid's wall condition), so these are counts
     to recognise, not assertions."""
 
-    #: Rows in ``face_tags``. Rows, not faces: two rows naming the same face count twice.
+    #: Named faces. One tag per shared face, so this counts faces, not rows -- the
+    #: two could differ only while a tag was addressed by ``(element, side)``.
     n_rows: int
-    #: Faces on the topological boundary that no row names.
+    #: Faces on the topological boundary that carry no name.
     n_untagged_boundary: int
-    #: Rows naming a face that is **not** on the topological boundary.
+    #: Named faces that are **not** on the topological boundary.
     n_tagged_interior: int
 
 
 def tag_report(mesh: HexMesh) -> TagReport:
     """Cross-check ``face_tags`` against the topological boundary (see
     :class:`TagReport <nekmeshpy.hexmesh.query.TagReport>`)."""
-    _, on_boundary = _boundary_mask(mesh.hexes)
+    on_boundary = boundary_face_ids(mesh)
     ft = mesh.face_tags
     named: BoolArray = np.zeros(on_boundary.size, dtype=bool)
-    named[6 * ft.elements + ft.sides - 1] = True
+    named[ft.ids] = True
     return TagReport(len(ft),
                      int(np.count_nonzero(on_boundary & ~named)),
                      int(np.count_nonzero(named & ~on_boundary)))
@@ -240,9 +291,11 @@ def centroid(mesh: HexMesh, *, high_order: bool = False) -> Point:
 
 __all__ = [
     "TagReport",
+    "face_tag_rows",
     "WeldResult",
     "bounds",
     "boundary_elements",
+    "boundary_face_ids",
     "boundary_faces",
     "boundary_points",
     "centroid",

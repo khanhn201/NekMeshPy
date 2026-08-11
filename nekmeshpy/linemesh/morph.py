@@ -14,7 +14,7 @@ from .._typing import (
     Vec3,
 )
 from ..core import affine
-from ..core.tags import PointTags
+from ..pointmesh import PointMesh
 from .linemesh import LineMesh
 from .query import boundary_points
 
@@ -45,8 +45,8 @@ def blend(a: LineMesh, b: LineMesh,
         # the blended points); at order 1 both interiors are empty, so this is a
         # no-op and the result equals the plain point blend.
         ia: PointArray = (1.0 - t) * a.interior + t * b.interior
-        out.append(LineMesh((1.0 - t) * A + t * B, a.lines, ia,
-                            point_tags=a.point_tags))
+        out.append(LineMesh(PointMesh((1.0 - t) * A + t * B, a.point_tags),
+                            a.lines, ia))
     return out
 
 
@@ -85,12 +85,13 @@ def reverse(mesh: LineMesh) -> LineMesh:
     # element order and swap the two endpoints of every line.
     rmap = _reverse_relabel(mesh)
     lines: IntArray = rmap[mesh.lines][::-1, ::-1]
-    b = mesh.point_tags
-    bnd = PointTags(L - 1 - b.elements, 3 - b.sides, b.tags).ordered()
-    return LineMesh(np.ascontiguousarray(mesh.points[rmap]),
+    # a point tag rides its point through the relabel -- new point j is old point
+    # rmap[j], which is exactly what ``gather`` means.  Nothing to remap side-wise:
+    # the tag names the point, not one line's view of it.
+    return LineMesh(PointMesh(np.ascontiguousarray(mesh.points[rmap]),
+                              mesh.point_tags.gather(rmap)),
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
-                    bnd,
                     mesh.element_tags.renumber(
                         (L - 1 - np.arange(L, dtype=np.int64))),
 )
@@ -98,9 +99,9 @@ def reverse(mesh: LineMesh) -> LineMesh:
 
 def _affine(mesh: LineMesh, matrix: FloatArray | None, offset: Vec3) -> LineMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
-    return LineMesh(affine.apply(mesh.points, matrix, offset), mesh.lines,
-                    affine.apply(mesh.interior, matrix, offset),
-                    point_tags=mesh.point_tags,
+    return LineMesh(PointMesh(affine.apply(mesh.points, matrix, offset),
+                              mesh.point_tags),
+                    mesh.lines, affine.apply(mesh.interior, matrix, offset),
                     element_tags=mesh.element_tags)
 
 

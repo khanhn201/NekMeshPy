@@ -16,10 +16,10 @@ from .._typing import (
 )
 from ..core import affine, conform, frames
 from ..core.paths import SpacePath
-from ..core.tags import EdgeTags
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
+from ..pointmesh import PointMesh
 from .quadmesh import QuadMesh
 
 
@@ -53,9 +53,12 @@ def blend(a: QuadMesh, b: QuadMesh,
     ho = a.order > 1
     ai, bi = a.interior, b.interior
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
-    return [QuadMesh(lm, a.quad, a.flip,
-                (1.0 - t) * ai + t * bi if ho else None,
-                edge_tags=a.edge_tags)
+    # the edge tags ride the blended ``lines`` themselves -- ``LineMesh.blend`` keeps
+    # ``a``'s point tags but drops its element tags, so they are put back here
+    return [QuadMesh(LineMesh(lm.vertices, lm.lines, lm.interior,
+                              a.lines.element_tags),
+                     a.quad, a.flip,
+                     (1.0 - t) * ai + t * bi if ho else None)
             for t, lm in zip(fr, line_blend(a.lines, b.lines, fr))]
 
 
@@ -63,7 +66,6 @@ def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
     return QuadMesh(line_affine(mesh.lines, matrix, offset), mesh.quad, mesh.flip,
                     affine.apply(mesh.interior, matrix, offset),
-                    edge_tags=mesh.edge_tags,
                     element_tags=mesh.element_tags)
 
 
@@ -104,16 +106,14 @@ def _rewind(mesh: QuadMesh) -> QuadMesh:
     In B-rep storage that is the edge columns reversed with every traversal bit
     toggled; the shared edges themselves are untouched, since an edge row is canonical
     (min corner first) and knows nothing of the winding of the quads on it.  The private
-    interior transposes with the local frame, and an ``edge_tags`` side rides its column
-    to ``5 - side``."""
+    interior transposes with the local frame.  The edge **tags** need no fixing at
+    all: they name the shared edges, which are exactly what re-winding leaves alone --
+    where a ``(quad, side)`` table had to ride each row to ``5 - side``."""
     n = mesh.order - 1
     perm: IntArray = (np.arange(n * n, dtype=np.int64).reshape(n, n).T.ravel()
                       if n else np.zeros(0, dtype=np.int64))
-    et = mesh.edge_tags
     return QuadMesh(mesh.lines, mesh.quad[:, ::-1], ~mesh.flip[:, ::-1],
-                    mesh.interior[:, perm, :],
-                    EdgeTags(et.elements, 5 - et.sides, et.tags).ordered(),
-                    mesh.element_tags)
+                    mesh.interior[:, perm, :], mesh.element_tags)
 
 
 def mirror(mesh: QuadMesh, normal: Vec3 | Sequence[float],
@@ -166,9 +166,10 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     rev = te[tidx, 0] != se[:, 0]
     new_ei: PointArray = np.asarray(target.lines.interior, dtype=float)[tidx].copy()
     new_ei[rev] = new_ei[rev][:, ::-1]
-    new_lines = LineMesh(target.points[s], structure.lines.lines, new_ei,
-                         target.lines.point_tags, target.lines.element_tags,
-)
+    new_lines = LineMesh(PointMesh(target.points[s],
+                                   target.lines.point_tags.gather(s)),
+                         structure.lines.lines, new_ei,
+                         target.lines.element_tags)
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.
@@ -178,7 +179,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
     return QuadMesh(new_lines, structure.quad, structure.flip, new_qi,
-                    target.edge_tags, target.element_tags)
+                    target.element_tags)
 
 
 def place_on_path(section: QuadMesh, path: SpacePath,

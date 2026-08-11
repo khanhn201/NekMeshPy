@@ -600,7 +600,7 @@ def _tagged_arc(Nt, tags):
     na = 4 * Nt + 1
     ang = np.linspace(np.pi, 0.0, na)
     lm = linemesh.loft(np.column_stack([np.cos(ang), np.sin(ang), np.zeros(na)]))
-    return LineMesh(lm.points, lm.lines, lm.interior, lm.point_tags,
+    return LineMesh(lm.vertices, lm.lines, lm.interior,
                     ElementTags.from_dense(tags))
 
 

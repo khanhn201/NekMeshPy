@@ -10,6 +10,8 @@ in ``tests/golden/`` (a frozen snapshot of the validated results).
 
 import os
 import runpy
+import struct
+from collections import Counter
 
 import matplotlib
 import numpy as np
@@ -45,6 +47,7 @@ def built_mesh(tmp_path_factory):
     ns = run_example("carotid.py", out)
     return {
         "mesh": ns["mesh"],
+        "groups": ns["GROUPS"],          # the example's own name -> Nek code mapping
         "re2": os.path.join(out, "carotid.re2"),
         "vtu": os.path.join(out, "carotid.vtu"),
     }
@@ -73,7 +76,7 @@ def conformal(mesh):
 
 
 def quad_from_entities(points, quads, edge_nodes=None, interior=None,
-                       edge_tags=None, element_tags=None, *, order=1):
+                       element_tags=None, *, order=1):
     """Local test scaffold: build a ``QuadMesh`` from corner ``points`` ``(P,3)`` +
     CCW ``quads`` ``(Q,4)`` plus already-decomposed high-order tables.
 
@@ -88,8 +91,7 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
     conn = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges, elem_edges, flip = conform.unique_edges(conn, 2)
     lm = LineMesh(pts, edges, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, edge_tags,
-                    element_tags)
+    return QuadMesh(lm, elem_edges, flip, interior, element_tags)
 
 
 def vtu_cell_types(path):
@@ -125,11 +127,54 @@ def read_re2_coords(path):
     return num_elem, coords, rest
 
 
+def read_re2_boundary(path):
+    """The ``.re2`` boundary block decoded into a ``Counter`` of
+    ``(element (1-based), face, code)`` -- the block's *content*, freed of its row order.
+
+    The byte comparison in ``test_re2_boundary_block_identical`` is the stricter check
+    and stays, but it also pins something that is not part of the contract: which order
+    the rows happen to be written in. This is the part that must survive a refactor of
+    how tags are stored, so it is asserted separately and can outlive a regenerated
+    baseline."""
+    with open(path, "rb") as f:
+        hdr = f.read(80)
+        f.read(4)
+        num_elem = int(hdr.split()[1])
+        np.fromfile(f, dtype="<f8", count=num_elem * 25)
+        rest = f.read()
+    n_bnd = int(np.frombuffer(rest[:16], dtype="<f8")[1])
+    rows = np.frombuffer(rest[16:16 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
+    # a code rides in the 8 bytes of one double; Nek's own field is 3 chars, so the
+    # rest are the NUL padding ``_str_to_double`` left there
+    return Counter(
+        (int(r[0]), int(r[1]),
+         struct.pack("<d", r[7]).decode("ascii", "replace").rstrip("\x00"))
+        for r in rows)
+
+
+def face_rows(mesh):
+    """``[(element, face, tag), ...]`` for a ``HexMesh``, lexsorted by (element, face).
+
+    A tag names a shared face now, so this is the reconstruction an exporter does --
+    one entry per hex carrying a named face, which means two for a named *interior*
+    face. Kept here because most of these tests were written against the old
+    ``(element, side)`` storage and still read most naturally in those terms."""
+    from nekmeshpy.hexmesh.query import face_tag_rows
+    rows, names = face_tag_rows(mesh)
+    return [(int(e), int(f), str(t))
+            for (e, f), t in zip(rows.tolist(), names.tolist())]
+
+
 def assert_same_side_tags(a, b):
     """The two side-tag tables carry the same rows in the same order.
 
     The tables set ``eq=False`` (the generated ``__eq__`` would compare ndarray
-    fields and raise), so equality is spelt column by column."""
+    fields and raise), so equality is spelt column by column -- and the columns differ
+    by rung as the tags fold onto the shared entity: a table addressed by
+    ``(element, side)`` still has both, one addressed by entity id has only ``ids``."""
+    assert np.array_equal(a.tags, b.tags)
+    if hasattr(a, "ids") or hasattr(b, "ids"):
+        assert np.array_equal(a.ids, b.ids)
+        return
     assert np.array_equal(a.elements, b.elements)
     assert np.array_equal(a.sides, b.sides)
-    assert np.array_equal(a.tags, b.tags)

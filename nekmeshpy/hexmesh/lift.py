@@ -211,9 +211,14 @@ def _self_map(a: QuadMesh, k: int, axis: Vec3 | Sequence[float]) -> IntArray:
 
 def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
             axis: Vec3 | Sequence[float] | None = None, layers: int = 2,
-            max_deviation: float = 0.2, radius_tol: float = 0.05) -> HexMesh:
+            max_deviation: float = 0.2, radius_tol: float = 0.05,
+            element_tags: str | ElementTags | None = None) -> HexMesh:
     """A short block morphing between two same-connectivity sections whose *node
-    patterns* differ slightly -- and whose **both** end faces are bit-exact."""
+    patterns* differ slightly -- and whose **both** end faces are bit-exact.
+
+    ``element_tags`` names the block's own elements, as in :func:`extrude
+    <nekmeshpy.hexmesh.lift.extrude>` -- a connector belongs to whichever region it
+    joins, and is the one piece with no section of its own to inherit a name from."""
     if layers < 1:
         raise ValueError("adapter: layers must be >= 1, got %d" % layers)
     sec_a = a.section if isinstance(a, Port) else a
@@ -241,7 +246,8 @@ def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
             "centre (max_deviation %.3g). Blending across it would twist the block "
             "into inverted elements; use bridge() for patterns this far apart."
             % (dev, max_deviation))
-    return loft(quad_blend(a, b_aligned, np.linspace(0.0, 1.0, layers + 1)))
+    return loft(quad_blend(a, b_aligned, np.linspace(0.0, 1.0, layers + 1)),
+                element_tags=element_tags)
 
 
 def _as_port(x: QuadMesh | Port, toward: Point, who: str) -> tuple[Port, bool]:
@@ -300,10 +306,14 @@ def _stub_sections(disc: QuadMesh, direction: Vec3, distance: float,
 
 def bridge(a: QuadMesh | Port, b: QuadMesh | Port, *, layers: int = 4,
            stub_fraction: float = 0.3, stub_max: float = 1.5, blend_layers: int = 6,
-           radius_tol: float = 0.05) -> HexMesh:
+           radius_tol: float = 0.05,
+           element_tags: str | ElementTags | None = None) -> HexMesh:
     """A connector between two same-radius sections whose node patterns are too far
     apart for :func:`adapter <nekmeshpy.hexmesh.lift.adapter>` -- two legs of different
-    T-junctions, built by different algorithms."""
+    T-junctions, built by different algorithms.
+
+    ``element_tags`` names the block's own elements, as in :func:`adapter
+    <nekmeshpy.hexmesh.lift.adapter>`."""
     if blend_layers < 1:
         raise ValueError("bridge: blend_layers must be >= 1, got %d" % blend_layers)
     sec_a = a.section if isinstance(a, Port) else a
@@ -328,7 +338,7 @@ def bridge(a: QuadMesh | Port, b: QuadMesh | Port, *, layers: int = 4,
             "would collapse several of one section's nodes onto one of the other's")
     b_secs = [quad_reindex(a_end, s, sigma) for s in b_secs_raw]
     blend_secs = quad_blend(a_end, b_secs[0], np.linspace(0.0, 1.0, blend_layers + 1))
-    return loft(a_secs[:-1] + blend_secs + b_secs[1:])
+    return loft(a_secs[:-1] + blend_secs + b_secs[1:], element_tags=element_tags)
 
 
 __all__ = [

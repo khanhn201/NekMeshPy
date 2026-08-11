@@ -107,7 +107,7 @@ def test_blend_morphs_hex_curved_blocks():
     # every stored node doubled, so the two pair by index at every rung
     lines = LineMesh(a.points * 2.0, a.edges, interior=a.edge_nodes * 2.0)
     quads = QuadMesh(lines, a.quads.quad, a.quads.flip, a.face_nodes * 2.0)
-    b = HexMesh(quads, a.hex, a.face_orient, a.interior * 2.0, a.face_tags)
+    b = HexMesh(quads, a.hex, a.face_orient, a.interior * 2.0)
     lo, mid, hi = hexmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)

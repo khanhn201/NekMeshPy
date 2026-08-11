@@ -73,12 +73,14 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 | `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
 | `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` / `weld` |
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
+| `tag.py` | 0 | `retag_element`; `retag_point` / `retag_edge` / `retag_face` — rename the tag vocabulary, geometry untouched. Plus the authoring bridges: `quadmesh.tag_edges` takes `(quad, side)` rows, since factories think element-locally; `hexmesh.tag_faces` takes face ids, the natural handle after a weld |
 
 **`loft`, `merge`, `select`/`remove`/`components` and `boundary_mesh` are the only
 operations that manufacture a global index space** — `select` and its kin are `merge`
 run backwards, and sit beside it for that reason. To place a new operation: *invents a
 numbering?* → `assemble` (unless it is boundary extraction → `lower`); *changes rung?* →
-`lift`/`lower`; *neither?* → `morph`.
+`lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`. `morph` is for the
+*geometry* at delta 0, which is why a retag is not in it.
 
 A reflection has determinant −1, so `mirror` is the coordinate map **plus** a re-winding
 of the connectivity — never `transform` with a reflection matrix, which inverts every
@@ -168,10 +170,22 @@ mesh was flawless locally and corner-inverted on CI.
 
 ## Tags
 
-Tag slots are types from `core/tags.py` that **validate themselves at construction** —
-`PointTags`/`EdgeTags`/`FaceTags` declare their own `SIDES` (2/4/6) and reject an
-out-of-range side with no mesh in sight. The slot is named for the entity:
-`.point_tags` / `.edge_tags` / `.face_tags`.
+**A rung's side tags *are* the rung below's `element_tags`.** There is one table type,
+`ElementTags` from `core/tags.py`, and a mesh reads the one under it through a named
+property: `HexMesh.face_tags` is `quads.element_tags`, `QuadMesh.edge_tags` is
+`lines.element_tags`, `LineMesh.point_tags` is `vertices.element_tags` on the
+`PointMesh` the ladder bottoms out on. A tag is addressed by **entity id**, never by
+`(element, side)`.
+
+That is what makes tag consistency structural, the way conformality already is: a face
+is one stored object both its hexes reference, so it carries one name and the two sides
+cannot disagree. `merge` raises when a weld would put two different names on one
+entity, and a closed sweep's two caps -- the same seam -- cannot be named differently.
+
+An **asymmetric** boundary condition therefore cannot live on the face. It lives in the
+regions either side of it: `face_tag_rows` reconstructs one `(element, face)` row per
+hex carrying a named face, and `GROUPS` can key the code by that hex's own region —
+`{"fluid": "W  ", "solid": None}`, where `None` writes no row from that side.
 
 **`boundary` is reserved for the topological domain boundary** — what `boundary_faces`
 / `_edges` / `_points` compute from connectivity. A side-tag table is a *named subset*
@@ -181,6 +195,15 @@ rows the last one's tag.
 
 `element_tags` is sparse (`ids + tags`), so an untagged mesh stores nothing and `len()`
 is the *tagged* count.
+
+**Only the top rung's `element_tags` names a region.** One rung down, an element is a
+piece of some volume's *surface* — and now literally the same object as that volume's
+face — so its `element_tags` is the boundary name (`"wall"`, `"inlet"`), never
+`"fluid"` / `"solid"`. Not enforced, but the mechanism punishes getting it wrong:
+`first_tag`/`last_tag` default to the bounding slice's own `element_tags`, so a section
+tagged `"fluid"` exports its caps as a `"fluid"` **boundary condition**.
+`hexmesh.extrude(..., element_tags="fluid")` is safe precisely because a hex's own
+`element_tags` never becomes a face tag — nothing is above it to read them.
 
 **`loft`'s three tag arguments are the same shape at every rung**: `element_tags` names
 the *swept* elements — one string for all of them, or an `ElementTags` over **one
