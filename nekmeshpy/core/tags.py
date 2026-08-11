@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import ClassVar, Generic, TypeVar
 
@@ -13,7 +13,8 @@ from .._typing import BoolArray, IntArray, StrArray
 T = TypeVar("T", bound="SideTags")
 
 __all__ = ["SideTags", "PointTags", "EdgeTags", "FaceTags", "TagBuilder",
-           "ElementTags", "element_mask", "sweep_element_tags", "sweep_cap_tags"]
+           "ElementTags", "element_mask", "sweep_element_tags", "sweep_cap_tags",
+           "welded_element_tags"]
 
 
 def _frozen(arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -31,6 +32,33 @@ def _str_array(values: Sequence[str] | StrArray) -> StrArray:
 def _empty_str() -> StrArray:
     """A zero-length string array."""
     return np.empty(0, dtype=np.str_)
+
+
+def _renamed(tags: StrArray, mapping: Mapping[str, str], vocabulary: list[str],
+             who: str) -> StrArray:
+    """``tags`` with every entry the ``mapping`` names replaced by its image, entries
+    it does not name left alone.
+
+    Read once and written once, so the map applies **simultaneously**: ``{"a": "b",
+    "b": "a"}`` swaps the two rather than collapsing both onto one. Two keys may share
+    an image, which merges those groups. The result is re-widened rather than written
+    into the input's dtype, so a longer name does not come back truncated.
+
+    A key that names nothing is an error, on the same reasoning
+    :func:`element_mask` refuses an absent tag: a rename that silently matches
+    nothing is almost always a typo, and in a mesh a mis-spelled region or boundary
+    name is not visible again until the solver reads it."""
+    unknown = sorted(set(mapping) - set(vocabulary))
+    if unknown:
+        raise ValueError(
+            "%s: nothing is tagged %s; this table has %s"
+            % (who, ", ".join(repr(u) for u in unknown),
+               ", ".join(repr(v) for v in vocabulary) or "no tags at all"))
+    if not tags.shape[0]:
+        return tags
+    uniq, inverse = np.unique(tags, return_inverse=True)
+    renamed: StrArray = _str_array([mapping.get(str(u), str(u)) for u in uniq.tolist()])
+    return renamed[inverse.reshape(-1)]
 
 
 @dataclass(frozen=True, eq=False)
@@ -175,6 +203,22 @@ class SideTags:
         """The rows where ``mask`` is True, order preserved."""
         m = np.asarray(mask, dtype=bool)
         return type(self)(self.elements[m], self.sides[m], self.tags[m])
+
+    def renamed(self: T, mapping: Mapping[str, str], who: str = "renamed") -> T:
+        """The same rows under a new vocabulary, in stored order -- which matters
+        here, since ``.re2`` writes rows in it.
+
+        A tag the map does not name is left alone.  The map applies simultaneously
+        (``{"a": "b", "b": "a"}`` swaps), two keys may share an image (merging those
+        groups), and a key that names nothing raises.
+
+        Renaming a group to ``""`` **drops** its rows: a side-tag table names a
+        subset, and the way out of that subset is not to be listed. That is how a
+        tag that has become meaningless -- an inlet welded shut into an interior
+        plane -- is retired without touching the rows around it."""
+        t = _renamed(self.tags, mapping, self.group_tags, who)
+        keep: BoolArray = t != ""
+        return type(self)(self.elements[keep], self.sides[keep], t[keep])
 
     def count(self, tag: str) -> int:
         """How many rows are named ``tag``."""
@@ -360,10 +404,30 @@ class ElementTags:
     def __bool__(self) -> bool:
         return bool(self.ids.shape[0])
 
+    def __iter__(self) -> Iterator[tuple[int, str]]:
+        """``(element, tag)`` per tagged element, in stored (ascending id) order."""
+        for i, t in zip(self.ids, self.tags):
+            yield int(i), str(t)
+
+    def count(self, tag: str) -> int:
+        """How many elements are named ``tag``."""
+        return int(np.count_nonzero(self.tags == tag))
+
     def __repr__(self) -> str:
         return "<ElementTags %d tagged {%s}>" % (len(self), ",".join(self.group_tags))
 
     # -- operations ------------------------------------------------------
+    def renamed(self, mapping: Mapping[str, str],
+                who: str = "renamed") -> ElementTags:
+        """The same elements under a new vocabulary: a tag the map does not name is
+        left alone, the map applies simultaneously, two keys may share an image, and a
+        key that names nothing raises.
+
+        Renaming a region to ``""`` drops it back to untagged, which is what this
+        sparse table stores as no row at all."""
+        return ElementTags(self.ids, _renamed(self.tags, mapping,
+                                              self.group_tags, who))
+
     def gather(self, index: IntArray) -> ElementTags:
         """Tags for a new element list whose element ``k`` copies source ``index[k]``.
 
@@ -427,6 +491,44 @@ class ElementTags:
             raise ValueError("element_tags names element %d but there are only %d "
                              "elements" % (int(self.ids[-1]), n_elements))
 
+
+
+def welded_element_tags(tables: Sequence[ElementTags], who: str) -> ElementTags:
+    """Combine tables that may name the **same** element -- what a ``merge`` produces
+    once its weld has carried two blocks' tags onto one shared entity.
+
+    Plain :meth:`ElementTags.concat` cannot do this: it would hand the constructor two
+    rows for one id, which is rejected. Here the duplicate is expected and meaningful,
+    so it is resolved rather than refused -- but only when the two agree. Two different
+    non-empty names on one entity is the contradiction the shared-entity storage exists
+    to rule out, and there is no honest way to pick between them, so it raises.
+
+    An entity named by one side and left untagged by the other simply takes the name:
+    that is the ordinary case of a tagged block welding onto an untagged neighbour."""
+    live = [t for t in tables if len(t)]
+    if not live:
+        return ElementTags.empty()
+    # concatenated as raw columns rather than through ``concat``: the duplicate ids
+    # this resolves are exactly what the constructor is there to reject
+    raw_ids: IntArray = np.concatenate([t.ids for t in live])
+    raw_names: StrArray = _str_array(np.concatenate([t.tags for t in live]))
+    order = np.argsort(raw_ids, kind="stable")
+    ids, names = raw_ids[order], raw_names[order]
+    dup: BoolArray = np.zeros(ids.shape[0], dtype=bool)
+    dup[1:] = ids[1:] == ids[:-1]
+    if not dup.any():
+        return ElementTags(ids, names)
+    differs: BoolArray = np.zeros(ids.shape[0], dtype=bool)
+    differs[1:] = names[1:] != names[:-1]
+    clash = np.flatnonzero(dup & differs)
+    if clash.size:
+        i = int(clash[0])
+        raise ValueError(
+            "%s: the weld puts two different names on one entity -- element %d is "
+            "tagged both %r and %r. A shared entity carries one tag, so leave one of "
+            "the two sides untagged, or give them the same name."
+            % (who, int(ids[i]), str(names[i - 1]), str(names[i])))
+    return ElementTags(ids[~dup], names[~dup])
 
 
 def element_mask(which: str | BoolArray | IntArray | Sequence[int],

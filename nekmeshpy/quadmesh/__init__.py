@@ -1,6 +1,5 @@
 """2-D quad mesh container (``QuadMesh``), its operations, and smoothing."""
 
-from . import assemble, lift, lower, morph, query, shape
 from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
 from .lower import boundary_mesh
@@ -47,6 +46,7 @@ from .shape import (
     tri_patch,
     tri_patch_tip,
 )
+from .tag import retag_edge, retag_element
 
 __all__ = [
     "area",
@@ -57,6 +57,8 @@ __all__ = [
     "element_blocks",
     "mirror",
     "remove",
+    "retag_edge",
+    "retag_element",
     "select",
     "NO_TAG",
     "Port",
@@ -103,6 +105,7 @@ __all__ = [
     "structured",
     "sweep",
     "sweep_path",
+    "tag",
     "transform",
     "translate",
     "tri_patch",

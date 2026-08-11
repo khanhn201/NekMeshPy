@@ -1,6 +1,5 @@
 """3-D hex mesh container (``HexMesh``), its operations, and constrained smoothing."""
 
-from . import assemble, lift, lower, morph, query, shape
 from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .hexmesh import HexMesh
 from .lift import (
@@ -34,6 +33,7 @@ from .query import (
     weld,
 )
 from .shape import tetra
+from .tag import retag_element, retag_face
 
 __all__ = [
     "bounds",
@@ -43,7 +43,10 @@ __all__ = [
     "element_volumes",
     "mirror",
     "remove",
+    "retag_element",
+    "retag_face",
     "select",
+    "tag",
     "volume",
     "HexMesh",
     "adapter",
