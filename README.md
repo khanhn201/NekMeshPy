@@ -206,3 +206,4 @@ tags byte-for-byte — so a golden diff from a refactor is a bug.
 - [ ] Rework smoothing
 - [ ] GUI?
 - [ ] Paving algorithm / advancing front?
+- [ ] Polyhedron meshing/midpoint subdivision?
