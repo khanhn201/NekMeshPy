@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Iterable, Iterator
 
@@ -16,9 +17,44 @@ class PhysicalGroup:
     dim: int = 2          # 2 = boundary/surface, 3 = volume
     code: str = "E  "     # Nek BC character code, padded to exactly 3 chars
 
+    #: Per-**region** codes, keyed by the ``element_tags`` name of the element the row
+    #: is written for (``""`` for an untagged one).  ``None`` when the group reads the
+    #: same from every side, which is every ordinary boundary.
+    #:
+    #: A face is one shared object with one name, so an asymmetric boundary condition
+    #: cannot live on the face -- it lives in the *regions* either side of it. A
+    #: conjugate interface is a face between a ``"fluid"`` hex and a ``"solid"`` one;
+    #: naming it once and giving it ``{"fluid": "W  ", "solid": None}`` writes the
+    #: fluid's wall condition and nothing at all on the solid side.  A ``None`` value
+    #: emits no row for that region, which is how a face gets a condition from one
+    #: side only.
+    side_codes: Mapping[str, str | None] | None = None
+
     def __post_init__(self) -> None:
         if len(self.code) != 3:
             object.__setattr__(self, "code", (self.code + "   ")[:3])
+        if self.side_codes is not None:
+            object.__setattr__(self, "side_codes", {
+                r: None if c is None else (c + "   ")[:3]
+                for r, c in self.side_codes.items()})
+
+    def code_for_side(self, region: str) -> str | None:
+        """The code to write for a row owned by an element in ``region``.
+
+        ``None`` means "write no row from this side". A group with no
+        :attr:`side_codes` reads the same from everywhere, so its own ``code`` is the
+        answer; one with them must name every region it actually borders, since a
+        missing key is far more likely a typo than an intent to drop the face."""
+        if self.side_codes is None:
+            return self.code
+        if region not in self.side_codes:
+            raise ValueError(
+                "boundary %r has per-region codes for %s, but borders an element in "
+                "region %r. Give that region a code, or None to write no row there."
+                % (self.name,
+                   ", ".join(repr(k) for k in sorted(self.side_codes)) or "no region",
+                   region))
+        return self.side_codes[region]
 
 
 class PhysicalGroups:

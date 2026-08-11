@@ -102,6 +102,10 @@ R_BR = 0.5       # == chimera's R_BRANCH
 # the same string as the "solid" region -- see chimera.py's own note.
 FLUID_TAG = "fluid"
 SOLID_FACE_TAG = "insulated"
+#: chimera's conjugate interface, which arrives with the chain.  Its two sides want
+#: different conditions and a face carries one name, so the asymmetry is keyed by the
+#: region of the element each exported row belongs to -- see GROUPS below.
+INTERFACE_TAG = "interface"
 
 L1 = 2.5 * R_MAIN     # T1 main half-length
 H1 = 2.5 * R_MAIN     # T1 branch length
@@ -685,7 +689,8 @@ print(_rep_out)
 
 mesh = mesh_out
 OUT_NAME = "chimera_full"
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", SOLID_FACE_TAG: "I  "}
+GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", SOLID_FACE_TAG: "I  ",
+          INTERFACE_TAG: {"fluid": "W  ", "solid": None}}
 export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 export.to_fld(mesh, OUT_NAME + ".f00000")

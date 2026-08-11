@@ -8,8 +8,13 @@ sibling list can tell at a glance that a retag cannot have moved a node.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
+import numpy as np
+
+from .._typing import IntArray, StrArray
+from ..core.tags import ElementTags
+from ..quadmesh import QuadMesh
 from ..quadmesh import tag as quadmesh
 from .hexmesh import HexMesh
 
@@ -49,7 +54,35 @@ def retag_face(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
                    mesh.hex, mesh.face_orient, mesh.interior, mesh.element_tags)
 
 
+def tag_faces(mesh: HexMesh, faces: IntArray,
+              tags: str | Sequence[str] | StrArray) -> HexMesh:
+    """The same mesh with the given shared **faces** named, by face id.
+
+    The entity-side authoring form, and the natural handle at this rung: after a
+    ``merge`` or a weld the thing you have is a set of faces, not a set of
+    ``(hex, side)`` pairs -- see :func:`boundary_face_ids
+    <nekmeshpy.hexmesh.query.boundary_face_ids>` and :func:`face_tag_rows
+    <nekmeshpy.hexmesh.query.face_tag_rows>` for the two ways to get them. (Its quad
+    counterpart :func:`tag_edges <nekmeshpy.quadmesh.tag.tag_edges>` takes
+    ``(quad, side)`` rows instead, because the factories that use it genuinely think
+    element-locally.)
+
+    ``tags`` is one name for all of them or one per face; ``NO_TAG`` names nothing, and
+    a face already named is overwritten."""
+    named = np.asarray(mesh.face_tags.dense(mesh.quads.n_quads), dtype=object)
+    ids: IntArray = np.asarray(faces, dtype=np.int64).reshape(-1)
+    names: StrArray = (np.full(ids.shape[0], tags) if isinstance(tags, str)
+                       else np.asarray(tags, dtype=np.str_).reshape(-1))
+    hit = names != ""
+    named[ids[hit]] = names[hit]
+    q = mesh.quads
+    return HexMesh(QuadMesh(q.lines, q.quad, q.flip, q.interior,
+                            ElementTags.from_dense(np.asarray(named, dtype=np.str_))),
+                   mesh.hex, mesh.face_orient, mesh.interior, mesh.element_tags)
+
+
 __all__ = [
     "retag_element",
     "retag_face",
+    "tag_faces",
 ]

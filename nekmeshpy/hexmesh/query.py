@@ -32,12 +32,16 @@ def _boundary_mask(hexes: IntArray) -> tuple[IntArray, BoolArray]:
     return faces, counts[inverse] == 1
 
 
-def _boundary_face_ids(mesh: HexMesh) -> BoolArray:
-    """``(n_faces,)`` mask of shared faces carried by exactly one hex.
+def boundary_face_ids(mesh: HexMesh) -> BoolArray:
+    """``(n_faces,)`` mask of the shared faces carried by exactly one hex.
 
-    Read off the B-rep rather than re-derived: the faces are already deduplicated in
-    ``quads``, so this is a bincount over the incidence instead of a hash of every
-    element's corner tuples."""
+    The face-id form of :func:`boundary_faces`, and the cheaper one: the faces are
+    already deduplicated in ``quads``, so this is a bincount over the incidence rather
+    than a hash of every element's corner tuples.
+
+    It is also how a name is checked against the topology it was meant for --
+    ``face_tags.ids`` outside this mask are the tagged interior faces
+    :func:`tag_report` counts."""
     return np.asarray(
         np.bincount(np.asarray(mesh.hex, dtype=np.int64).ravel(),
                     minlength=mesh.quads.n_quads) == 1, dtype=bool)
@@ -188,7 +192,7 @@ class TagReport(NamedTuple):
 def tag_report(mesh: HexMesh) -> TagReport:
     """Cross-check ``face_tags`` against the topological boundary (see
     :class:`TagReport <nekmeshpy.hexmesh.query.TagReport>`)."""
-    on_boundary = _boundary_face_ids(mesh)
+    on_boundary = boundary_face_ids(mesh)
     ft = mesh.face_tags
     named: BoolArray = np.zeros(on_boundary.size, dtype=bool)
     named[ft.ids] = True
@@ -291,6 +295,7 @@ __all__ = [
     "WeldResult",
     "bounds",
     "boundary_elements",
+    "boundary_face_ids",
     "boundary_faces",
     "boundary_points",
     "centroid",

@@ -33,13 +33,44 @@ _VTK_LAGRANGE_HEXAHEDRON = 72
 _log = logging.getLogger("nekmeshpy")
 
 # accepted types for the ``groups`` export parameter
-GroupsArg = Union[PhysicalGroups, Mapping[str, str], None]
+#: What ``groups=`` accepts. A value is either one code used from every side, or a
+#: ``{region: code}`` mapping read against the ``element_tags`` of the element each row
+#: is written for -- see :attr:`PhysicalGroup.side_codes
+#: <nekmeshpy.core.physical.PhysicalGroup.side_codes>`.
+GroupSpec = Union[str, Mapping[str, Union[str, None]]]
+GroupsArg = Union[PhysicalGroups, Mapping[str, GroupSpec], None]
 
 
 def _rows_as_lists(mesh: HexMesh) -> tuple[list[list[int]], list[str]]:
     """``face_tag_rows`` as plain lists, for the row-at-a-time paint loops below."""
     rows, names = face_tag_rows(mesh)
     return rows.tolist(), names.tolist()
+
+
+def _coded_rows(mesh: HexMesh, g: PhysicalGroups
+                ) -> list[tuple[int, int, str]]:
+    """``(element, face, code)`` for every boundary row the ``.re2`` should carry.
+
+    This is where an asymmetric condition is resolved. A named face reconstructs to one
+    row per hex carrying it, and each row's code is read against the **region** of the
+    hex that owns it, so the two sides of a conjugate interface can differ even though
+    the face has a single name. A region whose code is ``None`` contributes no row,
+    which is how a face gets a condition from one side only."""
+    rows, names = face_tag_rows(mesh)
+    regions = mesh.element_tags.dense(mesh.hex.shape[0])
+    out: list[tuple[int, int, str]] = []
+    for (elem, face), name in zip(rows.tolist(), names.tolist()):
+        grp = g.get(name)
+        if grp is None:
+            _log.warning("unknown boundary name: %s", name)
+            code = "   "
+        else:
+            got = grp.code_for_side(str(regions[elem]))
+            if got is None:
+                continue
+            code = got
+        out.append((int(elem), int(face), code))
+    return out
 
 
 def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
@@ -51,8 +82,9 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
         return PhysicalGroups(
             PhysicalGroup(name, i + 1) for i, name in enumerate(names))
     return PhysicalGroups(
-        PhysicalGroup(name, i + 1, 2, code)
-        for i, (name, code) in enumerate(groups.items()))
+        PhysicalGroup(name, i + 1, 2, spec) if isinstance(spec, str)
+        else PhysicalGroup(name, i + 1, 2, side_codes=spec)
+        for i, (name, spec) in enumerate(groups.items()))
 
 
 # -- generic mesh view --------------------------------------------------
@@ -115,7 +147,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
     re2 has no high-order format, so only the 8 corners of each hex are emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    bnd_rows, bnd_names = face_tag_rows(mesh)
+    bnd = _coded_rows(mesh, g)
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
@@ -127,16 +159,12 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             fid.write(elements[i, :, 1].astype("<f8").tobytes())
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
-        fid.write(struct.pack("<d", float(bnd_rows.shape[0])))
-        for (elem0, face), name in zip(bnd_rows.tolist(), bnd_names.tolist()):
+        fid.write(struct.pack("<d", float(len(bnd))))
+        for elem0, face, code in bnd:
             buf2: FloatArray = np.zeros(8, dtype="<f8")
             buf2[0] = float(elem0 + 1)
             buf2[1] = float(face)
-            grp = g.get(name)
-            if grp is not None:
-                buf2[7] = _str_to_double(grp.code)
-            else:
-                _log.warning("unknown boundary name: %s", name)
+            buf2[7] = _str_to_double(code)
             fid.write(buf2.tobytes())
     return mesh
 

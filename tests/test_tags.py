@@ -14,10 +14,13 @@ side-tag tests concentrate on the two things the mesh's output depends on -- tha
 else ever reorders rows.
 """
 
+from collections import Counter
+
 import numpy as np
 import pytest
+from conftest import face_rows, read_re2_boundary
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
+from nekmeshpy import export, hexmesh, linemesh, quadmesh
 from nekmeshpy.core.tags import (
     EdgeTags,
     ElementTags,
@@ -503,3 +506,53 @@ def test_retag_face_drops_a_name_welded_shut(built_mesh):
     assert "trunk_outlet" not in got.face_tags.group_tags
     assert len(got.face_tags) == len(mesh.face_tags) - n_drop
     assert hexmesh.tag_report(got).n_untagged_boundary == n_drop
+
+
+# -- asymmetric boundary conditions --------------------------------------
+def _two_region_block():
+    """Two stacked hexes, the interface between them named -- fluid below, solid above.
+
+    The face is one shared object with one name; what differs is the *region* on
+    either side of it, which is the only place an asymmetry can live now."""
+    g = np.zeros((2, 2, 3))
+    for i, x in enumerate((0.0, 1.0)):
+        for j, y in enumerate((0.0, 1.0)):
+            g[i, j] = (x, y, 0.0)
+    sec = quadmesh.from_grid(g)
+    lo = hexmesh.extrude(sec, 1.0, 1, axis=(0, 0, 1), element_tags="fluid")
+    hi = hexmesh.translate(
+        hexmesh.extrude(sec, 1.0, 1, axis=(0, 0, 1), element_tags="solid"), (0, 0, 1.0))
+    mesh = hexmesh.merge([lo, hi])
+    iface = mesh.face_tags.ids if len(mesh.face_tags) else None
+    assert iface is None
+    shared = np.flatnonzero(np.bincount(np.asarray(mesh.hex).ravel()) == 2)
+    return hexmesh.tag_faces(mesh, shared, "interface")
+
+
+def test_per_region_codes_split_the_two_sides_of_one_face(tmp_path):
+    """The interface is one named face carried by two hexes, so it reconstructs to two
+    rows -- and each takes its code from the region of the hex that owns it."""
+    mesh = _two_region_block()
+    assert len(mesh.face_tags) == 1                     # one face, one name
+    assert len(face_rows(mesh)) == 2                    # two hexes carry it
+
+    out = str(tmp_path / "m.re2")
+    export.to_re2(mesh, out, groups={"interface": {"fluid": "W  ", "solid": "I  "}})
+    got = read_re2_boundary(out)
+    assert got == Counter({(1, 6, "W  "): 1, (2, 5, "I  "): 1})
+
+
+def test_a_none_side_code_writes_no_row_at_all(tmp_path):
+    """How a face gets a condition from one side only -- what a conjugate interface
+    keeping just the fluid's wall needs."""
+    mesh = _two_region_block()
+    out = str(tmp_path / "m.re2")
+    export.to_re2(mesh, out, groups={"interface": {"fluid": "W  ", "solid": None}})
+    assert read_re2_boundary(out) == Counter({(1, 6, "W  "): 1})
+
+
+def test_a_region_the_codes_do_not_name_is_an_error(tmp_path):
+    mesh = _two_region_block()
+    with pytest.raises(ValueError, match="borders an element in region 'solid'"):
+        export.to_re2(mesh, str(tmp_path / "m.re2"),
+                      groups={"interface": {"fluid": "W  "}})

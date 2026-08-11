@@ -15,6 +15,7 @@ from .lower import boundary_mesh
 from .morph import blend, mirror, rotate, scale, transform, translate
 from .query import (
     boundary_elements,
+    boundary_face_ids,
     boundary_faces,
     boundary_points,
     bounds,
@@ -33,7 +34,7 @@ from .query import (
     weld,
 )
 from .shape import tetra
-from .tag import retag_element, retag_face
+from .tag import retag_element, retag_face, tag_faces
 
 __all__ = [
     "bounds",
@@ -54,6 +55,7 @@ __all__ = [
     "assemble",
     "blend",
     "boundary_elements",
+    "boundary_face_ids",
     "boundary_faces",
     "boundary_mesh",
     "boundary_points",
@@ -79,6 +81,7 @@ __all__ = [
     "shape",
     "sweep",
     "sweep_path",
+    "tag_faces",
     "tag_report",
     "tetra",
     "topology_report",
