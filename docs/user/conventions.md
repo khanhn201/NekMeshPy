@@ -29,11 +29,12 @@ Its stored state is the **B-rep**: a `quads` `QuadMesh` of the shared faces, `he
 `(E,(order-1)**3,3)`. `points` `(P,3)` and `hexes` `(E,8)` (Nek point order) are
 **derived read-only views** over it, so corner consistency is structural rather than
 maintained — see [Concepts](../user/concepts.md#high-order-order-n-elements).
-Alongside it are `face_tags`, a `FaceTags` table of `(element id, face (1–6), tag)`
-rows, plus `element_tags`, an `ElementTags` naming only the hexes that carry a region
-tag (inherited from the swept quad). `face_tags` is *not* "the boundary": it is the
-named subset of sides, while `boundary_faces()` derives the topological domain
-boundary from connectivity. A **region** name (`"fluid"`, `"solid"`) belongs to the top
+Alongside it is `element_tags`, an `ElementTags` naming only the hexes that carry a
+region tag. `face_tags` is not a second table: it reads through to `quads.element_tags`,
+so a face is named **once, by id**, as the one object both its hexes reference. It is
+also *not* "the boundary" — it is the named subset of faces, while `boundary_faces()`
+derives the topological domain boundary from connectivity, and `tag_report()` counts
+where the two disagree. A **region** name (`"fluid"`, `"solid"`) belongs to the top
 rung's `element_tags` only: one rung down an element is a piece of a *surface*, so its
 `element_tags` should be the boundary name that face will carry once lifted. Nothing
 enforces it, but `first_tag`/`last_tag` default to the bounding slice's own
@@ -41,8 +42,9 @@ enforces it, but `first_tag`/`last_tag` default to the bounding slice's own
 condition. Renaming either vocabulary without touching the other is what
 `retag_element` / `retag_face` are for.
 `QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
-`quad`/`flip`/`interior`, `edge_tags` rows `[quad id, side (1–4)]`, side `s` =
-edge `EDGE_POINTS[s-1]`); `LineMesh` carries `point_tags` with side ∈ {1,2}. `weld()` returns a `WeldResult` NamedTuple —
+`quad`/`flip`/`interior`, its `edge_tags` reading through to `lines.element_tags`);
+`LineMesh` does the same onto a `PointMesh`, which is the ladder's bottom rung and
+carries nothing but coordinates and their tags. `weld()` returns a `WeldResult` NamedTuple —
 `.points` (the **live** array), `.hexes`, `.n_points`; the name is historical, since
 a `HexMesh` is already stored shared-point and nothing is welded or copied. Exporters
 expand via `points[hexes]`. Coordinates may be repositioned in place — writing

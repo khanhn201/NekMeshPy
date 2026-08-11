@@ -17,7 +17,6 @@ from nekmeshpy import (
     ElementTags,
     LineMesh,
     PointMesh,
-    PointTags,
     QuadMesh,
     hexmesh,
     linemesh,
@@ -91,11 +90,11 @@ def test_element_tags_is_one_name_for_every_lofted_line():
         linemesh.loft([(0, 0, 0), (1, 0, 0), (2, 0, 0)], element_tags=["a", "b"])
 
 
-def test_boundary_table_columns_must_match_in_length():
-    """The pairing is now structural: the table itself refuses a ragged build,
-    so a LineMesh can no longer be given desynchronized rows and names."""
+def test_point_table_columns_must_match_in_length():
+    """The pairing is structural: the table itself refuses a ragged build, so a
+    LineMesh can no longer be given desynchronized ids and names."""
     with pytest.raises(ValueError, match="same length"):
-        PointTags.from_pairs([[0, 1]], ["a", "b"])
+        ElementTags([0], ["a", "b"])
 
 
 # -- topological queries -----------------------------------------------------

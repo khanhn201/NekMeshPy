@@ -146,22 +146,32 @@ materializes the one-slot-per-element form where a caller wants it.
 Note `len(element_tags)` is the number of **tagged** elements, not the element
 count — use `n_lines` / `n_quads` / `n_hexes` for that.
 
-### `point_tags` / `edge_tags` / `face_tags` — named sides
+### `point_tags` / `edge_tags` / `face_tags` — the rung below's element tags
 
-`(element, side, tag)` rows in one object, rather than two arrays a caller has to
-keep in step. The slot is named for the entity it names, because the "side" is the
-rung's own:
+Not tables of their own. **A rung's side tags *are* the rung below's `element_tags`**,
+read through under the name of the entity they name:
 
-- `LineMesh.point_tags` (a `PointTags`): `[elem id, side ∈ {1,2}]` → end **point** `s-1`.
-- `QuadMesh.edge_tags` (an `EdgeTags`): `[quad id, side ∈ {1..4}]` → **edge** `EDGE_POINTS[s-1]`.
-- `HexMesh.face_tags` (a `FaceTags`): `[elem id, face ∈ {1..6}]` → **face**.
+- `LineMesh.point_tags` → `vertices.element_tags`, over **point** ids.
+- `QuadMesh.edge_tags` → `lines.element_tags`, over **edge** ids.
+- `HexMesh.face_tags` → `quads.element_tags`, over **face** ids.
+
+The B-rep already stores each entity exactly once, so naming it is naming that one
+object rather than naming it once per incident element. That makes tag consistency
+structural, the way conformality already is: a face cannot carry two contradictory
+names, because there is only one place to put a name. `merge` raises rather than
+silently keeping both when a weld would disagree, and reflections need no side remap at
+all — re-winding changes how an element *views* an entity, which a tag on the entity
+does not care about.
+
+The cost is that a genuinely two-sided condition cannot live on the entity. See
+*asymmetric conditions* below.
 
 These are **not** "the boundary". *Boundary* is reserved throughout for the
 topological domain boundary — the facets borne by exactly one element, which
 `boundary_faces()` / `boundary_edges()` / `boundary_points()` derive from
-connectivity. A side-tag table is the *named subset* of that, and the two genuinely
+connectivity. A tag table is the *named subset* of that, and the two genuinely
 differ: an extruded pipe whose wall was never named has 192 boundary faces and 0
-tagged rows.
+named ones. `hexmesh.tag_report()` counts both ways they can disagree.
 
 On `extrude`, line end-point tags become quad **edge** tags, then hex **face** tags.
 `point_group_tags` / `edge_group_tags` / `face_group_tags` are the sorted unique
@@ -175,9 +185,22 @@ parent's **own** nodes, bit for bit at any order — which is the point, since a
 built off a port has to weld back onto it, and at `order > 1` `merge` verifies shared
 high-order nodes far more tightly than any coordinate weld.
 
-Row order is meaningful and never changes implicitly — `ordered()` is the one
-explicit canonical sort. The `.re2` boundary block is written in stored order, and
-the `.vtu` writer resolves a node touched by several rows to the **last** of them.
+### Asymmetric conditions — the two sides of one face
+
+A named **interior** face is carried by two elements, and `hexmesh.face_tag_rows()`
+reconstructs a row for each — that is what the `.re2` boundary block gets. Since the
+face has one name, anything that must differ between the two sides is read from the
+**region** of the element that owns the row, i.e. from `element_tags`:
+
+```python
+GROUPS = {"wall": "W  ", "interface": {"fluid": "W  ", "solid": None}}
+```
+
+A plain string is one code from every side. A mapping is keyed by region name (`""`
+for an untagged element), and `None` writes **no row** from that side — which is how a
+conjugate fluid/solid interface keeps the fluid's wall condition and puts nothing on
+the solid. A region the mapping does not name raises. `examples/chimera.py` is the
+worked case.
 
 ### Tag at the lowest level; upper overrides lower
 
