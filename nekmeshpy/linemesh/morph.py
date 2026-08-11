@@ -24,7 +24,8 @@ def blend(a: LineMesh, b: LineMesh,
     """Linearly morph between two conformal profiles ``a`` and ``b`` (equal point count
     and identical ``lines`` connectivity -- which is exactly what makes both open or
     both closed), one profile per fraction ``t`` with points ``(1-t)*a + t*b`` -- so
-    ``t=0`` reproduces ``a`` and ``t=1`` reproduces ``b``."""
+    ``t=0`` reproduces ``a`` and ``t=1`` reproduces ``b``.  Each profile returned carries
+    ``a``'s ``point_tags`` and empty ``element_tags``."""
     A: PointArray = np.asarray(a.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(b.points, dtype=float).reshape(-1, 3)
     if A.shape[0] != B.shape[0]:

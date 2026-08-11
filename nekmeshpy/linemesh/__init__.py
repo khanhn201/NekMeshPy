@@ -1,7 +1,7 @@
 """1-D mesh container (:class:`LineMesh`), its operations, and its shape factories."""
 
 from . import assemble, morph, query, shape
-from .assemble import components, loft, loft_fn, merge, remove, select
+from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
 from .linemesh import LineMesh
 from .morph import blend, mirror, reverse, rotate, scale, transform, translate
 from .query import (
@@ -45,6 +45,7 @@ __all__ = [
     "line",
     "loft",
     "loft_fn",
+    "loft_spline",
     "merge",
     "morph",
     "on_surface",

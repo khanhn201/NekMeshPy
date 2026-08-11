@@ -247,6 +247,61 @@ def _loft_evaluated(
                 first_tag=first_tag, last_tag=last_tag)
 
 
+def loft_spline(
+    slices: Sequence[LineMesh],
+    *,
+    loop: bool = False,
+    element_tags: str | ElementTags | None = None,
+    first_tag: str | ElementTags | None = None,
+    last_tag: str | ElementTags | None = None,
+) -> QuadMesh:
+    """:func:`loft <nekmeshpy.quadmesh.assemble.loft>` with the sweep-direction nodes read
+    off a **cubic spline through the whole stack** of profiles, rather than blended
+    straight between the two bounding a layer.
+
+    Same arguments, same numbering, same tags, and the profiles given come back verbatim
+    as the levels -- the spline interpolates them, so this adds curvature between profiles
+    without moving any.  It is the automatic form of ``loft(..., sweep_nodes=...)``: where
+    that asks the caller for the intermediate profiles, this fits them.  Every node block
+    a profile stores is fitted, its ``interior`` as well as its points, so the result is
+    curved along the sweep at every node rather than only at the corners.
+
+    Reach for it when a sweep has a feature that turns sharply across a handful of
+    profiles: ``loft`` cuts the corner with a chord however high the order, and refining
+    the order alone will not fix that -- the nodes it adds land on the same chord."""
+    prof = list(slices)
+    order = prof[0].order if prof else 1
+    nz = len(prof) if loop else len(prof) - 1
+    if order < 2 or nz < 1:
+        return loft(prof, loop=loop, element_tags=element_tags,
+                    first_tag=first_tag, last_tag=last_tag)
+    fr: FloatArray = np.arange(nz + 1, dtype=float)
+    t: FloatArray = stations.refined_lattice(fr, order)
+
+    ref = prof[0]
+    lines: IntArray = np.asarray(ref.lines, dtype=np.int64).reshape(-1, 2)
+    # checked before the stack, so a mismatch names the profile rather than failing
+    # inside numpy with a shape it cannot explain
+    for k, m in enumerate(prof):
+        if (m.order != order or m.n_points != ref.n_points
+                or not np.array_equal(
+                    np.asarray(m.lines, dtype=np.int64).reshape(-1, 2), lines)):
+            raise ValueError(
+                "loft_spline: every profile must be index-paired with the first, but "
+                "profile %d stores a different order / point count / line table.  Place "
+                "one profile with the affine ops (translate / rotate / transform) rather "
+                "than rebuilding it per level." % k)
+    P: PointArray = stations.spline_levels(
+        np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3) for s in prof]),
+        t, loop=loop)
+    I: PointArray = stations.spline_levels(
+        np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
+    fitted = [LineMesh(P[k], lines, I[k], ref.point_tags, ref.element_tags)
+              for k in range(t.shape[0])]
+    return _loft_evaluated(fitted, t, order, loop=loop, element_tags=element_tags,
+                           first_tag=first_tag, last_tag=last_tag, name="loft_spline")
+
+
 def loft_fn(
     f: Callable[[float], LineMesh],
     fractions: FloatArray,
@@ -390,6 +445,7 @@ __all__ = [
     "components",
     "loft",
     "loft_fn",
+    "loft_spline",
     "merge",
     "remove",
     "select",

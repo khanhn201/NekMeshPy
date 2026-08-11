@@ -97,6 +97,39 @@ def refined_lattice(fractions: FloatArray, order: int) -> FloatArray:
     return np.concatenate([u, fr[-1:]])
 
 
+def spline_levels(blocks: FloatArray, t: FloatArray, *, loop: bool) -> FloatArray:
+    """Resample a per-level node block onto the sweep lattice through a **cubic spline**
+    in the level index, rather than a straight blend between the two bounding levels.
+
+    ``blocks`` is any node array stacked over the levels -- ``(n_lev,) + rest`` -- and the
+    levels are taken to sit at ``0, 1, ... n_lev-1``, which is exactly where ``loft``'s
+    own layers put them.  So evaluating at ``t`` returns level ``k`` verbatim at integer
+    ``t = k``: the spline *interpolates*, it does not approximate, and a sweep resampled
+    this way still passes through every profile it was given.
+
+    This is what a plain ``loft`` cannot do.  Its sweep-direction interior nodes are a
+    straight blend of the two profiles bounding their layer, so the surface is linear
+    between profiles however high the order is -- the trap the module docs call "high
+    order in storage, linear in geometry".  A spline sees the neighbouring profiles too,
+    so a station's high-order nodes bend the way the *stack* bends, and a feature that
+    turns sharply across a few profiles is resolved instead of being cut across.
+
+    ``loop`` closes the spline periodically, so the seam layer is no less smooth than any
+    other -- an open spline would leave the one place a closed sweep cannot show a joint.
+    Fewer than three levels carry no curvature to fit, and fall back to the straight
+    blend."""
+    n = blocks.shape[0]
+    x: FloatArray = np.arange(n + 1 if loop else n, dtype=float)
+    y: FloatArray = np.concatenate([blocks, blocks[:1]], axis=0) if loop else blocks
+    if x.shape[0] < 3:
+        lo = np.clip(np.floor(t).astype(np.int64), 0, max(x.shape[0] - 2, 0))
+        w = (t - lo).reshape((-1,) + (1,) * (blocks.ndim - 1))
+        return np.asarray((1.0 - w) * y[lo] + w * y[lo + 1], dtype=float)
+    from scipy.interpolate import CubicSpline
+    cs = CubicSpline(x, y, axis=0, bc_type="periodic" if loop else "not-a-knot")
+    return np.asarray(cs(t), dtype=float)
+
+
 def check_fraction_count(fr: FloatArray, *, loop: bool, name: str) -> None:
     """Raise unless ``fr`` carries enough fractions for at least one sweep layer (two,
     with ``loop=True`` -- the last fraction is the wrap back onto the first profile
@@ -156,6 +189,7 @@ __all__ = [
     "at_levels",
     "check_fraction_count",
     "refined_lattice",
+    "spline_levels",
     "sweep_lattice",
     "split_evaluated",
     "sweep_path",
