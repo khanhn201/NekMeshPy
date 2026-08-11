@@ -34,7 +34,8 @@ def test_physical_group_pads_code():
 def test_to_mesh_groups(built_mesh):
     m = export.to_mesh(built_mesh["mesh"])
     assert m.cells["hexahedron"].shape == (7200, 8)
-    assert m.cells["quad"].shape == (1840, 4)
+    # 1840 boundary faces + both sides of the two interior flux planes
+    assert m.cells["quad"].shape == (2000, 4)
     assert set(m.cell_sets) >= {"wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"}
     assert m.cell_sets["wall"]["quad"].size == 1440
 

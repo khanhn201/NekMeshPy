@@ -1,6 +1,7 @@
 """Topology / watertightness checks for the volume and surface meshes."""
 
 import numpy as np
+from conftest import face_rows
 
 from nekmeshpy import HexMesh, QuadMesh, TriMesh, hexmesh, linemesh, quadmesh, topology
 from nekmeshpy.core import tags as tags_mod
@@ -125,9 +126,11 @@ def test_tag_report_counts_both_disagreements(built_mesh):
 
 def test_tag_report_flags_an_untagged_boundary():
     """A lone hex with one of its six faces named: five boundary faces go uncovered."""
-    mesh = HexMesh.from_corners(
-        _UNIT_HEX, np.arange(8).reshape(1, 8),
-        face_tags=tags_mod.FaceTags(np.array([0]), np.array([5]), np.array(["bottom"])))
+    mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
+    mesh = hexmesh.HexMesh(
+        quadmesh.QuadMesh(mesh.quads.lines, mesh.quads.quad, mesh.quads.flip, None,
+                          tags_mod.ElementTags([int(mesh.hex[0, 4])], ["bottom"])),
+        mesh.hex, mesh.face_orient)
     assert hexmesh.tag_report(mesh) == (1, 5, 0)
 
 
@@ -145,9 +148,8 @@ def test_boundary_helpers_match_topology(built_mesh):
     assert hexmesh.boundary_faces(mesh).shape[0] == rep.n_boundary_faces
     # boundary faces are the wall + outlet named faces (flux planes are interior)
     outer = ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"]
-    exterior = mesh.face_tags.select(np.isin(mesh.face_tags.tags, outer))
     got = {(int(e), int(f)) for e, f in hexmesh.boundary_faces(mesh)}
-    want = {(int(e), int(f)) for e, f, _t in exterior}
+    want = {(e, f) for e, f, t in face_rows(mesh) if t in outer}
     assert got == want
     # point ids on the domain boundary, consistent with the face points
     face_points = np.unique(

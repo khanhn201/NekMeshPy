@@ -13,6 +13,7 @@ on a closed sweep lands on the seam -- from whichever side names it."""
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
 from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import topology
@@ -181,7 +182,8 @@ def test_hex_loft_loop_builds_a_watertight_solid_torus(order):
     assert report.n_boundary_faces == n_wall
     assert len(solid.face_tags) == n_wall
     assert sorted(set(solid.face_tags.tags.tolist())) == ["wall"]
-    assert set(solid.face_tags.sides[:].tolist()).isdisjoint({5, 6})
+    # never a cap face: a closed sweep's seam is interior and stays unnamed
+    assert {f for _, f, _ in face_rows(solid)}.isdisjoint({5, 6})
 
 
 def test_hex_loft_loop_beats_repeating_the_first_profile():
@@ -220,9 +222,8 @@ def test_quad_loft_loop_places_cap_tags(cap):
 def test_hex_loft_loop_places_cap_tags(cap):
     profiles = _disc_profiles(nsec=4)
     hm = hexmesh.loft(profiles, loop=True, **{cap: "seam"})
-    tagged = hm.face_tags.select(hm.face_tags.mask_for("seam"))
-    assert len(tagged) == profiles[0].n_quads       # one face per section quad
-    assert set(tagged.sides.tolist()) == {{"first_tag": 5, "last_tag": 6}[cap]}
+    # one shared face per section quad -- the seam, whichever side asked for it
+    assert hm.face_tags.count("seam") == profiles[0].n_quads
 
 
 def test_loft_loop_places_a_per_line_cap_table():

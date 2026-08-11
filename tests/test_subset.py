@@ -10,6 +10,7 @@ reconstruct the whole), and ``components`` against a ``merge`` of known pieces.
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
 from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import conform
@@ -110,10 +111,10 @@ def test_side_tags_follow_their_elements_and_drop_with_them():
     ids = np.arange(block.n_hexes // 2)
     part = hexmesh.select(block, ids)
     assert len(part.face_tags) < len(block.face_tags)
-    assert part.face_tags.elements.max() < part.n_hexes
+    assert max(e for e, _, _ in face_rows(part)) < part.n_hexes
     # every kept row is one the parent had, on the same face of the same element
-    parent = block.face_tags.as_dict()
-    for e, s, t in part.face_tags:
+    parent = {(e, f): t for e, f, t in face_rows(block)}
+    for e, s, t in face_rows(part):
         assert parent[(int(ids[e]), s)] == t
 
 
@@ -128,7 +129,7 @@ def test_removal_exposes_untagged_boundary():
             - hexmesh.boundary_faces(block).shape[0])
     assert grew > 0
     # the new rows are boundary the tag table says nothing about
-    named = set(map(tuple, part.face_tags.rows.tolist()))
+    named = {(e, f) for e, f, _ in face_rows(part)}
     assert any(tuple(r) not in named for r in hexmesh.boundary_faces(part).tolist())
 
 

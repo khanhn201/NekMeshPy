@@ -12,7 +12,7 @@ from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from .hexmesh import HexMesh
-from .query import boundary_faces
+from .query import boundary_faces, face_tag_rows
 
 
 def _selected_faces(mesh: HexMesh, tag: str | None) -> IntArray:
@@ -20,12 +20,13 @@ def _selected_faces(mesh: HexMesh, tag: str | None) -> IntArray:
     when ``tag`` is given, the *topological* boundary when it is not."""
     if tag is None:
         return boundary_faces(mesh)
-    rows = mesh.face_tags.select(mesh.face_tags.mask_for(tag))
-    if len(rows) == 0:
+    rows, names = face_tag_rows(mesh)
+    hit = rows[names == tag]
+    if hit.shape[0] == 0:
         raise ValueError(
             "boundary_mesh: no face carries the tag %r; this mesh has %s"
             % (tag, sorted(mesh.face_tags.group_tags) or "no tagged faces"))
-    return np.column_stack([rows.elements, rows.sides]).astype(np.int64)
+    return np.asarray(hit, dtype=np.int64)
 
 
 def _face_corners(mesh: HexMesh, sel: IntArray) -> IntArray:
@@ -72,12 +73,13 @@ def boundary_mesh(mesh: HexMesh, tag: str | None = None, *,
     local: IntArray = np.searchsorted(gids, poly)
     edges, elem_edges, flip = conform.unique_edges(local, 2)
     en, fn = _high_order_nodes(mesh, poly, gids[edges])
-    tags = mesh.face_tags.as_dict() if tag is None else None
     if tag is not None:
         elem = ElementTags.uniform(poly.shape[0], tag)
     else:
-        names = [tags.get((int(e), int(s)), "") for e, s in sel]   # type: ignore[union-attr]
-        elem = ElementTags.from_dense(np.asarray(names, dtype=np.str_))
+        # the extracted quad inherits the name of the parent face it came from
+        named = mesh.face_tags.dense(mesh.quads.n_quads)
+        elem = ElementTags.from_dense(
+            named[np.asarray(mesh.hex, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
     lines = LineMesh(mesh.points[gids], edges, en)
     return QuadMesh(lines, elem_edges, flip, fn, elem)
 

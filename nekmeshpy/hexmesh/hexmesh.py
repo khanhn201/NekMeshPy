@@ -11,10 +11,7 @@ from .._typing import (
     PointArray,
 )
 from ..core import conform
-from ..core.tags import (
-    ElementTags,
-    FaceTags,
-)
+from ..core.tags import ElementTags
 from ..linemesh.linemesh import _repr_tags
 from ..quadmesh import QuadMesh
 
@@ -59,7 +56,6 @@ class HexMesh:
         hex: IntArray,
         face_orient: IntArray,
         interior: PointArray | None = None,
-        face_tags: FaceTags | None = None,
         element_tags: ElementTags | None = None,
     ) -> None:
         """Construct from the B-rep directly: ``quads`` (a ``QuadMesh`` holding every
@@ -103,9 +99,7 @@ class HexMesh:
                 % (E, k, self.interior.shape))
 
         self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.face_tags = FaceTags.empty() if face_tags is None else face_tags
         self.element_tags.check_within(E)
-        self.face_tags.check_within(E)
 
         # Corner connectivity is derived from the shared faces and immutable
         # post-construction (point moves don't change it), so memoize it once.
@@ -139,7 +133,6 @@ class HexMesh:
         cls,
         points: PointArray,
         hexes: IntArray,
-        face_tags: FaceTags | None = None,
         element_tags: ElementTags | None = None,
         *,
         order: int = 1,
@@ -162,8 +155,20 @@ class HexMesh:
         conn: IntArray = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
         canonical_conn, elem_faces, face_orient = conform.canonical_faces(conn)
         quads = QuadMesh.from_corners(pts, canonical_conn)
-        return cls(quads, elem_faces, face_orient, None, face_tags,
-                   element_tags)
+        return cls(quads, elem_faces, face_orient, None, element_tags)
+
+    @property
+    def face_tags(self) -> ElementTags:
+        """The tags on the shared faces, over **face ids**.
+
+        This is ``quads``' own ``element_tags`` read through, not a table of its own:
+        rung *N*'s side tags are rung *N-1*'s element tags. A face is one stored object
+        both its hexes reference, so naming it is naming that object -- which is why
+        there is no ``(hex, side)`` here for the two sides to disagree over. The
+        ``(element, face)`` rows the ``.re2`` boundary block wants are reconstructed at
+        export from the hexes that carry each named face (see :func:`face_tag_rows
+        <nekmeshpy.hexmesh.query.face_tag_rows>`)."""
+        return self.quads.element_tags
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(E,8)`` (Nek order) recovered from the shared faces via

@@ -14,6 +14,7 @@ get a conformal whole welded along the plane.
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core import affine
@@ -135,13 +136,13 @@ def test_face_tags_follow_their_faces_through_the_rewind():
     assert sorted(got.face_group_tags) == sorted(block.face_group_tags)
     assert len(got.face_tags) == len(block.face_tags)
     for tag, z in (("inlet", 0.0), ("outlet", 2.0)):
-        rows = got.face_tags.select(got.face_tags.mask_for(tag))
-        corners = got.hexes[rows.elements[:, None],
-                            hexmesh.HexMesh.FACE_POINTS[rows.sides - 1]]
+        rows = np.array([(e, f) for e, f, t in face_rows(got) if t == tag])
+        corners = got.hexes[rows[:, 0][:, None],
+                            hexmesh.HexMesh.FACE_POINTS[rows[:, 1] - 1]]
         assert np.allclose(got.points[corners][..., 2], z)
-    wall = got.face_tags.select(got.face_tags.mask_for("wall"))
-    corners = got.hexes[wall.elements[:, None],
-                        hexmesh.HexMesh.FACE_POINTS[wall.sides - 1]]
+    wall = np.array([(e, f) for e, f, t in face_rows(got) if t == "wall"])
+    corners = got.hexes[wall[:, 0][:, None],
+                        hexmesh.HexMesh.FACE_POINTS[wall[:, 1] - 1]]
     assert np.allclose(np.linalg.norm(got.points[corners][..., :2], axis=-1), 1.0)
 
 

@@ -14,7 +14,7 @@ from .._typing import (
     Vec3,
 )
 from ..core import affine, conform
-from ..core.tags import FaceTags
+from ..quadmesh import QuadMesh
 from ..quadmesh.morph import _affine as quad_affine
 from ..quadmesh.morph import blend as quad_blend
 from .hexmesh import HexMesh
@@ -52,9 +52,12 @@ def blend(a: HexMesh, b: HexMesh,
     ho = a.order > 1
     ai, bi = a.interior, b.interior
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
-    return [HexMesh(faces, a.hex, a.face_orient,
-                (1.0 - t) * ai + t * bi if ho else None,
-                a.face_tags)
+    # the face tags ride the blended ``quads`` themselves -- ``QuadMesh.blend`` keeps
+    # ``a``'s edge tags but drops its element tags, so they are put back here
+    return [HexMesh(QuadMesh(faces.lines, faces.quad, faces.flip, faces.interior,
+                             a.quads.element_tags),
+                    a.hex, a.face_orient,
+                    (1.0 - t) * ai + t * bi if ho else None)
             for t, faces in zip(fr, quad_blend(a.quads, b.quads, fr))]
 
 
@@ -62,8 +65,7 @@ def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
     return HexMesh(quad_affine(mesh.quads, matrix, offset), mesh.hex,
                    mesh.face_orient, affine.apply(mesh.interior, matrix, offset),
-                   mesh.face_tags, mesh.element_tags,
-)
+                   mesh.element_tags)
 
 
 def transform(mesh: HexMesh, matrix: FloatArray,
@@ -122,10 +124,7 @@ def _rewind(mesh: HexMesh) -> HexMesh:
     n = mesh.order - 1
     perm: IntArray = (np.arange(n ** 3, dtype=np.int64).reshape(n, n, n)[::-1].ravel()
                       if n else np.zeros(0, dtype=np.int64))
-    ft = mesh.face_tags
     return HexMesh(mesh.quads, elem_faces, orient, mesh.interior[:, perm, :],
-                   FaceTags(ft.elements, np.where(ft.sides >= 5, 11 - ft.sides,
-                                                  ft.sides), ft.tags).ordered(),
                    mesh.element_tags)
 
 

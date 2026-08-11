@@ -487,7 +487,6 @@ def test_retag_element_leaves_a_shared_word_in_the_side_table(built_mesh):
     mesh = built_mesh["mesh"]
     assert "wall" in mesh.face_tags.group_tags
     collided = hexmesh.HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
-                               mesh.face_tags,
                                ElementTags.uniform(mesh.hex.shape[0], "wall"))
     got = hexmesh.retag_element(collided, {"wall": "fluid"})
     assert got.element_tags.group_tags == ["fluid"]

@@ -17,6 +17,7 @@ from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
 from ..core.physical import PhysicalGroup, PhysicalGroups
 from ..hexmesh import HexMesh
+from ..hexmesh.query import face_tag_rows
 from ..hexmesh.query import weld as hex_weld
 from ..linemesh import LineMesh
 from ..quadmesh import QuadMesh
@@ -33,6 +34,12 @@ _log = logging.getLogger("nekmeshpy")
 
 # accepted types for the ``groups`` export parameter
 GroupsArg = Union[PhysicalGroups, Mapping[str, str], None]
+
+
+def _rows_as_lists(mesh: HexMesh) -> tuple[list[list[int]], list[str]]:
+    """``face_tag_rows`` as plain lists, for the row-at-a-time paint loops below."""
+    rows, names = face_tag_rows(mesh)
+    return rows.tolist(), names.tolist()
 
 
 def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
@@ -56,7 +63,8 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     g = _as_groups(mesh, groups)
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
-    for elem, face, name in mesh.face_tags:
+    rows, names = face_tag_rows(mesh)
+    for (elem, face), name in zip(rows.tolist(), names.tolist()):
         conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
         name_rows.append(name)
     quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
@@ -107,7 +115,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
     re2 has no high-order format, so only the 8 corners of each hex are emitted."""
     g = _as_groups(mesh, groups)
     elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
-    face_tags = mesh.face_tags
+    bnd_rows, bnd_names = face_tag_rows(mesh)
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
         header = "#v004%16d%3d%16d%4d hdr" % (num_elem, 3, num_elem, 1)
@@ -119,8 +127,8 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg = None) -> HexMesh
             fid.write(elements[i, :, 1].astype("<f8").tobytes())
             fid.write(elements[i, :, 2].astype("<f8").tobytes())
         fid.write(struct.pack("<d", 0.0))
-        fid.write(struct.pack("<d", float(len(face_tags))))
-        for elem0, face, name in face_tags:
+        fid.write(struct.pack("<d", float(bnd_rows.shape[0])))
+        for (elem0, face), name in zip(bnd_rows.tolist(), bnd_names.tolist()):
             buf2: FloatArray = np.zeros(8, dtype="<f8")
             buf2[0] = float(elem0 + 1)
             buf2[1] = float(face)
@@ -275,7 +283,7 @@ def _hex_arrays(mesh: HexMesh,
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
-        for elem, face, name in mesh.face_tags:
+        for (elem, face), name in zip(*_rows_as_lists(mesh)):
             grp = g.get(name)
             if grp is None:
                 _log.warning("unknown boundary name: %s", name)
@@ -290,7 +298,7 @@ def _hex_arrays(mesh: HexMesh,
         mesh.quads.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    for elem, face, name in mesh.face_tags:
+    for (elem, face), name in zip(*_rows_as_lists(mesh)):
         grp = g.get(name)
         if grp is None:
             _log.warning("unknown boundary name: %s", name)

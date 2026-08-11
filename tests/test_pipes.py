@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from conftest import run_example
+from conftest import face_rows, run_example
 from scipy import integrate
 
 from nekmeshpy import hexmesh, topology
@@ -63,7 +63,7 @@ def _wall_nodes(mesh):
         mesh.quads.lines.interior, mesh.hex, mesh.face_orient,
         mesh.quads.interior, mesh.interior, mesh.order)
     ids = [conn[e][interp.hex_face_indices(s, mesh.order)]
-           for e, s, tag in mesh.face_tags
+           for e, s, tag in face_rows(mesh)
            if tag == "wall"]
     return nodes[np.unique(np.concatenate(ids))]
 

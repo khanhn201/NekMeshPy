@@ -17,11 +17,10 @@ from ..core import conform, stations
 from ..core.fields import gll_nodes
 from ..core.tags import (
     ElementTags,
-    FaceTags,
-    TagBuilder,
     element_mask,
     sweep_cap_tags,
     sweep_element_tags,
+    welded_element_tags,
 )
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
@@ -318,7 +317,45 @@ def loft(
                        + gv * carried_e[nxt][:, :, None, :, :])
         face_nodes = np.concatenate(
             [carried_f.reshape(-1, k2, 3), swept_f.reshape(-1, k2, 3)], axis=0)
-    faces = QuadMesh(edge_lm, face_edges, face_flip, face_nodes)
+    # -- 4b. the face tags, written onto the shared faces themselves -------------
+    # Both families are closed forms, so a tag lands on a face id rather than on some
+    # hex's view of one.  A tagged section *edge* names the face swept from it, one per
+    # layer -- which is where the old ``(5 - side) if flip`` remap went: a swept face is
+    # one object, and which way the hex on either side reads it is not its business.  A
+    # cap face **is** a section quad, so with no argument it inherits that quad's own
+    # element tag; on a closed sweep the two caps are the same faces and naming them
+    # differently is refused rather than resolved by whichever is written second.
+    fnamed = np.full(face_edges.shape[0], "", dtype=object)
+
+    def _name(ids: IntArray, names: StrArray) -> None:
+        hit = names != ""
+        fnamed[np.asarray(ids, dtype=np.int64)[hit]] = names[hit]
+
+    enames: StrArray = sec.edge_tags.dense(sec.lines.n_lines)
+    for e0 in sec.edge_tags.ids:
+        if eslot[e0] >= 0:
+            fnamed[n_prof * M + lay * ne + eslot[e0]] = enames[e0]
+    closed = ElementTags.empty()
+    cap: IntArray = np.arange(M, dtype=np.int64)
+    first_caps = sweep_cap_tags(first_tag, closed if loop else sec.element_tags,
+                                M, "HexMesh.loft")
+    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+                               M, "HexMesh.loft")
+    if loop:
+        clash = np.flatnonzero((first_caps != "") & (last_caps != "")
+                               & (first_caps != last_caps))
+        if clash.size:
+            raise ValueError(
+                "HexMesh.loft: on a loop the first and last caps are the same seam "
+                "faces, so they cannot be named differently -- got %r and %r on "
+                "section quad %d. Name the seam once, or leave one side untagged."
+                % (str(first_caps[clash[0]]), str(last_caps[clash[0]]),
+                   int(clash[0])))
+    _name(cap, first_caps)
+    _name(nxt[nz - 1] * M + cap, last_caps)
+
+    faces = QuadMesh(edge_lm, face_edges, face_flip, face_nodes,
+                     ElementTags.from_dense(np.asarray(fnamed, dtype=np.str_)))
 
     # -- 5. the hexes, as indices into that QuadMesh ----------------------------
     # Local faces 0-3 are the section's sides swept across the layer, 4 / 5 the section
@@ -336,31 +373,8 @@ def loft(
     if ho:
         interior = _at(conform._interior_slots(3, order))
 
-    # -- tags: by column rather than by element ---------------------------------
-    # a section side names the same hex face on every layer, and a cap names one layer's
-    # worth.  Caps stay faces 5/6 by q (the flip only reorders a quad's 4 corners); a cap
-    # face *is* a section quad, so with no argument it inherits that quad's own element
-    # tag -- except on a closed sweep, whose "caps" are the interior seam.
-    closed = ElementTags.empty()
-    first_caps = sweep_cap_tags(first_tag, closed if loop else sec.element_tags,
-                                M, "HexMesh.loft")
-    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
-                               M, "HexMesh.loft")
-    bb = TagBuilder(FaceTags)
-    # the section's edge tags now name shared *edges*, so each quad's four sides are
-    # read back through its own edge indices -- a section edge between two quads is
-    # therefore named from both, which is the point: one edge, one name, seen twice
-    side_names: StrArray = sec.edge_tags.dense(sec.lines.n_lines)[
-        np.asarray(sec.quad, dtype=np.int64)]
-    for q, side0 in zip(*np.nonzero(side_names != "")):
-        side = int(side0) + 1
-        bb.add_if_tagged(lay * M + int(q), (5 - side) if flip else side,
-                         str(side_names[q, side0]))
-    cap: IntArray = np.arange(M, dtype=np.int64)
-    bb.add_if_tagged(cap, 5, first_caps)
-    bb.add_if_tagged((nz - 1) * M + cap, 6, last_caps)
     etags = sweep_element_tags(element_tags, nz, M, "HexMesh.loft")
-    return HexMesh(faces, elem_faces, face_orient, interior, bb.build_ordered(), etags)
+    return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
 
 def _loft_evaluated(
@@ -507,7 +521,6 @@ def merge(
     eflip_list: list[BoolArray] = []
     ef_list: list[IntArray] = []
     forient_list: list[IntArray] = []
-    bnd_list: list[FaceTags] = []
     etag_list: list[ElementTags] = []
     noff = eoff = foff = elem_off = 0
     for m, c in zip(meshes, counts):
@@ -518,9 +531,7 @@ def merge(
         eflip_list.append(m._edge_flip)
         ef_list.append(m.hex + foff)
         forient_list.append(m.face_orient)
-        # ids shift by this block's offset; sides stay local to their element
         etag_list.append(m.element_tags.offset(elem_off))
-        bnd_list.append(m.face_tags.offset(elem_off))
         noff += c
         eoff += m.edges.shape[0]
         foff += m.quads.n_quads
@@ -528,7 +539,6 @@ def merge(
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
     etags = ElementTags.concat(etag_list)
-    bnd = FaceTags.concat(bnd_list).ordered()
 
     order = meshes[0].order if meshes else 1
     if any(mm.order != order for mm in meshes):
@@ -596,7 +606,23 @@ def merge(
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
     faces = _face_brep(points, edges, elem_edges, eflip, elem_faces, face_orient,
                        canonical_conn.shape[0], edge_nodes, face_nodes)
-    return HexMesh(faces, elem_faces, face_orient, interior, bnd, etags)
+    # A face tag rides the face, so it waits for the merged face table: block ``m``'s
+    # local face ``m.hex[e, f]`` is merged face ``elem_faces[elem_off + e, f]``.  Two
+    # blocks welding onto one shared face can each name it, so the combine is the
+    # weld's own conflict rule rather than a concatenation -- which is the point of
+    # storing the tag on the face: the disagreement is now visible instead of being
+    # two rows nobody reconciles.
+    off = 0
+    ftag_list: list[ElementTags] = []
+    for m in meshes:
+        mine: IntArray = np.full(m.quads.n_quads, -1, dtype=np.int64)
+        mine[np.asarray(m.hex, dtype=np.int64).ravel()] = np.asarray(
+            elem_faces[off:off + m.hexes.shape[0]], dtype=np.int64).ravel()
+        ftag_list.append(m.face_tags.renumber(mine))
+        off += m.hexes.shape[0]
+    faces = QuadMesh(faces.lines, faces.quad, faces.flip, faces.interior,
+                     welded_element_tags(ftag_list, "HexMesh.merge"))
+    return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
 def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
     """``(the kept hexes as a HexMesh, new_hex_of)`` -- the top rung of
@@ -612,9 +638,10 @@ def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
     if hexes.size:
         face_keep[np.unique(hexes)] = True
     sub_quads, new_face_of = quad_subset(mesh.quads, face_keep)
+    # the face tags ride ``sub_quads`` -- ``quad_subset`` already carried them onto
+    # the compacted face numbering
     return (HexMesh(sub_quads, new_face_of[hexes], mesh.face_orient[kept],
                     mesh.interior[kept],
-                    mesh.face_tags.renumber(new_hex_of),
                     mesh.element_tags.gather(kept)),
             new_hex_of)
 

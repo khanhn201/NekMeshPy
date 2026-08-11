@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ..quadmesh import tag as quadmesh
 from .hexmesh import HexMesh
 
 
@@ -25,7 +26,6 @@ def retag_element(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
     The region vocabulary and the boundary-condition vocabulary are different tables,
     so renaming one never disturbs the other even where they share a word."""
     return HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
-                   mesh.face_tags,
                    mesh.element_tags.renamed(mapping, "hexmesh.retag_element"))
 
 
@@ -45,9 +45,8 @@ def retag_face(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
         mesh = hexmesh.retag_face(mesh, {"inlet": "", "outlet": ""})
 
     :func:`tag_report <nekmeshpy.hexmesh.query.tag_report>` is what finds those."""
-    return HexMesh(mesh.quads, mesh.hex, mesh.face_orient, mesh.interior,
-                   mesh.face_tags.renamed(mapping, "hexmesh.retag_face"),
-                   mesh.element_tags)
+    return HexMesh(quadmesh.retag_element(mesh.quads, mapping),
+                   mesh.hex, mesh.face_orient, mesh.interior, mesh.element_tags)
 
 
 __all__ = [

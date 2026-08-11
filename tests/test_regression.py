@@ -31,7 +31,7 @@ def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
     assert mesh.hexes.shape == (7200, 8)         # (N,8) shared-point connectivity
     assert mesh.points.shape == (8137, 3)
-    assert len(mesh.face_tags) == 1840
+    assert len(mesh.face_tags) == 1840           # named *faces*, one tag each
 
 
 def test_tag_face_counts(built_mesh):
@@ -86,7 +86,9 @@ def test_re2_boundary_content_matches_golden(built_mesh):
     got = read_re2_boundary(built_mesh["re2"])
     want = read_re2_boundary(os.path.join(GOLDEN, "carotid.re2"))
     assert got == want
-    assert sum(got.values()) == 1840
+    # 1840 named faces, but 2000 rows: the two flux planes are *interior*, so each of
+    # their faces is carried by two hexes and reconstructs to a row for each
+    assert sum(got.values()) == 2000
     assert {code for _, _, code in got} == {"W  ", "O  ", "v  ", "f1 ", "f2 ", "int"}
 
 

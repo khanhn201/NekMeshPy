@@ -7,6 +7,7 @@ from collections import Counter
 
 import numpy as np
 import pytest
+from conftest import face_rows
 
 from nekmeshpy import NO_TAG, EdgeTags, HexMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
@@ -23,7 +24,7 @@ _SQUARE_BND_TAGS = ["bottom", "right", "top", "left"]
 def _face_centroids(mesh):
     """(K,3) centroid of every tagged face."""
     out = []
-    for e, f, _tag in mesh.face_tags:
+    for e, f, _tag in face_rows(mesh):
         out.append(mesh.points[mesh.hexes[e, HexMesh.FACE_POINTS[f - 1]]].mean(axis=0))
     return np.array(out).reshape(-1, 3)
 
@@ -125,5 +126,6 @@ def test_no_boundary_seam_keeps_merge_a_plain_concatenate():
     z = _face_centroids(mesh)[:, 2]
     assert not np.any(np.isclose(z, 1.0))
     # the true outer caps are present and correctly placed
-    assert np.all(np.isclose(z[mesh.face_tags.tags == "bottom"], 0.0))
-    assert np.all(np.isclose(z[mesh.face_tags.tags == "top"], 2.0))
+    names = np.array([t for _, _, t in face_rows(mesh)])
+    assert np.all(np.isclose(z[names == "bottom"], 0.0))
+    assert np.all(np.isclose(z[names == "top"], 2.0))

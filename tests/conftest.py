@@ -151,6 +151,19 @@ def read_re2_boundary(path):
         for r in rows)
 
 
+def face_rows(mesh):
+    """``[(element, face, tag), ...]`` for a ``HexMesh``, lexsorted by (element, face).
+
+    A tag names a shared face now, so this is the reconstruction an exporter does --
+    one entry per hex carrying a named face, which means two for a named *interior*
+    face. Kept here because most of these tests were written against the old
+    ``(element, side)`` storage and still read most naturally in those terms."""
+    from nekmeshpy.hexmesh.query import face_tag_rows
+    rows, names = face_tag_rows(mesh)
+    return [(int(e), int(f), str(t))
+            for (e, f), t in zip(rows.tolist(), names.tolist())]
+
+
 def assert_same_side_tags(a, b):
     """The two side-tag tables carry the same rows in the same order.
 
