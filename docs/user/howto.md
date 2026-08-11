@@ -140,7 +140,8 @@ distance, so "two diameters from the junction" cannot be read off a level value.
 then lays uniform layers out from the junction and geometric ones to the cap, solving
 for the growth ratio so the two meet without a jump.
 
-It needs gmsh (`pip install -e ".[all]"`, or just `".[mesh]"`), and it caches the
-built surfaces and the tet solve under `examples/data/` — a cold run is a few minutes,
-a warm one is not. Change a knob and the cache key changes with it, so a stale result
+It needs gmsh (`pip install -e ".[all]"`, or just `".[mesh]"`). The gmsh wheel's
+bundled library links against libGLU even when it is driven headlessly, so on a bare
+Linux box you may also need `libglu1-mesa`. It caches the built surfaces and the tet
+solve under `examples/data/` — a cold run is about five minutes, a warm one about two. Change a knob and the cache key changes with it, so a stale result
 is never handed back.
