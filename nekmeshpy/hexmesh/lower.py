@@ -7,7 +7,7 @@ from scipy.spatial import cKDTree
 
 from .._typing import IntArray, PointArray
 from ..core import conform
-from ..core.tags import EdgeTags, ElementTags
+from ..core.tags import ElementTags
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
@@ -79,8 +79,7 @@ def boundary_mesh(mesh: HexMesh, tag: str | None = None, *,
         names = [tags.get((int(e), int(s)), "") for e, s in sel]   # type: ignore[union-attr]
         elem = ElementTags.from_dense(np.asarray(names, dtype=np.str_))
     lines = LineMesh(mesh.points[gids], edges, en)
-    return QuadMesh(lines, elem_edges, flip, fn, EdgeTags.empty(), elem,
-)
+    return QuadMesh(lines, elem_edges, flip, fn, elem)
 
 
 def _templated(mesh: HexMesh, tag: str | None, poly: IntArray, gids: IntArray,
@@ -101,7 +100,7 @@ def _templated(mesh: HexMesh, tag: str | None, poly: IntArray, gids: IntArray,
     lines = LineMesh(PointMesh(mesh.points[g], tl.point_tags), tl.lines, en,
                      tl.element_tags)
     _log_pairing(tag, float(np.max(dist)))
-    return QuadMesh(lines, template.quad, template.flip, fn, template.edge_tags,
+    return QuadMesh(lines, template.quad, template.flip, fn,
                     template.element_tags)
 
 

@@ -313,9 +313,9 @@ def test_merge_does_not_weld_interior_points():
 
 # -- line -> quad tag ladder -------------------------------------------------
 
-def _quad_edge_mid(qm, row):
-    q, s = int(qm.edge_tags.elements[row]), int(qm.edge_tags.sides[row])
-    return qm.points[qm.quads[q, QuadMesh.EDGE_POINTS[s - 1]]].mean(axis=0)
+def _quad_edge_mid(qm, edge_id):
+    """A tag names a shared edge, so its geometry comes straight off ``lines``."""
+    return qm.points[qm.lines.lines[edge_id]].mean(axis=0)
 
 
 def test_extrude_line_to_quad_carries_element_and_edge_tags():
@@ -338,8 +338,8 @@ def test_extrude_line_to_quad_carries_element_and_edge_tags():
     # boundary-point tags land on the correct side-wall edges: "start" at x=0,
     # "end" at x=2; caps "near" at y=0, "far" at y=1.  Assert by edge geometry.
     tag_of = {}
-    for r in range(qm.n_edge_tags):
-        tag_of.setdefault(str(qm.edge_tags.tags[r]), []).append(_quad_edge_mid(qm, r))
+    for eid, name in qm.edge_tags:
+        tag_of.setdefault(name, []).append(_quad_edge_mid(qm, eid))
     assert np.isclose(np.array(tag_of["start"])[:, 0], 0.0).all()
     assert np.isclose(np.array(tag_of["end"])[:, 0], 2.0).all()
     assert np.isclose(np.array(tag_of["near"])[:, 1], 0.0).all()

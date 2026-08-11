@@ -12,10 +12,7 @@ from .._typing import (
 )
 from ..core import conform
 from ..core.interp import quad_edge_indices
-from ..core.tags import (
-    EdgeTags,
-    ElementTags,
-)
+from ..core.tags import ElementTags
 from ..linemesh import LineMesh
 from ..linemesh.linemesh import _repr_tags
 
@@ -89,7 +86,6 @@ class QuadMesh:
         quad: IntArray,
         flip: BoolArray,
         interior: PointArray | None = None,
-        edge_tags: EdgeTags | None = None,
         element_tags: ElementTags | None = None,
     ) -> None:
         """Construct from the B-rep directly: ``lines`` (a ``LineMesh`` holding every
@@ -134,9 +130,7 @@ class QuadMesh:
                 % (E, k, self.interior.shape))
 
         self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.edge_tags = EdgeTags.empty() if edge_tags is None else edge_tags
         self.element_tags.check_within(E)
-        self.edge_tags.check_within(E)
 
         # corner connectivity is derived from quad/flip and immutable post-construction
         # (point moves don't change it), so memoize it once.
@@ -147,7 +141,6 @@ class QuadMesh:
         cls,
         points: PointArray,
         quads: IntArray,
-        edge_tags: EdgeTags | None = None,
         element_tags: ElementTags | None = None,
         *,
         order: int = 1,
@@ -173,7 +166,17 @@ class QuadMesh:
         conn: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         edges, elem_edges, flip = conform.unique_edges(conn, 2)
         lm = LineMesh(pts, edges)
-        return cls(lm, elem_edges, flip, None, edge_tags, element_tags)
+        return cls(lm, elem_edges, flip, None, element_tags)
+
+    @property
+    def edge_tags(self) -> ElementTags:
+        """The tags on the shared edges, over **edge ids**.
+
+        This is ``lines``' own ``element_tags`` read through, not a table of its own:
+        rung *N*'s side tags are rung *N-1*'s element tags. An edge is one stored
+        object every incident quad references, so naming it is naming that object --
+        which is why there is no ``(quad, side)`` here to disagree with itself."""
+        return self.lines.element_tags
 
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(Q,4)`` recovered from the edge indices + flip: column

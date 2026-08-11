@@ -281,8 +281,8 @@ def test_a_reversed_rings_per_segment_tags_stay_on_their_segments():
     rev = linemesh.reverse(named)
     section = quadmesh.ogrid(rev, 2, 2)
     where = dict(zip(rev.element_tags.tags.tolist(), rev.element_tags.ids.tolist()))
-    for e, side, tag in section.edge_tags:
-        mid = section.points[section.quads[e][[side - 1, side % 4]]].mean(axis=0)
+    for eid, tag in section.edge_tags:
+        mid = section.points[section.lines.lines[eid]].mean(axis=0)
         assert np.allclose(mid, rev.points[rev.lines[where[tag]]].mean(axis=0))
 
 

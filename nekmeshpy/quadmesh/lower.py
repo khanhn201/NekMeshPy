@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .._typing import IntArray, PointArray
+from .._typing import IntArray, PointArray, StrArray
 from ..core import conform
 from ..core.tags import ElementTags
 from ..linemesh import LineMesh
@@ -14,15 +14,18 @@ from .query import boundary_edges
 
 def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
     """A section's boundary as a ``LineMesh``, carrying the section's **own** nodes."""
+    # a tag names a shared *edge*, so the quads carrying it are looked up rather than
+    # stored: an edge on the boundary has one, an interior one has both of its own.
+    named: StrArray = mesh.edge_tags.dense(mesh.lines.n_lines)
     if tag is None:
         sel: IntArray = boundary_edges(mesh)
     else:
-        rows = mesh.edge_tags.select(mesh.edge_tags.mask_for(tag))
-        if len(rows) == 0:
+        hit = np.argwhere(named[np.asarray(mesh.quad, dtype=np.int64)] == tag)
+        if hit.shape[0] == 0:
             raise ValueError(
                 "boundary_mesh: no edge carries the tag %r; this section has %s"
                 % (tag, sorted(mesh.edge_tags.group_tags) or "no tagged edges"))
-        sel = np.column_stack([rows.elements, rows.sides]).astype(np.int64)
+        sel = np.column_stack([hit[:, 0], hit[:, 1] + 1]).astype(np.int64)
 
     pairs: IntArray = mesh.quads[sel[:, 0][:, None],
                                  QuadMesh.EDGE_POINTS[sel[:, 1] - 1, :]]
@@ -40,10 +43,8 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
     if tag is not None:
         elem = ElementTags.uniform(pairs.shape[0], tag)
     else:
-        named = mesh.edge_tags.as_dict()
         elem = ElementTags.from_dense(
-            np.asarray([named.get((int(e), int(s)), "") for e, s in sel],
-                       dtype=np.str_))
+            named[np.asarray(mesh.quad, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
     return LineMesh(mesh.points[gids], local, en, elem)
 
 

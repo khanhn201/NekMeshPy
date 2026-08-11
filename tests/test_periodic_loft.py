@@ -156,7 +156,10 @@ def test_quad_loft_loop_emits_no_cap_rows_but_keeps_side_walls():
     assert closed.n_quads == 4 * 2
     assert sorted(set(closed.edge_tags.tags.tolist())) == ["left", "right"]
     assert len(closed.edge_tags) == 2 * 4
-    assert set(closed.edge_tags.sides[:].tolist()) == {2, 4}   # never sides 1/3
+    # every tagged edge is a swept side wall, never a carried seam edge: the seam ones
+    # are the profile's own lines, which a closed sweep leaves unnamed
+    seam = set(np.asarray(closed.quad, dtype=int)[:, (0, 2)].ravel().tolist())
+    assert not seam & set(closed.edge_tags.ids.tolist())
 
 
 # -- rung 3: HexMesh.loft -----------------------------------------------------
@@ -208,9 +211,9 @@ def test_line_loft_loop_places_cap_tags(cap):
 def test_quad_loft_loop_places_cap_tags(cap):
     qm = quadmesh.loft(_ring_profiles(nsec=4), loop=True, **{cap: "seam"})
     # one tagged edge per section line, on the seam layer's own side
+    # one tagged edge per section line: the seam edges themselves, whichever side of
+    # the closed sweep asked for them
     assert qm.edge_tags.count("seam") == NRING
-    tagged = qm.edge_tags.select(qm.edge_tags.mask_for("seam"))
-    assert set(tagged.sides.tolist()) == {{"first_tag": 1, "last_tag": 3}[cap]}
 
 
 @pytest.mark.parametrize("cap", ["first_tag", "last_tag"])
@@ -230,11 +233,15 @@ def test_loft_loop_places_a_per_line_cap_table():
     assert qm.edge_tags.count("seam") == 1
 
 
-def test_loft_loop_can_tag_one_side_of_the_seam_only():
-    """The two caps are the same seam seen from either side, so naming one names one
-    side: the whole point of allowing cap tags on a closed sweep."""
+def test_loft_loop_seam_cannot_carry_two_names():
+    """The two caps of a closed sweep are the *same* seam edges. With one name per
+    shared edge that is no longer two rows to disagree, so naming them differently is
+    refused rather than resolved by whichever is written second."""
     qm = quadmesh.loft(_ring_profiles(nsec=4), loop=True, first_tag="in")
-    both = quadmesh.loft(_ring_profiles(nsec=4), loop=True,
-                         first_tag="in", last_tag="out")
     assert qm.edge_tags.count("in") == NRING and qm.edge_tags.count("out") == 0
-    assert both.edge_tags.count("in") == both.edge_tags.count("out") == NRING
+    same = quadmesh.loft(_ring_profiles(nsec=4), loop=True,
+                         first_tag="in", last_tag="in")
+    assert same.edge_tags.count("in") == NRING
+    with pytest.raises(ValueError, match="same seam edges"):
+        quadmesh.loft(_ring_profiles(nsec=4), loop=True,
+                      first_tag="in", last_tag="out")

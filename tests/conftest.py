@@ -75,7 +75,7 @@ def conformal(mesh):
 
 
 def quad_from_entities(points, quads, edge_nodes=None, interior=None,
-                       edge_tags=None, element_tags=None, *, order=1):
+                       element_tags=None, *, order=1):
     """Local test scaffold: build a ``QuadMesh`` from corner ``points`` ``(P,3)`` +
     CCW ``quads`` ``(Q,4)`` plus already-decomposed high-order tables.
 
@@ -90,8 +90,7 @@ def quad_from_entities(points, quads, edge_nodes=None, interior=None,
     conn = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     edges, elem_edges, flip = conform.unique_edges(conn, 2)
     lm = LineMesh(pts, edges, interior=edge_nodes)
-    return QuadMesh(lm, elem_edges, flip, interior, edge_tags,
-                    element_tags)
+    return QuadMesh(lm, elem_edges, flip, interior, element_tags)
 
 
 def vtu_cell_types(path):

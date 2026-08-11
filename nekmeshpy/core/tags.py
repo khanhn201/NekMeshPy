@@ -413,6 +413,15 @@ class ElementTags:
         """How many elements are named ``tag``."""
         return int(np.count_nonzero(self.tags == tag))
 
+    def mask_for(self, tag: str) -> BoolArray:
+        """Boolean mask of the **rows** named ``tag`` (not of the elements)."""
+        return np.asarray(self.tags == tag, dtype=bool)
+
+    def select(self, mask: BoolArray) -> ElementTags:
+        """The rows where ``mask`` is True, ascending id order preserved."""
+        m = np.asarray(mask, dtype=bool)
+        return ElementTags(self.ids[m], self.tags[m])
+
     def __repr__(self) -> str:
         return "<ElementTags %d tagged {%s}>" % (len(self), ",".join(self.group_tags))
 

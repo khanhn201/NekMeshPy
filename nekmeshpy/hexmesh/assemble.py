@@ -11,6 +11,7 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
+    StrArray,
 )
 from ..core import conform, stations
 from ..core.fields import gll_nodes
@@ -346,8 +347,15 @@ def loft(
     last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
                                M, "HexMesh.loft")
     bb = TagBuilder(FaceTags)
-    for (q, side), nm in sec.edge_tags.as_dict().items():
-        bb.add_if_tagged(lay * M + q, (5 - side) if flip else side, nm)
+    # the section's edge tags now name shared *edges*, so each quad's four sides are
+    # read back through its own edge indices -- a section edge between two quads is
+    # therefore named from both, which is the point: one edge, one name, seen twice
+    side_names: StrArray = sec.edge_tags.dense(sec.lines.n_lines)[
+        np.asarray(sec.quad, dtype=np.int64)]
+    for q, side0 in zip(*np.nonzero(side_names != "")):
+        side = int(side0) + 1
+        bb.add_if_tagged(lay * M + int(q), (5 - side) if flip else side,
+                         str(side_names[q, side0]))
     cap: IntArray = np.arange(M, dtype=np.int64)
     bb.add_if_tagged(cap, 5, first_caps)
     bb.add_if_tagged((nz - 1) * M + cap, 6, last_caps)
@@ -434,7 +442,7 @@ def loft_spline(
         np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
     fitted = [QuadMesh(LineMesh(PointMesh(P[k], ref.lines.point_tags), edges, E[k],
                                 ref.lines.element_tags),
-                       ref.quad, ref.flip, F[k], ref.edge_tags, ref.element_tags)
+                       ref.quad, ref.flip, F[k], ref.element_tags)
               for k in range(t.shape[0])]
     return _loft_evaluated(fitted, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="loft_spline")
