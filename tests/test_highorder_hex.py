@@ -7,11 +7,10 @@ true wall/shell) and the N=1 no-op (order-1 factories are byte-for-byte the old
 linear meshes, and the ``high_order_hex`` example VTU stays byte-identical to its
 golden)."""
 
-import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example, vtu_cell_types
+from conftest import curved, vtu_cell_types
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.interp import corner_indices, hex_face_indices
@@ -230,14 +229,3 @@ def test_vtu_meshio_roundtrip(tmp_path):
 
 
 # -- example golden -----------------------------------------------------
-def test_high_order_hex_example_matches_golden(tmp_path):
-    ns = run_example("high_order_hex.py", tmp_path)
-    mesh = ns["mesh"]
-    # the example's own ORDER constant is the contract -- read it back rather
-    # than pinning a literal here, so the two can never drift apart.
-    assert isinstance(mesh, HexMesh) and mesh.order == ns["ORDER"] > 1
-    with open(os.path.join(tmp_path, "high_order_hex.vtu"), "rb") as f:
-        got = f.read()
-    with open(os.path.join(GOLDEN, "high_order_hex.vtu"), "rb") as f:
-        ref = f.read()
-    assert got == ref

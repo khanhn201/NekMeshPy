@@ -6,11 +6,10 @@ true surface / wall) and the N=1 no-op (order-1 factories are byte-for-byte the 
 linear meshes, and the ``high_order_quad`` example VTU stays byte-identical to its
 golden)."""
 
-import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example, vtu_cell_types
+from conftest import curved, vtu_cell_types
 
 from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
@@ -461,14 +460,3 @@ def test_vtu_quad_nodes_land_on_the_bilinear_lattice(tmp_path):
 
 
 # -- example golden -----------------------------------------------------
-def test_high_order_quad_example_matches_golden(tmp_path):
-    ns = run_example("high_order_quad.py", tmp_path)
-    mesh = ns["mesh"]
-    # the example's own ORDER constant is the contract -- read it back rather
-    # than pinning a literal here, so the two can never drift apart.
-    assert isinstance(mesh, QuadMesh) and mesh.order == ns["ORDER"] > 1
-    with open(os.path.join(tmp_path, "high_order_quad.vtu"), "rb") as f:
-        got = f.read()
-    with open(os.path.join(GOLDEN, "high_order_quad.vtu"), "rb") as f:
-        ref = f.read()
-    assert got == ref

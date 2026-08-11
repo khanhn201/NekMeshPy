@@ -184,9 +184,8 @@ loop  = linemesh.circle(radius=2.0, n=8, order=5)   # 6 GLL nodes / arc, on the 
 export.line_to_vtu(loop, "arc.vtu")                 # VTK_LAGRANGE_CURVE (XML)
 ```
 
-See [`examples/high_order_curve.py`](examples/high_order_curve.py),
-[`high_order_quad.py`](examples/high_order_quad.py), and
-[`high_order_hex.py`](examples/high_order_hex.py).
+Every example is high order; pass `order=N` to a factory and the
+nodes land on the true geometry.
 
 ## Development
 

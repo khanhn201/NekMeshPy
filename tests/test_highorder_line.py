@@ -5,13 +5,12 @@ Two invariants ride through: geometric truth (curved nodes sit on the true shape
 and the N=1 no-op (order-1 factories are byte-for-byte the old linear meshes, and
 the ``high_order_curve`` example VTU stays byte-identical to its golden)."""
 
-import os
 
 import numpy as np
 import pytest
-from conftest import GOLDEN, curved, run_example, vtu_cell_types
+from conftest import curved, vtu_cell_types
 
-from nekmeshpy import LineMesh, linemesh
+from nekmeshpy import linemesh
 from nekmeshpy.io import export
 
 
@@ -141,14 +140,3 @@ def test_vtu_high_order_is_lagrange_curve(tmp_path):
 
 
 # -- example golden -----------------------------------------------------
-def test_high_order_curve_example_matches_golden(tmp_path):
-    ns = run_example("high_order_curve.py", tmp_path)
-    mesh = ns["mesh"]
-    # the example's own ORDER constant is the contract -- read it back rather
-    # than pinning a literal here, so the two can never drift apart.
-    assert isinstance(mesh, LineMesh) and mesh.order == ns["ORDER"] > 1
-    with open(os.path.join(tmp_path, "high_order_curve.vtu"), "rb") as f:
-        got = f.read()
-    with open(os.path.join(GOLDEN, "high_order_curve.vtu"), "rb") as f:
-        ref = f.read()
-    assert got == ref

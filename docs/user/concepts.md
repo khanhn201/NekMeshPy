@@ -716,7 +716,6 @@ meshed.
   the `conform.conformal_*` walk, so a viewer renders the true curved geometry. Use
   the XML `.vtu` writer ({func}`nekmeshpy.io.export.to_vtu` / `line_to_vtu` /
   `quad_to_vtu`) — ParaView and VisIt render Lagrange cells reliably from `.vtu`.
-  See `examples/high_order_*.py`.
 - **Quality metrics are opt-in** — the defaults stay corner-based so pinned numbers
   hold. Pass `high_order=True` to `mesh.scaled_jacobian()` /
   `mesh.quality_summary()` to sample the scaled Jacobian at the block's `(N+1)^d` GLL
