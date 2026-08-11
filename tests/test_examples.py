@@ -25,7 +25,7 @@ _EXAMPLES = os.path.join(os.path.dirname(__file__), "..", "examples")
 
 #: Scripts that are imported by other examples rather than run for their own mesh, so
 #: they legitimately define no ``mesh`` global.  They must still execute cleanly.
-LIBRARY_ONLY = {"tjunction_lib.py", "coil_lib.py"}
+LIBRARY_ONLY = {"tjunction_lib.py", "coil_lib.py", "femoral_vol.py"}
 
 #: Wall-clock over ~10 s on a warm machine, so they are deselected from a default run
 #: (``-m "not slow"`` in ``addopts``) and run explicitly by one CI job.  Measured:

@@ -114,3 +114,33 @@ leg filled with `half_ogrid`, extruded/merged, and smoothed. →
 output is frozen in `tests/golden/` (coordinates to `1e-12`, connectivity and
 boundary tags byte-for-byte), so any change that moves it is a bug unless
 deliberately re-based.
+
+## The femoral T-junction: build the surface, then mesh it like a scan
+
+`examples/femoral.py` runs the carotid pipeline on a surface it **builds** rather
+than loads — a main vessel and a branch teeing off at an angle, joined on a flat
+elliptical seam and ringed by a trough. Everything downstream is the carotid's:
+conduction seam fields, a sign-based cut into three legs, conformal seam rings
+from Fourier-refit arcs, an O-grid per station, `loft`, `weld`.
+
+Two things make it worth reading on its own.
+
+**The conduction solve is volumetric, not on the wall.** `examples/femoral_vol.py`
+tet-meshes the interior with gmsh and solves P1 Laplace there. A harmonic field
+with a no-flux wall has `grad(u)` tangent to the wall, so every level set meets the
+wall at a right angle — which a field solved on the wall alone cannot tell you
+anything about. The Dirichlet condition is imposed on the *cut itself*: the tets are
+clipped along each leg's bounding level sets and `u` is pinned on the nodes the clip
+creates, because pinning it on a band of nearby nodes instead quantizes the boundary
+and shreds the level sets.
+
+**Stations are placed by distance, not by level.** The field is not linear in
+distance, so "two diameters from the junction" cannot be read off a level value.
+`leg_levels` walks the gradient from seam to cap to build the level-to-distance map,
+then lays uniform layers out from the junction and geometric ones to the cap, solving
+for the growth ratio so the two meet without a jump.
+
+It needs gmsh (`pip install -e ".[all]"`, or just `".[mesh]"`), and it caches the
+built surfaces and the tet solve under `examples/data/` — a cold run is a few minutes,
+a warm one is not. Change a knob and the cache key changes with it, so a stale result
+is never handed back.
