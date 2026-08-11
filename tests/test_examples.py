@@ -27,12 +27,12 @@ _EXAMPLES = os.path.join(os.path.dirname(__file__), "..", "examples")
 #: they legitimately define no ``mesh`` global.  They must still execute cleanly.
 LIBRARY_ONLY = {"tjunction_lib.py", "coil_lib.py", "femoral_vol.py"}
 
-#: Wall-clock over ~10 s on a warm machine, so they are deselected from a default run
-#: (``-m "not slow"`` in ``addopts``) and run explicitly by one CI job.  Measured:
-#: chimera 57 s, chimera_full 138 s, femoral 316 s.  ``femoral`` caches its surfaces and
-#: its tet solve under ``examples/data/``, but CI starts cold every time, so it pays the
-#: full 316 s -- and would pay it once per Python version if it were not deselected here.
-SLOW = {"chimera.py", "chimera_full.py", "femoral.py"}
+#: Deselected from a default run (``-m "not slow"`` in ``addopts``) and run explicitly
+#: by one CI job.  Only ``femoral`` is left: it tet-meshes with gmsh and costs 316 s
+#: cold, which CI always is, and it would pay that once per Python version.  The
+#: chimera pair used to be here at 57 s / 138 s and are now 20 s / 40 s -- worth the
+#: default run to have the largest meshes in the repo covered on every push.
+SLOW = {"femoral.py"}
 
 #: Examples known to build an inverted element, as a strict xfail so that fixing one
 #: fails this test and forces the entry out.  Empty, and worth keeping that way: the

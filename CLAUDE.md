@@ -8,7 +8,7 @@ pip install -e ".[all,dev]"
 ruff check nekmeshpy tests examples
 mypy                          # config pins files=["nekmeshpy"]; do NOT pass paths
 python -m pytest              # addopts deselect `slow`
-python -m pytest -m slow      # the big chimera examples
+python -m pytest -m slow      # femoral, the one gmsh example
 sphinx-build -b html -n -W --keep-going docs docs/_build/html
 ```
 
