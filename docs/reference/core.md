@@ -1,61 +1,61 @@
-# `model`
+# `core`
 
-The mesh-agnostic model: the shared-point `Mesh`, physical groups, topology
-checks, and sizing fields. The order-N kernel — `model.interp` (numerics over GLL
-reference nodes) and `model.conform` (topology / orientation / reconciliation
+The mesh-agnostic layer: the shared-point `Mesh`, physical groups, topology
+checks, and sizing fields. The order-N kernel — `core.interp` (numerics over GLL
+reference nodes) and `core.conform` (topology / orientation / reconciliation
 behind the B-rep) — is internal; see
 [Concepts](../user/concepts.md#high-order-order-n-elements).
 
-## `model.mesh`
+## `core.mesh`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.mesh
    :members:
 ```
 
-## `model.physical`
+## `core.physical`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.physical
    :members:
 ```
 
-## `model.topology`
+## `core.topology`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.topology
    :members:
 ```
 
-## `model.quality`
+## `core.quality`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.quality
    :members:
 ```
 
-## `model.measure`
+## `core.measure`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.measure
    :members:
 ```
 
-## `model.affine`
+## `core.affine`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.affine
    :members:
 ```
 
-## `model.frames`
+## `core.frames`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.frames
    :members:
 ```
 
-## `model.paths`
+## `core.paths`
 
 `Move` — one row of a move table, `("line", length, 0.0)` or `("arc", radius,
 signed_degrees)` — is excluded below: it is a `typing.Tuple` alias, and autodoc
@@ -68,7 +68,7 @@ module docstring describes the two forms.
    :exclude-members: Move
 ```
 
-## `model.surfaces`
+## `core.surfaces`
 
 `SurfaceMap` — a `(K,2) -> (K,3)` callable — is excluded below for the same
 reason as `paths.Move`: it is a `typing` alias, and autodoc renders those through
@@ -80,14 +80,14 @@ reason as `paths.Move`: it is a `typing` alias, and autodoc renders those throug
    :exclude-members: SurfaceMap
 ```
 
-## `model.fields`
+## `core.fields`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.fields
    :members:
 ```
 
-## `model.tags`
+## `core.tags`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.tags

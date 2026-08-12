@@ -48,12 +48,18 @@ myst_heading_anchors = 3
 
 # -- autodoc -----------------------------------------------------------------
 # The reference documents each *leaf* module once with ``automodule`` (see
-# docs/reference/*.md); autodoc excludes imported members by default, so the
-# classes re-exported from the package ``__init__``s are documented exactly once,
-# at their canonical location -- no duplicate/ambiguous cross-references.  The shape
-# factories are free functions bound onto LineMesh / QuadMesh by each package
-# ``__init__`` (setattr), so they land in the class ``__dict__`` and autodoc documents
-# them directly on the container -- no inherited-members needed.
+# docs/reference/*.md). Autodoc's usual "skip imported members" rule does NOT
+# apply here: every rung package (linemesh/quadmesh/hexmesh) declares an
+# ``__all__``, and once a module has one, autodoc treats it as the authoritative
+# member list regardless of where each name was actually defined -- so a bare
+# ``automodule:: nekmeshpy.quadmesh :members:`` (even with an explicit, narrowed
+# ``:members:`` list) still pulls in every re-exported operation, duplicating the
+# full docstring already rendered under its owning submodule
+# (``nekmeshpy.quadmesh.shape``, ``.morph``, ...). The reference pages route
+# around this: each rung's own top section uses ``autoclass``/``autodata`` for
+# just its container class and constants, which documents that exact object at
+# that exact dotted path without going through ``__all__`` at all -- everything
+# else is documented once, under the submodule that actually defines it.
 autodoc_default_options = {
     "members": True,
     "undoc-members": False,
@@ -94,4 +100,7 @@ intersphinx_mapping = {
 # -- HTML output -------------------------------------------------------------
 html_theme = "furo"
 html_title = f"NekMeshPy {release}"
-html_static_path: list[str] = []
+html_static_path = ["_static"]
+# furo styles a visited link in a separate purple brand color by default --
+# custom.css makes it match an ordinary link instead, in both light and dark mode.
+html_css_files = ["custom.css"]
