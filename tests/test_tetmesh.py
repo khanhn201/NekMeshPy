@@ -99,7 +99,15 @@ def test_cap_surface_closes_an_open_patch():
 
 
 def test_tet_mesh_generates_a_watertight_volume():
-    pytest.importorskip("gmsh")
+    try:
+        import gmsh  # noqa: F401
+    except (ImportError, OSError):
+        # gmsh's wheel dlopen's libgmsh.so eagerly at import time, so a machine
+        # with the package installed but not its native libGLU dependency (the
+        # default "Tests" CI job, which installs `all` -- gmsh included -- but
+        # only the slow-examples job adds libGLU) raises OSError, not
+        # ImportError; pytest.importorskip only catches the latter.
+        pytest.skip("gmsh not usable in this environment (missing libGLU?)")
     # a small octahedron: 6 vertices, 8 outward-wound triangular faces
     V = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0],
                   [0, -1, 0], [0, 0, 1], [0, 0, -1]], dtype=float)
