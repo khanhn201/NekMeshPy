@@ -24,6 +24,9 @@ container's own `element_tags`.
 ## Operations
 
 ```{eval-rst}
+.. automodule:: nekmeshpy.pointmesh.morph
+   :members:
+
 .. automodule:: nekmeshpy.pointmesh.tag
    :members:
 ```

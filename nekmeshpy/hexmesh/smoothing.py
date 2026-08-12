@@ -8,10 +8,12 @@ import numpy as np
 import scipy.sparse as sp
 
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
+from ..linemesh import LineMesh
+from ..pointmesh import PointMesh
+from ..quadmesh import QuadMesh
 from ..trimesh import TriMesh, ops
 from . import quality
 from .hexmesh import HexMesh
-from .morph import reposition
 from .query import _unique_edges, classify_points
 
 _log = logging.getLogger("nekmeshpy")
@@ -127,7 +129,14 @@ def smooth(
     if np.min(sj) <= 0:
         _log.warning("  %d element(s) still non-positive after smoothing",
                      int(np.sum(sj <= 0)))
-    return reposition(mesh, X)
+    # mesh.order == 1 is enforced above, so every interior in the ladder is empty
+    # and this only ever moves corners.
+    qm, lm = mesh.quad_mesh, mesh.quad_mesh.line_mesh
+    return HexMesh(
+        QuadMesh(LineMesh(PointMesh(X, lm.point_tags), lm.lines, lm.interior,
+                          lm.element_tags),
+                qm.quad, qm.orient, qm.interior, qm.element_tags),
+        mesh.hex, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 # -- helpers (module-private) -------------------------------------------

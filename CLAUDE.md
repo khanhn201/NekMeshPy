@@ -253,3 +253,6 @@ override *to* untagged** — the difference shows where a tag would otherwise be
   a pytest `AttributeError`, not a type error.
 
 `docs/user/` is the long form (`concepts.md`, `architecture.md`, `conventions.md`).
+
+## Git
+When make a PR, always PR to main

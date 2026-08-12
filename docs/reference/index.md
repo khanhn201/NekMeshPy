@@ -10,6 +10,7 @@ generated from source docstrings.
 pointmesh
 linemesh
 trimesh
+tetmesh
 quadmesh
 hexmesh
 core

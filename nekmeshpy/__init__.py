@@ -1,6 +1,6 @@
 """NekMeshPy -- an all-hex meshing toolkit with Nek5000/NekRS export."""
 
-from . import trimesh
+from . import tetmesh, trimesh
 from .core import fields, topology
 from .core.fields import AxisLinearField, ConstantField, DistanceField, Field, MinField
 from .core.mesh import Mesh
@@ -18,12 +18,15 @@ from .quadmesh.smoothing import (
     register_section_smoothing,
     set_section_smoothing,
 )
+from .tetmesh import TetMesh
 from .trimesh import TriMesh
 
 __all__ = [
     "LineMesh",
     "PointMesh",
+    "TetMesh",
     "TriMesh",
+    "tetmesh",
     "trimesh",
     "QuadMesh",
     "HexMesh",

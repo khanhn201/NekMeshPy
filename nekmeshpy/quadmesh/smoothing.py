@@ -9,8 +9,9 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
-from .._typing import BoolArray, IntArray
-from .morph import reposition
+from .._typing import BoolArray, IntArray, PointArray
+from ..linemesh import LineMesh
+from ..pointmesh import PointMesh
 from .quadmesh import QuadMesh
 
 F = TypeVar("F", bound=Callable[..., "QuadMesh"])
@@ -36,6 +37,18 @@ def _section_boundary(quads: IntArray, nu: int) -> BoolArray:
     return bnd
 
 
+def _with_points(qm: QuadMesh, X: PointArray) -> QuadMesh:
+    """``qm`` rebuilt around solved corner positions ``X``.
+
+    Both relaxers below are order-1 only (``set_section_smoothing`` rejects anything
+    higher before either runs), so every ``interior`` in the ladder is empty and this
+    only ever moves corners."""
+    lm = qm.line_mesh
+    return QuadMesh(LineMesh(PointMesh(X, lm.point_tags), lm.lines, lm.interior,
+                             lm.element_tags),
+                    qm.quad, qm.orient, qm.interior, qm.element_tags)
+
+
 def conduction_section(qm: QuadMesh) -> QuadMesh:
     """Discrete-conduction map of the interior, boundary held fixed.
 
@@ -58,7 +71,7 @@ def conduction_section(qm: QuadMesh) -> QuadMesh:
     Lc = L.tocsc()
     rhs = -(Lc[I, :][:, B] @ X[B, :])
     X[I, :] = spla.spsolve(Lc[I, :][:, I].tocsc(), rhs)
-    return reposition(qm, X)
+    return _with_points(qm, X)
 
 
 def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMesh:
@@ -89,7 +102,7 @@ def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMe
             w = 1.0 / np.maximum(dist, dfloor[v])
             xn = (w @ X[nb, :]) / np.sum(w)
             X[v, :] = (1 - omega) * X[v, :] + omega * xn
-    return reposition(qm, X)
+    return _with_points(qm, X)
 
 
 # -- registry -----------------------------------------------------------

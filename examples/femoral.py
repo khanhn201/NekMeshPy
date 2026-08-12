@@ -28,9 +28,11 @@ is a half-period sine, which leaves the rim with a finite slope -- the trough is
 the mouth rather than shelved around it.
 
 **What the conduction solve decides.** Everything about *where the mesh is cut* comes
-from the three Laplace fields, exactly as in the carotid: which triangle belongs to which
-leg, where the three seam arcs run, and where the two triple points sit.  The geometry
-above only says what the wall *is*; it never says where to put a seam.
+from three Laplace fields, conceptually the same idea as the carotid's -- except solved
+volumetrically over the tet scaffold rather than on the surface, so it is which *tet*
+belongs to which leg, where the three seam arcs run, and where the two triple points
+sit.  The geometry above only says what the wall *is*; it never says where to put a
+seam.
 """
 
 import logging
@@ -41,12 +43,14 @@ import sys
 import numpy as np
 
 from nekmeshpy import (
+    TetMesh,
     TriMesh,
     export,
     fields,
     hexmesh,
     linemesh,
     quadmesh,
+    tetmesh,
     trimesh,
     viz,
 )
@@ -714,14 +718,19 @@ def write_stl(surface, path):
     return path
 
 
-# -- seam / opening solvers (the carotid pipeline) ---------------------------
+# -- seam / opening solvers ---------------------------------------------------
 def order_openings(surf):
     """Order the three boundary loops: A = main inlet (lowest mean X), B = branch
     (highest mean Z), C = main outlet.
 
-    The carotid picks its trunk by lowest mean Z and splits the other two by X; this
-    junction is laid out differently, so the *identification* differs -- everything after
-    it does not."""
+    Only the *identification* is this junction's own -- the carotid picks its trunk by
+    lowest mean Z and splits the other two by X, since its layout differs.  This is the
+    one piece of ``trimesh.ops``'s trifurcation-splitting pipeline that cannot be
+    shared: everything downstream of the three ordered loops lives there, but here the
+    surface split itself is unused (:func:`tet_scaffold` reads these loops only to find
+    the volumetric caps; the actual leg cut is the tet-conduction fields below,
+    :func:`tetmesh.ops.seam_fields <nekmeshpy.tetmesh.ops.seam_fields>` /
+    :func:`tetmesh.ops.leg_label <nekmeshpy.tetmesh.ops.leg_label>`)."""
     loops = surf.boundary_loops()
     assert len(loops) == 3, "expected exactly 3 boundary loops, got %d" % len(loops)
     Z, X = surf.points[:, 2], surf.points[:, 0]
@@ -733,237 +742,9 @@ def order_openings(surf):
     return [loops[rest[order[0]]], loops[iB], loops[rest[order[1]]]]
 
 
-def conduction_field(surf, gloops, neumann, dvals):
-    """Laplace with Neumann on loop ``neumann``, Dirichlet ``dvals`` on the other two,
-    shifted to zero mean on the free loop."""
-    dpoints, dv = [], []
-    for k in range(3):
-        if k == neumann:
-            continue
-        g = np.asarray(gloops[k]).ravel()
-        dpoints.append(g)
-        dv.append(dvals[k] * np.ones(g.size))
-    u = trimesh.ops.solve_dirichlet(surf, np.concatenate(dpoints), np.concatenate(dv))
-    return u - np.mean(u[gloops[neumann]])
-
-
-def seam_fields(surf, gloops):
-    """The three conduction seam fields U (nv, 3)."""
-    nan = np.nan
-    dvals = [[nan, 0, 1], [1, nan, 0], [0, 1, nan]]
-    U = np.zeros((surf.n_points, 3))
-    for k in range(3):
-        U[:, k] = conduction_field(surf, gloops, k, dvals[k])
-    return U
-
-
-# -- cut the surface into legs -----------------------------------------------
-def leg_label(F):
-    a, b, c = F[:, 0], F[:, 1], F[:, 2]
-    lab = np.zeros(a.shape[0], dtype=np.int64)
-    lab[(b > 0) & (c < 0)] = 1                   # leg A (main inlet)
-    lab[(a < 0) & (c > 0)] = 2                   # leg B (branch)
-    lab[(a > 0) & (b < 0)] = 3                   # leg C (main outlet)
-    return lab
-
-
-def cut_surface_from_fields(surf, F):
-    """Cut ``surf`` into three legs defined by seam fields ``F`` (nv, 3), retriangulating
-    triangles a seam crosses.  Returns ``(V, faces)``."""
-    xyz = surf.points
-    tri = surf.tris
-    nv = xyz.shape[0]
-    V = [xyz[i, :].copy() for i in range(nv)]
-    faces = {1: [], 2: [], 3: []}
-    lab = leg_label(F)
-    ecache = {}
-
-    def edge_pt(vi, vj, fi):
-        key = (min(vi, vj), max(vi, vj), fi)
-        if key in ecache:
-            return ecache[key]
-        fi_i, fi_j = F[vi, fi], F[vj, fi]
-        t = fi_i / (fi_i - fi_j)
-        V.append(xyz[vi, :] + t * (xyz[vj, :] - xyz[vi, :]))
-        ecache[key] = len(V) - 1
-        return ecache[key]
-
-    def triple_pt(v):
-        Aeq = np.array([[F[v[0], 0], F[v[1], 0], F[v[2], 0]],
-                        [F[v[0], 1], F[v[1], 1], F[v[2], 1]],
-                        [1.0, 1.0, 1.0]])
-        lam = np.linalg.solve(Aeq, np.array([0.0, 0.0, 1.0]))
-        V.append(lam @ xyz[v, :])
-        return len(V) - 1
-
-    for e in range(tri.shape[0]):
-        v = tri[e, :]
-        l = lab[v]
-        ul = np.unique(l)
-        if ul.size == 1:
-            faces[int(ul[0])].append([v[0], v[1], v[2]])
-        elif ul.size == 2:
-            cnt = np.array([np.sum(l == u) for u in ul])
-            lone = int(ul[cnt == 1][0])
-            pair = int(ul[cnt == 2][0])
-            p = int(v[l == lone][0])
-            qr = v[l == pair]
-            q, r = int(qr[0]), int(qr[1])
-            fi = (6 - lone - pair) - 1
-            e1, e2 = edge_pt(p, q, fi), edge_pt(p, r, fi)
-            faces[lone].append([p, e1, e2])
-            faces[pair].append([q, r, e2])
-            faces[pair].append([q, e2, e1])
-        else:
-            T = triple_pt(v)
-            l0, l1, l2 = int(l[0]), int(l[1]), int(l[2])
-            m12 = edge_pt(int(v[0]), int(v[1]), (6 - l0 - l1) - 1)
-            m23 = edge_pt(int(v[1]), int(v[2]), (6 - l1 - l2) - 1)
-            m31 = edge_pt(int(v[2]), int(v[0]), (6 - l2 - l0) - 1)
-            faces[l0].append([int(v[0]), m12, T])
-            faces[l0].append([int(v[0]), T, m31])
-            faces[l1].append([int(v[1]), m23, T])
-            faces[l1].append([int(v[1]), T, m12])
-            faces[l2].append([int(v[2]), m31, T])
-            faces[l2].append([int(v[2]), T, m23])
-
-    Varr = np.array(V, dtype=float)
-    return Varr, [np.array(faces[k], dtype=np.int64).reshape(-1, 3) for k in (1, 2, 3)]
-
-
-def leg_field(V, faces, leg, gloops):
-    """One leg as a sub-mesh with Laplace solved (0 on opening, 1 on seam).
-    Returns ``(sub, us, opening, seam, vids)``."""
-    sub, vids = TriMesh.from_faces(V, faces[leg])
-    sloops = [c for c in trimesh.ops.boundary_loops(sub) if c.size >= 3]
-    gset = set(int(x) for x in gloops[leg])
-    opencnt = np.array([np.sum([1 for x in vids[c] if int(x) in gset]) for c in sloops])
-    oi = int(np.argmax(opencnt))
-    rest = [i for i in range(len(sloops)) if i != oi]
-    si = rest[int(np.argmax([sloops[i].size for i in rest]))]
-    opening, seam = sloops[oi], sloops[si]
-    us = trimesh.ops.solve_dirichlet(
-        sub, np.concatenate([opening, seam]),
-        np.concatenate([np.zeros(opening.size), np.ones(seam.size)]))
-    return sub, us, opening, seam, vids
-
-
-def _split_two_arcs(ordv, iA1, iA2, segX, segY):
-    ordv = np.asarray(ordv).ravel()
-    k1 = int(np.flatnonzero(ordv == iA1)[0])
-    ordv = np.roll(ordv, -k1)
-    k2 = int(np.flatnonzero(ordv == iA2)[0])
-    a = ordv[0:k2 + 1]
-    b = np.concatenate([ordv[k2:], ordv[:1]])[::-1]
-    segXset = set(int(x) for x in segX)
-    if all(int(x) in segXset for x in a[1:-1]):
-        return a, b
-    return b, a
-
-
-def _arc_curve(V, arcverts, iA1, n, keep=FOURIER_KEEP):
-    """Analytic ``A1 -> A2`` seam arc: the polyline's deviation from its own chord, refit
-    as a truncated **sine** series in normalized arc length, returned as ``p(s)``.
-
-    Every ``sin(k*pi*s)`` vanishes at both ends, so the triple points stay bit-exact
-    however many modes are kept -- which is what lets the three legs keep welding, since
-    each arc is fitted once, globally, and the *same* mesh goes to both legs sharing it.
-    """
-    arcverts = np.asarray(arcverts).ravel()
-    if arcverts[0] != iA1:
-        arcverts = arcverts[::-1]
-    N = 4 * n
-    s = np.linspace(0.0, 1.0, N + 1)
-    Q = trimesh.ops.resample_polyline(V[arcverts, :], s)
-    a1, a2 = Q[0, :], Q[-1, :]
-    dev = Q - (a1 + s[:, None] * (a2 - a1))
-    K = max(1, int(keep * (n - 1)))
-    kk = np.arange(1, K + 1)
-    S = np.sin(np.pi * np.outer(np.arange(1, N), kk) / N)
-    B = (2.0 / N) * (S.T @ dev[1:N, :])
-
-    def p(t):
-        t = np.atleast_1d(np.asarray(t, dtype=float))
-        return (a1 + t[:, None] * (a2 - a1) + np.sin(np.pi * np.outer(t, kk)) @ B)
-
-    return p
-
-
-def _arc_mesh(p, n, element_tag):
-    """Mesh an ``_arc_curve`` into ``n`` high-order elements, evenly spaced by arc
-    length; ``loft_fn`` evaluates ``p`` at every node, so none lands on a chord."""
-    return linemesh.loft_fn(p, linemesh.arclength_fractions(p, n),
-                            order=ORDER, element_tags=element_tag)
-
-
-def _ring(p, q):
-    """Two shared-endpoint ``A1 -> A2`` arcs welded into one loop; ``q`` is reversed so
-    the traversal runs down ``p`` and back up ``q`` without crossing."""
-    return linemesh.merge([p, linemesh.reverse(q)])
-
-
-def seam_rings(V, faces, gloops, n_half):
-    """The three conformal seam rings plus the central spine.
-    Returns ``(rings, A1, A2, spine)``."""
-    segV, ordV = [None] * 3, [None] * 3
-    for leg in range(3):
-        sub, _, _, seam, vids = leg_field(V, faces, leg, gloops)
-        segV[leg] = vids[seam]
-        ordV[leg] = vids[trimesh.ops.order_boundary_loop(sub, seam)]
-
-    common = np.intersect1d(np.intersect1d(segV[0], segV[1]), segV[2])
-    Pc = V[common, :]
-    diff = Pc[:, None, :] - Pc[None, :, :]
-    Dc = np.sum(diff ** 2, axis=2)
-    mx = int(np.argmax(Dc.ravel(order="F")))
-    ia, ib = np.unravel_index(mx, Dc.shape, order="F")
-    iA1, iA2 = int(common[ia]), int(common[ib])
-
-    arcAB, arcAC = _split_two_arcs(ordV[0], iA1, iA2, segV[1], segV[2])
-    bc1, bc2 = _split_two_arcs(ordV[1], iA1, iA2, segV[2], segV[0])
-    segAset = set(int(x) for x in segV[0])
-    arcBC = bc1 if all(int(x) in segAset for x in bc2) else bc2
-
-    abP = _arc_mesh(_arc_curve(V, arcAB, iA1, n_half), n_half, "wall")
-    acP = _arc_mesh(_arc_curve(V, arcAC, iA1, n_half), n_half, "wall")
-    bcP = _arc_mesh(_arc_curve(V, arcBC, iA1, n_half), n_half, "wall")
-
-    rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
-    spine = linemesh.loft((abP.points + acP.points + bcP.points) / 3.0, order=ORDER)
-    return rings, V[iA1, :], V[iA2, :], spine
-
-
-# -- analytic wall from a scanned ring ---------------------------------------
-def fourier_ring(P, keep=FOURIER_KEEP):
-    """Refit a closed ring as a truncated Fourier series ``p(t)``, periodic on
-    ``[0, 2*pi)``.  The result is a closed-form curve, so ``loft_fn`` can place every GLL
-    node *on* it instead of on the chords between the samples."""
-    P = np.asarray(P, dtype=float)
-    M = P.shape[0]
-    nk = max(2, int(keep * (M // 2 + 1)))
-    C = np.fft.rfft(P, axis=0)[:nk, :] / M
-    C[1:, :] *= 2.0
-    k = np.arange(nk)
-
-    def p(t):
-        t = np.atleast_1d(np.asarray(t, dtype=float))
-        return np.real(np.exp(1j * t[:, None] * k[None, :]) @ C)
-
-    return p
-
-
-def fourier_wall(P, order, element_tag):
-    """Closed high-order wall ``LineMesh`` through ``fourier_ring(P)``, sampled at the
-    same parameters as ``P``; ``loft_fn`` only makes an open chain, so weld the ends."""
-    M = np.asarray(P).shape[0]
-    return linemesh.merge([linemesh.loft_fn(
-        fourier_ring(P), np.linspace(0.0, 2.0 * np.pi, M + 1),
-        order=order, element_tags=element_tag)])
-
-
 # -- volumetric conduction ---------------------------------------------------
 def tet_scaffold(surf):
-    """Cap the wall, tet-mesh the interior, and return ``(P, TET, caps, gloops)``.
+    """Cap the wall, tet-mesh the interior, and return ``(mesh, caps, gloops)``.
 
     The scaffold is deliberately coarse and thrown away afterwards: it only has to carry
     a smooth field, and surface element size is what drives the tet count.  Its wall
@@ -971,15 +752,14 @@ def tet_scaffold(surf):
     the first ``surf.n_points`` rows."""
     gloops = order_openings(surf)
     loops = [trimesh.ops.order_boundary_loop(surf, g) for g in gloops]
-    Vc, Fc, _ = fvol.cap_surface(surf.points, surf.tris, loops)
-    P, TET = fvol.tet_mesh(Vc, Fc, TET_NEAR, TET_FAR, TET_RAMP,
-                           (0.0, 0.0, Z_SEAM))
+    capped, _ = tetmesh.ops.cap_surface(surf, loops)
+    mesh = tetmesh.ops.tet_mesh(capped, TET_NEAR, TET_FAR, TET_RAMP, (0.0, 0.0, Z_SEAM))
     # gmsh remeshed the surface, so the caps have to be found on the mesh it returned
-    caps = fvol.cap_nodes(P, TET, [surf.points[q] for q in loops])
-    return P, TET, caps, gloops
+    caps = tetmesh.ops.cap_nodes(mesh, [surf.points[q] for q in loops])
+    return mesh, caps, gloops
 
 
-# which two fields bound each leg: ``leg_label_tets`` reads a leg off two signs, so those
+# which two fields bound each leg: ``tetmesh.ops.leg_label`` reads a leg off two signs, so those
 # two zero sets are its two cuts.  ``(index, sign)`` -- keep where ``sign * U[:, index] > 0``
 LEG_CUTS = {1: ((1, +1), (2, -1)), 2: ((0, -1), (2, +1)), 3: ((0, +1), (1, -1))}
 
@@ -1051,7 +831,7 @@ def leg_levels(walker, seed, diameter, near_len):
     return np.interp(d[:-1], s, us)[::-1], q
 
 
-def leg_field_vol(P, TET, U, caps, leg):
+def leg_field_vol(mesh, U, caps, leg):
     """A leg's own conduction field: ``0`` on its opening cap, ``1`` on **the cut**,
     no-flux on the wall -- solved on a mesh that has been cut along the cut.
 
@@ -1072,13 +852,13 @@ def leg_field_vol(P, TET, U, caps, leg):
     cut has to be in the mesh.  ``clip_tets`` puts it there -- twice, once per bounding
     interface -- and the nodes it creates lie exactly on the level set, so ``u = 1`` on
     them *is* ``u = 1`` on the smooth cut."""
-    Pl, Fl, Tl, o1 = fvol.clip_tets(P, U, TET, *_cut_arg(U, leg, 0))
+    Pl, Fl, Tl, o1 = fvol.clip_tets(mesh.points, U, mesh.tets, *_cut_arg(U, leg, 0))
     Pl, Fl, Tl, o2 = fvol.clip_tets(Pl, Fl, Tl, *_cut_arg(Fl, leg, 1))
     # a node the cut made carries -1; through two clips, either clip may have made it
     back = np.maximum(o2, 0)
     oncut = (o2 == -1) | ((o2 >= 0) & (o1[back] == -1))
 
-    inv1 = np.full(P.shape[0], -1, np.int64)
+    inv1 = np.full(mesh.n_points, -1, np.int64)
     inv1[o1[o1 >= 0]] = np.flatnonzero(o1 >= 0)
     inv2 = np.full(o1.shape[0], -1, np.int64)
     inv2[o2[o2 >= 0]] = np.flatnonzero(o2 >= 0)
@@ -1089,8 +869,7 @@ def leg_field_vol(P, TET, U, caps, leg):
     nodes = np.concatenate([cap, np.flatnonzero(oncut)])
     vals = np.concatenate([np.zeros(cap.size), np.ones(int(oncut.sum()))])
     nodes, keep = np.unique(nodes, return_index=True)
-    u = fvol.solve_dirichlet(fvol.tet_laplacian(Pl, Tl), Pl.shape[0],
-                             nodes, vals[keep])
+    u = tetmesh.ops.solve_dirichlet(TetMesh(Pl, Tl), nodes, vals[keep])
     return Pl, Tl, u
 
 
@@ -1099,14 +878,14 @@ def _cut_arg(F, leg, which):
     return (sign * F[:, k],)
 
 
-def station_discs(P, TET, inleg, u, levels):
+def station_discs(mesh, inleg, u, levels):
     """One isosurface per level, as ``(TriMesh, ordered boundary ring)``.
 
     Restricting to the leg's own tets is what keeps each level set a single disc: the
     field is monotone through the leg but says nothing useful about the others."""
     out = []
     for lv in levels:
-        pts, tris = fvol.isosurface(P, TET[inleg], u, float(lv))
+        pts, tris = fvol.isosurface(mesh.points, mesh.tets[inleg], u, float(lv))
         if tris.shape[0] < 4:
             continue
         disc = TriMesh(pts, tris)
@@ -1145,7 +924,7 @@ def project_interior(section, disc):
 
 # -- O-grid leg builder ------------------------------------------------------
 # -- O-grid leg builder ------------------------------------------------------
-def seam_pieces(P, TET, U, wall_pts, n_half, radial, center_scale, fine):
+def seam_pieces(mesh, U, wall_pts, n_half, radial, center_scale, fine):
     """The three shared wall arcs and the one shared spine, computed **once**.
 
     Each interface is a half-disc: an arc on the wall and a spine through the interior,
@@ -1163,7 +942,7 @@ def seam_pieces(P, TET, U, wall_pts, n_half, radial, center_scale, fine):
     # trim created are the intersection with the other sheets, exactly
     raw = {}
     for pair in PAIRS:
-        pts, tris, cut = fvol.interface(P, TET, U, *pair, want_cut=True)
+        pts, tris, cut = fvol.interface(mesh.points, mesh.tets, U, *pair, want_cut=True)
         disc = TriMesh(pts, tris)
         ring = trimesh.ops.order_boundary_loop(
             disc, max(trimesh.ops.boundary_loops(disc), key=lambda c: c.size))
@@ -1229,7 +1008,7 @@ def _rim_target(sec, uv_pts, rim):
     ang = np.arctan2(ruv[o, 1], ruv[o, 0])
     M = rim.size
     tpar = 2.0 * np.pi * np.arange(M) / M
-    p = fourier_ring(sec.points[rim[o]], keep=RIM_KEEP)
+    p = trimesh.ops.fourier_ring(sec.points[rim[o]], keep=RIM_KEEP)
     # the ring's parameter runs with its angle, so a node anywhere on the rim -- corner
     # or curved -- finds its place on the refit curve by its own angle
     ang_x = np.concatenate([ang - 2.0 * np.pi, ang, ang + 2.0 * np.pi])
@@ -1630,18 +1409,17 @@ def cached_tets(scaffold):
         z = np.load(path)
         if z["key"].shape == key.shape and np.array_equal(z["key"], key):
             logging.info("femoral: tet mesh and fields from cache")
-            return (z["P"], z["TET"], [z["c0"], z["c1"], z["c2"]],
+            return (TetMesh(z["P"], z["TET"]), [z["c0"], z["c1"], z["c2"]],
                     z["U"], z["lab"])
         logging.info("femoral: tet knobs changed, rebuilding")
-    P, TET, caps, _gl = tet_scaffold(scaffold)
-    L = fvol.tet_laplacian(P, TET)
-    U = fvol.seam_fields(L, P.shape[0], caps)
-    lab = fvol.leg_label_tets(U, TET)
+    mesh, caps, _gl = tet_scaffold(scaffold)
+    U = tetmesh.ops.seam_fields(mesh, caps)
+    lab = tetmesh.ops.leg_label(mesh, U)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    np.savez(path, key=key, P=P, TET=TET, c0=caps[0], c1=caps[1], c2=caps[2],
-             U=U, lab=lab)
-    logging.info("femoral: cached the tet mesh (%d tets) and its fields", TET.shape[0])
-    return P, TET, caps, U, lab
+    np.savez(path, key=key, P=mesh.points, TET=mesh.tets, c0=caps[0], c1=caps[1],
+             c2=caps[2], U=U, lab=lab)
+    logging.info("femoral: cached the tet mesh (%d tets) and its fields", mesh.n_tets)
+    return mesh, caps, U, lab
 
 
 def cached_surface(tag):
@@ -1684,12 +1462,12 @@ _fine = {k: globals()[k] for k in SCAFFOLD}
 globals().update(SCAFFOLD)
 scaffold = cached_surface("scaffold")
 globals().update(_fine)
-P, TET, caps, Uvol, lab = cached_tets(scaffold)
-print("tet scaffold: %d nodes, %d tets" % (P.shape[0], TET.shape[0]))
+tets, caps, Uvol, lab = cached_tets(scaffold)
+print("tet scaffold: %d nodes, %d tets" % (tets.n_points, tets.n_tets))
 print("leg tet counts: %s (unassigned %d)"
       % ([int((lab == k).sum()) for k in (1, 2, 3)], int((lab == 0).sum())))
 
-arcs, spine, raw = seam_pieces(P, TET, Uvol, scaffold.points, N_HALF, RADIAL,
+arcs, spine, raw = seam_pieces(tets, Uvol, scaffold.points, N_HALF, RADIAL,
                                CENTER_SCALE, surf)
 print("shared spine: %d nodes; arcs %s"
       % (spine.n_points, {k: v.n_points for k, v in arcs.items()}))
@@ -1715,7 +1493,7 @@ cap_loops = [surf.points[trimesh.ops.order_boundary_loop(surf, c)]
 
 blocks = []
 for leg in (1, 2, 3):
-    Pl, Tl, u = leg_field_vol(P, TET, Uvol, caps, leg)
+    Pl, Tl, u = leg_field_vol(tets, Uvol, caps, leg)
     walker = fvol.FieldWalker(Pl, Tl, u)
     pr, qr = LEG_ARCS[leg]
     near_len = LEG_NEAR_LEN[leg - 1]

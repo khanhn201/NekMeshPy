@@ -12,7 +12,7 @@ from .lift import (
     sweep_path,
 )
 from .lower import boundary_mesh
-from .morph import blend, mirror, reposition, rotate, scale, transform, translate
+from .morph import blend, mirror, rotate, scale, transform, translate
 from .query import (
     boundary_elements,
     boundary_face_ids,
@@ -43,7 +43,6 @@ __all__ = [
     "element_volumes",
     "mirror",
     "remove",
-    "reposition",
     "retag_element",
     "retag_face",
     "select",

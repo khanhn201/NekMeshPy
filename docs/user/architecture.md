@@ -21,15 +21,15 @@ TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft
  cotan Laplacian,                                                                 │
  Dirichlet solve,         ┌──────────────────────────────────────────────────────┤
  boundary loops)          ▼               ▼            ▼               ▼          ▼
-             quadmesh.smoothing/  quadmesh|hexmesh   model.topology  io.export  io.viz
+             quadmesh.smoothing/  quadmesh|hexmesh   core.topology   io.export  io.viz
              hexmesh.smoothing    .quality           (watertight/    (re2/vtu/  (plot)
-                   (reposition)   (scaled Jac)       conformal)      mesh, meshio)
+                   (relax)        (scaled Jac)       conformal)      mesh, meshio)
 ```
 
 ## Containers are pure data; operations are free functions
 
 Everything that acts on a finished mesh is a **free function** taking the
-container as its first argument — `io.export`, `io.viz`, `model.topology`, and the
+container as its first argument — `io.export`, `io.viz`, `core.topology`, and the
 per-type modules beside their container in each `<type>/` package:
 
 - `hexmesh.quality` + `quadmesh.quality` — scaled-Jacobian metrics,

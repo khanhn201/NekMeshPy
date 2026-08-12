@@ -16,9 +16,9 @@ last is capped.  The two chains are mirror images, so their ``k``-th junctions
 face each other across their own copy of the serpentine coil -- ``N_T2``
 parallel coils stacked down ``-y``, each planar in its own x-z plane.  The
 coil's shape is traced from a reference photo and is **fixed**: it is only
-placed, never rescaled (see ``coil_lib``, whose move table ``serpentine_pipe.py``
-builds standing alone).  The chimera ports sit exactly ``H1 + RUN_T1_T2`` = 10
-above the first coil in y.
+placed, never rescaled (see ``serpentine_pipe.py``, whose ``MOVES`` move table
+this file imports directly and which also builds the coil standing alone).  The
+chimera ports sit exactly ``H1 + RUN_T1_T2`` = 10 above the first coil in y.
 
     PYTHONPATH=. python examples/chimera_full.py
 
@@ -83,8 +83,10 @@ from nekmeshpy.core.paths import turtle_path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from coil_lib import MOVES as COIL_MOVES_LIB  # noqa: E402  (needs the path above)
-from coil_lib import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
+# serpentine_pipe's own mesh build is guarded behind `if __name__ == "__main__"`,
+# so importing it for these two names alone costs nothing beyond them.
+from serpentine_pipe import MOVES as COIL_MOVES_LIB  # noqa: E402  (needs the path above)
+from serpentine_pipe import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
 from tjunction_lib import build_tjunction  # noqa: E402
 
 FAST = False
@@ -528,8 +530,8 @@ print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
 # -----------------------------------------------------------------------------
 
 # -- the coil's own fixed shape --------------------------------------------
-# Traced from a reference photo; do not reshape or rescale.  It lives in coil_lib
-# because serpentine_pipe.py builds the same physical part standing alone.
+# Traced from a reference photo; do not reshape or rescale.  It lives in
+# serpentine_pipe.py, which builds the same physical part standing alone.
 COIL_MOVES = COIL_MOVES_LIB
 
 _coil_local = turtle_path(COIL_MOVES, start=(0.0, 0.0), heading=0.0)
@@ -580,8 +582,8 @@ def _end_section(section, moves, heading, y_fixed):
 
 
 TOTAL_COIL = _coil_local.total_length
-# The sweep target is the coil's own (see coil_lib): it must subdivide even the
-# tightest U_R 180-degree turn into several stations.
+# The sweep target is the coil's own (see serpentine_pipe.py): it must subdivide
+# even the tightest U_R 180-degree turn into several stations.
 COIL_TARGET_LEN = COIL_TARGET_LEN_LIB
 
 
