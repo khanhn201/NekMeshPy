@@ -3,12 +3,20 @@ examples/quadrant_pipe_tjunction.py, generalized into a function so it can be
 called multiple times at different radii/positions.  Local frame: main pipe axis
 = Z (legs at z = -Z_NEAR "minus" and z = +Z_NEAR "plus"), branch axis = X
 (opening at x = H_BRANCH), exactly quadrant_pipe_tjunction.py's own convention.
+``quadrant_pipe_tjunction.py`` is this function's reference caller: it passes
+``branch_tag="branch"`` (the one boundary this function can tag that a caller
+cannot reach after the fact -- the branch stub's far cap is already inside
+``core``) and extrudes the two ``disc_minus``/``disc_plus`` legs onward itself.
 
 Returns a TJunction(core, disc_minus, disc_plus, disc_branch): ``core`` is the
-merged crotch/transition hex block (untagged), and the three discs are the
+merged crotch/transition hex block (tagged ``element_tag`` throughout, and
+``branch_tag`` on the branch's far cap if given), and the three discs are the
 *plain* QuadMesh cross-sections at each leg's outward end -- for a caller to
 continue building from (extrude/loft/sweep) rather than re-deriving the
-junction's own geometry.
+junction's own geometry.  The two legs stop at the plain disc rather than being
+capped here, since how far to carry them (and by what -- a straight extrude, a
+sweep along a bend) is a per-caller choice; the branch is the one piece with
+nothing left for a caller to add when it needs none, so it is capped inline.
 """
 from __future__ import annotations
 
@@ -83,7 +91,8 @@ def auto_params(R_MAIN, R_BRANCH):
 def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                      RADIAL=None, CENTER_SCALE=0.7,
                      order=2, PHI_W=None, CAP_TIP_BIAS=None,
-                     N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag=""):
+                     N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag="",
+                     branch_tag=""):
     RADIAL = _RADIAL_DEFAULT if RADIAL is None else RADIAL
     # each of the three defaults to the ratio-dependent choice; pass one explicitly to
     # override just that one
@@ -230,7 +239,9 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                                            (1.0 - t[i]) * ORIGIN + t[i] * c_open, RADIAL,
                                            center_scale=CENTER_SCALE, wall_tag="wall")
                    for i in range(t.size)]
-        return hexmesh.loft(sections, element_tags=element_tag or None), sections[-1]
+        return (hexmesh.loft(sections, element_tags=element_tag or None,
+                             last_tag=branch_tag or None),
+                sections[-1])
 
     trans_plus, disc_plus = leg(COMPOSITE_R, W_R, 1)
     trans_minus, disc_minus = leg(COMPOSITE_L, W_L, -1)

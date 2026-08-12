@@ -133,8 +133,11 @@ def test_quadrant_pipe_tjunction(tmp_path):
 
     # the 45 degree rotation: the whole footprint reaches only asin(Rb/Rm) either
     # side of theta = 0, so it stays inside the branch-facing quadrant of the plain
-    # disc each leg morphs into, whose seams sit at +-45 degrees.
-    foot = np.vstack([a.points for a in ns["FQ"]])
+    # disc each leg morphs into, whose seams sit at +-45 degrees.  The footprint is
+    # exactly the wall nodes lying on *both* cylinders at once -- read straight off
+    # the built mesh rather than off an internal variable of the script, since the
+    # actual construction now lives in tjunction_lib.build_tjunction.
+    foot = p[on_main & on_branch]
     theta = np.abs(np.arctan2(foot[:, 1], foot[:, 0]))
     assert theta.max() == pytest.approx(np.arcsin(ns["R_BRANCH"] / ns["R_MAIN"]),
                                         abs=1e-12)

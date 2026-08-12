@@ -25,7 +25,12 @@ _EXAMPLES = os.path.join(os.path.dirname(__file__), "..", "examples")
 
 #: Scripts that are imported by other examples rather than run for their own mesh, so
 #: they legitimately define no ``mesh`` global.  They must still execute cleanly.
-LIBRARY_ONLY = {"tjunction_lib.py", "coil_lib.py", "femoral_vol.py"}
+#:
+#: ``serpentine_pipe.py`` is deliberately **not** here: run directly (as this harness
+#: does, ``run_name="__main__"``) it still builds its own mesh -- only a plain
+#: ``import``, which ``chimera_full.py`` uses for two names, sees the guarded body
+#: skipped.
+LIBRARY_ONLY = {"tjunction_lib.py", "femoral_vol.py"}
 
 #: Deselected from a default run (``-m "not slow"`` in ``addopts``) and run explicitly
 #: by one CI job.  Only ``femoral`` is left: it tet-meshes with gmsh and costs 316 s
