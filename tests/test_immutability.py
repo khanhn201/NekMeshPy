@@ -36,24 +36,12 @@ def test_operations_leave_their_input_untouched(rung):
            lambda m: ns.rotate(m, 0.3),
            lambda m: ns.scale(m, 2.0),
            lambda m: ns.mirror(m, (1.0, 0.0, 0.0)),
-           lambda m: ns.reposition(m, m.points + 5.0),
            lambda m: ns.retag_element(m, {}),
            lambda m: ns.merge([m])]
     for op in ops:
         out = op(mesh)
         assert out is not mesh
         assert np.array_equal(mesh.points, before), op
-
-
-def test_reposition_replaces_coordinates_and_keeps_everything_else():
-    _, sec, _ = _rungs()
-    moved = quadmesh.reposition(sec, sec.points * 3.0)
-    assert np.allclose(moved.points, sec.points * 3.0)
-    assert not np.shares_memory(moved.points, sec.points)
-    assert np.array_equal(moved.quads, sec.quads)
-    assert moved.edge_group_tags == sec.edge_group_tags
-    with pytest.raises(ValueError, match="expected .* points"):
-        quadmesh.reposition(sec, sec.points[:-1])
 
 
 @pytest.mark.parametrize("smoother", [qsmooth.conduction_section,

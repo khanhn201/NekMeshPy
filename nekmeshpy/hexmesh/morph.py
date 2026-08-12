@@ -17,7 +17,6 @@ from ..core import affine, conform
 from ..quadmesh import QuadMesh
 from ..quadmesh.morph import _affine as quad_affine
 from ..quadmesh.morph import blend as quad_blend
-from ..quadmesh.morph import reposition as quad_reposition
 from .hexmesh import HexMesh
 
 
@@ -60,22 +59,6 @@ def blend(a: HexMesh, b: HexMesh,
                     a.hex, a.orient,
                     (1.0 - t) * ai + t * bi if ho else None)
             for t, faces in zip(fr, quad_blend(a.quad_mesh, b.quad_mesh, fr))]
-
-
-def reposition(mesh: HexMesh, points: PointArray) -> HexMesh:
-    """The same mesh at new coordinates: same connectivity, same tags, new points.
-
-    The general form of the affine placements above, for a caller that has computed
-    positions rather than a map -- a smoother, a projection onto a surface, a solve.
-    It returns a new mesh rather than writing into ``points``, which is what keeps
-    every operation in the toolkit non-mutating; the live array is still there for a
-    caller who deliberately wants the in-place escape hatch.
-
-    The private high-order ``interior`` nodes ride along **unchanged**, so this is for
-    order 1 or for a caller that has already placed them: moving corners alone leaves
-    curved nodes where they were."""
-    return HexMesh(quad_reposition(mesh.quad_mesh, points), mesh.hex, mesh.orient,
-                   mesh.interior, mesh.element_tags)
 
 
 def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
@@ -170,7 +153,6 @@ def mirror(mesh: HexMesh, normal: Vec3 | Sequence[float],
 
 __all__ = [
     "blend",
-    "reposition",
     "mirror",
     "rotate",
     "scale",
