@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
@@ -11,6 +13,10 @@ import scipy.sparse.linalg as spla
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
+from ..linemesh.assemble import loft_fn as line_loft_fn
+from ..linemesh.assemble import merge as line_merge
+from ..linemesh.morph import reverse as line_reverse
+from ..linemesh.shape import arclength_fractions
 from .trimesh import TriMesh
 
 
@@ -124,6 +130,305 @@ def order_boundary_loop(surface: TriMesh, lv: IntArray) -> IntArray:
         cur = nb[0]
         ordv.append(cur)
     return np.array(ordv, dtype=np.int64)
+
+
+# -- trifurcation splitting ----------------------------------------------
+#
+# A trifurcation (three boundary loops on one open surface) is cut into three legs by
+# solving three Laplace fields and reading their sign pattern -- shared, verbatim, by
+# every mesher in this toolkit that starts from a trifurcated wall (``examples/carotid.py``,
+# ``examples/femoral.py``). Identifying *which* physical loop is leg 1/2/3 is left to the
+# caller: that identification is a property of one specific junction's layout, not of the
+# splitting algorithm below it -- see each example's own ``order_openings``.
+def conduction_field(
+    surf: TriMesh, gloops: Sequence[IntArray], neumann: int, dvals: Sequence[float],
+) -> FloatArray:
+    """Laplace with Neumann on loop ``neumann``, Dirichlet ``dvals`` on the other two,
+    shifted to zero mean on the free loop."""
+    dpoints, dv = [], []
+    for k in range(3):
+        if k == neumann:
+            continue
+        g = np.asarray(gloops[k]).ravel()
+        dpoints.append(g)
+        dv.append(dvals[k] * np.ones(g.size))
+    u = solve_dirichlet(surf, np.concatenate(dpoints), np.concatenate(dv))
+    return u - np.mean(u[gloops[neumann]])
+
+
+def seam_fields(surf: TriMesh, gloops: Sequence[IntArray]) -> FloatArray:
+    """The three conduction seam fields ``U`` ``(nv, 3)``: column ``k`` is 0 on opening
+    ``k``, 1 on the next opening round, and Neumann (free) on the third -- so its sign
+    is what :func:`cut_surface_from_fields` reads to place seam ``k``."""
+    nan = np.nan
+    dvals = [[nan, 0, 1], [1, nan, 0], [0, 1, nan]]
+    U = np.zeros((surf.n_points, 3))
+    for k in range(3):
+        U[:, k] = conduction_field(surf, gloops, k, dvals[k])
+    return U
+
+
+def leg_label(F: FloatArray) -> IntArray:
+    """Which of the three legs (1, 2 or 3) each row of seam-field values ``F``
+    ``(n, 3)`` falls in, by the sign pattern :func:`seam_fields` gives each leg."""
+    a, b, c = F[:, 0], F[:, 1], F[:, 2]
+    lab: IntArray = np.zeros(a.shape[0], dtype=np.int64)
+    lab[(b > 0) & (c < 0)] = 1
+    lab[(a < 0) & (c > 0)] = 2
+    lab[(a > 0) & (b < 0)] = 3
+    return lab
+
+
+def cut_surface_from_fields(
+    surf: TriMesh, F: FloatArray,
+) -> tuple[PointArray, list[IntArray]]:
+    """Cut ``surf`` into three legs defined by seam fields ``F`` ``(nv, 3)``,
+    retriangulating triangles a seam crosses.  Returns ``(V, faces)``: ``V`` is the
+    surface's own points plus every new seam-crossing and triple point, and ``faces``
+    is a 3-element list of ``(T,3)`` arrays -- one leg's triangles each -- both
+    indexing into ``V``."""
+    xyz = surf.points
+    tri = surf.tris
+    nv = xyz.shape[0]
+    V = [xyz[i, :].copy() for i in range(nv)]
+    faces: dict[int, list[list[int]]] = {1: [], 2: [], 3: []}
+    lab = leg_label(F)
+    ecache: dict[tuple[int, int, int], int] = {}
+
+    def edge_pt(vi: int, vj: int, fi: int) -> int:
+        key = (min(vi, vj), max(vi, vj), fi)
+        if key in ecache:
+            return ecache[key]
+        fi_i = F[vi, fi]
+        fi_j = F[vj, fi]
+        t = fi_i / (fi_i - fi_j)
+        V.append(xyz[vi, :] + t * (xyz[vj, :] - xyz[vi, :]))
+        idv = len(V) - 1
+        ecache[key] = idv
+        return idv
+
+    def triple_pt(v: IntArray) -> int:
+        Aeq = np.array([[F[v[0], 0], F[v[1], 0], F[v[2], 0]],
+                        [F[v[0], 1], F[v[1], 1], F[v[2], 1]],
+                        [1.0, 1.0, 1.0]])
+        lam = np.linalg.solve(Aeq, np.array([0.0, 0.0, 1.0]))
+        V.append(lam @ xyz[v, :])
+        idv = len(V) - 1
+        return idv
+
+    for e in range(tri.shape[0]):
+        v = tri[e, :]
+        l = lab[v]
+        ul = np.unique(l)
+        if ul.size == 1:
+            faces[int(ul[0])].append([v[0], v[1], v[2]])
+        elif ul.size == 2:
+            cnt = np.array([np.sum(l == u) for u in ul])
+            lone = int(ul[cnt == 1][0])
+            pair = int(ul[cnt == 2][0])
+            p = int(v[l == lone][0])
+            qr = v[l == pair]
+            q = int(qr[0])
+            r = int(qr[1])
+            fi = (6 - lone - pair) - 1
+            e1 = edge_pt(p, q, fi)
+            e2 = edge_pt(p, r, fi)
+            faces[lone].append([p, e1, e2])
+            faces[pair].append([q, r, e2])
+            faces[pair].append([q, e2, e1])
+        else:
+            T = triple_pt(v)
+            l0, l1, l2 = int(l[0]), int(l[1]), int(l[2])
+            m12 = edge_pt(int(v[0]), int(v[1]), (6 - l0 - l1) - 1)
+            m23 = edge_pt(int(v[1]), int(v[2]), (6 - l1 - l2) - 1)
+            m31 = edge_pt(int(v[2]), int(v[0]), (6 - l2 - l0) - 1)
+            faces[l0].append([int(v[0]), m12, T])
+            faces[l0].append([int(v[0]), T, m31])
+            faces[l1].append([int(v[1]), m23, T])
+            faces[l1].append([int(v[1]), T, m12])
+            faces[l2].append([int(v[2]), m31, T])
+            faces[l2].append([int(v[2]), T, m23])
+
+    Varr: PointArray = np.array(V, dtype=float)
+    faces_list = [np.array(faces[k], dtype=np.int64).reshape(-1, 3) for k in (1, 2, 3)]
+    return Varr, faces_list
+
+
+def leg_field(
+    V: PointArray, faces: list[IntArray], leg: int, gloops: Sequence[IntArray],
+) -> tuple[TriMesh, FloatArray, IntArray, IntArray, IntArray]:
+    """One leg as a sub-mesh with Laplace solved (0 on opening, 1 on seam).
+    Returns ``(sub, us, opening, seam, vids)``."""
+    sub, vids = TriMesh.from_faces(V, faces[leg])
+    sloops = [c for c in boundary_loops(sub) if c.size >= 3]
+    gset = set(int(x) for x in gloops[leg])
+    opencnt = np.array([np.sum([1 for x in vids[c] if int(x) in gset]) for c in sloops])
+    oi = int(np.argmax(opencnt))
+    rest = [i for i in range(len(sloops)) if i != oi]
+    si = rest[int(np.argmax([sloops[i].size for i in rest]))]
+    opening = sloops[oi]
+    seam = sloops[si]
+    us = solve_dirichlet(
+        sub,
+        np.concatenate([opening, seam]),
+        np.concatenate([np.zeros(opening.size), np.ones(seam.size)]))
+    return sub, us, opening, seam, vids
+
+
+def _split_two_arcs(
+    ordv: IntArray, iA1: int, iA2: int, segX: IntArray, segY: IntArray,
+) -> tuple[IntArray, IntArray]:
+    ordv = np.asarray(ordv).ravel()
+    k1 = int(np.flatnonzero(ordv == iA1)[0])
+    ordv = np.roll(ordv, -k1)
+    k2 = int(np.flatnonzero(ordv == iA2)[0])
+    a = ordv[0:k2 + 1]
+    b = np.concatenate([ordv[k2:], ordv[:1]])[::-1]
+    interiorA = a[1:-1]
+    segXset = set(int(x) for x in segX)
+    if all(int(x) in segXset for x in interiorA):
+        return a, b
+    return b, a
+
+
+def arc_curve(
+    V: PointArray, arcverts: IntArray, iA1: int, n: int, keep: float = 0.5,
+) -> Callable[[FloatArray], PointArray]:
+    """Analytic ``A1 -> A2`` seam arc: the scanned polyline's deviation from its own
+    chord, refit as a truncated **sine** series in the normalized arc-length parameter
+    ``s``, and returned as a callable ``p(s)`` on ``[0, 1]``.
+
+    This is :func:`fourier_ring`'s open-curve sibling, and the basis is chosen for the
+    one property the seam needs: every ``sin(k*pi*s)`` vanishes at both ends, so ``A1``
+    and ``A2`` -- the triple points where all three arcs meet -- stay **bit-exact**
+    however many modes are kept.  That is what lets the three legs keep welding: each
+    arc is fitted once, globally, and the *same* mesh is handed to both legs that share
+    it, so no leg ever sees a privately-refitted seam (which is why the seam ring
+    could not simply go through :func:`fourier_wall` -- refitting per leg would mix the
+    two arcs that leg happens to see).
+
+    Dropping the upper modes removes the STL facet noise for the same reason it does on
+    a station ring, and ``keep`` is applied to the modes the *mesh* can resolve
+    (``n`` elements -> ``n-1`` interior nodes -> modes ``1..n-1``), mirroring
+    :func:`fourier_ring`'s ``keep * (M // 2 + 1)``."""
+    arcverts = np.asarray(arcverts).ravel()
+    if arcverts[0] != iA1:
+        arcverts = arcverts[::-1]
+    N = 4 * n                                  # dense uniform-arc-length fit samples
+    s = np.linspace(0.0, 1.0, N + 1)
+    Q = resample_polyline(V[arcverts, :], s)
+    a1, a2 = Q[0, :], Q[-1, :]
+    dev = Q - (a1 + s[:, None] * (a2 - a1))    # vanishes at both ends by construction
+    K = max(1, int(keep * (n - 1)))
+    kk = np.arange(1, K + 1)
+    # discrete sine transform (type I) of the interior samples, truncated to K modes
+    S = np.sin(np.pi * np.outer(np.arange(1, N), kk) / N)      # (N-1, K)
+    B = (2.0 / N) * (S.T @ dev[1:N, :])                        # (K,3) sine coefficients
+
+    def p(t: FloatArray) -> PointArray:
+        t = np.atleast_1d(np.asarray(t, dtype=float))
+        return (a1 + t[:, None] * (a2 - a1)
+                + np.sin(np.pi * np.outer(t, kk)) @ B)
+
+    return p
+
+
+def arc_mesh(
+    p: Callable[[FloatArray], PointArray], n: int, order: int, element_tag: str,
+) -> LineMesh:
+    """Mesh an :func:`arc_curve` into ``n`` high-order elements of the given ``order``,
+    evenly spaced by arc length.  ``LineMesh.loft_fn`` evaluates ``p`` at every node --
+    corners *and* the private GLL interiors -- so no node lands on a chord."""
+    return line_loft_fn(p, arclength_fractions(p, n), order=order, element_tags=element_tag)
+
+
+def _ring(p: LineMesh, q: LineMesh) -> LineMesh:
+    """Close two shared-endpoint ``A1 -> A2`` arcs into one loop by welding them at
+    ``A1`` and ``A2`` (:func:`linemesh.merge <nekmeshpy.linemesh.assemble.merge>`); ``q`` is
+    reversed so the traversal runs ``A1 -> A2`` down ``p`` then ``A2 -> A1`` back up
+    ``q`` without crossing.
+
+    ``reverse`` carries ``q``'s high-order nodes with it; re-lofting its points
+    would straight-subdivide them and lose the curve at ``order > 1``."""
+    return line_merge([p, line_reverse(q)])
+
+
+def seam_rings(
+    V: PointArray, faces: list[IntArray], gloops: Sequence[IntArray], n_half: int, *,
+    order: int, keep: float = 0.5, element_tag: str = "wall",
+) -> tuple[list[LineMesh], Point, Point, LineMesh]:
+    """Build the three conformal seam rings + spine.
+    Returns ``(rings, A1, A2, spine)``."""
+    segV: list[Any] = [None, None, None]
+    ordV: list[Any] = [None, None, None]
+    for leg in range(3):
+        sub, _, _, seam, vids = leg_field(V, faces, leg, gloops)
+        segV[leg] = vids[seam]
+        ordV[leg] = vids[order_boundary_loop(sub, seam)]
+
+    common = np.intersect1d(np.intersect1d(segV[0], segV[1]), segV[2])
+    Pc = V[common, :]
+    diff = Pc[:, None, :] - Pc[None, :, :]
+    Dc = np.sum(diff ** 2, axis=2)
+    # MATLAB max(Dc(:)) scans column-major; replicate its tie-break.
+    mx = int(np.argmax(Dc.ravel(order="F")))
+    ia, ib = np.unravel_index(mx, Dc.shape, order="F")
+    iA1 = int(common[ia])
+    iA2 = int(common[ib])
+    A1: Point = V[iA1, :]
+    A2: Point = V[iA2, :]
+
+    arcAB, arcAC = _split_two_arcs(ordV[0], iA1, iA2, segV[1], segV[2])
+    bc1, bc2 = _split_two_arcs(ordV[1], iA1, iA2, segV[2], segV[0])
+    segAset = set(int(x) for x in segV[0])
+    arcBC = bc1 if all(int(x) in segAset for x in bc2) else bc2
+
+    # Each shared arc is refit and meshed exactly once here, so the two legs that
+    # share it are handed bit-identical geometry and the blocks still weld.
+    abP = arc_mesh(arc_curve(V, arcAB, iA1, n_half, keep), n_half, order, element_tag)
+    acP = arc_mesh(arc_curve(V, arcAC, iA1, n_half, keep), n_half, order, element_tag)
+    bcP = arc_mesh(arc_curve(V, arcBC, iA1, n_half, keep), n_half, order, element_tag)
+
+    rings = [_ring(abP, acP), _ring(abP, bcP), _ring(acP, bcP)]
+    spine = line_loft((abP.points + acP.points + bcP.points) / 3.0, order=order)
+    return rings, A1, A2, spine
+
+
+# -- analytic wall from a scanned ring -----------------------------------
+def fourier_ring(P: PointArray, keep: float = 0.5) -> Callable[[FloatArray], PointArray]:
+    """Refit a closed scanned ring as a truncated Fourier series ``p(t)``, periodic
+    on ``[0, 2*pi)`` with sample ``j`` at ``t = 2*pi*j/M``.
+
+    ``x``, ``y`` and ``z`` are transformed independently (``np.fft.rfft`` against the
+    uniform parameter) and only the lowest ``keep`` fraction of the modes is retained;
+    the rest -- facet-scale noise from the STL projection, which a high-order wall would
+    otherwise resolve faithfully -- is dropped.  The result is a genuine closed-form
+    curve, so ``LineMesh.loft_fn`` can place every GLL node *on* it instead of on the
+    chords between the samples (see the straight-GLL-subdivision trap in CLAUDE.md).
+    """
+    P = np.asarray(P, dtype=float)
+    M = P.shape[0]
+    nk = max(2, int(keep * (M // 2 + 1)))     # modes 0..nk-1; never the Nyquist mode
+    C = np.fft.rfft(P, axis=0)[:nk, :] / M
+    C[1:, :] *= 2.0                           # each retained mode is a conjugate pair
+    k = np.arange(nk)
+
+    def p(t: FloatArray) -> PointArray:
+        t = np.atleast_1d(np.asarray(t, dtype=float))
+        return np.real(np.exp(1j * t[:, None] * k[None, :]) @ C)
+
+    return p
+
+
+def fourier_wall(P: PointArray, order: int, element_tag: str, keep: float = 0.5) -> LineMesh:
+    """Closed high-order wall ``LineMesh`` through :func:`fourier_ring`, sampled at the
+    same ``M`` parameters as ``P`` so index 0 / ``M//2`` still land on the spine rails.
+    ``LineMesh.loft_fn`` only ever makes an open chain, so weld the two ends into a loop
+    the way the toolkit expects (:func:`linemesh.merge <nekmeshpy.linemesh.assemble.merge>`)."""
+    M = np.asarray(P).shape[0]
+    return line_merge([line_loft_fn(
+        fourier_ring(P, keep=keep), np.linspace(0.0, 2.0 * np.pi, M + 1),
+        order=order, element_tags=element_tag)])
 
 
 # -- isocontours --------------------------------------------------------
