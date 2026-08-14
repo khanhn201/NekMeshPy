@@ -118,10 +118,10 @@ kw_t1 = dict(n_half=N_HALF, order=ORDER, radial=RADIAL, center_scale=CENTER_SCAL
 kw_t2 = kw_t1
 
 
-# chimera's own port cross-section: the same quadrant_disc recipe its
+# chimera's own port cross-section: the same quadrant_ogrid recipe its
 # junctions are built from, so it reproduces a port's pattern exactly.
 _chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
-               CENTER_SCALE=0.7, N_TRANS=2, N_BRANCH=2)
+               CENTER_SCALE=0.75, QUADRANT_SCALE=0.55, N_TRANS=2, N_BRANCH=2)
 
 
 def fake_chi_disc(center):
@@ -186,9 +186,9 @@ AXIS_T1 = (1.0, -1.0, 1.0)
 
 def build_t1(mirror=False):
     tj = build_tjunction(R_MAIN, R_MAIN * T1_RATIO, H1, order=ORDER, N_QUAD=2,
-                         RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         N_TRANS=n_slices, N_BRANCH=n_slices, Z_NEAR=L1,
-                         element_tag=FLUID_TAG)
+                         RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.75,
+                         QUADRANT_SCALE=0.55, N_TRANS=n_slices, N_BRANCH=n_slices,
+                         Z_NEAR=L1, element_tag=FLUID_TAG)
     ang, axis = ROT_T1, AXIS_T1
     core, da, db, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
@@ -405,8 +405,8 @@ N2_BRANCH = max(2, int(round(H2_BRANCH / 2.0)))   # ~2.0-long layers, as the coi
 
 def build_t2(mirror=False):
     tj = build_tjunction(R_MAIN, R_BR, H2_BRANCH, order=ORDER, N_QUAD=2,
-                         RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-                         N_TRANS=n_slices, N_BRANCH=N2_BRANCH,
+                         RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.75,
+                         QUADRANT_SCALE=0.55, N_TRANS=n_slices, N_BRANCH=N2_BRANCH,
                          element_tag=FLUID_TAG)
     ang, axis = ROT_T2, AXIS_T2
     core, dm, dp, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),

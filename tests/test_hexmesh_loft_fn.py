@@ -262,8 +262,8 @@ def test_rejects_sections_that_are_not_index_paired():
         linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     b = quadmesh.ogrid(
-        linemesh.circle(RT, 4 * (NS + 1), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
-        NS + 1, RADIAL)
+        linemesh.circle(RT, 4 * (NS + 2), center=(R, 0.0, 0.0), normal=(0, 1, 0)),
+        NS + 2, RADIAL)
     f = lambda t: (a if t < 0.5 else b)                            # noqa: E731
     with pytest.raises(ValueError, match="index-paired and conformal"):
         hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 3))
@@ -283,8 +283,8 @@ def test_sweep_nodes_must_be_sized_per_layer():
 
 def test_sweep_nodes_must_match_the_slices():
     base = _flat_disc(2)
-    other = quadmesh.ogrid(linemesh.circle(RT, 4 * (NS + 1), order=2),
-                           NS + 1, RADIAL)
+    other = quadmesh.ogrid(linemesh.circle(RT, 4 * (NS + 2), order=2),
+                           NS + 2, RADIAL)
     slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="must match the slices"):
         hexmesh.loft(slices, sweep_nodes=[[other], [other]])

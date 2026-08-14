@@ -42,7 +42,7 @@ wall = linemesh.circle(RADIUS, 4 * N_SIDE,
 radial = geometric_spacing(N_RADIAL, RADIAL_GRADING)
 
 section = quadmesh.ogrid(wall, N_SIDE, radial,
-                         center_scale=CENTER_SCALE,
+                         center_scale=CENTER_SCALE, quadrant_scale=CENTER_SCALE,
                          smoothing_method=SMOOTHING_METHOD)
 
 mesh = hexmesh.extrude(

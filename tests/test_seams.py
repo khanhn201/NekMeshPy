@@ -98,7 +98,7 @@ def test_reindex_rejects_a_non_permutation():
 
 
 def test_reindex_rejects_mismatched_connectivity():
-    a, b = _disc(n_side=2), _disc(n_side=3)
+    a, b = _disc(n_side=2), _disc(n_side=4)
     with pytest.raises(ValueError, match="identical quad/flip|one entry per point"):
         quadmesh.reindex(a, b, np.arange(a.points.shape[0]))
 

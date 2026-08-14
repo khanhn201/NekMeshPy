@@ -2,7 +2,7 @@
 
 [![docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://khanhn201.github.io/NekMeshPy/)
 
-Conformal high order all-hex meshing
+Conformal high order all-hex meshing.
 
 **Insert cool meshes here**
 

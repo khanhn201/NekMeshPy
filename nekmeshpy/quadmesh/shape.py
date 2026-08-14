@@ -204,6 +204,27 @@ def _sub_chain(chain: LineMesh, segs: IntArray, seg2line: IntArray) -> LineMesh:
                     interior=chain.interior[idx])
 
 
+def _slice_chain(chain: LineMesh, a: int, b: int) -> LineMesh:
+    """Points ``[a, b]`` of ``chain`` as their own ``LineMesh`` -- interior nodes and
+    per-segment tags carried verbatim, nothing resampled. ``chain`` may be an open
+    chain (``b < len(points)``) or a closed loop being cut at its wrap (``b ==
+    len(points)``, closing through point 0)."""
+    pts = chain.points
+    M = pts.shape[0]
+    seg = _seg_tags(chain)
+    if b < M:
+        p, interior = pts[a:b + 1], chain.interior[a:b]
+        tags = None if seg is None else seg[a:b]
+    else:
+        p = np.vstack([pts[a:M], pts[0:1]])
+        interior = chain.interior[a:M]
+        tags = None if seg is None else seg[a:M]
+    lm = line_loft(p, interior=interior, order=chain.order)
+    if tags is None:
+        return lm
+    return LineMesh(lm.point_mesh, lm.lines, lm.interior, ElementTags.from_dense(tags))
+
+
 def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
                side_tags: Mapping[str, str] | None = None,
                smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
@@ -324,112 +345,70 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
 
 
 def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
-          center_scale: float = 0.5,
+          center_scale: float = 0.7, quadrant_scale: float = 0.7,
           wall_tag: str = "", smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
-    """O-grid filling the closed ``boundary``: a central ``n_side x n_side`` block at
-    the loop centroid, surrounded by O-ring layers blending its perimeter out to the
-    boundary. ``center_scale`` sizes the block (fraction of the mean radius)."""
+    """O-grid filling the closed ``boundary``: four :func:`quadrant_ogrid
+    <nekmeshpy.quadmesh.shape.quadrant_ogrid>` quarters meeting at the loop's centroid,
+    split at the loop's own quarter points. ``center_scale`` places each quarter's own
+    hub corner; ``quadrant_scale`` places the seam corner shared between neighbours (via
+    :func:`quadrant_seam_fractions <nekmeshpy.quadmesh.shape.quadrant_seam_fractions>`)
+    -- see there for what each one does."""
     if n_side < 1:
         raise ValueError("ogrid needs n_side >= 1")
-    if not 0.0 < center_scale < 1.0:
-        raise ValueError("ogrid needs center_scale in (0, 1)")
-    radial = validate_layers(radial, "ogrid radial")
-    n_radial = radial.size - 1
+    if n_side % 2 != 0:
+        raise ValueError(
+            "ogrid needs an even n_side (it is built from four quadrant_ogrid "
+            "quarters, each needing a wall midpoint), got n_side=%d" % n_side)
     bpts = _check_boundary(boundary, "ogrid boundary", 3)
     # wall ring = the boundary loop itself, meshed exactly: it must already carry
-    # P = 4*n_side points (the caller sizes it, e.g. circle(R, 4*n_side)).  Block
-    # corners are 4 of those pulled toward the centroid and bilinearly filled;
-    # rings are straight-chord blends (an initial guess for smoothing).
+    # P = 4*n_side points (the caller sizes it, e.g. circle(R, 4*n_side)), split at
+    # its quarter points into the four quadrant arcs.
     P = 4 * n_side
     if bpts.shape[0] != P:
         raise ValueError(
             "ogrid boundary must have exactly 4*n_side = %d points to be meshed "
             "exactly (got %d); size the loop to match, e.g. circle(R, %d)"
             % (P, bpts.shape[0], P))
-    outer_pos: PointArray = bpts                                # (P,3) true wall
-    centroid = outer_pos.mean(axis=0)
-    rad = float(np.mean(np.linalg.norm(outer_pos - centroid, axis=1)))
+    centroid = bpts.mean(axis=0)
+    rad = float(np.mean(np.linalg.norm(bpts - centroid, axis=1)))
     if rad <= 0.0:
         raise ValueError("ogrid: boundary is degenerate (all points coincide)")
-    row = n_side + 1
-
-    def cid(i: int, j: int) -> int:
-        return i * row + j
-
-    # central block: 4 corners at arc-length quarters, scaled toward the
-    # centroid, bilinearly interpolated into a 3-D patch.
-    C00 = centroid + center_scale * (outer_pos[0] - centroid)
-    C10 = centroid + center_scale * (outer_pos[n_side] - centroid)
-    C11 = centroid + center_scale * (outer_pos[2 * n_side] - centroid)
-    C01 = centroid + center_scale * (outer_pos[3 * n_side] - centroid)
-    t_lat = np.arange(row) / n_side
-    U = t_lat[:, None]                                           # (row,1)  i / n_side
-    V = t_lat[None, :]                                           # (1,row)  j / n_side
-    block = (((1 - U) * (1 - V))[..., None] * C00
-             + (U * (1 - V))[..., None] * C10
-             + (U * V)[..., None] * C11
-             + ((1 - U) * V)[..., None] * C01).reshape(-1, 3)    # (row*row, 3)
-    cquads = _grid_quads(n_side, n_side)
-
-    peri_ids = np.array([cid(i, 0) for i in range(row)]
-                        + [cid(n_side, j) for j in range(1, row)]
-                        + [cid(i, n_side) for i in range(n_side - 1, -1, -1)]
-                        + [cid(0, j) for j in range(n_side - 1, 0, -1)],
-                        dtype=np.int64)
-    peri_pos = block[peri_ids, :]                                # (P,3)
-    # O-ring layers blending block perimeter out to boundary; radial[0]==0 is
-    # the perimeter itself, so skip it
-    fracs = radial[1:]
-    layers = [block]
-    ring = [peri_ids]
-    nprev = block.shape[0]
-    for t in fracs:
-        layers.append((1.0 - t) * peri_pos + t * outer_pos)
-        ring.append(nprev + np.arange(P, dtype=np.int64))
-        nprev += P
-    points = np.vstack(layers)
-
-    k: IntArray = np.arange(P, dtype=np.int64)
-    kn = (k + 1) % P
-    ring_quads = [np.stack([b[k], b[kn], a[kn], a[k]], axis=1)    # CCW
-                  for a, b in zip(ring[:-1], ring[1:])]
-    quads = np.vstack([cquads, *ring_quads])
-
-    # wall edges = side 1 of the outermost ring's quads (rows n_side^2 +
-    # (n_radial-1)*P onward), named from the boundary loop's own per-segment tags.
-    wall_q0 = n_side * n_side + (n_radial - 1) * P
-    qm = tag_edges(QuadMesh.from_corners(points, quads),
-                   *_curve_rows([(wall_q0 + m, 1) for m in range(P)],
-                                boundary, wall_tag))
-    # order-N: the ring quad is [b[k], b[kn], a[kn], a[k]] with b the outer layer, so
-    # the outward-facing local side is 1.  ``layers[1:]`` are the ring curves, ring 0
-    # being the straight block perimeter that stays with its bilinear guess.
-    order = boundary.order
-    overlays: list[Overlay] = []
-    if order > 1:
-        overlays = _ring_overlays(layers[1:], boundary, radial, peri_pos,
-                                  n_side * n_side, P, 1)
-    qm = _elevate(qm, order, overlays)
-    return _apply_smoothing(qm, smoothing_method)
+    n = n_side // 2
+    radial = validate_layers(radial, "ogrid radial")
+    fr = quadrant_seam_fractions(n, radial, quadrant_scale)
+    starts = [0, n_side, 2 * n_side, 3 * n_side]
+    arcs = [_slice_chain(boundary, a, b)
+            for a, b in zip(starts, starts[1:] + [P])]
+    seams = [line(centroid, a.points[0], fr, order=boundary.order) for a in arcs]
+    seams.append(seams[0])
+    return _apply_smoothing(
+        merge([quadrant_ogrid(arcs[q], seams[q], seams[q + 1], radial,
+                              center_scale=center_scale, wall_tag=wall_tag)
+              for q in range(4)]),
+        smoothing_method)
 
 
 def half_ogrid(arc: LineMesh, spine: LineMesh,
-               radial: int | FloatArray, *, center_scale: float = 0.5,
-               wall_tag: str = "",
+               radial: int | FloatArray, *, center_scale: float = 0.7,
+               quadrant_scale: float = 0.7, wall_tag: str = "",
                smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """Structured half-circle O-grid over a half-disk split along the ``spine`` line
     (A1..A2); the wall ``arc`` (``(4*Ntheta+1, 3)``, arc[0]=A1, arc[-1]=A2) is the open
-    boundary."""
+    boundary. Built as two :func:`quadrant_ogrid
+    <nekmeshpy.quadmesh.shape.quadrant_ogrid>` quarters split at the arc's own apex (its
+    midpoint, directly opposite the spine) and merged there: the spine's own [north
+    caps, center fan, south caps] halves become the ``O -> A1`` / ``O -> A2`` seams
+    verbatim (nothing resampled, same as the rest of ``spine``), and a fresh ``O ->
+    apex`` seam (via :func:`quadrant_seam_fractions
+    <nekmeshpy.quadmesh.shape.quadrant_seam_fractions>`) is the only new geometry.
+    ``center_scale``/``quadrant_scale`` are as there."""
     apts = _check_boundary(arc, "half_ogrid arc", 5)   # (na,3) backing array
     na = apts.shape[0]
     if (na - 1) % 4 != 0:
         raise ValueError("half_ogrid: arc must have 4*Ntheta+1 points (Ntheta >= 1)")
     Nt = (na - 1) // 4
-    if not 0.0 < center_scale < 1.0:
-        raise ValueError("half_ogrid needs center_scale in (0, 1)")
     radial = validate_layers(radial, "half_ogrid radial")
     Nr = radial.size - 1
-    cs = center_scale
 
     # spine is meshed exactly: its points must be sampled monotonically along the
     # diameter, A1 (fraction 0) -> A2 (fraction 1) -- Nr north caps, then the 2Nt+1
@@ -449,91 +428,19 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
             "spine cannot describe a higher-order seam"
             % (spine.order, arc.order))
 
-    north = sp[0:Nr][::-1]                      # A1 -> block; reverse to inner-first
-    fe = sp[Nr:Nr + 2 * Nt + 1]                 # the center fan, sN..sS
-    O = fe[Nt]                                  # spine midpoint (fan is symmetric)
-    south = sp[Nr + 2 * Nt + 1:]                # block -> A2, already inner-first
-    Q_N = O + cs * (apts[Nt, :] - O)
-    Q_S = O + cs * (apts[3 * Nt, :] - O)
-    ae = Q_N + (np.arange(2 * Nt + 1)[:, None] / (2 * Nt)) * (Q_S - Q_N)
-    P_N = fe[0, :]
-    P_S = fe[-1, :]
+    o_idx = Nr + Nt                             # the spine's own midpoint, O
+    seam_a1 = line_reverse(_slice_chain(spine, 0, o_idx))       # O -> A1, exact nodes
+    seam_a2 = _slice_chain(spine, o_idx, sp.shape[0] - 1)       # O -> A2, exact nodes
+    fr = quadrant_seam_fractions(Nt, radial, quadrant_scale)
+    seam_apex = line(sp[o_idx], apts[2 * Nt], fr, order=arc.order)
 
-    ni = 2 * Nt
-    nj = Nt
-    rid: IntArray = np.zeros((ni + 1, nj + 1), dtype=np.int64)
-    point_list = []
-    for i in range(ni + 1):
-        u = i / ni
-        for j in range(nj + 1):
-            v = j / nj
-            left = (1 - v) * P_N + v * Q_N
-            right = (1 - v) * P_S + v * Q_S
-            bott = fe[i, :]
-            top = ae[i, :]
-            C = ((1 - v) * bott + v * top + (1 - u) * left + u * right
-                 - ((1 - u) * (1 - v) * P_N + u * (1 - v) * P_S
-                    + (1 - u) * v * Q_N + u * v * Q_S))
-            point_list.append(C)
-            rid[i, j] = len(point_list) - 1
-
-    quads = _grid_quads(ni, nj).tolist()
-
-    peri = np.concatenate([rid[0, 0:nj + 1], rid[1:ni + 1, nj], rid[ni, nj - 1::-1]])
-    points = np.array(point_list, dtype=float)
-    peripts = points[peri, :]
-
-    lid = [peri]
-    ring_pts: list[PointArray] = []
-    for r in range(Nr):
-        tau = radial[r + 1]                 # radial[0] == 0 is the block perimeter
-        pts = (1 - tau) * peripts + tau * apts
-        pts[0, :] = north[r]                # spine sample at (1-tau)*sN
-        pts[-1, :] = south[r]              # spine sample at sS + tau*(1-sS)
-        base = points.shape[0]
-        points = np.vstack([points, pts])
-        lid.append(base + np.arange(pts.shape[0]))
-        ring_pts.append(pts)
-
-    for r in range(Nr):
-        a = lid[r]
-        b = lid[r + 1]
-        for k in range(4 * Nt):
-            quads.append([a[k], a[k + 1], b[k + 1], b[k]])
-
-    # wall arc edges = side 3 of the outermost ring's quads (rows (ni*nj) +
-    # (Nr-1)*(4*Nt) onward); wall edge k tracks arc segment k.
-    wall_q0 = ni * nj + (Nr - 1) * (4 * Nt)
-    qm = tag_edges(QuadMesh.from_corners(points, np.array(quads, dtype=np.int64)),
-                   *_curve_rows([(wall_q0 + k, 3) for k in range(4 * Nt)],
-                                arc, wall_tag))
-    # order-N: the ring quad here is [a[k], a[k+1], b[k+1], b[k]] with b the outer
-    # layer, so the outward-facing local side is 3 (as the wall always was).
-    # ``_blended_ring`` re-anchors each ring on its snapped spine end points.
-    order = arc.order
-    overlays: list[Overlay] = []
-    if order > 1:
-        q0 = ni * nj
-        overlays = _ring_overlays(ring_pts, arc, radial, peripts,
-                                  q0, 4 * Nt, 3)
-        # ...and overlay the seam with the spine's *own* nodes, so a curved spine is
-        # meshed exactly at order N too rather than straight-subdivided between its
-        # samples.  Each seam edge is single-incidence (the half-disk's flat side), and
-        # the spine's point intervals partition it exactly: intervals [0, Nr) are the
-        # north radial edges (outermost first, so reversed), [Nr, Nr+ni) the inner
-        # block's j == 0 row, and [Nr+ni, ...) the south radial edges.
-        seg2line: IntArray = np.argsort(_chain_intervals(spine, "half_ogrid spine"))
-        rs: IntArray = np.arange(Nr, dtype=np.int64)
-        overlays += [
-            (q0 + rs * (4 * Nt), 4,                       # north caps, block -> A1
-             _sub_chain(spine, rs[::-1], seg2line)),
-            (np.arange(ni, dtype=np.int64) * nj, 1,       # the center fan, A1 -> A2
-             _sub_chain(spine, np.arange(Nr, Nr + ni, dtype=np.int64), seg2line)),
-            (q0 + rs * (4 * Nt) + (4 * Nt - 1), 2,        # south caps, block -> A2
-             _sub_chain(spine, Nr + ni + rs, seg2line)),
-        ]
-    qm = _elevate(qm, order, overlays)
-    return _apply_smoothing(qm, smoothing_method)
+    arc_a = _slice_chain(arc, 0, 2 * Nt)         # A1 -> apex
+    arc_b = _slice_chain(arc, 2 * Nt, na - 1)    # apex -> A2
+    qa = quadrant_ogrid(arc_a, seam_a1, seam_apex, radial,
+                        center_scale=center_scale, wall_tag=wall_tag)
+    qb = quadrant_ogrid(arc_b, seam_apex, seam_a2, radial,
+                        center_scale=center_scale, wall_tag=wall_tag)
+    return _apply_smoothing(merge([qa, qb]), smoothing_method)
 
 
 #: The two nameable seams of a :func:`quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>`, in the order its arguments
@@ -704,50 +611,48 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
 
 
 def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
-                            center_scale: float = 0.5) -> FloatArray:
+                            quadrant_scale: float = 0.7) -> FloatArray:
     """The normalized ``O -> A`` positions of the ``n_side+1 + Nradial`` seam points
     that :func:`quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` requires,
-    ascending: the ``n_side+1`` core fan, then the ``Nradial`` ring stations."""
+    ascending: the ``n_side+1`` core fan, then the ``Nradial`` ring stations. The seam's
+    shared corner ``M`` sits at ``quadrant_scale * R`` along ``O -> A`` directly -- an
+    independent knob from :func:`quadrant_ogrid
+    <nekmeshpy.quadmesh.shape.quadrant_ogrid>`'s own ``center_scale``, which places its
+    hub corner ``K`` at ``center_scale * R`` along the arc's *bisector* instead. Unless
+    ``quadrant_scale`` is chosen to land ``M`` exactly on the chord between neighbouring
+    quadrants' ``K`` corners (``quadrant_scale == center_scale * cos(45deg)``), the
+    merged core's boundary bows into an octagon rather than sitting flush as a
+    square."""
     ns = int(n_side)
     if ns < 1:
         raise ValueError("quadrant_seam_fractions needs n_side >= 1, got %d" % ns)
-    if not 0.0 < center_scale < 1.0:
-        raise ValueError("quadrant_seam_fractions needs center_scale in (0, 1)")
+    if not 0.0 < quadrant_scale < 1.0:
+        raise ValueError("quadrant_seam_fractions needs quadrant_scale in (0, 1)")
     rad = validate_layers(radial, "quadrant_seam_fractions radial")
-    s_m = center_scale * float(np.cos(np.pi / 4.0))
+    s_m = quadrant_scale
     fr: FloatArray = np.concatenate([np.linspace(0.0, s_m, ns + 1),
                                      s_m + rad[1:] * (1.0 - s_m)])
     return fr
 
 
-def quadrant_disc(arcs: Sequence[LineMesh], center: Point, radial: int | FloatArray,
-                  *, center_scale: float = 0.5, wall_tag: str = "") -> QuadMesh:
-    """Full disc from its four wall arcs and centre point: the four-quadrant analogue of
-    :func:`ogrid <nekmeshpy.quadmesh.shape.ogrid>`."""
-    n = (np.asarray(arcs[0].points).shape[0] - 1) // 2
-    fr = quadrant_seam_fractions(n, radial, center_scale=center_scale)
-    seams = [line(center, a.points[0], fr, order=arcs[0].order) for a in arcs]
-    seams.append(seams[0])
-    return merge([quadrant_ogrid(arcs[q], seams[q], seams[q + 1], radial,
-                                 center_scale=center_scale, wall_tag=wall_tag)
-                 for q in range(4)])
-
-
 def spine_fractions(n_theta: int, radial: int | FloatArray,
-                    center_scale: float = 0.5) -> FloatArray:
+                    quadrant_scale: float = 0.7) -> FloatArray:
     """The normalized ``A1 -> A2`` positions of the ``2*n_theta+1 + 2*Nradial`` spine
     points that :func:`half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` and
     :func:`spined_ogrid <nekmeshpy.quadmesh.shape.spined_ogrid>` require, in ascending
     order: ``Nradial`` north caps, the ``2*n_theta+1`` center fan, then ``Nradial``
     south caps (see :func:`half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` for what
-    each region is)."""
+    each region is). ``quadrant_scale`` plays the same role here as it does in
+    :func:`quadrant_seam_fractions <nekmeshpy.quadmesh.shape.quadrant_seam_fractions>`:
+    it is the fraction of each half (``O -> A1`` and ``O -> A2``) given to the center
+    fan before the ``Nradial`` O-ring caps take over."""
     nt = int(n_theta)
     if nt < 1:
         raise ValueError("spine_fractions needs n_theta >= 1, got %d" % nt)
-    if not 0.0 < center_scale < 1.0:
-        raise ValueError("spine_fractions needs center_scale in (0, 1)")
+    if not 0.0 < quadrant_scale < 1.0:
+        raise ValueError("spine_fractions needs quadrant_scale in (0, 1)")
     rad = validate_layers(radial, "spine_fractions radial")
-    s_n, s_s = (1.0 - center_scale) / 2, (1.0 + center_scale) / 2
+    s_n, s_s = (1.0 - quadrant_scale) / 2, (1.0 + quadrant_scale) / 2
     fr: FloatArray = np.concatenate([((1.0 - rad[1:]) * s_n)[::-1],
                                      np.linspace(s_n, s_s, 2 * nt + 1),
                                      s_s + rad[1:] * (1.0 - s_s)])
@@ -755,14 +660,17 @@ def spine_fractions(n_theta: int, radial: int | FloatArray,
 
 
 def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
-                 spine: LineMesh | None = None, center_scale: float = 0.5,
-                 wall_tag: str = "",
+                 spine: LineMesh | None = None, center_scale: float = 0.7,
+                 quadrant_scale: float = 0.7, wall_tag: str = "",
                  smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
     """Full-disk O-grid over a closed ``boundary`` split along a spine diameter into two
-    :func:`half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` halves welded along the
-    spine -- the clean way to O-grid a disk that has a natural ``A1..A2`` seam (a
-    saddle-split vessel or pipe cross-section), so the caller need not hand-roll the arc
-    split and merge."""
+    :func:`half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` halves (each in turn built
+    from two :func:`quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` quarters)
+    welded along the spine -- the clean way to O-grid a disk that has a natural
+    ``A1..A2`` seam (a saddle-split vessel or pipe cross-section), so the caller need not
+    hand-roll the arc split and merge. ``center_scale``/``quadrant_scale`` are as in
+    :func:`quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>`/
+    :func:`quadrant_seam_fractions <nekmeshpy.quadmesh.shape.quadrant_seam_fractions>`."""
     bpts = _check_boundary(boundary, "spined_ogrid boundary", 8)
     M = bpts.shape[0]
     if M % 8 != 0:
@@ -771,15 +679,13 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
             "into two 4*Ntheta+1 arcs); got %d" % M)
     nh = M // 2
     Nt = nh // 4
-    if not 0.0 < center_scale < 1.0:
-        raise ValueError("spined_ogrid needs center_scale in (0, 1)")
     radial = validate_layers(radial, "spined_ogrid radial")
 
     # The spine is meshed exactly at the points given -- nothing is resampled here.
     # A caller-supplied spine must already carry the [north caps, center fan, south
     # caps] sampling half_ogrid consumes; only the default straight chord is a shape
     # this factory owns, so only that one may be placed here.
-    fr = spine_fractions(Nt, radial, center_scale)
+    fr = spine_fractions(Nt, radial, quadrant_scale)
     if spine is None:
         spine = line(bpts[0, :], bpts[nh, :], fr, order=boundary.order)
     elif spine.points.shape[0] != fr.shape[0]:
@@ -787,7 +693,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
             "spined_ogrid spine must have exactly 2*Ntheta+1 + 2*Nradial = %d points "
             "ascending A1 -> A2 (got %d); it is meshed exactly at the points given, "
             "never resampled -- evaluate your spine curve at "
-            "spine_fractions(%d, radial, center_scale)"
+            "spine_fractions(%d, radial, quadrant_scale)"
             % (fr.shape[0], spine.points.shape[0], Nt))
     # the second half traverses A2 -> A1; ``reverse`` relabels rather than re-placing,
     # so both halves see bit-identical seam coordinates (and, at order > 1, carries the
@@ -796,25 +702,14 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
 
     # split the loop (and its per-segment tags) into the two half arcs: arc1 runs
     # A1 -> A2 over segments [0, nh), arc2 runs A2 -> A1 over segments [nh, M).
-    # order-N: the loop's per-line private ``interior`` nodes split the same way (a
-    # line element shares nothing but its endpoints), so each half arc carries its
-    # exact wall geometry natively -- no curved block anywhere.
-    seg = _seg_tags(boundary)
-    o = boundary.order
-    inner: PointArray = boundary.interior
-    def _arc(pts: PointArray, interior: PointArray, tags: object) -> LineMesh:
-        lm = line_loft(pts, interior=interior, order=o)
-        if tags is None:
-            return lm
-        return LineMesh(lm.point_mesh, lm.lines, lm.interior,
-                        ElementTags.from_dense(tags))
-    arc1 = _arc(bpts[0:nh + 1, :], inner[0:nh], None if seg is None else seg[0:nh])
-    arc2 = _arc(np.vstack([bpts[nh:M, :], bpts[0:1, :]]), inner[nh:M],
-                None if seg is None else seg[nh:M])
+    arc1 = _slice_chain(boundary, 0, nh)
+    arc2 = _slice_chain(boundary, nh, M)
     h1 = half_ogrid(arc1, spine, radial, center_scale=center_scale,
-                    wall_tag=wall_tag, smoothing_method=smoothing_method)
+                    quadrant_scale=quadrant_scale, wall_tag=wall_tag,
+                    smoothing_method=smoothing_method)
     h2 = half_ogrid(arc2, spine2, radial, center_scale=center_scale,
-                    wall_tag=wall_tag, smoothing_method=smoothing_method)
+                    quadrant_scale=quadrant_scale, wall_tag=wall_tag,
+                    smoothing_method=smoothing_method)
     return merge([h1, h2])
 
 
@@ -1041,7 +936,6 @@ __all__ = [
     "hemisphere",
     "ogrid",
     "quadrant_core",
-    "quadrant_disc",
     "quadrant_ogrid",
     "quadrant_seam_fractions",
     "rectangle",

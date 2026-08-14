@@ -116,7 +116,8 @@ if __name__ == "__main__":
     PLANE_NORMAL = (0.0, 1.0, 0.0)       # the coil is planar: y is the plane normal
 
     # -- mesh parameters --------------------------------------------------------
-    N_SIDE = 5                   # central square block cells per side (loop = 4*N_SIDE pts)
+    N_SIDE = 6                   # central square block cells per side (loop = 4*N_SIDE pts);
+                                 # must be even -- ogrid is built from 4 quadrant_ogrid quarters
     N_RADIAL = 3                 # O-ring layers out to the wall
     CENTER_SCALE = 0.5
     # TARGET_LEN above is a property of this coil's own geometry (the tightest

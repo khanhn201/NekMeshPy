@@ -121,18 +121,20 @@ def test_tags_ride_up_from_the_line_level():
     assert q2.edge_group_tags == ["cut", "outer", "sym"]
 
 
-def test_seam_fraction_helper_places_the_core_corner_on_the_square():
-    """``|O-M| == center_scale * cos(45 deg) * R``, not ``center_scale * R``: M is the
-    midpoint of the core square's side while K is its corner."""
+def test_seam_fraction_helper_places_the_core_corner_past_the_hub_chord():
+    """``|O-M| == quadrant_scale * R``: M sits on the O -> A radius directly, past the
+    chord between neighbouring quadrants' hub corners K (which sit at
+    ``center_scale * R * cos(45deg)`` along their own bisector), so the merged core's
+    boundary is an octagon, not a square."""
     n, cs = 4, 0.6
     fr = quadmesh.quadrant_seam_fractions(n, RADIAL, cs)
     assert fr.size == n + 1 + NR
     assert fr[0] == 0.0 and fr[-1] == 1.0
     assert np.all(np.diff(fr) > 0.0)
-    assert fr[n] == pytest.approx(cs * np.cos(np.pi / 4))
+    assert fr[n] == pytest.approx(cs)
     q = _disc(n, 1, center_scale=cs)[0]
-    # the merged core of four quadrants is a square: its corner K and the shared
-    # midpoints M sit at the expected radii.
+    # the merged core of four quadrants is an octagon: its corner K and the shared
+    # midpoints M sit at the expected, differing radii.
     assert np.linalg.norm(q.points[-1] - q.points[0]) > 0.0
 
 

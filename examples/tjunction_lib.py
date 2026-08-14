@@ -39,6 +39,7 @@ _RADIAL_DEFAULT = np.array([0.0, 0.6, 1.0])
 _PHI_W_FLOOR, _PHI_W_CEIL = np.deg2rad(60.0), np.deg2rad(170.0)
 
 
+
 def footprint_angle(ratio):
     """Cylindrical half-angle subtended by the branch footprint, ``asin(r/sqrt(2))``.
 
@@ -89,7 +90,7 @@ def auto_params(R_MAIN, R_BRANCH):
 
 
 def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
-                     RADIAL=None, CENTER_SCALE=0.7,
+                     RADIAL=None, CENTER_SCALE=0.7, QUADRANT_SCALE=0.7,
                      order=2, PHI_W=None, CAP_TIP_BIAS=None,
                      N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag="",
                      branch_tag=""):
@@ -156,11 +157,22 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return quadmesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
                                for arc, s1, s2 in pieces])
 
+    def disc_at(arcs, center):
+        # quadrant_disc's own recipe, inlined: quadmesh.ogrid/spined_ogrid now cover the
+        # single-boundary-loop case, but this junction's per-station arcs are built
+        # independently per quadrant with an off-centroid hub, so they still need the
+        # general form.
+        fr = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
+        seams = [seam(a.points[0], fr, center) for a in arcs]
+        seams.append(seams[0])
+        return quadmesh.merge([quadrant(arcs[q], seams[q], seams[q + 1], wall_tag="wall")
+                               for q in range(4)])
+
     def plain_walls(composite, z, sign):
         ang = sign * np.deg2rad(-45.0 + 90.0 * np.arange(5))
         return [plain_wall(composite[q], ang[q], ang[q + 1], z) for q in range(4)]
 
-    FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+    FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
 
     P = [footprint(TQ[q:q + 1])[0] for q in range(4)]
     WP, WM = cyl(PHI_W, 0.0), cyl(-PHI_W, 0.0)
@@ -211,7 +223,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                               quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca,
                                                  order=order, tip_bias=tip_bias,
                                                  mids=mids, element_tag="wall")],
-                             center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN),
+                             center=ORIGIN + CENTER_SCALE* np.sqrt(1.5) * (wc - ORIGIN),
                              element_tag=element_tag)
 
     def leg(composite, walls, sign):
@@ -219,11 +231,9 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         w_plain = plain_walls(walls, z, sign)
 
         def station(s):
-            return quadmesh.quadrant_disc(
+            return disc_at(
                 [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
-                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]),
-                RADIAL, center_scale=CENTER_SCALE,
-                wall_tag="wall")
+                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]))
 
         plain = station(1.0)
         transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
@@ -235,9 +245,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
         walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
-        sections = [quadmesh.quadrant_disc([w[i] for w in walls],
-                                           (1.0 - t[i]) * ORIGIN + t[i] * c_open, RADIAL,
-                                           center_scale=CENTER_SCALE, wall_tag="wall")
+        sections = [disc_at([w[i] for w in walls],
+                            (1.0 - t[i]) * ORIGIN + t[i] * c_open)
                    for i in range(t.size)]
         return (hexmesh.loft(sections, element_tags=element_tag or None,
                              last_tag=branch_tag or None),

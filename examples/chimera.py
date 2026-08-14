@@ -131,7 +131,7 @@ H_BRANCH = 4.0                # branch opening plane, x = H_BRANCH
 
 N_QUAD = 2                    # cells per quadrant half-arc; a quadrant spans 2*N_QUAD
 RADIAL = np.array([0.0, 0.6, 1.0])   # O-ring positions, core perimeter -> wall
-CENTER_SCALE = 0.7           # core corner at CENTER_SCALE * R along the arc midpoint
+CENTER_SCALE = 0.8           # core corner at CENTER_SCALE * R along the arc midpoint
 
 # PHI_W / CAP_TIP_BIAS / ORIGIN -- the bypass edge, the crotch wall-triangle tip
 # bias, and the junction hub -- are no longer needed here: build_tjunction defaults
