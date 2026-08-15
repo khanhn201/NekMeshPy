@@ -87,7 +87,50 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # so importing it for these two names alone costs nothing beyond them.
 from serpentine_pipe import MOVES as COIL_MOVES_LIB  # noqa: E402  (needs the path above)
 from serpentine_pipe import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
-from tjunction_lib import build_tjunction  # noqa: E402
+from tjunction_lib import build_eqtee, build_tjunction  # noqa: E402
+
+
+def loft_between(a, b, n_layers, element_tags=None):
+    """Blend + loft two discs that share ``quads``/``orient`` connectivity even though
+    they come from different mesher families (eqtee's spined_ogrid discs and the
+    quadrant construction's both bottom out in quadrant_ogrid quarters, so they turn
+    out identical -- verified, not assumed). ``quadmesh.blend`` needs no reindexing
+    when that holds: point ``i`` of ``a`` and point ``i`` of ``b`` are already the
+    same node, so a straight index-paired blend carries both discs' own true curvature
+    the whole way across, unlike ``hexmesh.adapter``/``bridge`` (built for sections
+    that only differ in *pattern*, not connectivity, and approximate curvature they
+    cannot exactly reconcile).
+
+    The one thing index equality does not fix is which way each disc's CCW winding
+    faces -- the two families' own "outward" convention can come out opposite even on
+    identical connectivity -- so this tries ``a`` as given and, if that blend comes out
+    inverted, a copy of ``a`` flipped 180 degrees about an in-plane axis instead.
+    Only ``a`` is ever touched: ``b``'s own points/interior ride into the result
+    verbatim (``blend``'s own ``t=1`` end), which is what lets the caller weld the
+    result to whatever else already carries ``b``'s own true geometry."""
+    fracs = np.linspace(0.0, 1.0, n_layers + 1)
+
+    def _try(aa):
+        slices = quadmesh.blend(aa, b, fracs)
+        block = hexmesh.loft(slices, element_tags=element_tags)
+        return block, float(hexmesh.scaled_jacobian(block, high_order=True).min())
+
+    try:
+        block, m = _try(a)
+        if m > 0.0:
+            return block
+    except ValueError:
+        m = -1.0
+    na = quadmesh.plane_normal(a)
+    axis = (0.0, 1.0, 0.0) if abs(na[1]) < 0.9 else (1.0, 0.0, 0.0)
+    a_flip = quadmesh.rotate(a, np.pi, axis=axis, center=a.points.mean(axis=0))
+    block2, m2 = _try(a_flip)
+    if m2 <= 0.0:
+        raise ValueError(
+            "loft_between: both windings of a gave an inverted block (min sj %.4g, "
+            "%.4g) -- a and b may not actually share connectivity" % (m, m2))
+    return block2
+
 
 FAST = False
 ORDER = 2
@@ -153,7 +196,8 @@ if chi_mesh is None:
 else:
     # template= reuses fake_chi_disc's B-rep *structure* while every coordinate comes
     # off chimera itself.  A freshly numbered extraction would be exact too, but could
-    # not pair index-for-index with T1's own end section, which hexmesh.adapter needs.
+    # not pair index-for-index with T1's own end section, which loft_between needs
+    # (a straight index-paired blend, so it never has to reindex either side).
     #
     # Reading the target off the real mesh is what removes the guess: a recipe that
     # reproduces one port exactly need not reproduce the other.  chimera builds its
@@ -168,27 +212,27 @@ else:
                                          template=fake_chi_disc(CHI_OUT))
 
 # -----------------------------------------------------------------------------
-# T1: same quadrant pattern family as T2 (not eqtee) so the T1-branch <-> T2-
-# main weld is a same-family tolerance weld, not a cross-family one. Equal
-# main/branch radius is not directly supported by the quadrant construction
-# (the footprint curve degenerates as R_BRANCH -> R_MAIN), so R_BRANCH is
-# 99.9% of R_MAIN -- visually and functionally equal. PHI_W / CAP_TIP_BIAS /
-# ORIGIN are left to tjunction_lib.auto_params, which picks them from the
-# radius ratio; at this ratio a hand-tuned PHI_W=165 with the old fixed
-# bias and hub gave 0.105 min scaled Jacobian and the automatic choice gives
-# 0.253. CENTER_SCALE has no effect on this at all (checked).
+# T1: main and branch are genuinely equal radius here (R_MAIN both), which the
+# quadrant construction cannot mesh at all -- its footprint curve degenerates as
+# R_BRANCH -> R_MAIN, which used to force a 99.9%-of-R_MAIN fudge. eqtee's collar
+# construction is built for exactly this ratio, so T1 uses it while T2 (genuinely
+# unequal: main = R_MAIN, branch = R_BR) stays on the quadrant construction below.
+# That puts the T1-branch <-> T2-main weld across families (eqtee's spined_ogrid
+# disc into the quadrant one's), but both are built from quadrant_ogrid quarters
+# underneath and turn out to share identical quad/orient connectivity (verified),
+# so loft_between's index-paired blend spans that seam with both sides' true
+# curvature intact -- see place_t2's own comment.
 # main axis -> x, branch -> -y.
 # -----------------------------------------------------------------------------
-T1_RATIO = 0.999
 ROT_T1 = -np.deg2rad(120.0)
 AXIS_T1 = (1.0, -1.0, 1.0)
 
 
 def build_t1(mirror=False):
-    tj = build_tjunction(R_MAIN, R_MAIN * T1_RATIO, H1, order=ORDER, N_QUAD=2,
-                         RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.75,
-                         QUADRANT_SCALE=0.55, N_TRANS=n_slices, N_BRANCH=n_slices,
-                         Z_NEAR=L1, element_tag=FLUID_TAG)
+    tj = build_eqtee(R_MAIN, L1, H1, order=ORDER, n_half=N_HALF,
+                     radial=np.array([0.0, 0.6, 1.0]), n_layers_main=n_slices,
+                     n_layers_branch=n_slices, center_scale=0.75,
+                     quadrant_scale=0.55, element_tag=FLUID_TAG)
     ang, axis = ROT_T1, AXIS_T1
     core, da, db, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
@@ -274,10 +318,14 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # opening (T1 sits below the chimera plane), face to face -- descending
     # onto it (-1, as before the real-chimera flip) would put two -z-facing
     # faces back to back, which cannot weld.
-    # the swept tube stops ADAPT short of the chimera plane; the last ADAPT is
-    # a hexmesh.adapter morphing T1's own disc pattern into chimera's own
-    # (they differ ~2% in one quadrant's wall spacing -- different
-    # branch-radius params -- so no plain weld across that seam can be exact).
+    # the swept tube stops ADAPT short of the chimera plane; the last ADAPT is a
+    # loft_between morphing T1's own disc pattern into chimera's own. T1 used to be
+    # quadrant-family like chimera and this used to be a hexmesh.adapter -- a *pattern*
+    # roll, since both sides differed only slightly. Now that T1 is eqtee (spined_ogrid-
+    # family) they look built differently, but both bottom out in quadrant_ogrid
+    # quarters and turn out to share identical quad/orient connectivity (verified) --
+    # so a straight index-paired blend carries both discs' true curvature across with
+    # no reindexing at all, once loft_between finds the winding that isn't inverted.
     # NOTE: elbow_backward always lands exactly *at* the target point it is
     # given (that is what "backward" means -- it solves the start position to
     # make that true), so the connector must be solved to a point ADAPT short
@@ -314,13 +362,12 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
 
     conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
     end_port = _end_section(db)
-    # chimera's own openings face -z and this connector rises +z into them, so the two
-    # face each other; adapter takes its roll axis from end_port's own normal, which is
-    # what the explicit axis=(0,0,1) always was.
+    # chimera's own openings face -z and this connector rises +z into them, so the
+    # two face each other; bridge checks that from each port's own stated normal.
     chi_port = quadmesh.port(chi_disc, outward=(0.0, 0.0, -1.0))
     print("  [%s] end %s" % (tag, end_port))
     print("  [%s] tgt %s" % (tag, chi_port))
-    adapter = hexmesh.adapter(end_port, chi_port, layers=2, element_tags=FLUID_TAG)
+    connector = loft_between(end_port.section, chi_disc, 2, element_tags=FLUID_TAG)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
     # The inlet/outlet risers themselves bend to z- (away from chimera, which
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
@@ -333,16 +380,14 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # above (da is no more exactly centred on t1_center than db is).
     riser = build_bend_mesh(da, da_c, moves_r, 0.0 if a_sign > 0 else np.pi,
                             da_c[1], n_slices*8, last_tag=tag)
-    # conn_chi's own end and the adapter's own start are the *same* physical
-    # points (both derived from db via the same sweep_placements machinery),
-    # but the adapter's internal 90-degree roll search (see hexmesh.adapter)
-    # rotates them, and T1's own disc is only *near*-exactly 4-fold symmetric
-    # (a ~0.03-unit residual, well under merge()'s global tol=0.005 default)
-    # -- so weld *this one seam* locally, at a tolerance sized to that
-    # specific residual, rather than loosening the tolerance for the whole
-    # assembly (which welded an unrelated, closer-together pair by mistake
-    # the one time this was tried globally).
-    conn_chi = hexmesh.merge([conn_chi, adapter], tol=0.05)
+    # conn_chi's own end and the connector's own start are the *same* physical
+    # points (both derived from db via the same sweep_placements machinery), but
+    # T1's own disc is only *near*-exactly symmetric (a ~0.03-unit residual, well
+    # under merge()'s global tol=0.005 default) -- so weld *this one seam* locally,
+    # at a tolerance sized to that specific residual, rather than loosening the
+    # tolerance for the whole assembly (which welded an unrelated, closer-together
+    # pair by mistake the one time this was tried globally).
+    conn_chi = hexmesh.merge([conn_chi, connector], tol=0.05)
     return core, [conn_chi], riser, dbr, t1_center
 
 
@@ -435,7 +480,7 @@ RUN_T1_T2 = 10.0 - H1
 
 
 def place_t2(source_disc, t2_y, mirror=False):
-    """One T2 at ``t2_y``, its ``+y`` leg bridged back to ``source_disc`` --
+    """One T2 at ``t2_y``, its ``+y`` leg loft_between-ed back to ``source_disc`` --
     T1's own branch for the first of a chain, the previous T2's ``-y`` leg for
     every one after that.  Returns that T2's own ``-y`` leg rather than capping
     it, so the caller decides whether it carries on to another T2 or dead-ends.
@@ -445,8 +490,8 @@ def place_t2(source_disc, t2_y, mirror=False):
     different y (they follow chimera's own inlet/outlet).  A fixed run length
     instead would leave the two sides at different y -- which the coil build
     downstream cannot express, since it spans one shared x-z plane.  Pure -y
-    also keeps the hexmesh.bridge stubs aligned with both discs' own normal,
-    avoiding the large-rotation mismatch a diagonal offset causes."""
+    also keeps the two discs facing each other squarely, avoiding the large
+    in-plane rotation a diagonal offset would otherwise blend across."""
     t2 = build_t2(mirror=mirror)
     br_pos = source_disc.points.mean(axis=0)
     run = br_pos[1] - t2_y - L2
@@ -456,14 +501,18 @@ def place_t2(source_disc, t2_y, mirror=False):
     da = quadmesh.translate(t2.disc_minus, t2_center)   # -y, on to the next T2 (or capped)
     db = quadmesh.translate(t2.disc_plus, t2_center)    # +y, faces back upstream
     dbr = quadmesh.translate(t2.disc_branch, t2_center)  # +/-x (mirror), out to a serpentine
-    # both legs run along y: the source faces -y (on down the chain) and this T2's
-    # +y leg faces back upstream at it.  Stating that rather than letting bridge infer
-    # it from the centroid line is what lets it check the two really do face each
-    # other, and that they are the same size.
-    conn = hexmesh.bridge(quadmesh.port(source_disc, outward=(0.0, -1.0, 0.0)),
-                          quadmesh.port(db, outward=(0.0, 1.0, 0.0)),
-                          element_tags=FLUID_TAG)
-    return core, conn, da, dbr, t2_center
+    # source_disc is T1's own branch (eqtee-family) for the first T2 in a chain, or a
+    # previous T2's own disc_minus (quadrant-family, same recipe as db) for every one
+    # after -- both share db's quad/orient connectivity either way (verified for the
+    # eqtee case too), so loft_between's index-paired blend applies uniformly.
+    conn = loft_between(source_disc, db, 6, element_tags=FLUID_TAG)
+    # for the first T2 off each T1 branch, source_disc is eqtee-family and db is
+    # quadrant-family, so bridge's own db-facing stub falls back to a *loose* (corner-
+    # exact, straight-interior) match rather than db's exact curvature -- weld that one
+    # seam to core (which carries db's real curvature) locally, at a tolerance sized to
+    # that residual, same as place_t1's own conn_chi <-> connector weld above.
+    core = hexmesh.merge([core, conn], tol=0.05)
+    return core, da, dbr, t2_center
 
 
 #: T2 junctions in series on each side, each hanging off the previous one's own
@@ -483,9 +532,9 @@ def t2_chain(source_disc, mirror):
     the whole run stays a single open flow path off that branch."""
     levels, src = [], source_disc
     for k in range(N_T2):
-        core, conn, da, dbr, ctr = place_t2(src, T2_SHARED_Y - k * T2_SPACING,
-                                            mirror=mirror)
-        levels.append({"core": core, "conn": conn, "da": da, "dbr": dbr, "ctr": ctr})
+        core, da, dbr, ctr = place_t2(src, T2_SHARED_Y - k * T2_SPACING,
+                                      mirror=mirror)
+        levels.append({"core": core, "da": da, "dbr": dbr, "ctr": ctr})
         src = da
     levels[-1]["dead"] = hexmesh.extrude(levels[-1]["da"], 1.5 * R_BR, 2,
                                          axis=(0.0, -1.0, 0.0), last_tag="wall",
@@ -497,8 +546,7 @@ chain_in = t2_chain(br_in, mirror=False)
 chain_out = t2_chain(br_out, mirror=True)
 
 pieces2 = pieces + [p for lv in (*chain_in, *chain_out)
-                    for p in (lv["core"], lv["conn"], *( [lv["dead"]]
-                                                         if "dead" in lv else []))]
+                    for p in (lv["core"], *([lv["dead"]] if "dead" in lv else []))]
 mesh2 = hexmesh.merge(pieces2, tol=0.005)
 _rep2 = hexmesh.topology_report(mesh2)
 print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
