@@ -149,8 +149,8 @@ def leg_slices(open_ring, seam_ring, n_slices):
         # merges the two half-discs; wall_tag names every wall edge (see
         # flow_past_cylinder.py for the tag-flow-down convention).
         slices.append(quadmesh.spined_ogrid(
-            loop, RADIAL, center_scale=CENTER_SCALE, wall_tag="wall",
-            smoothing_method=m))
+            loop, RADIAL, center_scale=CENTER_SCALE, quadrant_scale=CENTER_SCALE,
+            wall_tag="wall", smoothing_method=m))
     return slices
 
 

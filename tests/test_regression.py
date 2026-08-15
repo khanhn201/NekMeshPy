@@ -55,8 +55,13 @@ def test_scaled_jacobian_quality(built_mesh):
     # worst wall elements, so the floor is well above the 0.0281 of the order-1 chord
     # wall it replaced.  Corner metric, so the high-order nodes do not enter it; still
     # no inverted elements.
-    assert float(np.min(sj)) == pytest.approx(0.1207, abs=1e-3)
-    assert float(np.mean(sj)) == pytest.approx(0.9117, abs=1e-3)
+    #
+    # ogrid/half_ogrid/spined_ogrid were rebuilt on quadrant_ogrid quarters (an octagon
+    # core in place of the old bilinear square block), which moves every interior node
+    # and shifts this floor -- quadrant_disc is gone along with it, superseded by the
+    # same quarters.
+    assert float(np.min(sj)) == pytest.approx(0.0960, abs=1e-3)
+    assert float(np.mean(sj)) == pytest.approx(0.9167, abs=1e-3)
     assert float(np.min(sj)) > 0.0   # no inverted elements
 
 

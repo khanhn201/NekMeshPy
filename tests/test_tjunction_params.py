@@ -36,8 +36,8 @@ from tjunction_lib import (  # noqa: E402
     footprint_angle,
 )
 
-CFG = dict(order=2, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.7,
-           N_TRANS=3, N_BRANCH=3, Z_NEAR=1.2)
+CFG = dict(order=2, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.5,
+           QUADRANT_SCALE=0.4, N_TRANS=3, N_BRANCH=3, Z_NEAR=1.2)
 RATIOS = [0.15, 0.30, 0.4167, 0.60, 0.80, 0.95, 0.999]
 
 

@@ -52,7 +52,6 @@ from nekmeshpy import (
     quadmesh,
     tetmesh,
     trimesh,
-    viz,
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -116,15 +115,15 @@ NEAR_LEN = 1.5                # the uniform run, in leg **diameters** out from t
                               # something -- the crater, the rim, the three-way weld --
                               # and constant layer thickness across it is what draws the
                               # trough; the legs beyond are diameters of nothing much.
-NEAR_LEN_BRANCH = 4.5         # ...except down the branch, which gets three times the run
+NEAR_LEN_BRANCH = 3.0         # ...except down the branch, which gets three times the run
                               # for the same layer count, so its layers are three times
                               # thicker.  A node carried onto the wall moves a fixed
                               # distance, so what decides whether that distortion matters
                               # is how big it is *relative to the layer* -- and the branch
                               # is where the snap has furthest to reach, off the crater
                               # and round the rim.
-N_UNIFORM = 16                # layers in that uniform run
-N_GRADED = 40                 # layers from there out to the outlet.  Their growth is not
+N_UNIFORM = 12                # layers in that uniform run
+N_GRADED = 20                 # layers from there out to the outlet.  Their growth is not
                               # a knob: it is solved for, so the first graded layer equals
                               # the uniform one and the last lands on the cap.  One
                               # grading across the whole leg cannot serve both ends --
@@ -134,8 +133,8 @@ N_GRADED = 40                 # layers from there out to the outlet.  Their grow
 FLUX_OFFSET = 2               # hex layers in from the outlet cap to the flux plane
                               # (0 = off).  Splitting the loft there is what names it.
 MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
-CENTER_SCALE = 0.7            # inner square-core size (fraction of diameter)
-RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layers (first 0, last 1.0)
+CENTER_SCALE = 0.8            # inner square-core size (fraction of diameter)
+RADIAL = np.array([0.0, 0.6, 1.0])   # O-ring layers (first 0, last 1.0)
 PROJECT_TO_STL = True
 SNAP_MAX = 0.20               # farthest a node may be carried onto the analytic wall.
                               # Beyond this it is not being projected, it is being moved
@@ -155,12 +154,6 @@ RIM_KEEP = 0.5                # ditto for a *station's* wall ring, which is the 
                               # the ring is a near-circle and its real content is in the
                               # first few modes.
 SMOOTHING_METHOD = None       # both relaxers move corners only and reject order > 1
-UNTANGLE = True               # run ``hexmesh.smooth``'s point-local untangler on the
-                              # welded mesh.  It searches each bad point's neighbourhood
-                              # for a position that lifts the worst element around it, so
-                              # unlike a Laplacian pass it can pull a node back through a
-                              # face it has crossed.  Corner nodes only -- skipped above
-                              # order 1, which is where it would be needed most.
 TET_CACHE = "data/femoral_tets.npz"          # under ``examples/data/``, beside this
                               # script rather than in whatever directory it was run from:
                               # the cache belongs to the mesher, not to the caller.
@@ -179,12 +172,19 @@ PLOT_STL = False              # show the surface and stop, without meshing.  For
                               # NT/NU/NB/NS by eye: change a knob, run, look.
 EXPORT_RE2 = True
 EXPORT_VTK = True
-PLOT = False
+EXPORT_FLD = True
 
+FLUX_UPSTREAM, FLUX_DOWNSTREAM = "flux_upstream", "flux_downstream"
 # the flux planes are interior surfaces, so they carry Nek's own ``f1``/``f2`` codes
 # rather than a flow condition -- naming a plane is not constraining it
-NAMES = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  ",
-         "flux_1": "f1 ", "flux_2": "f2 "}
+GROUPS = {
+    "wall": "W  ",
+    "inlet": "v  ",
+    "outlet": "int",
+    "branch": "O  ",
+    "flux_1": {FLUX_UPSTREAM: "f1 ", FLUX_DOWNSTREAM: None},
+    "flux_2": {FLUX_UPSTREAM: "f2 ", FLUX_DOWNSTREAM: None},
+}
 
 # -- derived -----------------------------------------------------------------
 if not 0.0 < R_BRANCH < R_MAIN:
@@ -1140,7 +1140,7 @@ def map_section(pts, tris, ring_ids, seam_loop, frac, *, radial, center_scale):
     sec = quadmesh.spined_ogrid(
         wall_loop(flat, ORDER), radial,
         spine=linemesh.loft(chord, order=ORDER),
-        center_scale=center_scale, wall_tag="wall")
+        center_scale=center_scale, quadrant_scale=center_scale, wall_tag="wall")
     # the parameter positions, kept before the lift overwrites them -- the O-grid's own
     # radial coordinate, which is what weights the wall correction inward
     uv_pts = sec.points[:, :2].copy()
@@ -1204,7 +1204,8 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     flat_s = np.column_stack([dm.ring_uv(spine.points), np.zeros(spine.n_points)])
     half = quadmesh.half_ogrid(
         linemesh.loft(flat_a, order=ORDER, element_tags="wall"),
-        linemesh.loft(flat_s, order=ORDER), radial, center_scale=center_scale)
+        linemesh.loft(flat_s, order=ORDER), radial, center_scale=center_scale,
+        quadrant_scale=center_scale)
     # the parameter positions, kept before the lift overwrites them -- ``pin_curve``
     # finds its nodes by where they sit in the *parameter* plane, which is the only
     # place it can recognize them, and after the lift they are model coordinates
@@ -1514,32 +1515,23 @@ for leg in (1, 2, 3):
     # overshoot.  One loft per run keeps each spline inside a region of its own spacing,
     # and the split at the flux plane is what gives that plane a name.
     if flux and 0 < off < joint:
-        blocks.append(hexmesh.loft_spline(slices[:off + 1], first_tag=name))
-        blocks.append(hexmesh.loft_spline(slices[off:joint + 1], first_tag=flux))
+        blocks.append(hexmesh.loft_spline(slices[:off + 1], first_tag=name,element_tags=FLUX_DOWNSTREAM))
+        blocks.append(hexmesh.loft_spline(slices[off:joint + 1], first_tag=flux,element_tags=FLUX_UPSTREAM))
     else:
         blocks.append(hexmesh.loft_spline(slices[:joint + 1], first_tag=name))
     blocks.append(hexmesh.loft_spline(slices[joint:]))
 
 mesh = hexmesh.merge(blocks)
-
-if UNTANGLE:
-    sj = hexmesh.scaled_jacobian(mesh)
-    if mesh.order > 1:
-        logging.info("femoral: untangling skipped -- it moves corners only and this "
-                     "mesh is order %d; %d elements are inverted",
-                     mesh.order, int((sj <= 0).sum()))
-    elif (sj <= 0).any():
-        mesh = hexmesh.smooth(mesh, surf, smooth_iters=4, untangle_iters=60,
-                              wall="wall", project_to_stl=PROJECT_TO_STL)
+mesh = hexmesh.scale(mesh, 1.0/8.0)
 
 print(hexmesh.report(mesh))
 print("femoral: branch %.0f deg, R %.3g / %.3g, seam z %.4f, trough %.3g deep x %.3g"
       % (BRANCH_ANGLE, R_MAIN, R_BRANCH, Z_SEAM, TROUGH_DEPTH, TROUGH_WIDTH))
 
 if EXPORT_VTK:
-    export.to_vtu(mesh, OUT_NAME + ".vtu", groups=NAMES)
+    export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 if EXPORT_RE2:
-    export.to_re2(mesh, OUT_NAME + ".re2", groups=NAMES)
-if PLOT:
-    viz.plot(mesh, ["wall", "inlet", "outlet", "branch"], OUT_NAME)
+    export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+if EXPORT_FLD:
+    export.to_fld(mesh, OUT_NAME + ".f00000")
 print("femoral: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))

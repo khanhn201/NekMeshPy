@@ -832,8 +832,9 @@ def test_spined_ogrid_default_spine_equals_explicit_chord():
     radial = uniform_spacing(2)
     fr = quadmesh.spine_fractions(Nt, radial, 0.5)
     chord = linemesh.line(loop.points[0], loop.points[4 * Nt], fr)
-    auto = quadmesh.spined_ogrid(loop, radial, center_scale=0.5)
-    explicit = quadmesh.spined_ogrid(loop, radial, spine=chord, center_scale=0.5)
+    auto = quadmesh.spined_ogrid(loop, radial, center_scale=0.5, quadrant_scale=0.5)
+    explicit = quadmesh.spined_ogrid(loop, radial, spine=chord, center_scale=0.5,
+                                     quadrant_scale=0.5)
     assert np.array_equal(np.asarray(auto.points), np.asarray(explicit.points))
     assert np.array_equal(np.asarray(auto.quads), np.asarray(explicit.quads))
 
@@ -866,8 +867,8 @@ def test_spine_fractions_rejects_bad_n_theta():
 
 
 @pytest.mark.parametrize("cs", [0.0, 1.0, -0.2, 1.5])
-def test_spine_fractions_rejects_bad_center_scale(cs):
-    with pytest.raises(ValueError, match=r"center_scale in \(0, 1\)"):
+def test_spine_fractions_rejects_bad_quadrant_scale(cs):
+    with pytest.raises(ValueError, match=r"quadrant_scale in \(0, 1\)"):
         quadmesh.spine_fractions(2, uniform_spacing(2), cs)
 
 
@@ -905,14 +906,14 @@ def test_spined_ogrid_matches_two_half_ogrids():
     P = loop.points
     M, nh = 8 * Nt, 4 * Nt
     radial = uniform_spacing(2)
-    combined = quadmesh.spined_ogrid(loop, radial, center_scale=0.5)
+    combined = quadmesh.spined_ogrid(loop, radial, center_scale=0.5, quadrant_scale=0.5)
 
     arc1 = linemesh.loft(P[0:nh + 1, :], element_tags="wall")
     arc2 = linemesh.loft(np.vstack([P[nh:M, :], P[0:1, :]]), element_tags="wall")
     h1 = quadmesh.half_ogrid(arc1, _diameter_spine(arc1, 0.5, radial), radial,
-                             center_scale=0.5, wall_tag="")
+                             center_scale=0.5, quadrant_scale=0.5, wall_tag="")
     h2 = quadmesh.half_ogrid(arc2, _diameter_spine(arc2, 0.5, radial), radial,
-                             center_scale=0.5, wall_tag="")
+                             center_scale=0.5, quadrant_scale=0.5, wall_tag="")
     manual = quadmesh.merge([h1, h2])
 
     assert manual.n_quads == combined.n_quads

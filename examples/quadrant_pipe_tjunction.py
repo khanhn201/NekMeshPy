@@ -130,7 +130,11 @@ H_BRANCH = 2.5               # branch opening plane, x = H_BRANCH
 
 N_QUAD = 3                   # cells per quadrant half-arc; a quadrant spans 2*N_QUAD
 RADIAL = np.array([0.0, 0.45, 0.8, 1.0])   # O-ring positions, core perimeter -> wall
-CENTER_SCALE = 0.55          # core corner at CENTER_SCALE * R along the arc midpoint
+CENTER_SCALE = 0.6           # hub corner at CENTER_SCALE * R along the arc midpoint
+QUADRANT_SCALE = 0.5         # seam corner at QUADRANT_SCALE * R along the arc's own
+                             # radius; kept below CENTER_SCALE so the seam corner does
+                             # not bow out past the hub's own chord (min scaled
+                             # Jacobian collapses toward 0 as the two converge)
 
 N_TRANS = 5                  # layers from a leg's composite face to its plain disc
 N_LEG = 6                    # layers from the plain disc to the end plane
@@ -148,8 +152,8 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  "}
 # any of them explicitly here to override just that one.
 core, disc_minus, disc_plus, disc_branch = build_tjunction(
     R_MAIN, R_BRANCH, H_BRANCH, Z_NEAR=Z_NEAR, N_QUAD=N_QUAD, RADIAL=RADIAL,
-    CENTER_SCALE=CENTER_SCALE, order=ORDER, N_TRANS=N_TRANS, N_BRANCH=N_BRANCH,
-    branch_tag="branch")
+    CENTER_SCALE=CENTER_SCALE, QUADRANT_SCALE=QUADRANT_SCALE, order=ORDER,
+    N_TRANS=N_TRANS, N_BRANCH=N_BRANCH, branch_tag="branch")
 
 # -- the two legs: build_tjunction stops at the plain per-leg disc so a caller can
 # continue however it needs to (extrude, loft, sweep); here that is a straight

@@ -37,6 +37,11 @@ N_HALF = 8                    # half-ring resolution; MULTIPLE OF 4
 N_SLICES = 30                 # cross-sections per leg (hex layers = n_slices)
 MIN_LOOP_PTS = 6              # ignore isocontour loops smaller than this
 CENTER_SCALE = 0.5            # inner square-core size (fraction of diameter)
+QUADRANT_SCALE = 0.45         # half_ogrid's own hub is built from center_scale; this
+                             # is quadrant_seam_fractions' independent scale for the
+                             # apex seam spined_ogrid synthesizes between the two
+                             # halves -- 0.45 is the min-scaled-Jacobian optimum measured
+                             # against 0.5's center_scale (search stepped by 0.05)
 RADIAL = np.array([0.0, 0.4, 0.7, 0.9, 1.0])   # O-ring layer positions (first 0, last 1.0)
 PROJECT_TO_STL = True
 # polynomial order.  The wall is genuinely curved at ORDER > 1: each interior
@@ -82,7 +87,7 @@ def order_openings(surf):
 
 # -- O-grid leg builder ------------------------------------------------------
 def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
-              radial, center_scale, project_to_stl, smoothing_method):
+              radial, center_scale, quadrant_scale, project_to_stl, smoothing_method):
     """Turn a stack of fine interior rings (opening -> seam) into ``nr`` full-disk
     :class:`QuadMesh` slices: each station's two half-O-grids are repositioned
     then merged along the shared spine."""
@@ -141,14 +146,15 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # curve at the wrong count (there is no analytic form to evaluate: the
         # deviation comes off the STL, so the chord is the honest interpolant).
         spn = trimesh.ops.resample_polyline(
-            spn, quadmesh.spine_fractions(nh // 4, radial, center_scale))
+            spn, quadmesh.spine_fractions(nh // 4, radial, quadrant_scale))
         # reposition interior stations; leave opening cap (k=0) and pinned seam
         # (k=nr-1) as raw algebraic fill.  Wall tagged on the loop (see
         # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
         m = smoothing_method if 0 < k < nr - 1 else None
         slices.append(quadmesh.spined_ogrid(
             wall, radial, spine=linemesh.loft(spn, order=ORDER),
-            center_scale=center_scale, smoothing_method=m))
+            center_scale=center_scale, quadrant_scale=quadrant_scale,
+            smoothing_method=m))
     return slices
 
 
@@ -203,6 +209,7 @@ for leg in range(3):
     fr, frlev = trimesh.ops.extract_rings(sub, us, levels, MIN_LOOP_PTS)
     slices = ogrid_leg(fr, rings[leg], spine, surf, frlev,
                        radial=RADIAL, center_scale=CENTER_SCALE,
+                       quadrant_scale=QUADRANT_SCALE,
                        project_to_stl=PROJECT_TO_STL,
                        smoothing_method=SMOOTHING_METHOD)
     flux_name = flux_name_for(outlet_name[leg])

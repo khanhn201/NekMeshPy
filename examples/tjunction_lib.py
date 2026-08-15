@@ -39,6 +39,7 @@ _RADIAL_DEFAULT = np.array([0.0, 0.6, 1.0])
 _PHI_W_FLOOR, _PHI_W_CEIL = np.deg2rad(60.0), np.deg2rad(170.0)
 
 
+
 def footprint_angle(ratio):
     """Cylindrical half-angle subtended by the branch footprint, ``asin(r/sqrt(2))``.
 
@@ -89,7 +90,7 @@ def auto_params(R_MAIN, R_BRANCH):
 
 
 def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
-                     RADIAL=None, CENTER_SCALE=0.7,
+                     RADIAL=None, CENTER_SCALE=0.7, QUADRANT_SCALE=0.7,
                      order=2, PHI_W=None, CAP_TIP_BIAS=None,
                      N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag="",
                      branch_tag=""):
@@ -156,11 +157,22 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         return quadmesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
                                for arc, s1, s2 in pieces])
 
+    def disc_at(arcs, center):
+        # quadrant_disc's own recipe, inlined: quadmesh.ogrid/spined_ogrid now cover the
+        # single-boundary-loop case, but this junction's per-station arcs are built
+        # independently per quadrant with an off-centroid hub, so they still need the
+        # general form.
+        fr = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
+        seams = [seam(a.points[0], fr, center) for a in arcs]
+        seams.append(seams[0])
+        return quadmesh.merge([quadrant(arcs[q], seams[q], seams[q + 1], wall_tag="wall")
+                               for q in range(4)])
+
     def plain_walls(composite, z, sign):
         ang = sign * np.deg2rad(-45.0 + 90.0 * np.arange(5))
         return [plain_wall(composite[q], ang[q], ang[q + 1], z) for q in range(4)]
 
-    FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, CENTER_SCALE)
+    FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
 
     P = [footprint(TQ[q:q + 1])[0] for q in range(4)]
     WP, WM = cyl(PHI_W, 0.0), cyl(-PHI_W, 0.0)
@@ -211,7 +223,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                               quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca,
                                                  order=order, tip_bias=tip_bias,
                                                  mids=mids, element_tag="wall")],
-                             center=ORIGIN + CENTER_SCALE * np.sqrt(1.5) * (wc - ORIGIN),
+                             center=ORIGIN + CENTER_SCALE* np.sqrt(1.5) * (wc - ORIGIN),
                              element_tag=element_tag)
 
     def leg(composite, walls, sign):
@@ -219,11 +231,9 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         w_plain = plain_walls(walls, z, sign)
 
         def station(s):
-            return quadmesh.quadrant_disc(
+            return disc_at(
                 [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
-                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]),
-                RADIAL, center_scale=CENTER_SCALE,
-                wall_tag="wall")
+                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]))
 
         plain = station(1.0)
         transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
@@ -235,9 +245,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
         walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
-        sections = [quadmesh.quadrant_disc([w[i] for w in walls],
-                                           (1.0 - t[i]) * ORIGIN + t[i] * c_open, RADIAL,
-                                           center_scale=CENTER_SCALE, wall_tag="wall")
+        sections = [disc_at([w[i] for w in walls],
+                            (1.0 - t[i]) * ORIGIN + t[i] * c_open)
                    for i in range(t.size)]
         return (hexmesh.loft(sections, element_tags=element_tag or None,
                              last_tag=branch_tag or None),
@@ -258,3 +267,82 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                   (linemesh.reverse(SIDE_LM), surfaces.reverse(W_L[1])))]
     core = hexmesh.merge(blocks)
     return TJunction(core, disc_minus, disc_plus, disc_branch)
+
+
+def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
+                n_layers_branch=5, radial=None, center_scale=0.7,
+                quadrant_scale=0.7, element_tag="", branch_tag=""):
+    """Equal-radius T-junction: main and branch pipes the *same* radius ``R``, meeting
+    in a pair of planar elliptical collars (adapted from ``circular_pipe_tjunction.py``)
+    rather than a quadrant footprint/crotch-cap construction -- which
+    :func:`build_tjunction` needs, since its footprint curve degenerates as the radius
+    ratio approaches 1. Same ``TJunction(core, disc_minus, disc_plus, disc_branch)``
+    return and the same local frame as :func:`build_tjunction` (main axis Z, legs at
+    ``z = -Z_NEAR``/``+Z_NEAR``; branch axis X, opening at ``x = H_BRANCH``), so the two
+    are interchangeable to a caller. ``n_half`` must be a multiple of 4.
+    ``center_scale``/``quadrant_scale`` are :func:`quadmesh.spined_ogrid
+    <nekmeshpy.quadmesh.shape.spined_ogrid>`'s, which every station here is built
+    from."""
+    radial = _RADIAL_DEFAULT if radial is None else radial
+    M = 2 * n_half
+
+    # -- native frame here is (main=X, branch=Z), circular_pipe_tjunction's own --
+    def arc_main_lower():
+        return linemesh.arc(R, n_half, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+                            start_theta=0.0, end_theta=np.pi, order=order)
+
+    def arc_collar(xside):
+        def f(t):
+            return np.column_stack(
+                [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
+        return linemesh.loft_fn(
+            f, linemesh.arclength_fractions(f, n_half, t_range=(0.0, np.pi)),
+            order=order)
+
+    def join_arcs(p, q):
+        return linemesh.merge([p, linemesh.reverse(q)])
+
+    def opening_main(x0):
+        return linemesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
+                               order=order)
+
+    def opening_branch(z0):
+        return linemesh.circle(R, M, center=(0.0, 0.0, z0), normal=(0.0, 0.0, 1.0),
+                               start_theta=np.pi / 2, order=order)
+
+    def leg_slices(open_ring, seam_ring, n_layers):
+        loops = linemesh.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_layers + 1))
+        return [quadmesh.spined_ogrid(loop, radial, center_scale=center_scale,
+                                      quadrant_scale=quadrant_scale, wall_tag="wall")
+               for loop in loops]
+
+    a_lm = arc_main_lower()
+    a_lb = arc_collar(-1.0)
+    a_rb = arc_collar(+1.0)
+    seam_left = join_arcs(a_lm, a_lb)
+    seam_right = join_arcs(a_lm, a_rb)
+    seam_branch = join_arcs(a_lb, a_rb)
+
+    slices_minus = leg_slices(opening_main(-Z_NEAR), seam_left, n_layers_main)
+    slices_plus = leg_slices(opening_main(Z_NEAR), seam_right, n_layers_main)
+    slices_branch = leg_slices(opening_branch(H_BRANCH), seam_branch, n_layers_branch)
+
+    core = hexmesh.merge([
+        hexmesh.loft(slices_minus, element_tags=element_tag or None),
+        hexmesh.loft(slices_plus, element_tags=element_tag or None),
+        hexmesh.loft(slices_branch, element_tags=element_tag or None,
+                     last_tag=branch_tag or None)])
+    disc_minus, disc_plus, disc_branch = (slices_minus[0], slices_plus[0],
+                                          slices_branch[0])
+
+    # rotate the native (main=X, branch=Z) frame into build_tjunction's own
+    # (main=Z, branch=X): swapping two axes while leaving the third alone is a
+    # reflection (det -1, inverts every element -- see the mirror note in
+    # CLAUDE.md), so this also flips Y, which keeps it a proper rotation (det +1):
+    # 180 degrees about the X=Z diagonal maps +X->+Z, +Z->+X, +Y->-Y.
+    ang, axis = np.pi, (1.0, 0.0, 1.0)
+    return TJunction(
+        hexmesh.rotate(core, ang, axis=axis),
+        quadmesh.rotate(disc_minus, ang, axis=axis),
+        quadmesh.rotate(disc_plus, ang, axis=axis),
+        quadmesh.rotate(disc_branch, ang, axis=axis))
