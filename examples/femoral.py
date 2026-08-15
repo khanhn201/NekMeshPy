@@ -51,7 +51,7 @@ from nekmeshpy import (
     linemesh,
     quadmesh,
     tetmesh,
-    trimesh
+    trimesh,
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
