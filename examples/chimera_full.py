@@ -80,6 +80,8 @@ from scipy.spatial import cKDTree
 from nekmeshpy import export, hexmesh, quadmesh
 from nekmeshpy.core import paths
 from nekmeshpy.core.paths import turtle_path
+from nekmeshpy.quadmesh._helpers import _elevate as _quad_elevate
+from nekmeshpy.quadmesh.quadmesh import QuadMesh
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -90,28 +92,82 @@ from serpentine_pipe import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
 from tjunction_lib import build_eqtee, build_tjunction  # noqa: E402
 
 
+def _twist_slices(a, b, fracs):
+    """Index-paired intermediate sections between ``a`` and ``b`` (same ``quads``),
+    each point carried along a helix about the a->b axis rather than the straight
+    chord ``quadmesh.blend`` would use: radius and axial position interpolate
+    linearly, but the angle *around* the axis takes the short way rather than
+    cutting across the disc. Point ``i`` of ``a`` and point ``i`` of ``b`` are index-
+    paired but not angularly aligned (the two mesher families' own conventions differ
+    by a rotation no reindexing removes -- see loft_between), so the straight chord
+    a plain blend takes between two out-of-phase points passes close to the axis,
+    pinching the block; a rotation about the shared axis does not.
+
+    Only the interior fractions are built here (0 and 1 are literally ``a``/``b``,
+    unchanged, so the block's own two ends stay bit-exact for whatever the caller
+    welds them to)."""
+    ca, cb = a.points.mean(axis=0), b.points.mean(axis=0)
+    axis = cb - ca
+    axis = axis / np.linalg.norm(axis)
+    up = np.array([0.0, 0.0, 1.0]) if abs(axis[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    e1 = up - axis * np.dot(up, axis)
+    e1 = e1 / np.linalg.norm(e1)
+    e2 = np.cross(axis, e1)
+
+    def polar(pts, c):
+        rel = pts - c
+        return rel @ axis, np.hypot(rel @ e1, rel @ e2), np.arctan2(rel @ e2, rel @ e1)
+
+    ax_a, r_a, th_a = polar(a.points, ca)
+    ax_b, r_b, th_b = polar(b.points, cb)
+    dth = np.mod(th_b - th_a + np.pi, 2.0 * np.pi) - np.pi   # shortest turn, signed
+
+    slices = []
+    for t in fracs:
+        if t <= 0.0:
+            slices.append(a)
+            continue
+        if t >= 1.0:
+            slices.append(b)
+            continue
+        c_t = (1.0 - t) * ca + t * cb
+        ax_t = (1.0 - t) * ax_a + t * ax_b
+        r_t = (1.0 - t) * r_a + t * r_b
+        th_t = th_a + t * dth
+        pts = (c_t + ax_t[:, None] * axis
+               + (r_t * np.cos(th_t))[:, None] * e1
+               + (r_t * np.sin(th_t))[:, None] * e2)
+        linear = QuadMesh.from_corners(pts, a.quads)
+        slices.append(_quad_elevate(linear, a.order))
+    return slices
+
+
 def loft_between(a, b, n_layers, element_tags=None):
-    """Blend + loft two discs that share ``quads``/``orient`` connectivity even though
+    """Twist-loft two discs that share ``quads``/``orient`` connectivity even though
     they come from different mesher families (eqtee's spined_ogrid discs and the
     quadrant construction's both bottom out in quadrant_ogrid quarters, so they turn
-    out identical -- verified, not assumed). ``quadmesh.blend`` needs no reindexing
-    when that holds: point ``i`` of ``a`` and point ``i`` of ``b`` are already the
-    same node, so a straight index-paired blend carries both discs' own true curvature
-    the whole way across, unlike ``hexmesh.adapter``/``bridge`` (built for sections
-    that only differ in *pattern*, not connectivity, and approximate curvature they
-    cannot exactly reconcile).
+    out identical -- verified, not assumed). Point ``i`` of ``a`` and point ``i`` of
+    ``b`` are already the same node, so no reindexing is needed at all, unlike
+    ``hexmesh.adapter``/``bridge`` (built for sections that only differ in *pattern*,
+    not connectivity, and can only approximate curvature they cannot exactly
+    reconcile) -- but the two families' own phase does not line up, so
+    :func:`_twist_slices` carries each point there by rotating about the connector's
+    own axis instead of ``quadmesh.blend``'s straight chord, which would cut across
+    the disc and pinch the block at the middle station (measured: a straight blend
+    between out-of-phase discs waists to well under the wall radius; the same discs
+    twist-lofted hold their radius across every station).
 
-    The one thing index equality does not fix is which way each disc's CCW winding
-    faces -- the two families' own "outward" convention can come out opposite even on
-    identical connectivity -- so this tries ``a`` as given and, if that blend comes out
-    inverted, a copy of ``a`` flipped 180 degrees about an in-plane axis instead.
-    Only ``a`` is ever touched: ``b``'s own points/interior ride into the result
-    verbatim (``blend``'s own ``t=1`` end), which is what lets the caller weld the
-    result to whatever else already carries ``b``'s own true geometry."""
+    The one thing phase does not fix is which way each disc's CCW winding faces -- the
+    two families' own "outward" convention can come out opposite even on identical
+    connectivity -- so this tries ``a`` as given and, if that comes out inverted, a
+    copy of ``a`` flipped 180 degrees about an in-plane axis instead. Only ``a`` is
+    ever touched: ``b``'s own points/interior ride into the result verbatim (the
+    ``t=1`` end), which is what lets the caller weld the result to whatever else
+    already carries ``b``'s own true geometry."""
     fracs = np.linspace(0.0, 1.0, n_layers + 1)
 
     def _try(aa):
-        slices = quadmesh.blend(aa, b, fracs)
+        slices = _twist_slices(aa, b, fracs)
         block = hexmesh.loft(slices, element_tags=element_tags)
         return block, float(hexmesh.scaled_jacobian(block, high_order=True).min())
 
@@ -290,7 +346,10 @@ def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, las
 
 BEND_R1 = 2.0 * R_MAIN
 VERTICAL_DROP = 14.0   # matches VERTICAL_RISE -- the two legs read as comparable
-ADAPT = 1.0            # length of each pattern-adapter layer (see hexmesh.adapter)
+ADAPT = 3.0            # length of the loft_between transition into chimera's own
+                       # disc pattern (see loft_between) -- wider than a same-family
+                       # adapter needs, since the twist that avoids pinching wants
+                       # room to turn rather than being forced through a short gap
 RUN_TO_RISER = 8.0
 VERTICAL_RISE = 14.0
 
@@ -367,7 +426,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     chi_port = quadmesh.port(chi_disc, outward=(0.0, 0.0, -1.0))
     print("  [%s] end %s" % (tag, end_port))
     print("  [%s] tgt %s" % (tag, chi_port))
-    connector = loft_between(end_port.section, chi_disc, 2, element_tags=FLUID_TAG)
+    connector = loft_between(end_port.section, chi_disc, 6, element_tags=FLUID_TAG)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
     # The inlet/outlet risers themselves bend to z- (away from chimera, which
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
