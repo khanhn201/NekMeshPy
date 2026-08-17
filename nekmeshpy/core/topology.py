@@ -189,7 +189,7 @@ def _hex_sample_points(X: PointArray, HC: IntArray) -> PointArray:
     triangles (the same anchored split ``_hex_geometry`` constrains against, so a
     sample point on a face shared with another hex is exactly what that hex's own
     constraint surface was built from too) -- what
-    :func:`_count_overlapping_pairs` samples from one hex to test against another.
+    ``_count_overlapping_pairs`` samples from one hex to test against another.
     Corners alone would miss a face bulging into a neighbour without any corner
     crossing it; a quad face's own *average*-of-4-corners centre is not that
     fallback, though -- on a warped face that average can sit slightly off the true
@@ -321,13 +321,14 @@ def is_watertight(points: PointArray, hexes: IntArray) -> bool:
 
 def count_overlapping_pairs(points: PointArray, hexes: IntArray) -> int:
     """Number of hex pairs whose volumes geometrically overlap (see
-    :func:`_count_overlapping_pairs`) -- independent of, and not part of,
+    ``_count_overlapping_pairs``) -- independent of, and not part of,
     :func:`hex_report`: unlike watertight/conformal (a fixed-size facet-incidence
     scan), this is a geometric broad-then-narrow-phase search whose candidate count
     can run into the hundreds of thousands on a large mesh, so it is not folded into
-    the fast report every :func:`is_watertight`/:func:`is_conforming` call already
-    pays for -- call it explicitly where the extra work is wanted (a summary,
-    typically, alongside those two)."""
+    the fast report every :func:`is_watertight`/:func:`hexmesh.is_conforming
+    <nekmeshpy.hexmesh.query.is_conforming>` call already pays for -- call it
+    explicitly where the extra work is wanted (a summary, typically, alongside
+    those two)."""
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
     return _count_overlapping_pairs(X, HC)
