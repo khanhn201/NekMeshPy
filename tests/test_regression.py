@@ -28,7 +28,7 @@ RE2_TOL = 1e-12
 
 def test_element_and_boundary_counts(built_mesh):
     mesh = built_mesh["mesh"]
-    assert mesh.hexes.shape == (7200, 8)         # (N,8) shared-point connectivity
+    assert mesh.corners.shape == (7200, 8)         # (N,8) shared-point connectivity
     assert mesh.points.shape == (8137, 3)
     assert len(mesh.face_tags) == 1840           # named *faces*, one tag each
 
@@ -46,7 +46,7 @@ def test_tag_face_counts(built_mesh):
 
 def test_scaled_jacobian_quality(built_mesh):
     mesh = built_mesh["mesh"]
-    X, HC = mesh.points, mesh.hexes
+    X, HC = mesh.points, mesh.corners
     sj = quality.scaled_jacobian(X, HC)
     # values for the order-3 pipeline whose wall is refit analytically before meshing:
     # each private station ring as a truncated-Fourier loop (``fourier_ring``) and each

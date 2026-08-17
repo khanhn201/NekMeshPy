@@ -27,7 +27,7 @@ def plot(
     except Exception as exc:                     # pragma: no cover
         _log.warning("plot skipped (matplotlib unavailable): %s", exc)
         return mesh
-    elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
+    elements = mesh.points[mesh.corners]            # (N,8,3) per-element coords
     names = list(names)
     colors = [(0.80, 0.80, 0.82), (0.85, 0.20, 0.20),
               (0.20, 0.70, 0.25), (0.20, 0.35, 0.90)]

@@ -81,8 +81,8 @@ def test_placement_keeps_topology_and_tags(order):
         assert_same_side_tags(getattr(out, attr), getattr(mesh, attr))
         assert out.order == mesh.order
     assert np.array_equal(linemesh.translate(ring, (1.0, 0, 0)).lines, ring.lines)
-    assert np.array_equal(quadmesh.rotate(section, 0.3).quads, section.quads)
-    assert np.array_equal(hexmesh.scale(block, 2.0).hexes, block.hexes)
+    assert np.array_equal(quadmesh.rotate(section, 0.3).corners, section.corners)
+    assert np.array_equal(hexmesh.scale(block, 2.0).corners, block.corners)
 
 
 # -- rotation -----------------------------------------------------------------
@@ -174,7 +174,7 @@ def test_extrude_is_a_stack_of_translations(order):
     manual = hexmesh.loft([quadmesh.translate(section, d * axis)
                            for d in np.linspace(0.0, 1.0, 3) * 2.0])
     assert np.array_equal(manual.points, ref.points)
-    assert np.array_equal(manual.hexes, ref.hexes)
+    assert np.array_equal(manual.corners, ref.corners)
     assert np.array_equal(manual.interior, ref.interior)
 
 

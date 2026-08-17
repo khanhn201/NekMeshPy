@@ -1,7 +1,25 @@
 /* furo styles visited links in a separate purple brand color
    (--color-brand-visited) by default; make a visited link look like any other
-   link instead, in both light and dark mode. */
-:root {
+   link instead, in both light and dark mode.
+
+   furo sets these variables on `body` (and `body[data-theme=...]` for dark mode),
+   not `:root` -- overriding on `:root` targets `<html>`, a different element, so
+   `body`'s own (non-!important) declaration still wins there. This has to match
+   furo's own selector to actually override it. */
+body {
   --color-link--visited: var(--color-link) !important;
   --color-link--visited--hover: var(--color-link--hover) !important;
+  --color-link-underline--visited: var(--color-link-underline) !important;
+  --color-link-underline--visited--hover: var(--color-link-underline--hover) !important;
+}
+
+/* the footer GitHub mark is a CDN-hosted SVG with a hardcoded black fill --
+   invert it in dark mode so it stays visible against furo's dark background. */
+body[data-theme="dark"] .github-icon {
+  filter: invert(1);
+}
+@media (prefers-color-scheme: dark) {
+  body:not([data-theme="light"]) .github-icon {
+    filter: invert(1);
+  }
 }

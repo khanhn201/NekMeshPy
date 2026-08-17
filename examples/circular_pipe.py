@@ -21,7 +21,7 @@ LENGTH = 5.0
 N_AXIAL = 40                 # hex layers along the axis
 N_SIDE = 6                   # central square block cells per side
 N_RADIAL = 8                 # O-ring layers out to the wall
-CENTER_SCALE = 0.4
+CENTER_SCALE = 0.7
 RADIAL_GRADING = 0.5        # <1 clusters cells toward the wall
 AXIAL_GRADING = 1.0
 ORDER = 2                    # polynomial order; 1 = linear. High order bows the
@@ -29,7 +29,6 @@ ORDER = 2                    # polynomial order; 1 = linear. High order bows the
                             # .re2 stays linear either way)
 AXIS = (0.0, 0.0, 1.0)
 CENTER = (0.0, 0.0, 0.0)
-SMOOTHING_METHOD = "bilinear"   # per-section interior repositioning
 OUT_NAME = "circular_pipe"
 
 # boundary name -> Nek BC code, applied only at export
@@ -42,8 +41,7 @@ wall = linemesh.circle(RADIUS, 4 * N_SIDE,
 radial = geometric_spacing(N_RADIAL, RADIAL_GRADING)
 
 section = quadmesh.ogrid(wall, N_SIDE, radial,
-                         center_scale=CENTER_SCALE, quadrant_scale=CENTER_SCALE,
-                         smoothing_method=SMOOTHING_METHOD)
+                         center_scale=CENTER_SCALE, quadrant_scale=CENTER_SCALE)
 
 mesh = hexmesh.extrude(
     section, axis=AXIS, length=LENGTH,

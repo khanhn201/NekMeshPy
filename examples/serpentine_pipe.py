@@ -119,16 +119,14 @@ if __name__ == "__main__":
     N_SIDE = 6                   # central square block cells per side (loop = 4*N_SIDE pts);
                                  # must be even -- ogrid is built from 4 quadrant_ogrid quarters
     N_RADIAL = 3                 # O-ring layers out to the wall
-    CENTER_SCALE = 0.5
+    CENTER_SCALE = 0.7
     # TARGET_LEN above is a property of this coil's own geometry (the tightest
     # turn), not of how any one script meshes it.
-    ORDER = 2                    # polynomial order; 1 = linear. Both smoothers stay off:
-                                 # a repositioning smoother moves corner nodes only and
-                                 # rejects order > 1. sweep evaluates the path at the
-                                 # intermediate GLL levels too, so the bend geometry is
-                                 # exact along the sweep at any order (the .vtu renders
-                                 # true arcs; the .re2 stays linear either way).
-    SMOOTHING_METHOD = "bilinear"   # no-op section fill -- allowed at any order
+    ORDER = 2                    # polynomial order; 1 = linear. sweep evaluates the
+                                 # path at the intermediate GLL levels too, so the bend
+                                 # geometry is exact along the sweep at any order (the
+                                 # .vtu renders true arcs; the .re2 stays linear either
+                                 # way).
     OUT_NAME = "serpentine_pipe"
 
     # boundary name -> Nek BC code, applied only at export
@@ -177,7 +175,7 @@ if __name__ == "__main__":
         linemesh.circle(R_PIPE, 4 * N_SIDE, center=START, normal=START_TANGENT,
                         element_tag="wall", order=ORDER),
         N_SIDE, uniform_spacing(N_RADIAL),
-        center_scale=CENTER_SCALE, smoothing_method=SMOOTHING_METHOD)
+        center_scale=CENTER_SCALE)
 
     # -- sweep it along the coil --------------------------------------------------
     # The path is planar, so orientation="fixed" against the plane normal is exact,

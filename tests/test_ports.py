@@ -113,7 +113,7 @@ def test_bare_sections_reproduce_the_old_guess_bit_for_bit(op):
         stated = hexmesh.adapter(quadmesh.port(a, outward=(0.0, 0.0, 1.0)),
                                  quadmesh.port(b, outward=(0.0, 0.0, -1.0)))
     assert np.array_equal(bare.points, stated.points)
-    assert np.array_equal(bare.hexes, stated.hexes)
+    assert np.array_equal(bare.corners, stated.corners)
     assert np.array_equal(bare.interior, stated.interior)
 
 

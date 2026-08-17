@@ -163,7 +163,7 @@ def test_hex_sweep_path_reproduces_sweep(walk, order):
                                  orientation="fixed", up=(0.0, 1.0, 0.0), origin=ORIGIN,
                                  first_tag="inlet", last_tag="outlet")
     assert np.array_equal(viapath.points, direct.points)
-    assert np.array_equal(viapath.hexes, direct.hexes)
+    assert np.array_equal(viapath.corners, direct.corners)
     assert np.array_equal(viapath.interior, direct.interior)
 
 
@@ -177,7 +177,7 @@ def test_quad_sweep_path_reproduces_sweep(walk, order):
                                   orientation="fixed", up=(0.0, 1.0, 0.0),
                                   origin=ORIGIN)
     assert np.array_equal(viapath.points, direct.points)
-    assert np.array_equal(viapath.quads, direct.quads)
+    assert np.array_equal(viapath.corners, direct.corners)
 
 
 def test_swept_block_is_valid_and_not_inverted(walk):

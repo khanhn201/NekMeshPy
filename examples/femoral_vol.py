@@ -801,7 +801,7 @@ def map_to_surface(section, pts, tris):
     order = section.order
     if order > 1:
         # shared edge interiors, skipping the rim's own edges
-        cnt = np.bincount(section.quad.ravel(), minlength=section.line_mesh.n_lines)
+        cnt = np.bincount(section.quads.ravel(), minlength=section.line_mesh.n_lines)
         inner = np.flatnonzero(cnt > 1)
         ei = section.line_mesh.interior
         if inner.size and ei.shape[1]:

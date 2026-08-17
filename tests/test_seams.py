@@ -65,7 +65,7 @@ def _shift_sigma(mesh):
 def test_reindex_carries_the_structures_numbering():
     a, b = _disc(), _disc(radius=1.3)
     out = quadmesh.reindex(a, b, _shift_sigma(a))
-    assert np.array_equal(out.quad, a.quad)
+    assert np.array_equal(out.quads, a.quads)
     assert np.array_equal(out.orient, a.orient)
     assert np.array_equal(out.line_mesh.lines, a.line_mesh.lines)
 

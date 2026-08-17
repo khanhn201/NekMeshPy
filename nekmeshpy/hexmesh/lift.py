@@ -81,7 +81,7 @@ def annulus(
             "annulus: inner and outer surfaces must have equal point counts "
             "(got %d, %d); build one from the other's points so they pair by "
             "index" % (A.shape[0], B.shape[0]))
-    if not np.array_equal(inner.quads, outer.quads):
+    if not np.array_equal(inner.corners, outer.corners):
         raise ValueError(
             "annulus: inner and outer surfaces must share identical quad "
             "connectivity (they are paired by index)")

@@ -25,14 +25,14 @@ def _face_centroids(mesh):
     """(K,3) centroid of every tagged face."""
     out = []
     for e, f, _tag in face_rows(mesh):
-        out.append(mesh.points[mesh.hexes[e, HexMesh.FACE_POINTS[f - 1]]].mean(axis=0))
+        out.append(mesh.points[mesh.corners[e, HexMesh.FACE_POINTS[f - 1]]].mean(axis=0))
     return np.array(out).reshape(-1, 3)
 
 
 def _edge_points(mesh, row):
     """Point ids of tagged edge ``row`` (via [quad, side])."""
     q, s = int(mesh.edge_tags.elements[row]), int(mesh.edge_tags.sides[row])
-    return mesh.quads[q, QuadMesh.EDGE_POINTS[s - 1]]
+    return mesh.corners[q, QuadMesh.EDGE_POINTS[s - 1]]
 
 
 def _tagged_square():

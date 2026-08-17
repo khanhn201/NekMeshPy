@@ -32,7 +32,7 @@ def _selected_faces(mesh: HexMesh, tag: str | None) -> IntArray:
 def _face_corners(mesh: HexMesh, sel: IntArray) -> IntArray:
     """``(K,4)`` global corner ids of each selected face, in the hex's own CCW
     winding for that local face."""
-    return mesh.hexes[sel[:, 0][:, None], HexMesh.FACE_POINTS[sel[:, 1] - 1, :]]
+    return mesh.corners[sel[:, 0][:, None], HexMesh.FACE_POINTS[sel[:, 1] - 1, :]]
 
 
 def _high_order_nodes(mesh: HexMesh, quads_global: IntArray, edges_global: IntArray,
@@ -54,7 +54,7 @@ def _high_order_nodes(mesh: HexMesh, quads_global: IntArray, edges_global: IntAr
     # counterpart of the edge reversal just above
     fn: PointArray = conform.face_nodes_in_frame(
         np.asarray(mesh.face_nodes, dtype=float)[f_idx], quads_global,
-        np.asarray(mesh.quad_mesh.quads, dtype=np.int64)[f_idx])
+        np.asarray(mesh.quad_mesh.corners, dtype=np.int64)[f_idx])
     return en, fn
 
 
@@ -79,7 +79,7 @@ def boundary_mesh(mesh: HexMesh, tag: str | None = None, *,
         # the extracted quad inherits the name of the parent face it came from
         named = mesh.face_tags.dense(mesh.quad_mesh.n_quads)
         elem = ElementTags.from_dense(
-            named[np.asarray(mesh.hex, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
+            named[np.asarray(mesh.hexes, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
     lines = LineMesh(mesh.points[gids], edges, en)
     return QuadMesh(lines, elem_edges, flip, fn, elem)
 
@@ -97,12 +97,12 @@ def _templated(mesh: HexMesh, tag: str | None, poly: IntArray, gids: IntArray,
             "template is not this port's own pattern"
             % (tag, g.size - len(set(g.tolist())), g.size))
     tl = template.line_mesh
-    en, fn = _high_order_nodes(mesh, g[np.asarray(template.quads, dtype=np.int64)],
+    en, fn = _high_order_nodes(mesh, g[np.asarray(template.corners, dtype=np.int64)],
                                g[np.asarray(tl.lines, dtype=np.int64)])
     lines = LineMesh(PointMesh(mesh.points[g], tl.point_tags), tl.lines, en,
                      tl.element_tags)
     _log_pairing(tag, float(np.max(dist)))
-    return QuadMesh(lines, template.quad, template.orient, fn,
+    return QuadMesh(lines, template.quads, template.orient, fn,
                     template.element_tags)
 
 

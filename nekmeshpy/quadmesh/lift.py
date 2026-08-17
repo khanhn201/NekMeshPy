@@ -11,7 +11,6 @@ from .._typing import (
     FloatArray,
     Point,
     PointArray,
-    SmoothingMethod,
     Vec3,
 )
 from ..core import frames, stations
@@ -25,7 +24,7 @@ from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
 from ..linemesh.shape import path_fractions
 from ..pointmesh import PointMesh
-from ._helpers import _apply_smoothing, _check_boundary
+from ._helpers import _check_boundary
 from .assemble import _loft_evaluated, loft
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
 
@@ -57,7 +56,6 @@ def extrude(
                 first_tag=first_tag, last_tag=last_tag)
 
 def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
-            smoothing_method: SmoothingMethod | None = None,
             inner_tag: str | None = None, outer_tag: str | None = None,
             ) -> QuadMesh:
     """Ring O-grid filling the region between an inner and an outer closed loop -- e.g.
@@ -90,12 +88,9 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
     # blend_ho(inner, outer, t_k), so a high-order annulus is curved throughout, not
     # just on the two walls; loft builds the curved Coons columns.  blend copies the
     # ring topology but drops element_tags (the wall tags ride in inner_caps /
-    # outer_caps as the loft's cap tags).  A requested repositioning smoother rejects
-    # order > 1 (high-order smoothing not implemented); at order 1 it relaxes the
-    # linear loft as before.
+    # outer_caps as the loft's cap tags).
     rings = line_blend(inner, outer, radial)
-    qm = loft(rings, first_tag=inner_caps, last_tag=outer_caps)
-    return _apply_smoothing(qm, smoothing_method)
+    return loft(rings, first_tag=inner_caps, last_tag=outer_caps)
 
 def from_grid(
     P: PointArray,

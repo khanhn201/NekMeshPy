@@ -67,7 +67,7 @@ class Port:
         return ("<Port r=%.4g at %s facing %s, %d quads>"
                 % (self.radius, np.array2string(self.center, precision=4),
                    np.array2string(self.normal, precision=4),
-                   self.section.quad.shape[0]))
+                   self.section.quads.shape[0]))
 
 
 def port(section: QuadMesh, *, outward: Vec3 | Sequence[float],

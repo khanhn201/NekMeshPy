@@ -36,7 +36,7 @@ def blend(a: QuadMesh, b: QuadMesh,
             "blend: sections must have equal point counts (got %d, %d); build "
             "one from the other's points so they pair by index"
             % (A.shape[0], B.shape[0]))
-    if not np.array_equal(a.quads, b.quads):
+    if not np.array_equal(a.corners, b.corners):
         raise ValueError(
             "blend: sections must share identical connectivity (paired by index)")
     if a.order != b.order:
@@ -57,14 +57,14 @@ def blend(a: QuadMesh, b: QuadMesh,
     # ``a``'s point tags but drops its element tags, so they are put back here
     return [QuadMesh(LineMesh(lm.point_mesh, lm.lines, lm.interior,
                               a.line_mesh.element_tags),
-                     a.quad, a.orient,
+                     a.quads, a.orient,
                      (1.0 - t) * ai + t * bi if ho else None)
             for t, lm in zip(fr, line_blend(a.line_mesh, b.line_mesh, fr))]
 
 
 def _affine(mesh: QuadMesh, matrix: FloatArray | None, offset: Vec3) -> QuadMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
-    return QuadMesh(line_affine(mesh.line_mesh, matrix, offset), mesh.quad, mesh.orient,
+    return QuadMesh(line_affine(mesh.line_mesh, matrix, offset), mesh.quads, mesh.orient,
                     affine.apply(mesh.interior, matrix, offset),
                     element_tags=mesh.element_tags)
 
@@ -112,7 +112,7 @@ def _rewind(mesh: QuadMesh) -> QuadMesh:
     n = mesh.order - 1
     perm: IntArray = (np.arange(n * n, dtype=np.int64).reshape(n, n).T.ravel()
                       if n else np.zeros(0, dtype=np.int64))
-    return QuadMesh(mesh.line_mesh, mesh.quad[:, ::-1], ~mesh.orient[:, ::-1],
+    return QuadMesh(mesh.line_mesh, mesh.quads[:, ::-1], ~mesh.orient[:, ::-1],
                     mesh.interior[:, perm, :], mesh.element_tags)
 
 
@@ -138,7 +138,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     """``target``'s own geometry, reached through ``structure``'s own index labels:
     point ``i`` takes ``target``'s point ``sigma[i]``, and every shared-edge and
     per-quad interior node follows its relabelled corners."""
-    if not (np.array_equal(structure.quad, target.quad)
+    if not (np.array_equal(structure.quads, target.quads)
             and np.array_equal(structure.orient, target.orient)):
         raise ValueError(
             "reindex: structure and target must share identical quad/flip incidence; "
@@ -173,12 +173,12 @@ def reindex(structure: QuadMesh, target: QuadMesh,
 
     # Quads: match on the relabelled corner *set*, which is orientation-free, so the
     # two pair however each happens to be wound.
-    qidx = conform.locate_rows(np.asarray(target.quads, dtype=np.int64),
-                                s[np.asarray(structure.quads, dtype=np.int64)],
+    qidx = conform.locate_rows(np.asarray(target.corners, dtype=np.int64),
+                                s[np.asarray(structure.corners, dtype=np.int64)],
                                 who="reindex", what="quad")
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
-    return QuadMesh(new_lines, structure.quad, structure.orient, new_qi,
+    return QuadMesh(new_lines, structure.quads, structure.orient, new_qi,
                     target.element_tags)
 
 

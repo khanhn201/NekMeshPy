@@ -39,7 +39,7 @@ def _unit_tet(n=2, order=1, tags=("", "", "", ""), **kw):
 def test_counts_and_topology(n):
     t = _unit_tet(n)
     # four corner blocks, each n x n x n
-    assert t.hexes.shape[0] == 4 * n ** 3
+    assert t.corners.shape[0] == 4 * n ** 3
     rep = hexmesh.topology_report(t)
     assert rep.watertight and rep.conformal and rep.n_components == 1
     assert rep.n_open_edges == 0 and rep.n_hanging_points == 0
@@ -52,14 +52,14 @@ def test_face_order_does_not_matter():
     faces = [_triangle(V[0], V[1], V[2], 2), _triangle(V[0], V[1], V[3], 2),
              _triangle(V[0], V[2], V[3], 2), _triangle(V[1], V[2], V[3], 2)]
     b = hexmesh.tetra([faces[2], faces[0], faces[3], faces[1]])
-    assert b.hexes.shape[0] == a.hexes.shape[0]
+    assert b.corners.shape[0] == a.corners.shape[0]
     assert np.allclose(np.sort(b.points, axis=0), np.sort(a.points, axis=0),
                        atol=1e-12)
 
 
 def _boundary_nodes(mesh):
     """Corner ids of every topological boundary face."""
-    hexes = mesh.hexes
+    hexes = mesh.corners
     seen: dict[tuple[int, ...], list[tuple[int, int]]] = {}
     for e in range(hexes.shape[0]):
         for s in range(6):
@@ -106,7 +106,7 @@ def test_tags_follow_their_face():
     counts = {n: t.face_tags.count(n) for n in names}
     assert set(counts.values()) == {3 * 2 * 2}          # 3 patches of n x n each
     # a tagged face's boundary rows must be genuine boundary faces
-    hexes = t.hexes
+    hexes = t.corners
     key: dict[tuple[int, ...], int] = {}
     for e in range(hexes.shape[0]):
         for s in range(6):
@@ -121,7 +121,7 @@ def test_center_override_moves_only_the_interior():
     """``center`` repositions the shared far corner; the four faces are untouched."""
     a = _unit_tet(2)
     b = _unit_tet(2, center=(0.3, 0.3, 0.3))
-    assert a.hexes.shape == b.hexes.shape
+    assert a.corners.shape == b.corners.shape
     face = np.abs(a.points.sum(axis=1) - 1.0) < 1e-12
     assert np.allclose(np.sort(a.points[face], axis=0),
                        np.sort(b.points[face], axis=0), atol=1e-12)
@@ -197,7 +197,7 @@ def test_quadrant_faces_make_an_octant():
         g /= np.linalg.norm(g, axis=-1, keepdims=True)          # onto the sphere
         pats.append(quadmesh.from_grid(g, element_tag="sphere"))
     t = hexmesh.tetra(quads + [quadmesh.merge(pats)])
-    assert t.hexes.shape[0] == n ** 3 + 3 * (n * n * NR)
+    assert t.corners.shape[0] == n ** 3 + 3 * (n * n * NR)
     rep = hexmesh.topology_report(t)
     assert rep.watertight and rep.conformal and rep.n_components == 1
     assert float(np.min(hexmesh.scaled_jacobian(t))) > 0.0
@@ -205,7 +205,7 @@ def test_quadrant_faces_make_an_octant():
     # the tagged side really is on the sphere; the three quadrant sides are the flat
     # cuts through the ball, so they are not (and must not be).
     ids = np.unique(np.concatenate(
-        [t.hexes[e][list(HexMesh.FACE_POINTS[s - 1])]
+        [t.corners[e][list(HexMesh.FACE_POINTS[s - 1])]
          for e, s, tag in face_rows(t) if tag == "sphere"]))
     assert np.allclose(np.linalg.norm(t.points[ids], axis=1), 1.0, atol=1e-12)
     flat = np.setdiff1d(_boundary_nodes(t), ids)

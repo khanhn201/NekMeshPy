@@ -61,7 +61,7 @@ def _relabel_edges(m):
     sigma = np.random.default_rng(0).permutation(m.line_mesh.n_lines)
     lines = LineMesh(m.points, m.line_mesh.lines[sigma],
                      interior=m.line_mesh.interior[sigma])
-    return QuadMesh(lines, np.argsort(sigma)[m.quad], m.orient, m.interior)
+    return QuadMesh(lines, np.argsort(sigma)[m.quads], m.orient, m.interior)
 
 
 def test_loft_rejects_slices_that_are_not_index_paired():
@@ -137,8 +137,8 @@ def test_a_tight_loop_closes_a_torus(order, n_prof):
     qm = quadmesh.loft(lev, loop=True, sweep_nodes=sw)
     assert qm.n_quads == n_prof * 8
     # a one-layer loop would leave every quad with two corners, not four
-    assert all(len(set(row.tolist())) == 4 for row in np.asarray(qm.quads))
-    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.orient,
+    assert all(len(set(row.tolist())) == 4 for row in np.asarray(qm.corners))
+    nodes, _ = conform.conformal_quad(qm.points, qm.corners, qm.quads, qm.orient,
                                       qm.line_mesh.interior, qm.interior, qm.order)
     tube = np.hypot(np.hypot(nodes[:, 0], nodes[:, 1]) - R, nodes[:, 2])
     assert np.max(np.abs(tube - a)) < 1e-12
@@ -155,7 +155,7 @@ def test_a_tight_loop_closes_a_solid_torus(order):
                for level in sw]
     blk = hexmesh.loft(disc, loop=True, sweep_nodes=disc_sw)
     assert blk.n_hexes == 3 * disc[0].n_quads
-    assert all(len(set(row.tolist())) == 8 for row in np.asarray(blk.hexes))
+    assert all(len(set(row.tolist())) == 8 for row in np.asarray(blk.corners))
     assert hexmesh.is_watertight(blk)
 
 
@@ -166,13 +166,13 @@ def test_quad_loft_edges_match_a_dedup_of_its_own_corners(n_prof, loop):
     if loop and n_prof < 3:
         pytest.skip("a closed sweep needs at least two layers")
     qm = quadmesh.loft(_profiles(n_prof, loop), loop=loop)
-    want_e, want_i, want_f = conform.unique_edges(np.asarray(qm.quads, np.int64), 2)
+    want_e, want_i, want_f = conform.unique_edges(np.asarray(qm.corners, np.int64), 2)
     assert qm.line_mesh.n_lines == want_e.shape[0]
     # numbering is free; the partition into entities is not
-    assert np.array_equal(np.sort(qm.line_mesh.lines[qm.quad], axis=2),
+    assert np.array_equal(np.sort(qm.line_mesh.lines[qm.quads], axis=2),
                           np.sort(want_e[want_i], axis=2))
     # ... and the stored flip must agree with the traversal it claims
-    assert np.array_equal(qm.quads, qm._derive_corners())
+    assert np.array_equal(qm.corners, qm._derive_corners())
 
 
 @pytest.mark.parametrize("order", [2, 3, 4])
@@ -181,7 +181,7 @@ def test_curved_nodes_survive_the_closed_form(order, loop):
     """The node-level check: every conformal node of a curved sweep sits on the true
     cylinder, which fails the moment an entity's nodes land in the wrong frame."""
     qm = quadmesh.loft(_profiles(4, loop, order=order), loop=loop)
-    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.orient,
+    nodes, _ = conform.conformal_quad(qm.points, qm.corners, qm.quads, qm.orient,
                                       qm.line_mesh.interior, qm.interior, qm.order)
     assert np.max(np.abs(np.hypot(nodes[:, 0], nodes[:, 1]) - 1.0)) < 1e-12
 
@@ -193,7 +193,7 @@ def test_isolated_points_get_no_rung():
     prof = LineMesh(pts, [[0, 1], [1, 2]])
     slices = [linemesh.translate(prof, (0.0, 0.0, z)) for z in (0.0, 1.0)]
     qm = quadmesh.loft(slices)
-    referenced = np.unique(qm.quad)
+    referenced = np.unique(qm.quads)
     assert referenced.shape[0] == qm.line_mesh.n_lines      # no unreferenced edge
 
 
@@ -219,8 +219,8 @@ def _inplane(sec, blk):
     sb = curved(sec)
     row = sec.order + 1
     kk = np.arange(row * row)
-    reversed_template = not np.array_equal(blk.hexes[0, :4] % sec.n_points,
-                                           sec.quads[0])
+    reversed_template = not np.array_equal(blk.corners[0, :4] % sec.n_points,
+                                           sec.corners[0])
     return sb[:, (kk // row) + row * (kk % row), :] if reversed_template else sb
 
 
@@ -238,8 +238,8 @@ def test_hex_loft_face_tables_round_trip_to_its_own_corners(loop, down):
     """``faces`` / ``elem_faces`` / ``face_orient`` must be mutually consistent: the
     container recovers the very corners the loft built."""
     _, _, blk = _shell(1, nz=4, loop=loop, down=down)
-    assert np.array_equal(blk.hexes, conform.hex_corners_from_faces(
-        blk.quad_mesh.quads, blk.hex, blk.orient))
+    assert np.array_equal(blk.corners, conform.hex_corners_from_faces(
+        blk.quad_mesh.corners, blk.hexes, blk.orient))
 
 
 @pytest.mark.parametrize("order", [2, 3, 4])
@@ -317,7 +317,7 @@ def test_hex_loft_fn_nodes_are_its_section_lattice_revolved(order, loop):
 @pytest.mark.parametrize("loop", [False, True])
 def test_hex_loft_entity_partition_matches_a_dedup(loop, down):
     _, _, blk = _shell(1, nz=4, loop=loop, down=down)
-    hexes = np.asarray(blk.hexes, np.int64)
+    hexes = np.asarray(blk.corners, np.int64)
     want_e, want_i, _ = conform.unique_edges(hexes, 3)
     # the block's *stored* tables, against a fresh dedup of its own corners
     assert blk.edges.shape[0] == want_e.shape[0]
@@ -338,6 +338,6 @@ def test_hex_loft_leaves_no_entity_an_element_does_not_carry(loop):
               for z in _levels(3, loop)]
     blk = hexmesh.loft(slices, loop=loop)
     assert np.unique(blk._elem_edges).shape[0] == blk.edges.shape[0]
-    assert np.unique(blk.hex).shape[0] == blk.quad_mesh.n_quads
+    assert np.unique(blk.hexes).shape[0] == blk.quad_mesh.n_quads
     assert blk.edges.shape[0] == conform.unique_edges(
-        np.asarray(blk.hexes, np.int64), 3)[0].shape[0]
+        np.asarray(blk.corners, np.int64), 3)[0].shape[0]

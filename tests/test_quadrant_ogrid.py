@@ -33,7 +33,7 @@ def _disc(n, order=1, center_scale=CS, radial=RADIAL, wall_tag="wall"):
 def test_counts_and_orientation(n, order):
     q = _disc(n, order)[0]
     assert q.points.shape[0] == (n + 1) ** 2 + NR * (2 * n + 1)
-    assert q.quads.shape[0] == n * n + 2 * n * NR
+    assert q.corners.shape[0] == n * n + 2 * n * NR
     assert q.order == order
     assert quadmesh.scaled_jacobian(q).min() > 0.0
     assert quadmesh.scaled_jacobian(q, high_order=True).min() > 0.0
@@ -50,7 +50,7 @@ def test_four_quadrants_merge_to_a_conforming_disc(order):
     n_seam = n + 1 + NR
     expect = 4 * quads[0].points.shape[0] - 4 * (n_seam - 1) - 3
     assert disc.points.shape[0] == expect
-    assert disc.quads.shape[0] == 4 * quads[0].quads.shape[0]
+    assert disc.corners.shape[0] == 4 * quads[0].corners.shape[0]
     # the real conformality proof at order > 1: merge reconciles every shared edge's
     # nodes owner-wins and raises if an incident copy disagrees.  It did not.
     hm = hexmesh.extrude(disc, 1.0, 1)

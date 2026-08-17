@@ -376,7 +376,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     # notion of "boundary".
     seams: list[IntArray] = []
     for m in meshes:
-        edges, mask = _boundary_mask(m.quads)
+        edges, mask = _boundary_mask(m.corners)
         seams.append(np.unique(edges[mask]))
     points, point_id = conform.weld_points(pos, seams, tol)
 
@@ -384,7 +384,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     etag_list: list[ElementTags] = []
     noff = qoff = 0
     for m, c in zip(meshes, counts):
-        quad_list.append(point_id[m.quads + noff])   # local -> welded id
+        quad_list.append(point_id[m.corners + noff])   # local -> welded id
         etag_list.append(m.element_tags.offset(qoff))
         noff += c
         qoff += m.n_quads
@@ -404,21 +404,21 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
     interior: PointArray | None = None
     if order > 1:
         local: PointArray = np.concatenate(
-            [conform.gather_edge_nodes(m.line_mesh.interior, m.quad, m.orient)
+            [conform.gather_edge_nodes(m.line_mesh.interior, m.quads, m.orient)
              for m in meshes], axis=0)                     # (Q,4,order-1,3)
         edge_nodes = conform.scatter_edge_nodes(
             local, elem_edges, flip, edges.shape[0],
             conform.entity_tol(points), "QuadMesh.merge")
         interior = np.concatenate([m.interior for m in meshes], axis=0)
     # An edge tag rides the edge, so it has to wait for the merged edge table: block
-    # ``m``'s local edge ``m.quad[q, s]`` is merged edge ``elem_edges[qoff + q, s]``,
+    # ``m``'s local edge ``m.quads[q, s]`` is merged edge ``elem_edges[qoff + q, s]``,
     # which is the whole map.  Two blocks welding onto one shared edge can each name
     # it, so the combine is the weld's own conflict rule rather than a concatenation.
     etag_off = 0
     edge_tag_list: list[ElementTags] = []
     for m in meshes:
         mine: IntArray = np.full(m.line_mesh.n_lines, -1, dtype=np.int64)
-        mine[np.asarray(m.quad, dtype=np.int64).ravel()] = np.asarray(
+        mine[np.asarray(m.quads, dtype=np.int64).ravel()] = np.asarray(
             elem_edges[etag_off:etag_off + m.n_quads], dtype=np.int64).ravel()
         edge_tag_list.append(m.edge_tags.renumber(mine))
         etag_off += m.n_quads
@@ -435,7 +435,7 @@ def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
     B-rep comes back complete rather than trailing orphaned entities.  Order is
     preserved: the shared edge-interior and private per-quad nodes ride along."""
     kept, new_quad_of = conform.renumber_map(keep)
-    quad: IntArray = mesh.quad[kept]
+    quad: IntArray = mesh.quads[kept]
     edge_keep: BoolArray = np.zeros(mesh.line_mesh.n_lines, dtype=bool)
     if quad.size:
         edge_keep[np.unique(quad)] = True
@@ -474,7 +474,7 @@ def components(mesh: QuadMesh) -> list[QuadMesh]:
     """The section split into its connected pieces -- one ``QuadMesh`` per group of
     quads reachable through shared corner points, in the order their first quad
     appears."""
-    n, labels = conform.element_components(mesh.quads, mesh.n_points)
+    n, labels = conform.element_components(mesh.corners, mesh.n_points)
     return [_subset(mesh, labels == c)[0] for c in range(n)]
 
 

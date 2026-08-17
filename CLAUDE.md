@@ -5,15 +5,19 @@
 ```bash
 pip install -e ".[all,dev]"
 
-ruff check nekmeshpy tests examples
+ruff check nekmeshpy tests examples docs
 mypy                          # config pins files=["nekmeshpy"]; do NOT pass paths
 python -m pytest              # addopts deselect `slow`
 python -m pytest -m slow      # femoral, the one gmsh example
+python docs/_ext/gen_viewer_assets.py   # regenerate the gallery's .vtp assets
 sphinx-build -b html -n -W --keep-going docs docs/_build/html
 ```
 
-Those five **are** the CI gates. A local pass is not the gate — after pushing, poll
-`gh pr checks <n>`.
+The four checks and `sphinx-build` **are** the CI gates. A local pass is not the gate
+— after pushing, poll `gh pr checks <n>`. `gen_viewer_assets.py` isn't a gate itself
+(`sphinx-build` doesn't check the `.vtp` files exist, so a docs build passes without it)
+but the deployed gallery needs it run first — `.github/workflows/docs.yml` does so
+before every `sphinx-build`.
 
 The docs build is nitpicky (`-n -W`), so every `:func:`/`:class:` role needs a fully
 qualified target naming the *namespace* module, not the private container module:
@@ -53,15 +57,14 @@ quadmesh.ogrid(boundary, n_side, radial)    # not QuadMesh.ogrid(...)
 hexmesh.is_watertight(mesh)                 # not mesh.is_watertight()
 ```
 
-There are no `TYPE_CHECKING` guards, and the three containers have no deferred imports.
-Siblings do use function-body imports in a few places (`query` → `quality`,
-`shape` → `linemesh`), so a deferred import in a *sibling* is not by itself a bug; one
-in a container is.
+No `TYPE_CHECKING` guards; the three containers have no deferred imports. Siblings do
+use function-body imports in a few places (`query` → `quality`, `shape` → `linemesh`),
+so a deferred import in a *sibling* is not by itself a bug; one in a container is.
 
 Each rung re-exports its operations, so `quadmesh.ogrid` and `quadmesh.shape.ogrid` are
 the same function — prefer the short form. Names collide across rungs by design (each
-rung has its own `loft`, `merge`), which is why there is no flat namespace above this
-one. Adding an operation touches one sibling module plus two `__all__`s.
+has its own `loft`, `merge`), which is why there is no flat namespace above this one.
+Adding an operation touches one sibling module plus two `__all__`s.
 
 Siblings split on **arity** and **rung delta** (line → quad → hex):
 
@@ -98,29 +101,29 @@ is `trimesh.ops.*`.
 
 Each container holds the rung below plus what it privately owns — `LineMesh` (a
 `point_mesh` *`PointMesh` of the shared points* + `lines` + `interior (L,N-1,3)`);
-`QuadMesh` (a `line_mesh` *`LineMesh` of the shared edges* + `quad`/`orient` +
+`QuadMesh` (a `line_mesh` *`LineMesh` of the shared edges* + `quads`/`orient` +
 `interior (Q,(N-1)²,3)`); `HexMesh` (a `quad_mesh` *`QuadMesh` of the shared faces* +
-`hex`/`orient` + `interior (E,(N-1)³,3)`).
+`hexes`/`orient` + `interior (E,(N-1)³,3)`).
 
 **The slot names say which of three roles they play**, so the same word never means two
-things: `<rung>_mesh` is the stored container one rung down; the **singular** `line` /
-`quad` / `hex` is this rung's incidence into it; the **plural** `lines` / `quads` /
-`hexes` is the derived corner connectivity; and `points` is always the `(N,3)`
-coordinates. At the line rung a point *is* its own corner, so `line` and `lines` are
-one table under both names.
+things: `<rung>_mesh` is the stored container one rung down; the **plural** `lines` /
+`quads` / `hexes` is this rung's own stored incidence into it; `corners` is the derived
+corner connectivity at every rung; and `points` is always the `(N,3)` coordinates. At
+the line rung a point *is* its own corner, so `lines` and `corners` are one table under
+both names.
 
-`points` / `quads` / `hexes` are **derived read-only views**, so corner consistency is
+`points` / `corners` are **derived read-only views**, so corner consistency is
 structural and `mesh.points[:] = X` propagates for free. Conformality is likewise
 structural: a shared edge or face is *one stored object* referenced by every incident
 element, resolved by corner ids rather than coordinate search (`core/conform.py`).
 
 Constructors share one argument order: `(rung below, incidence, [orientation,]
-interior, element_tags)` — `LineMesh(point_mesh, lines, …)`, `QuadMesh(line_mesh, quad,
-orient, …)`, `HexMesh(quad_mesh, hex, orient, …)`. A line element has no orientation
+interior, element_tags)` — `LineMesh(point_mesh, lines, …)`, `QuadMesh(line_mesh, quads,
+orient, …)`, `HexMesh(quad_mesh, hexes, orient, …)`. A line element has no orientation
 bit, so `LineMesh` has no `orient` slot.
 
 **No container takes or stores `order`** — it derives all the way down: `HexMesh.order`
-→ `quads.order` → `lines.order` → **`interior.shape[1] + 1`**. A mesh cannot disagree
+→ `quad_mesh.order` → `line_mesh.order` → **`interior.shape[1] + 1`**. A mesh cannot disagree
 with the nodes it stores. The cost: `interior`'s middle axis is unconstrained, so a
 wrong-sized block yields a *different order* rather than a `ValueError`. Size blocks
 through a factory or `loft`.
@@ -254,5 +257,10 @@ override *to* untagged** — the difference shows where a tag would otherwise be
 
 `docs/user/` is the long form (`concepts.md`, `architecture.md`, `conventions.md`).
 
-## Git
-When make a PR, always PR to main
+## User instructions, always confirm with user before modifying
+- Git: When make a PR, always PR to main
+- Spin up subagents where ever make sense. Main
+objective is to maintain long sessions that retains high level understanding, minimize the
+number of conversation compacting and a clear transcript.
+- When attempting to web search, do it from local machine since Claude API server do not have access
+to internet

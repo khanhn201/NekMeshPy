@@ -107,7 +107,7 @@ def test_carotid_mesh_is_watertight(built_mesh):
 
 def test_hexmesh_report_matches_free_function(built_mesh):
     mesh = built_mesh["mesh"]
-    X, HC = mesh.points, mesh.hexes
+    X, HC = mesh.points, mesh.corners
     assert hexmesh.topology_report(mesh) == topology.hex_report(X, HC)
 
 
@@ -128,9 +128,9 @@ def test_tag_report_flags_an_untagged_boundary():
     """A lone hex with one of its six faces named: five boundary faces go uncovered."""
     mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
     mesh = hexmesh.HexMesh(
-        quadmesh.QuadMesh(mesh.quad_mesh.line_mesh, mesh.quad_mesh.quad, mesh.quad_mesh.orient, None,
-                          tags_mod.ElementTags([int(mesh.hex[0, 4])], ["bottom"])),
-        mesh.hex, mesh.orient)
+        quadmesh.QuadMesh(mesh.quad_mesh.line_mesh, mesh.quad_mesh.quads, mesh.quad_mesh.orient, None,
+                          tags_mod.ElementTags([int(mesh.hexes[0, 4])], ["bottom"])),
+        mesh.hexes, mesh.orient)
     assert hexmesh.tag_report(mesh) == (1, 5, 0)
 
 
@@ -153,7 +153,7 @@ def test_boundary_helpers_match_topology(built_mesh):
     assert got == want
     # point ids on the domain boundary, consistent with the face points
     face_points = np.unique(
-        mesh.hexes[hexmesh.boundary_faces(mesh)[:, 0][:, None],
+        mesh.corners[hexmesh.boundary_faces(mesh)[:, 0][:, None],
                    mesh.FACE_POINTS[hexmesh.boundary_faces(mesh)[:, 1] - 1]])
     assert np.array_equal(hexmesh.boundary_points(mesh), face_points)
     assert set(hexmesh.boundary_elements(mesh)) <= set(range(mesh.n_hexes))

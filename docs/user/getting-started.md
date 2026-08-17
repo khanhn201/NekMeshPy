@@ -24,15 +24,14 @@ The pattern is always: describe the **boundary** as a
 rides up onto the swept faces — so no post-hoc face detection is needed.
 
 ```python
-from nekmeshpy import HexMesh, LineMesh, QuadMesh, export
+from nekmeshpy import export, linemesh, quadmesh, hexmesh
 
 # 1. Boundary: a closed circular loop, tagged "wall" at the lowest level.
 n = 4 * 6                                   # 4 * n_side points around the ring
 boundary = linemesh.circle(radius=0.5, n=n, element_tag="wall")
 
 # 2. Section: fill the loop with an O-grid, 4 radial layers.
-section = quadmesh.ogrid(boundary, n_side=6, radial=4,
-                         smoothing_method="bilinear")
+section = quadmesh.ogrid(boundary, n_side=6, radial=4)
 
 # 3. Volume: sweep 40 layers along +z; name the two end caps.
 mesh = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
@@ -51,13 +50,13 @@ Containers are pure data; the checks take the mesh as their first argument.
 
 ```python
 print(mesh)                          # <HexMesh 5945 points, 5280 hexes, order 1, …>
-print(mesh.report())                 # element / point / boundary counts
+print(hexmesh.report(mesh))          # element / point / boundary counts
 
-stats = mesh.quality_summary()       # a QualitySummary NamedTuple, not a dict
+stats = hexmesh.quality_summary(mesh) # a QualitySummary NamedTuple, not a dict
 print(stats.min, stats.mean, stats.n_inverted)
 
-assert mesh.is_watertight()          # closed, leak-tight boundary, single body
-assert mesh.is_conforming()          # no hanging-point / T-junction interfaces
+assert hexmesh.is_watertight(mesh)   # closed, leak-tight boundary, single body
+assert hexmesh.is_conforming(mesh)   # no hanging-point / T-junction interfaces
 print(mesh.face_group_tags)          # ['inlet', 'outlet', 'wall']
 ```
 

@@ -153,7 +153,6 @@ RIM_KEEP = 0.5                # ditto for a *station's* wall ring, which is the 
                               # this is removing tet-scale noise, not resolving a shape:
                               # the ring is a near-circle and its real content is in the
                               # first few modes.
-SMOOTHING_METHOD = None       # both relaxers move corners only and reject order > 1
 TET_CACHE = "data/femoral_tets.npz"          # under ``examples/data/``, beside this
                               # script rather than in whatever directory it was run from:
                               # the cache belongs to the mesher, not to the caller.

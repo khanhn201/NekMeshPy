@@ -108,7 +108,7 @@ def test_quad_spline_matches_loft_at_order_one():
     a = quadmesh.loft(profs, loop=True, element_tags="w")
     b = quadmesh.loft_spline(profs, loop=True, element_tags="w")
     assert np.array_equal(a.points, b.points)
-    assert np.array_equal(np.asarray(a.quads), np.asarray(b.quads))
+    assert np.array_equal(np.asarray(a.corners), np.asarray(b.corners))
     assert np.array_equal(a.element_tags.dense(a.n_quads),
                           b.element_tags.dense(b.n_quads))
 
@@ -185,7 +185,7 @@ def test_hex_spline_matches_loft_at_order_one():
     a = hexmesh.loft(secs, loop=True, element_tags="core")
     b = hexmesh.loft_spline(secs, loop=True, element_tags="core")
     assert np.array_equal(a.points, b.points)
-    assert np.array_equal(np.asarray(a.hexes), np.asarray(b.hexes))
+    assert np.array_equal(np.asarray(a.corners), np.asarray(b.corners))
     assert np.array_equal(a.element_tags.dense(a.n_hexes),
                           b.element_tags.dense(b.n_hexes))
 

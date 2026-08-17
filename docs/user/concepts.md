@@ -6,8 +6,7 @@ Companion to the {doc}`getting-started` tutorial and {doc}`../reference/index`.
 
 ## The line → quad → hex ladder
 
-Geometry is modeled with one mesh container per dimension, each with 2 / 4 / 8
-vertices per element:
+One container per dimension, 2 / 4 / 8 vertices per element:
 
 | container | element | role |
 |---|---|---|
@@ -15,755 +14,507 @@ vertices per element:
 | {class}`~nekmeshpy.quadmesh.QuadMesh` | quad (4 pts) | 2-D cross-section / surface |
 | {class}`~nekmeshpy.hexmesh.HexMesh` | hex (8 pts)  | 3-D all-hex volume |
 
-Each container stores coordinates as a **bare `(P,3)` NumPy array** on `.points`
-(mutate in place with `mesh.points[:] = X`). There is **no `Point` class** — a
-single point is just a `(3,)` array. Boundaries live in 3-D: a `(N,2)` array is
-*rejected*, never padded to `z=0`.
+Coordinates are a bare `(P,3)` array on `.points` (mutate in place with
+`mesh.points[:] = X`). No `Point` class — a single point is a `(3,)` array.
+Boundaries live in 3-D: a `(N,2)` array is rejected, never padded to `z=0`.
 
-`LineMesh` holds a shared `(N,3)` point array plus `(L,2)` `lines` connectivity
-that **can branch** (a mesh, not a single ordered path). Open vs closed is a
-property of the `lines` array itself — a loop is a cycle of line elements with no
-degree-1 end point — and is **stored nowhere**: read it off the connectivity (or
-`boundary_points()`, empty for a loop). The container never *invents* connectivity
-either — `lines` is a **required** constructor argument, so there is no default chain
-and nothing in `LineMesh` that could imply a wrap. Factories build the wrap
-explicitly:
+`LineMesh` holds a shared point array plus `(L,2)` `lines` connectivity that
+**can branch** (a mesh, not a single path). Open vs closed is read off the
+connectivity (a loop has no degree-1 end point) — never stored as a flag.
+`lines` is a **required** constructor arg; nothing implies a wrap. Factories
+that build one explicitly:
 
-- {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>` — the bottom rung of the uniform
-  [sweep primitive](#loft-the-uniform-sweep-primitive): each "profile" is a single
-  point, so the rungs joining them *are* the line elements. `loop=False` gives the
-  consecutive chain, `loop=True` appends the single closing rung `[N-1, 0]`.
-  It is the **only** connectivity-authoring entry point: a chain is
-  `loft(points)`, a ring `loft(points, loop=True)`, and anything else comes in
-  through the constructor with its `lines` spelled out.
-- `linemesh.line(start, end, fractions, …)` — straight edge sampled at the given
-  fractions (a direct lerp, meshed exactly).
-- `linemesh.loft_fn(f, fractions, loop=False, order=1, element_tags=…)` — a curve
-  meshed on its own analytic parametrization, the general sibling of
-  {func}`linemesh.arc <nekmeshpy.linemesh.shape.arc>`. `f` maps a `(K,)` parameter array to
-  `(K,3)` points and is called once with the **whole** node lattice — corners and the
-  private high-order interior nodes alike — so nothing lands on a chord. `fractions`
-  are the parameter values themselves, passed to `f` verbatim (`len(fractions) - 1`
-  elements): for an `f` written on `[0,1]` they are exactly the normalized fractions
-  `linemesh.line` takes, an `f` on any other interval is sampled in its own units, and
-  a descending sequence runs the curve backwards. They grade the nodes per element:
-  above order 1 an element's interior rides the GLL nodes of its own span. For nodes
-  spaced evenly by arc length, pass {meth}`linemesh.arclength_fractions
-  <nekmeshpy.linemesh.shape.arclength_fractions>`. `loop=True` closes the ring, as
-  it does on `linemesh.loft`: the last fraction is the wrap back to the first point,
-  so `n+1` fractions give `n` points and `n` lines. See
+- {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>` — the only
+  connectivity-authoring entry point. `loop=False` chains consecutive points;
+  `loop=True` adds the closing rung. Anything else goes through the
+  constructor with `lines` spelled out.
+- `linemesh.line` — straight edge sampled at given fractions.
+- `linemesh.loft_fn(f, fractions, loop=False, order=1)` — curve meshed on its
+  own parametrization; `f` is called once on the **whole** node lattice
+  (corners + interior), so nothing lands on a chord. See
   [true geometry vs straight subdivision](#true-geometry-vs-straight-subdivision).
-- `linemesh.loft_spline(points, loop=False, order=1, element_tags=…)` — `linemesh.loft`
-  with the high-order interior nodes read off a **cubic spline through the whole point
-  chain** instead of their own element's chord. The corners are the points given,
-  untouched, and nothing is resampled; only the private `interior` moves. Use it when
-  the points are all there is — for a curve you can write down, `loft_fn` is exact.
-- `linemesh.circle(radius, n, center=…, normal=…, start_theta=0.0)` — closed ring
-  in the plane with the given `normal` (default `+z`); `start_theta` rotates the
-  first point off `+e1`.
-- `linemesh.rectangle(width, height, n, center=…, normal=…, side_tags=…)` — closed
-  far-field loop in the given plane, discretized into `n` line elements (`n` a
-  multiple of 4): `n // 4` evenly spaced per side, CCW from the lower-left corner
-  (bottom / right / top / left), corners always landing on a point. `side_tags` is
-  a **mapping** keyed by those four names — an absent key leaves that side
-  untagged, an unrecognized one is a loud `ValueError` rather than a silently lost
-  wall — the same spelling as its one-rung-up twin `quadmesh.rectangle`. Pass `n` equal
-  to the inner loop's point count and rotate the inner `circle` with `start_theta`
-  so index 0 meets the lower-left corner, and the two loops pair index-for-index in
-  `annulus` (the radial spokes need not be straight).
-- `linemesh.merge` — weld coincident **topological end points** (degree-1 chain
-  ends; never interior points), the 1-D sibling of `quadmesh.merge`/`hexmesh.merge`.
-  The welded connectivity is the answer: if no degree-1 end survives the result
-  *is* a loop, so two shared-endpoint `A1->A2` arcs (reverse one) weld at
-  `A1`/`A2` into a single cycle — the clean way to close a seam ring from two
-  half-arcs.
+- `linemesh.loft_spline(points, ...)` — like `loft`, but interior nodes come
+  from a cubic spline through the whole point chain instead of each element's
+  own chord. Use when the points are all you have; use `loft_fn` when you can
+  write the curve down.
+- `linemesh.circle` / `linemesh.rectangle` — closed rings; `rectangle`'s
+  `side_tags` mapping is keyed `bottom`/`right`/`top`/`left`.
+- `linemesh.merge` — welds coincident **degree-1 end points**. If no end
+  survives, the result is a loop — the way to close a seam from two half-arcs.
 
-Every factory meshes its points **exactly** — there is no resampling API; the
-caller hands in an exactly-sized, correctly-oriented curve. The ordered ops treat
-points in index order as a path/loop. That holds for curves handed to a
-section factory too: {func}`quadmesh.spined_ogrid <nekmeshpy.quadmesh.shape.spined_ogrid>` used to
-arc-length-resample its `spine`, and no longer does — a caller-supplied spine must
-carry exactly the `2*Ntheta+1 + 2*Nradial` points ascending `A1 -> A2` that
-`half_ogrid` consumes, or it is a loud `ValueError`. Derive that sampling from
-{meth}`quadmesh.spine_fractions <nekmeshpy.quadmesh.shape.spine_fractions>`
-(`n_theta`, `radial`, `center_scale` → the normalized fractions) and evaluate your own
-spine curve there, at the boundary's order — above order 1 the spine's own private
-interior nodes *are* the seam geometry, so the two orders must match (a mismatch is a
-`ValueError`). Omitting `spine` still gives the straight `A1..A2` chord, which the
-factory owns as a shape and places itself at `boundary.order`.
+Every factory meshes points **exactly** — no resampling API. `quadmesh.ogrid`,
+`half_ogrid`, `quadrant_ogrid`, `structured` likewise take exactly the point
+count their geometry needs (`spine_fractions`/`quadrant_seam_fractions` derive
+the sampling). `quadrant_ogrid`'s one non-obvious term: its core's shared
+corner `M` sits at `center_scale * cos(45°) * R` (half a diagonal past the far
+corner `K`, which sits at `center_scale * R`).
 
-{func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` takes the same line one step
-further: its two seams are **arguments**, not something it derives from a centre, so
-two adjacent quadrants hand in the *same* `LineMesh` object (the second through
-{meth}`linemesh.reverse <nekmeshpy.linemesh.morph.reverse>`) and weld bit-exactly
-rather than to a tolerance. Each seam must carry exactly `n_side+1 + Nradial` points
-ascending from the centre; derive them with
-{meth}`quadmesh.quadrant_seam_fractions <nekmeshpy.quadmesh.shape.quadrant_seam_fractions>`.
-Its one non-obvious term is that the core's shared corner `M` sits at
-`center_scale * cos(45°) * R`, not `center_scale * R` — `center_scale` places the core's
-*far* corner `K`, and `M` is the midpoint of the core square's side, half a diagonal
-further in.
-
-The core patch itself is public as
-{meth}`quadmesh.quadrant_core <nekmeshpy.quadmesh.shape.quadrant_core>`, which is
-the construction `quadrant_ogrid` builds its own core with.
-
-A quadrant face is also, read another way, a **triangle meshed as three structured
-patches** — its core plus the two halves of its ring band — which is exactly what
-{meth}`hexmesh.tetra <nekmeshpy.hexmesh.shape.tetra>` consumes. So the region
-*behind* three quadrant faces meeting at a common centre is filled by handing those
-three plus a fourth face to `tetra`: the octant of a 3-D O-grid (an `n³` core block
-and three `n × n × Nradial` slabs) falls out of the generic one-block-per-corner
-tetrahedron split, with the block split the faces already carry
+A quadrant face read as a triangle (core + two ring-band halves) is what
+{meth}`hexmesh.tetra <nekmeshpy.hexmesh.shape.tetra>` consumes — three
+quadrant faces plus a fourth fill the octant behind their common centre
 (`examples/quadrant_pipe_tjunction.py`).
 
-Because closedness is not a stored flag, the section factories constrain their input
-through the facts they actually need instead: `ogrid` an exact `4*n_side` point ring,
-`spined_ogrid` an `8*Ntheta` ring, `annulus` and `blend` identical `lines` on both
-rings, `structured` four edges that share corners. The factories that read only
-`boundary.points` (`ogrid`, `half_ogrid`, `structured`) therefore **accept an open
-chain and silently treat it as the equivalent closed ring** — a known, deliberate gap:
-they never see the connectivity that would tell them otherwise.
+Since closedness isn't stored, factories that read only `boundary.points`
+(`ogrid`, `half_ogrid`, `structured`) will silently treat an open chain as a
+closed ring — a known gap.
 
-{class}`~nekmeshpy.trimesh.TriMesh` is the **input surface** for the vessel
-pipeline; its algorithms (cotan Laplacian, Dirichlet solve, boundary loops) live
-in {mod}`nekmeshpy.trimesh.ops` (reached as `nekmeshpy.trimesh.ops`).
+{class}`~nekmeshpy.trimesh.TriMesh` is the input surface for the vessel
+pipeline; its ops (cotan Laplacian, Dirichlet solve, boundary loops) live in
+{mod}`nekmeshpy.trimesh.ops`.
 
 ## The two tag systems
 
-Both **propagate up the ladder** (line → quad → hex) on `extrude` / `loft`, and
-both are no-ops when untagged.
+Both propagate up the ladder on `extrude`/`loft`, and both no-op when untagged.
 
-### `element_tags` — an `ElementTags`, sparse (region / material)
+### `element_tags` — sparse region/material tag
 
-Names whichever lines / quads / hexes carry a region tag, as `ids` + `tags`. An
-untagged mesh stores nothing at all, and there is no `""` sentinel: an element is
-either named or absent. Set at construction on the `LineMesh`, copied by the
-section factories onto the section edges/quads and thence onto the hex
-faces/hexes. `element_group_tags` is the sorted unique set; `dense(n)`
-materializes the one-slot-per-element form where a caller wants it.
-
-Note `len(element_tags)` is the number of **tagged** elements, not the element
-count — use `n_lines` / `n_quads` / `n_hexes` for that.
+`ids` + `tags`; an untagged mesh stores nothing, no `""` sentinel. Set on the
+`LineMesh` at construction, copied up by section factories. `len(element_tags)`
+is the **tagged** count, not element count — use `n_lines`/`n_quads`/`n_hexes`.
 
 ### `point_tags` / `edge_tags` / `face_tags` — the rung below's element tags
 
-Not tables of their own. **A rung's side tags *are* the rung below's `element_tags`**,
-read through under the name of the entity they name:
+Not separate tables — **a rung's side tags *are* the rung below's
+`element_tags`**, read through by the entity they name:
 
-- `LineMesh.point_tags` → `point_mesh.element_tags`, over **point** ids.
-- `QuadMesh.edge_tags` → `line_mesh.element_tags`, over **edge** ids.
-- `HexMesh.face_tags` → `quad_mesh.element_tags`, over **face** ids.
+- `LineMesh.point_tags` → `point_mesh.element_tags` (point ids)
+- `QuadMesh.edge_tags` → `line_mesh.element_tags` (edge ids)
+- `HexMesh.face_tags` → `quad_mesh.element_tags` (face ids)
 
-The B-rep already stores each entity exactly once, so naming it is naming that one
-object rather than naming it once per incident element. That makes tag consistency
-structural, the way conformality already is: a face cannot carry two contradictory
-names, because there is only one place to put a name. `merge` raises rather than
-silently keeping both when a weld would disagree, and reflections need no side remap at
-all — re-winding changes how an element *views* an entity, which a tag on the entity
-does not care about.
-
-The cost is that a genuinely two-sided condition cannot live on the entity. See
+Each entity is stored once, so it can't carry two names — tag consistency is
+structural, like conformality. `merge` raises on a naming conflict; a
+reflection needs no side remap (re-winding is a view, not a tag concern).
+Cost: a genuinely two-sided condition can't live on the entity — see
 *asymmetric conditions* below.
 
-These are **not** "the boundary". *Boundary* is reserved throughout for the
-topological domain boundary — the facets borne by exactly one element, which
-`boundary_faces()` / `boundary_edges()` / `boundary_points()` derive from
-connectivity. A tag table is the *named subset* of that, and the two genuinely
-differ: an extruded pipe whose wall was never named has 192 boundary faces and 0
-named ones. `hexmesh.tag_report()` counts both ways they can disagree.
+**Not "the boundary".** *Boundary* means the topological domain boundary
+(`boundary_faces`/`_edges`/`_points`, derived from connectivity). A tag table
+is a *named subset* — an extruded pipe can have 192 boundary faces and 0
+named ones. `hexmesh.tag_report()` counts both.
 
-On `extrude`, line end-point tags become quad **edge** tags, then hex **face** tags.
-`point_group_tags` / `edge_group_tags` / `face_group_tags` are the sorted unique
-sets. See `examples/flow_past_cylinder.py`.
-
-To get either one *as a mesh* rather than as index pairs, use
-{func}`hexmesh.boundary_mesh <nekmeshpy.hexmesh.lower.boundary_mesh>` (or its
-`quadmesh` sibling, which returns a `LineMesh`): with a `tag` it extracts that named
-group, without one the whole topological boundary. The extracted surface carries the
-parent's **own** nodes, bit for bit at any order — which is the point, since a piece
-built off a port has to weld back onto it, and at `order > 1` `merge` verifies shared
-high-order nodes far more tightly than any coordinate weld.
+Use {func}`hexmesh.boundary_mesh <nekmeshpy.hexmesh.lower.boundary_mesh>` (or
+its `quadmesh` sibling) to get either **as a mesh**: with a `tag`, that named
+group; without one, the whole boundary. It carries the parent's own nodes
+bit-for-bit, so a weld back onto it is exact even at `order > 1`.
 
 ### Asymmetric conditions — the two sides of one face
 
-A named **interior** face is carried by two elements, and `hexmesh.face_tag_rows()`
-reconstructs a row for each — that is what the `.re2` boundary block gets. Since the
-face has one name, anything that must differ between the two sides is read from the
-**region** of the element that owns the row, i.e. from `element_tags`:
+An interior face's two sides can differ only by reading the **region**
+(`element_tags`) of the element that owns each row:
 
 ```python
 GROUPS = {"wall": "W  ", "interface": {"fluid": "W  ", "solid": None}}
 ```
 
-A plain string is one code from every side. A mapping is keyed by region name (`""`
-for an untagged element), and `None` writes **no row** from that side — which is how a
-conjugate fluid/solid interface keeps the fluid's wall condition and puts nothing on
-the solid. A region the mapping does not name raises. `examples/chimera.py` is the
-worked case.
+A plain string applies from every side. A mapping is keyed by region name
+(`None` writes no row from that side — how a conjugate interface keeps the
+fluid condition and puts nothing on the solid). An unnamed region raises.
+`examples/chimera.py` is the worked case.
 
 ### Tag at the lowest level; upper overrides lower
 
-Every section-wall tag can originate on the `LineMesh` input, which each section
-factory reads:
-
-- `ogrid` / `annulus` — the loop's per-line tags,
-- `half_ogrid` / `quadrant_ogrid` — the arc's per-segment tags (each seam from its own),
-- `structured` — each edge's uniform tag.
-
-The factory args (`wall_tag`, `inner_tag`, `outer_tag`, `side_tags[side]`)
-are **overrides**: a non-empty arg replaces the line-level tag; an empty/absent
-one falls through (a present-but-empty `side_tags[side]` / `NO_TAG`
-suppresses the side). The named-side override is spelt `side_tags` — a
-**mapping** keyed `bottom` / `right` / `top` / `left`, on `quadmesh.structured`,
-on both `rectangle` conveniences and on `from_grid` at both rungs — not the
-positional 4-list it was, and distinct from the stored `edge_tags` / `face_tags`
-tables of `(element, side, tag)` rows it feeds. Sweep end caps (`first_tag` / `last_tag`) are named at the
-hex level — no lower level exists for them.
+Section factories read per-line tags from their boundary `LineMesh` and let
+factory args (`wall_tag`, `inner_tag`, `outer_tag`, `side_tags[side]`)
+override: non-empty replaces, empty/absent falls through. `side_tags` is a
+mapping keyed `bottom`/`right`/`top`/`left` (not a positional list), used by
+`structured`, `rectangle`, and both `from_grid`s. Sweep end caps
+(`first_tag`/`last_tag`) exist only at the hex level.
 
 ## Section factories (`QuadMesh` classmethods)
 
-Sections fill a boundary with quads. All build **natively in 3-D** — nothing is
-projected to a plane, so a boundary in any plane, or a curvy / non-planar one, is
-filled in place with its true shape.
+All build **natively in 3-D** — nothing projected to a plane.
 
 | factory | fills |
 |---|---|
-| {func}`quadmesh.structured <nekmeshpy.quadmesh.shape.structured>` | transfinite (Coons) grid over 4 open `LineMesh` edges, given either as a CCW `[bottom, right, top, left]` sequence or — preferably — as a **mapping** keyed by those four names, since in the sequence spelling the position alone says which edge is which and transposing two yields a plausible-looking twisted patch instead of an error; resolution comes from the edges' own points (no resampling — opposite edges must match counts); each side named from its edge tag |
-| {func}`quadmesh.ogrid <nekmeshpy.quadmesh.shape.ogrid>` | O-grid inside a closed loop (no collapsed centre); outer ring named from the loop's per-line tags |
-| {func}`quadmesh.half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` | half-disc O-grid split along a spine; wall named from the arc's per-segment tags |
-| {func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid bounded by a wall arc and two caller-supplied radii — the 90° sibling of `half_ogrid`, and exactly the quarter of `ogrid` you get by cutting a full disk along two perpendicular diameters through its core-edge midpoints, so four of them `merge` back into a conforming disk |
-| {func}`quadmesh.annulus <nekmeshpy.quadmesh.lift.annulus>` | ring O-grid between inner and outer closed loops, paired **by index** (equal point counts — e.g. `linemesh.rectangle(w, h, N)` against `circle(r, N, start_theta=…)`) |
-| {func}`quadmesh.extrude <nekmeshpy.quadmesh.lift.extrude>` / {func}`quadmesh.loft <nekmeshpy.quadmesh.assemble.loft>` | sweep/stack a `LineMesh` one dimension down into a quad strip |
-| {func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` | carry **one** `LineMesh` profile along a curved path by a moving frame — the curved generalization of `extrude` |
-| {func}`quadmesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` | the same sweep with the profiles **evaluated**: `f(t) -> LineMesh` is called at every node level of the sweep lattice, so a swept curved surface is exact at `order > 1` instead of straight between the corner levels |
-| {func}`quadmesh.loft_spline <nekmeshpy.quadmesh.assemble.loft_spline>` | the same sweep with the intermediate profiles **fitted** rather than evaluated: a cubic spline through the whole stack, for when there is no parametrization to call |
-| {func}`quadmesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>` | structured `(ni+1,nj+1)` quad grid (itself a {func}`quadmesh.loft <nekmeshpy.quadmesh.assemble.loft>` of the grid's column profiles, each itself a {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>` of that column's `i` points, whose **sweep-major, `i`-fastest** numbering it carries up unchanged — `points == P.transpose(1,0,2).reshape(-1,3)`); `element_tag` fills the per-quad tags |
+| {func}`quadmesh.structured <nekmeshpy.quadmesh.shape.structured>` | transfinite grid over 4 edges (mapping keyed by side name preferred over positional `[bottom, right, top, left]`) |
+| {func}`quadmesh.ogrid <nekmeshpy.quadmesh.shape.ogrid>` | O-grid inside a closed loop |
+| {func}`quadmesh.half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` | half-disc O-grid split along a spine |
+| {func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid; four `merge` back into a conforming disk |
+| {func}`quadmesh.annulus <nekmeshpy.quadmesh.lift.annulus>` | ring O-grid between two closed loops, paired **by index** |
+| {func}`quadmesh.extrude <nekmeshpy.quadmesh.lift.extrude>` / {func}`loft <nekmeshpy.quadmesh.assemble.loft>` | sweep/stack a `LineMesh` into a quad strip |
+| {func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` | one profile along a curved path by a moving frame |
+| {func}`quadmesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` | sweep with profiles **evaluated** (`f(t) -> LineMesh`) at every node level — exact at `order > 1` |
+| {func}`quadmesh.loft_spline <nekmeshpy.quadmesh.assemble.loft_spline>` | sweep with intermediate profiles **fitted** by a cubic spline |
+| {func}`quadmesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>` | structured `(ni+1,nj+1)` grid, sweep-major `i`-fastest numbering |
 
-`ogrid` / `annulus` build a straight-chord initial guess and rely on
-`smoothing_method="conduction"` to relax the interior onto the curved boundary
-ring; `structured` / `half_ogrid` / `quadrant_ogrid` blend the 3-D edge points
-directly. (`ogrid` / `half_ogrid` are ICEM/Pointwise terms; the rest follow gmsh.)
+`ogrid`/`annulus` start from a straight-chord guess of the interior; a section's
+interior points can be repositioned onto a curved boundary afterward with
+{func}`quadmesh.smoothing.set_section_smoothing <nekmeshpy.quadmesh.smoothing.set_section_smoothing>`
+(`"conduction"`/`"winslow"`), which no factory calls automatically.
+`structured`/`half_ogrid`/`quadrant_ogrid` blend edge points directly.
 
 ## Hex-block factories (`HexMesh` classmethods)
 
 | factory | builds |
 |---|---|
-| {func}`hexmesh.extrude <nekmeshpy.hexmesh.lift.extrude>` | sweep one section along a straight axis (gmsh Extrude + Layers + Recombine) |
-| {func}`hexmesh.sweep <nekmeshpy.hexmesh.lift.sweep>` | carry **one** section along a *curved* path by a moving frame — a round pipe bent through a 90° elbow or a U-turn, from one O-grid disc |
-| {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` | recombine a stack of pre-positioned conformal profiles — the general case behind `extrude` |
-| {func}`hexmesh.loft_fn <nekmeshpy.hexmesh.assemble.loft_fn>` | the same stack with the sections **evaluated**: `f(t) -> QuadMesh` is called at every node level of the sweep lattice, so the sweep is exact at `order > 1` |
-| {func}`hexmesh.loft_spline <nekmeshpy.hexmesh.assemble.loft_spline>` | the same stack with the intermediate sections **fitted** by a cubic spline through the stack, for when there is no parametrization to call |
-| {func}`hexmesh.annulus <nekmeshpy.hexmesh.lift.annulus>` | fill the shell between two **closed `QuadMesh` surfaces**, paired **by index** (e.g. `sphere = R*normalize(cube.points)` on `cube.quads`) |
-| {func}`hexmesh.merge <nekmeshpy.hexmesh.assemble.merge>` | stitch blocks, welding coincident **boundary** points only |
-| {func}`hexmesh.from_grid <nekmeshpy.hexmesh.lift.from_grid>` | structured `i×j×k` block (itself a {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` of the grid's `k`-sections, each a {func}`quadmesh.from_grid <nekmeshpy.quadmesh.lift.from_grid>`, whose numbering it carries up unchanged — `i` fastest, `k` slowest, `points == P.transpose(2,1,0,3).reshape(-1,3)`); `face_tags` maps a side `x_min`…`z_max` to a name |
+| {func}`hexmesh.extrude <nekmeshpy.hexmesh.lift.extrude>` | sweep a section along a straight axis |
+| {func}`hexmesh.sweep <nekmeshpy.hexmesh.lift.sweep>` | one section along a curved path by a moving frame |
+| {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` | recombine a stack of pre-positioned conformal profiles |
+| {func}`hexmesh.loft_fn <nekmeshpy.hexmesh.assemble.loft_fn>` | stack **evaluated** (`f(t) -> QuadMesh`) per node level — exact at `order > 1` |
+| {func}`hexmesh.loft_spline <nekmeshpy.hexmesh.assemble.loft_spline>` | stack **fitted** by a cubic spline |
+| {func}`hexmesh.annulus <nekmeshpy.hexmesh.lift.annulus>` | shell between two closed `QuadMesh` surfaces, paired by index |
+| {func}`hexmesh.merge <nekmeshpy.hexmesh.assemble.merge>` | stitch blocks, welding coincident boundary points |
+| {func}`hexmesh.from_grid <nekmeshpy.hexmesh.lift.from_grid>` | structured `i×j×k` block, `i` fastest / `k` slowest |
 
-`HexMesh` is **immutable by construction**. `extrude` / `loft` are shared-point
-(conformal slices → index arithmetic, no weld); `merge` is the one place seam
-points are coordinate-welded.
+`HexMesh` is immutable by construction. `extrude`/`loft` are shared-point
+(index arithmetic, no weld); `merge` is the one place seams get coordinate-welded.
 
 ## Placing a finished mesh: `translate` / `rotate` / `scale`
 
-All three containers carry the same four affine placements, as instance methods
-returning a **new** mesh:
+All three containers carry the same affine placements, returning a **new** mesh —
+free functions on the rung's namespace module (`linemesh.translate(mesh, ...)`,
+`quadmesh.rotate(mesh, ...)`, `hexmesh.scale(mesh, ...)`, and so on):
 
-| method | does |
+| function | does |
 |---|---|
-| `mesh.translate(vector)` | shift rigidly by a `(3,)` displacement — **bit-exact** (the offset is added without a matrix), so translating by `0` returns identical coordinates |
-| `mesh.rotate(angle, axis=(0,0,1), center=(0,0,0))` | rotate by `angle` **radians** about the line through `center` along `axis` (right-handed; `axis` need not be normalized) |
-| `mesh.scale(factor, center=(0,0,0))` | scale about `center` by a scalar or a `(3,)` per-axis vector (every factor must be positive) |
-| `mesh.transform(matrix, offset=(0,0,0))` | the general case the other three wrap: `p @ matrix.T + offset` |
+| `translate(mesh, vector)` | rigid shift, bit-exact (offset added, no matrix) |
+| `rotate(mesh, angle, axis=(0,0,1), center=(0,0,0))` | radians, right-handed |
+| `scale(mesh, factor, center=(0,0,0))` | scalar or per-axis `(3,)`, factors must be positive |
+| `transform(mesh, matrix, offset=(0,0,0))` | the general case: `p @ matrix.T + offset` |
 
-Only coordinates move: connectivity, `element_tags` and the side tags
-ride through verbatim, so a placed mesh keeps its numbering and its BC markers. The map
-reaches **every** node, private high-order `interior` tables included — a rotated
-{func}`linemesh.circle <nekmeshpy.linemesh.shape.circle>` is still an exact circle, and a rigid map
-leaves `scaled_jacobian` untouched.
+Only coordinates move — connectivity and tags ride through verbatim. The map
+reaches every node including private high-order `interior`.
 
 ```python
 ring = linemesh.circle(1.0, 16, center=(3.0, 0.0, 0.0), order=3)
-profiles = [ring.rotate(2 * np.pi * k / 12, axis=(0, 1, 0)) for k in range(12)]
-torus = quadmesh.loft(profiles, loop=True)          # a periodic sweep of placed rings
+profiles = [linemesh.rotate(ring, 2 * np.pi * k / 12, axis=(0, 1, 0)) for k in range(12)]
+torus = quadmesh.loft(profiles, loop=True)          # periodic sweep of placed rings
 ```
 
-`LineMesh` additionally has {func}`linemesh.reverse <nekmeshpy.linemesh.morph.reverse>` — the same
-curve traversed the other way (`i → N-1-i`). It moves nothing; it relabels, carrying
-the high-order `interior` with it. Reach for it instead of
-`linemesh.loft(curve.points[::-1])`, which silently straight-subdivides the interior and
-loses the curve at `order > 1`. Reversing one of two shared-endpoint arcs before
-{func}`linemesh.merge <nekmeshpy.linemesh.assemble.merge>` is how a seam ring gets closed without the
-traversal crossing itself.
+`LineMesh` also has {func}`linemesh.reverse <nekmeshpy.linemesh.morph.reverse>`
+— same curve, opposite traversal (relabels, doesn't move). Prefer it over
+`linemesh.loft(curve.points[::-1])`, which straight-subdivides the interior and
+loses curvature above order 1.
 
-Use them to place something already built — a revolved profile stack, a block about to
-be {func}`hexmesh.merge <nekmeshpy.hexmesh.assemble.merge>`d onto its neighbour. A factory that can
-*construct* in position (`circle(center=…, normal=…)`, `extrude(origin=…)`) still
-should; `hexmesh.extrude` is itself a stack of `translate`d slices.
-
-(loft-the-uniform-sweep-primitive)=
 ## `loft`: the uniform sweep primitive
 
-`loft` is **one primitive at three dimensions** — the same "append each profile, then
-the rung entities joining it to the previous profile" assembly at every rung of the
-B-rep ladder, each taking a `loop: bool = False` flag:
+(loft-the-uniform-sweep-primitive)=
+
+One primitive at three dimensions — append each profile, then the rung
+entities joining it to the previous one — each taking `loop: bool = False`:
 
 | rung | a "profile" is | the "rungs" are |
 |---|---|---|
-| {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>` | a single **point** | the **line** elements |
-| {func}`quadmesh.loft <nekmeshpy.quadmesh.assemble.loft>` | a `LineMesh` | rung **lines** + the quads |
-| {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` | a `QuadMesh` | rung **faces** + the hexes |
+| {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>` | a point | line elements |
+| {func}`quadmesh.loft <nekmeshpy.quadmesh.assemble.loft>` | a `LineMesh` | lines + quads |
+| {func}`hexmesh.loft <nekmeshpy.hexmesh.assemble.loft>` | a `QuadMesh` | faces + hexes |
 
-`extrude` is the straight special case at each rung; at the bottom rung
-`linemesh.loft` *is* the constructor of a chain (`loop=False`) or a ring
-(`loop=True`).
-
-**`loop=True` makes the sweep periodic**: the last profile joins back to the
-**first**, so `M` profiles give `M` layers instead of `M-1`. It is one extra
-iteration of the same assembly — exactly one more rung block, appended once, with
-the first profile *not* duplicated — so the seam is a genuine shared entity and the
-result closes watertight in the sweep direction (a torus surface from
-`quadmesh.loft` of revolved rings; a solid torus from `hexmesh.loft` of revolved
-discs). A closed sweep has no *free* near/far end, so at every rung `loop=True`
-
-- emits **no cap tag rows by default** — the caps of an open sweep inherit the
-  bounding slices' own `element_tags`, and a seam has no free side to inherit onto,
-  while side walls from the profiles' own tagged entities are unaffected; but
-- **does place `first_tag` / `last_tag`** when they are given: the two caps are the
-  same seam entity seen from either side, so naming one names that side of it (which
-  is how a periodic pair gets its two names).
-
-`quadmesh.annulus` closes in the *ring* direction, which lives in the loops' own
-connectivity rather than the loft direction, so it does **not** use `loop=True`.
+`extrude` is the straight special case at each rung. `loop=True` makes the
+sweep periodic: the last profile joins back to the first (`M` profiles → `M`
+layers, not `M-1`), closing watertight. A closed sweep emits **no cap tag rows
+by default** (no free side to inherit onto) but **does** place `first_tag`/
+`last_tag` when given — the two caps are one seam entity seen from either side.
+`quadmesh.annulus` closes in the *ring* direction instead, so it never uses
+`loop=True`.
 
 ### The evaluated sweep: `loft_fn`
 
-A `loft` sees only the profiles it is handed, which at `order > 1` are the **corner
-levels** of the sweep. Between them it has no information, so it subdivides the sweep
-direction **straight** — a mesh lofted from perfectly exact profiles can still be
-high-order in storage and linear in geometry (a torus lofted from exact
-`linemesh.circle` rings puts its interior nodes tens of percent of the tube radius off
-the true surface). `loft_fn` is the escape at all three rungs: it *is*
-`loft`, with the profiles **evaluated** from a parametrization instead of handed in,
-so it can evaluate the intermediate GLL levels too and every node is a genuine profile
-point.
+`loft` only sees the profiles handed to it — at `order > 1` those are corner
+levels, and the sweep direction between them is subdivided **straight** (a
+torus lofted from exact `circle` rings can land its interior nodes tens of
+percent of the tube radius off the true surface). `loft_fn` evaluates the
+profiles from a parametrization instead, at every node level:
 
-| rung | `f` maps | evaluated at |
+| rung | `f` maps | evaluated |
 |---|---|---|
-| {func}`linemesh.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` | `(K,) params -> (K,3)` points | the whole node lattice, in one call |
-| {func}`quadmesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` | one param -> one `LineMesh` profile | once per node level of the sweep |
-| {func}`hexmesh.loft_fn <nekmeshpy.hexmesh.assemble.loft_fn>` | one param -> one `QuadMesh` section | once per node level of the sweep |
+| `linemesh.loft_fn` | `(K,) -> (K,3)` points | whole lattice, one call |
+| `quadmesh.loft_fn` | param → `LineMesh` profile | once per node level |
+| `hexmesh.loft_fn` | param → `QuadMesh` section | once per node level |
 
-All three take `fractions` as the **parameter values themselves** (in `f`'s own units, no
-normalization) and the same trailing-wrap `loop` convention: pass `n+1` values whose
-last maps back onto the first profile, and the wrap is checked to `conform.entity_tol`.
-Grading is honored per element/layer — level `a` of layer `i` is evaluated at
-`fr[i] + g[a]*(fr[i+1] - fr[i])` for the GLL nodes `g`, so at order 1 the lattice is
-exactly `fractions` and the order-1 path is unchanged by construction.
-
-At the quad and hex rungs the profiles must be **index-paired and conformal** (identical
-point count and incidence). The robust idiom is to build one profile and *place* it with the
-affine ops, which move no index:
+`fractions` are parameter values in `f`'s own units (no normalization), with
+the same trailing-wrap `loop` convention (`n+1` values, last maps to first).
+Quad/hex profiles must be **index-paired and conformal** — build one and
+*place* it with affine ops rather than rebuilding per parameter (a rotating
+`normal=` circle isn't guaranteed index-paired).
 
 ```python
 ring = linemesh.circle(0.6, 8, center=(2.0, 0, 0), normal=(0, 1, 0), order=3)
-torus = quadmesh.loft_fn(lambda t: ring.rotate(t, axis=(0, 0, 1)),
-                            np.linspace(0.0, 2.0 * np.pi, 7), loop=True)
+torus = quadmesh.loft_fn(lambda t: linemesh.rotate(ring, t, axis=(0, 0, 1)),
+                          np.linspace(0.0, 2.0 * np.pi, 7), loop=True)
 ```
 
-Rebuilding the profile per parameter (a `linemesh.circle` with a rotating `normal=`)
-is *not* guaranteed to be index-paired — the in-plane basis can flip.
-
-`order` is `None` by default at the quad and hex rungs and is read off the profile
-`f` returns — there is a mesh to ask. Only `linemesh.loft_fn` keeps a plain
-`order: int`, and there the argument is **constructive** rather than inherited: `f`
-hands back coordinates, not a mesh, so nothing carries an order and the argument is
-what *decides* the node lattice `f` is sampled on.
-
-`quadmesh.loft` and `hexmesh.loft` also accept the intermediate profiles directly, as
-`sweep_nodes[i]` = the `order-1` profiles lying strictly between slice `i` and the
-slice it sweeps to; `loft_fn` is exactly that argument with the profiles evaluated
-for you.
+`order` defaults to `None` at quad/hex rungs (read off `f`'s output); only
+`linemesh.loft_fn` keeps an `order: int`, since `f` there returns coordinates,
+not a mesh. `quadmesh.loft`/`hexmesh.loft` also take intermediate profiles
+directly via `sweep_nodes=` — `loft_fn` is that argument, evaluated for you.
 
 ### The fitted sweep: `loft_spline`
 
-`loft_fn` needs a parametrization. When there is none — the profiles were cut off a
-scan, solved for, or read out of another mesh — `loft_spline` fits the intermediate
-levels instead of asking for them: a **cubic spline through the whole stack** in the
-level index, evaluated on the same sweep lattice `loft` would subdivide straight.
+For when there's no parametrization — profiles came off a scan or another
+mesh. Fits a **cubic spline through the whole stack** on the sweep lattice
+`loft` would otherwise subdivide straight:
 
 | rung | fitted through |
 |---|---|
-| {func}`linemesh.loft_spline <nekmeshpy.linemesh.assemble.loft_spline>` | the points given, so a chain around a bend comes out bent rather than faceted |
-| {func}`quadmesh.loft_spline <nekmeshpy.quadmesh.assemble.loft_spline>` | every node block a profile stores — its points *and* its `interior` |
-| {func}`hexmesh.loft_spline <nekmeshpy.hexmesh.assemble.loft_spline>` | all three blocks a section stores — corners, shared-edge interiors, face interiors |
+| `linemesh.loft_spline` | the points given |
+| `quadmesh.loft_spline` | every node block a profile stores |
+| `hexmesh.loft_spline` | corners, edge interiors, face interiors |
 
-It takes `loft`'s arguments, numbering and tags unchanged, and it **interpolates**: every
-slice handed in comes back verbatim as a level, so this adds curvature *between* slices
-without moving any. At `order 1` it is `loft`, node for node. `loop=True` closes the
-spline periodically, so the seam layer is no smoother or rougher than any other. Like
-`loft_fn`, the quad and hex rungs need the slices **index-paired** — build one and place
-it with the affine ops — and say so with a `ValueError` naming the offending slice.
-
-A torus lofted from 8 exact rings at order 3 sits 0.157 off the true surface at its worst
-node; the same rings through `loft_spline` sit 0.0019 off, ~83× closer. It is a fit, not a
-parametrization, so it does not converge to the exact surface the way `loft_fn` does —
-reach for `loft_fn` or `sweep` when a closed form exists, and for `loft_spline` when the
-slices are all there is.
+Interpolates — every slice handed in comes back verbatim. At order 1 it's
+`loft`, node for node. `loop=True` closes periodically. Quad/hex rungs still
+need index-paired slices. Measured: a torus lofted from 8 exact rings at
+order 3 sits 0.157 off the true surface at its worst node with plain `loft`;
+`loft_spline` sits 0.0019 off, ~83× closer — it's a fit, not exact, so prefer
+`loft_fn`/`sweep` when a closed form exists.
 
 ### The rigid sweep: `sweep`
 
-`loft_fn` still asks you to *produce* each profile. When every station is the **same
-section** carried along a path — a round pipe bent through an elbow, a U-turn, a coil —
-{func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` and {func}`hexmesh.sweep <nekmeshpy.hexmesh.lift.sweep>`
-do the placing for you. They are the curved generalization of `extrude` (hence
-`lift.py`, not `assemble.py`) and end in the same `loft`-with-`sweep_nodes` assembly,
-so a bent tube is exact at every order both around the section and along the bend.
+For the same section carried along a path (an elbow, a U-turn, a coil):
+{func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` /
+{func}`hexmesh.sweep <nekmeshpy.hexmesh.lift.sweep>` place it for you — the
+curved generalization of `extrude`, ending in the same `sweep_nodes` assembly.
 
 ```python
-Rb = 1.0                                             # bend radius
+Rb = 1.0
 path  = lambda t: np.column_stack([Rb * np.sin(t), Rb * (1 - np.cos(t)), 0 * t])
 dpath = lambda t: np.column_stack([Rb * np.cos(t), Rb * np.sin(t), 0 * t])
 
-disc = quadmesh.ogrid(linemesh.circle(0.1, 20, normal=(1, 0, 0), order=2), 5, 3)
+disc = quadmesh.ogrid(linemesh.circle(0.1, 24, normal=(1, 0, 0), order=2), 6, 3)
 bend = hexmesh.sweep(disc, path, np.linspace(0.0, 0.5 * np.pi, 11),
                      origin=(0, 0, 0), tangent=dpath,
                      orientation="fixed", up=(0, 0, 1))
 ```
 
-There is no `order=`: the swept block's order is the **section's own**, and a rigid
-placement cannot change it. Note too that `ogrid` has no `order=` either — it
-inherits from the boundary loop, which is where the wall's true geometry is authored.
+No `order=` — the block's order is the section's own. The section is placed
+**rigidly** (`p ↦ path(t) + R(t) @ p_local`), never offset point-by-point:
+through a bend, the outboard wall travels `Rb + d` and inboard `Rb - d`, so
+only a frame-carried rigid placement gets both right.
 
-The section is placed **rigidly** — `p ↦ path(t) + R(t) @ p_local` — never offset
-point-by-point. That is the whole point: through a bend of radius `Rb`, the outboard
-wall traverses radius `Rb + d` and the inboard `Rb - d`, so the two travel different
-distances and *neither* follows the centreline. Only a frame-carried rigid placement
-gets this right; a U-turn's walls come out at exactly `Rb ± Rp`.
+Worth knowing:
+- `path` is vectorized `(K,) -> (K,3)`; the default frame generator integrates
+  sequentially, so it can't be evaluated at one isolated parameter.
+- Put a station exactly on every path junction with
+  {func}`linemesh.sweep_fractions <nekmeshpy.linemesh.shape.sweep_fractions>`
+  — an element straddling one is fitted across two geometries (a visible kink).
+- For a turtle-walked path, use `sweep_path` instead: {func}`paths.embed
+  <nekmeshpy.core.paths.embed>` lifts a 2-D `turtle_path` onto a plane, giving
+  a `SpacePath` with its own tangent and junction table; `sweep_path` then
+  takes a `target_length`/`layers`. The origin enters the centerline, never
+  the tangent (translating a tangent tilts every frame).
+- `orientation` picks the frame field: `"transport"` (default, rotation-
+  minimizing, for non-planar paths), `"fixed"` with `up=` (zero-twist, planar
+  paths only — fails if a tangent turns parallel to `up`), or `"frenet"`.
+  Station 0 always lands the section exactly as authored.
+- `tangent=` supplies the analytic derivative; without it, finite-difference
+  tangents tilt end stations by ~3e-4 rad on a coarse quarter arc.
+- `origin=` is **required**, no default — it's the section's reference point,
+  which for an O-grid disc is *not* its centroid (a past default produced a
+  quietly off-axis block).
+- A bend tighter than the section is wide folds inboard elements inside out —
+  rejected loudly by `loft`'s mixed-winding guard.
 
-Things worth knowing:
-
-- **`path` is vectorized** `(K,) -> (K,3)`. The default frame generator is a sequential
-  integration along the path, so it cannot be evaluated at one isolated parameter.
-- **`fractions` are the path parameter values themselves**, as everywhere else; the
-  intermediate GLL levels are evaluated for you. For a path assembled from pieces of
-  different curvature — a coil of straights and U-bends — put a station **exactly on
-  every junction** with {func}`linemesh.sweep_fractions
-  <nekmeshpy.linemesh.shape.sweep_fractions>`: an element straddling one would be
-  fitted across two different geometries, visible as a kink in the wall.
-- **For a turtle-walked path, reach for `sweep_path` instead.**
-  {func}`paths.embed <nekmeshpy.core.paths.embed>` lifts a 2-D
-  {func}`turtle_path <nekmeshpy.core.paths.turtle_path>` onto a plane in space,
-  giving a {class}`SpacePath <nekmeshpy.core.paths.SpacePath>` that already carries
-  its own analytic tangent and junction table; {func}`hexmesh.sweep_path
-  <nekmeshpy.hexmesh.lift.sweep_path>` then takes a `target_length` (or `layers`)
-  rather than a station array and does the `sweep_fractions` call for you. The one
-  thing `embed` exists to get right is that the origin enters the centerline and
-  **not** the tangent — a tangent is a direction, and translating it tilts every
-  frame along the sweep, so the section stops being perpendicular to the path.
-- **`orientation`** picks the frame field, and names a *mode* and nothing else:
-  `"transport"` (default; a rotation-minimizing frame, right for genuinely non-planar
-  paths), `"fixed"` with `up=` (exact and zero-twist, right for a planar path — it
-  fails loudly if a tangent turns parallel to `up`), or `"frenet"`. Whichever you pick,
-  station 0 lands the section exactly **as authored** — the frame field's one free
-  parameter (a constant roll about the tangent) is pinned for you. `twist=` adds a
-  deliberate roll on top.
-- **`up=`** takes either a single `(3,)` world direction or a `(K,3)` **per-station**
-  field, told apart by rank; the per-station vectors that once rode `orientation=`
-  are now this argument with `orientation="fixed"`.
-- **`tangent=`** supplies the analytic path derivative. Without it the tangents are a
-  finite difference, O(h²), and the end stations tilt by ~3e-4 rad on a coarse quarter
-  arc — every frame inherits it.
-- **`origin=`** is **required**, and deliberately has no default. It is the section's
-  reference point, the one that rides the path; it used to default to the profile's
-  *centroid*, which for an O-grid disc is **not** its centre, so the obvious call
-  produced a quietly off-axis block with no error anywhere. Pass the centre the
-  boundary loop was built about. `normal=` likewise overrides the best-fit plane (and
-  the planarity check with it), needed only for a non-planar section.
-- **`loop=True`** appends the *identical* first placement as the wrap profile, so a
-  closed sweep welds exactly rather than to a tolerance.
-- A bend **tighter than the section is wide** folds the inboard elements inside out and
-  is rejected loudly by `loft`'s mixed-winding guard rather than silently meshed.
-
-`examples/serpentine_pipe.py` is the worked case: one O-grid disc swept along an
-8-pass serpentine coil of straights and 180° U-bends.
+`examples/serpentine_pipe.py`: one O-grid disc swept along an 8-pass coil.
 
 ### The explicit-initial layer convention
 
-A graded sweep is set by a **normalized-position array**, not a count + grading
-pair — one convention shared by every layered factory (`extrude`'s `layers`; the
-`radial` of `ogrid` / `half_ogrid` / `annulus`). Values strictly increase in
-`[0, 1]` with the initial position explicit: first value is the near cap / inner
-ring (`0` for a full span flush with the body), last is `1`, so `array.size - 1`
-layers span `array[0]..1`. Use `uniform_spacing(k)`, `geometric_spacing(k, ratio)`
-(`ratio > 1` clusters toward the wall), or `numpy.linspace(a, 1, k + 1)` to start
-at `a`. Both helpers live in {mod}`nekmeshpy.core.fields`.
-
-For the uniform case the same arguments also take a plain **`int`**: `radial=3` /
-`layers=40` means *that many layers* — exactly `uniform_spacing(n)`, the `n+1`
-positions `linspace(0, 1, n+1)`. It counts **cells**, not positions, which is the
-convention `uniform_spacing` and `geometric_spacing` already use, so there is only
-one number to remember. Only a genuine scalar integer takes that branch; an array
-of ints is a position array like any other. Both spellings normalize through
-{func}`nekmeshpy.core.fields.validate_layers`, and an explicit array is returned
-bit-for-bit untouched.
+Every layered factory (`extrude`'s `layers`, `radial` of `ogrid`/`half_ogrid`/
+`annulus`) takes a **normalized-position array**: strictly increasing in
+`[0,1]`, first value the near cap (`0` if flush), last `1`. Use
+`uniform_spacing(k)`, `geometric_spacing(k, ratio)` (`ratio > 1` clusters
+toward the wall), or `numpy.linspace(a, 1, k+1)` to start at `a`
+({mod}`nekmeshpy.core.fields`). A plain **`int`** also works for the uniform
+case (`radial=3` = `uniform_spacing(3)`) — counts cells, matching
+`uniform_spacing`'s own convention. Both normalize through `validate_layers`.
 
 ## Per-section smoothing
 
-Interior nodes are repositioned on a single `QuadMesh` *before* extrusion, via
+Interior nodes on a single `QuadMesh` are repositioned *before* extrusion, via
 {func}`nekmeshpy.quadmesh.smoothing.set_section_smoothing` (registry
-`SECTION_METHODS`; extend with `@register_section_smoothing("name")`). Built-ins:
-
-- `bilinear` / `none` — algebraic radially-graded blend (default; near no-op).
-- `conduction` — harmonic (Laplace) relaxation onto a curved boundary ring.
-- `winslow` — elliptic (Winslow) smoothing.
-
-Each factory takes an optional `smoothing_method=`. There is **no** HexMesh-level
-registry; the constrained volume untangle/polish is the separate
+`SECTION_METHODS`). Built-ins: `bilinear`/`none` (algebraic blend, default,
+near no-op), `conduction` (harmonic relaxation onto a curved boundary),
+`winslow` (elliptic). No HexMesh-level registry — volume untangle/polish is
 {func}`nekmeshpy.hexmesh.smoothing.smooth`.
 
 ## High-order (order-N) elements
 
-The order is set once, at the **bottom** of the ladder, and rides up. `order=N`
-(default `1`) is an argument only where a factory genuinely *authors* geometry from
-nothing — the `LineMesh` shapes, `quadmesh.rectangle` / `box` / `sphere` /
-`half_box` / `hemisphere`, and the two `from_grid`s. Everything that consumes a mesh
-inherits its order instead and has no such argument: `ogrid` / `half_ogrid` /
-`quadrant_ogrid` / `spined_ogrid` / `structured` / `annulus` take it from the boundary loop or edges,
-`extrude` / `loft` / `sweep` from the section, and the quad and hex `loft_fn`s
-default `order=None` and read it off the profile `f` returns. All of them reject a
-mismatched order across their inputs rather than quietly degrading one.
+Order is set once at the **bottom** of the ladder and rides up. `order=N`
+(default `1`) is a factory argument only where geometry is authored from
+nothing (`LineMesh` shapes, `quadmesh.rectangle`/`box`/`sphere`/`half_box`/
+`hemisphere`, both `from_grid`s). Everything consuming a mesh inherits its
+order and rejects a mismatch across inputs.
 
-At `order > 1` each element carries `(N+1)` nodes per parametric direction — line
-`N+1`, quad `(N+1)²`, hex `(N+1)³` — sampled at **Gauss–Lobatto–Legendre (GLL)**
-parameters (the grid Nek5000's solver evaluates on; the endpoint parameters are
-exactly `0` and `1`, so the two extreme nodes *are* the corners and stay exact under
-every sweep).
+At `order > 1` each element carries `(N+1)` nodes per parametric direction,
+sampled at GLL parameters (endpoints exactly `0`/`1`, so corners stay exact
+under every sweep).
 
 ### The B-rep ladder *is* the storage
 
-There is no per-element node block anywhere — no `.curved` attribute, no
-`to_conformal()` facade to ask for one. Each container stores the rung below it plus
-the nodes it privately owns, and the familiar corner arrays are read off that:
+No `.curved` attribute, no `to_conformal()` facade — each container stores the
+rung below plus the nodes it privately owns:
 
 | rung | stored state | derived views |
 |---|---|---|
-| `LineMesh` | `point_mesh` — a **`PointMesh` of the shared points**, holding the `(P,3)` coordinates and their tags — plus `lines (L,2)` (**required**), `interior (L,N-1,3)` | `points`, `line` |
-| `QuadMesh` | `line_mesh` — a **`LineMesh` of the shared edges**, whose `interior` holds the edge nodes — plus `quad (Q,4)` edge incidence, `orient (Q,4)`, `interior (Q,(N-1)²,3)` | `points`, `quads (Q,4)` |
-| `HexMesh` | `quad_mesh` — a **`QuadMesh` of the shared faces**, whose `interior` holds the face nodes and whose `line_mesh.interior` holds the edge nodes — plus `hex (E,6)` face incidence, `orient (E,6)` D4 codes, `interior (E,(N-1)³,3)` | `points`, `hexes (E,8)` |
+| `LineMesh` | `point_mesh` (shared points+tags) + `lines (L,2)` + `interior (L,N-1,3)` | `points`, `corners` |
+| `QuadMesh` | `line_mesh` (shared edges) + `quads (Q,4)` edge incidence + `orient (Q,4)` + `interior (Q,(N-1)²,3)` | `points`, `corners (Q,4)` |
+| `HexMesh` | `quad_mesh` (shared faces) + `hexes (E,6)` face incidence + `orient (E,6)` D4 codes + `interior (E,(N-1)³,3)` | `points`, `corners (E,8)` |
 
-Three slot names, three roles, and no word does two jobs: **`<rung>_mesh`** is the
-stored container one rung down, the **singular** `line` / `quad` / `hex` is this rung's
-incidence into it, and the **plural** `lines` / `quads` / `hexes` is the derived corner
-connectivity. `points` is always the `(N,3)` coordinates. At the line rung a point *is*
-its own corner, so `line` and `lines` are one table reachable under both names.
+Three roles, three names: `<rung>_mesh` is the container one rung down; the
+**plural** `lines`/`quads`/`hexes` is this rung's own stored incidence into
+it; `corners` is the derived corner connectivity at every rung. `points` is
+always `(N,3)` coordinates. At the line rung a point *is* its own corner, so
+`lines` and `corners` are the same table under both names.
 
-`points` / `quads` / `hexes` are **derived, read-only** views over that storage.
-A `HexMesh`'s points *are* its shared-face `QuadMesh`'s points, which *are* its
-shared-edge `LineMesh`'s points: one array, single-sourced. So corner consistency is
-not an invariant anyone maintains — it is structural, and an in-place
-`mesh.points[:] = X` propagates to every rung for free.
+`points`/`corners` are derived, read-only — a `HexMesh`'s points *are* its
+`quad_mesh`'s points, which *are* its `line_mesh`'s points: single-sourced, so
+`mesh.points[:] = X` propagates for free.
 
-The convenience readers `.edges` / `.edge_nodes` (quad, hex) and `.faces` /
-`.face_nodes` (hex) surface the shared tables without digging through the ladder.
-At `order == 1` the `interior` tables are empty (`(·,0,3)`) but the edge/face
-*topology* is still first-class storage.
+`.edges`/`.edge_nodes` (quad, hex) and `.faces`/`.face_nodes` (hex) surface the
+shared tables directly. At `order == 1`, `interior` is empty but edge/face
+topology is still first-class.
 
 ### Conformality is structural
 
-Sharing is decided by **corner ids**, never by a coordinate search. A shared edge is
-literally one row of the edge `LineMesh` referenced by every incident quad, exactly as
-a shared corner is one row of `points`; a shared face is one quad of the shared-face
-`QuadMesh`. Two elements meeting on an edge or face therefore *resolve to the same
-nodes* — being conformal is a property of the data structure, not something checked
-afterwards.
+Sharing is decided by **corner ids**, never coordinate search. A shared edge
+is one row of the edge `LineMesh` referenced by every incident quad; a shared
+face is one quad of the shared-face `QuadMesh`. Being conformal is a property
+of the data structure, not something checked after the fact.
 
-- **edges** — unique undirected edges, canonical (min-corner-id first), plus a
-  per-element incidence and a *flip* bit when an element traverses one
-  anti-canonically (quad 4 edges, hex 12).
-- **faces** (hex only) — unique faces plus a per-hex incidence and a **D4 orientation
-  code** (one of the 8 square symmetries) mapping the hex's local face grid onto the
-  shared canonical frame.
-- **interior** — the private per-element nodes (line `N−1`, quad `(N−1)²`, hex
-  `(N−1)³`) that are never shared.
+- **edges** — unique undirected, canonical (min-corner-id first), plus
+  per-element incidence and a flip bit.
+- **faces** (hex only) — unique faces, per-hex incidence, D4 orientation code.
+- **interior** — private per-element nodes, never shared.
 
-`nekmeshpy.core.conform` owns this topology / orientation / reconciliation
-engine and imports no container — everything crosses as plain arrays. Where a
-combinator must rebuild the shared tables against a new topology (`merge`,
-`hexmesh.loft`), it reconciles with `conform.scatter_edge_nodes` /
-`scatter_face_nodes`: owner-wins, with every other incident copy **verified** within
-`conform.entity_tol`. A non-conforming input is a loud `ValueError`, not a silent
-weld.
+`nekmeshpy.core.conform` owns this and imports no container. Combinators that
+rebuild shared tables (`merge`, `hexmesh.loft`) reconcile via
+`conform.scatter_edge_nodes`/`scatter_face_nodes`: owner wins, every other copy
+verified within `conform.entity_tol` — mismatch is a loud `ValueError`.
 
-The conformal walks `conform.conformal_line` / `conformal_quad` / `conformal_hex`
-flatten the ladder on demand into `(nodes (M,3), conn_ho (E,(N+1)^d))` — every node
-numbered once in one global array with dense per-element connectivity into it, the
-high-order analog of `points` + `quads`. That is the single node numbering the `.vtu`
-writer and the order-N quality metrics read; `nodes[conn_ho]` is the transient
-per-element block whenever one is genuinely needed.
-
-Both `element_tags` and the side tags propagate exactly as in the linear case;
-the extra nodes are geometry only and carry no tags of their own.
+`conform.conformal_line`/`conformal_quad`/`conformal_hex` flatten the ladder
+into `(nodes (M,3), conn_ho (E,(N+1)^d))` — the numbering `.vtu` and order-N
+quality metrics read.
 
 (true-geometry-vs-straight-subdivision)=
 ### True geometry vs straight subdivision
 
-**High order in storage does not imply curved in geometry.** This is the single thing
-easiest to get wrong: every factory produces a valid order-N
-mesh, but only a factory that *owns an analytic shape* can put the extra nodes
-anywhere other than on the straight line between the corners.
+**High order in storage does not imply curved in geometry.** Every factory
+produces a valid order-N mesh, but only one that owns an analytic shape places
+extra nodes anywhere but the chord between corners.
 
-- **Placed on the true shape.** `linemesh.circle` and `linemesh.arc` evaluate the exact
-  arc at the interior GLL angles, so each element's nodes lie on the circle rather than
-  its chord. {func}`linemesh.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` generalizes that to any curve you
-  can write down: it builds the parameter values of *every* node of the chain — the
-  `n+1` corners and each element's `order-1` interior nodes — and calls your callable
-  once on the whole lattice, so no node is ever placed by interpolating between
-  others. {func}`quadmesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` is the same idea one rung
-  up — the profiles are evaluated at every node level of the *sweep*, so the swept
-  surface is exact in that direction too.
-  `quadmesh.sphere` and `quadmesh.hemisphere` project **every** node of the
-  cubed sphere / half box — corners, shared edge nodes and private quad interiors alike
-  — radially, so the whole surface is exact, not just its corners. Straight-sided
-  analytic shapes (`linemesh.line`, `linemesh.rectangle`, `quadmesh.box` /
-  `quadmesh.half_box`) are also exact, trivially: a straight GLL blend *is* the true
-  geometry of a straight side, and a flat grid cell is exact under tensor subdivision.
-- **Straight GLL subdivision.** Anything built from an explicit array of points has
-  nothing but those points to go on, so the nodes between them are the straight
-  blend: `linemesh.loft`, `quadmesh.from_grid` / `hexmesh.from_grid`. Sampling a
-  curve into points and calling `linemesh.loft` thus *throws the curve away* above
-  order 1 — pass the analytic `arc` / `circle` instead, or
-  {func}`linemesh.loft_fn <nekmeshpy.linemesh.assemble.loft_fn>` when the closed form is neither:
+- **Placed on the true shape.** `linemesh.circle`/`arc` evaluate the exact arc
+  at interior GLL angles. `loft_fn` generalizes this to any curve you can
+  write down — one call on the whole node lattice, corners and interior
+  alike. `quadmesh.sphere`/`hemisphere` project every node radially.
+  Straight-sided shapes (`line`, `rectangle`, `box`, `half_box`) are also
+  exact — a straight GLL blend *is* the true geometry of a straight side.
+- **Straight GLL subdivision.** Anything built from a bare point array has
+  nothing else to go on: `linemesh.loft`, `from_grid`. Sampling a curve into
+  points and calling `loft` throws the curve away above order 1 — pass `arc`/
+  `circle`, or `loft_fn`:
 
   ```python
-  # the intersection of two equal-radius cylinders is a planar ellipse
   ellipse = lambda t: np.column_stack([R * np.sin(t), R * np.cos(t), R * np.sin(t)])
   fr = linemesh.arclength_fractions(ellipse, n=12, t_range=(0.0, np.pi))
   collar = linemesh.loft_fn(ellipse, fr, order=3)
   ```
 
-  The sampling is the caller's to prove: `loft_fn` meshes exactly at the parameter values
-  given — `t_range=(0.0, np.pi)` above lives on the helper, not on the factory, because
-  the `fractions` already carry the domain. {meth}`linemesh.arclength_fractions
-  <nekmeshpy.linemesh.shape.arclength_fractions>` inverts a
-  chord-length table of `samples` dense evaluations into the parameter values that space
-  the nodes evenly along the curve, ready to hand straight to `loft_fn` unscaled. Only
-  *where along* the curve each node sits
-  inherits that table's discretization error — the node itself is still placed by
-  evaluating the callable, never by interpolating the table, so it lies on the curve to
-  machine precision. Raise `samples` for more even spacing, not for a more accurate
-  curve. `arc` stays a separate factory rather than a wrapper: for a circular arc the
-  angles are known outright, so it needs no inversion and is exact to the last ulp.
-  `loft_fn` takes the same `loop` flag as `linemesh.loft`, so a closed parametric
-  loop is meshed directly rather than welded: pass the **trailing wrap value** — `n+1`
-  fractions whose last maps back to the first point, e.g. `np.linspace(0, 2*np.pi, n+1)`
-  for a `2*pi`-periodic `f` — and the result is a ring of `n` points and `n` lines with
-  no free end. The wrap value is what lets the seam element's own interior nodes be
-  evaluated on the true curve; `f(fr[-1])` must land on `f(fr[0])` within the
-  toolkit's scale-relative coincidence tolerance or it is a loud `ValueError`. A curve with **no** closed
-  form — a scanned polyline — has nothing to evaluate. A *closed* scanned loop can still
-  be given one by refitting it, which is what `examples/carotid.py` does: its
-  `fourier_ring` takes the rFFT of `x`/`y`/`z` against the uniform ring parameter, keeps
-  the lower half of the modes (dropping the STL facet noise a high-order wall would
-  otherwise resolve faithfully) and feeds that series to `loft_fn`. An **open** scanned
-  arc gets the same treatment in a basis chosen for its endpoints: `_arc_curve` refits
-  the arc's deviation from its own chord as a truncated **sine** series in the
-  normalized arc-length parameter, and because every `sin(k*pi*s)` vanishes at both
-  ends the endpoints stay bit-exact however many modes are kept — which is what lets
-  the carotid's three shared seam arcs be refit once, globally, and still weld at
-  the triple points. Where no refit applies,
-  resample with `trimesh.ops.resample_polyline` and accept the chord.
-  `examples/circular_pipe_tjunction.py` is the worked
-  analytic case: its T-junction collar was a 400-point sampled polyline whose interior
-  nodes sat 2.6% of `R` off the true ellipse at order 2, and is now exact at any order.
-- **Region fills carry the wall's curvature inward.** `structured` owns an exact
-  transfinite map, so above order 1 it evaluates that map at the GLL-refined lattice
-  against each edge's own nodes: every node it emits — corner, edge and interior alike —
-  is the true transfinite point, so a block bounded by an `arc` is not merely circular on
-  that side but bowed all the way through. `ogrid`, `half_ogrid` and
-  `quadrant_ogrid` have no such global
-  map, so each O-ring is instead a `blend` of the block perimeter and the wall loop (the
-  same mechanism `annulus` uses) and inherits its share of the wall's curvature; the
-  elements are curved tangentially and straight radially, which is what a radial blend
-  should give. `half_ogrid` stamps the same channel along its **seam** as well: the
-  spine's point intervals partition the half-disk's flat side one-for-one (north radial
-  caps, the inner block's `j == 0` row, south radial caps), so each is overlaid with the
-  spine's own nodes and a bowed spine is meshed exactly rather than straight-subdivided
-  between its samples. `quadrant_ogrid` does the same along **both** of its seams, from
-  each seam's own nodes. In every region fill a quad's private interior is the transfinite patch of
-  that element's own four edge curves, so a curved side bows the nodes inside it rather
-  than leaving a straight fill within a curved boundary.
-- **Carried through unchanged.** The pure combinators move existing nodes rather than
-  inventing them: `extrude` translates a section's whole B-rep rigidly, `blend` lerps
-  the two profiles' entity tables the same way it lerps their corners, and `loft`
-  sweeps each column as a Coons patch that is curved along the profile (from the
-  profiles' own nodes) and straight along the sweep — which is exactly the gap
-  {func}`quadmesh.loft_fn <nekmeshpy.quadmesh.assemble.loft_fn>` (or `quadmesh.loft`'s `sweep_nodes=`)
-  closes when the sweep path is itself curved. So curvature you put in at the
-  bottom of the ladder rides all the way up — `hexmesh.annulus` between an `order=N`
-  `sphere` and an `order=N` `box` keeps its inner wall exactly spherical.
+  `loft_fn` meshes exactly at the fractions given — the sampling is the
+  caller's to prove. `arclength_fractions` inverts a chord-length table into
+  parameter values spacing nodes evenly; only *where* a node sits inherits
+  that table's discretization error, never its position (still evaluated by
+  the callable, to machine precision). A closed curve with no analytic form —
+  e.g. a scanned loop — can be refit: `examples/carotid.py`'s `fourier_ring`
+  keeps the low rFFT modes of a scanned ring (dropping STL noise) and feeds
+  that series to `loft_fn`; `_arc_curve` does the same for an open arc with a
+  sine series that vanishes at both endpoints, so a refit stays bit-exact at
+  its ends. Otherwise resample with `trimesh.ops.resample_polyline` and
+  accept the chord. Measured: a T-junction collar sampled as a 400-point
+  polyline sat 2.6% of `R` off the true ellipse at order 2 with `loft`;
+  `loft_fn` on the analytic form is exact at any order
+  (`examples/circular_pipe_tjunction.py`).
+- **Region fills carry the wall's curvature inward.** `structured` evaluates
+  its exact transfinite map at the GLL-refined lattice, so a block bounded by
+  an `arc` is bowed all the way through. `ogrid`/`half_ogrid`/`quadrant_ogrid`
+  instead `blend` the perimeter against the wall loop, curved tangentially and
+  straight radially; `half_ogrid`/`quadrant_ogrid` also stamp their seam(s)
+  with the spine's own nodes rather than straight-subdividing between samples.
+- **Carried through unchanged.** `extrude` rigidly translates a section's
+  whole B-rep; `blend` lerps entity tables the same way it lerps corners;
+  `loft` sweeps each column as a Coons patch curved along the profile but
+  straight along the sweep — the gap `loft_fn`/`sweep_nodes=` closes when the
+  sweep path itself is curved.
 
-If you need a curved shape that no factory owns, hand in an exactly-sampled curve at
-the lowest rung — the toolkit never resamples, so what you hand in is what gets
-meshed.
+If no factory owns the shape you need, hand in an exactly-sampled curve at the
+lowest rung — the toolkit never resamples.
 
 ### What sees the extra nodes
 
-- **`.re2` export stays linear** — Nek's re2 format has no high-order support yet,
-  so the exporter reads only the 8 corners per hex; a mesh exports byte-identically
-  at any order.
-- **VTK export becomes high-order** — at `order > 1` the `.vtu` writer emits VTK
-  Lagrange cells (`VTK_LAGRANGE_CURVE` = 68 / `_QUADRILATERAL` = 70 / `_HEXAHEDRON`
-  = 72) whose `(N+1)^d` nodes per cell index the conformal (welded) node array from
-  the `conform.conformal_*` walk, so a viewer renders the true curved geometry. Use
-  the XML `.vtu` writer ({func}`nekmeshpy.io.export.to_vtu` / `line_to_vtu` /
-  `quad_to_vtu`) — ParaView and VisIt render Lagrange cells reliably from `.vtu`.
-- **Quality metrics are opt-in** — the defaults stay corner-based so pinned numbers
-  hold. Pass `high_order=True` to `mesh.scaled_jacobian()` /
-  `mesh.quality_summary()` to sample the scaled Jacobian at the block's `(N+1)^d` GLL
-  nodes instead. At order 1 the GLL nodes *are* the corners, so the two agree exactly.
+- **`.re2` stays linear** — no high-order support in the format; exports only
+  the 8 corners per hex, byte-identical at any order.
+- **`.vtu` becomes high-order** — VTK Lagrange cells (curve=68, quad=70,
+  hex=72) indexing the conformal node array. Use {func}`nekmeshpy.io.export.to_vtu`
+  — ParaView/VisIt render Lagrange cells reliably from `.vtu`.
+- **A Nek field file carries the curved geometry to the solver** —
+  {func}`nekmeshpy.io.export.to_fld` writes the full GLL block as the `X`
+  field; see [Using a high-order mesh in Nek5000 / NekRS](#using-a-high-order-mesh-in-nek5000-nekrs)
+  below.
+- **Quality metrics are opt-in** — defaults stay corner-based. Pass
+  `high_order=True` to `scaled_jacobian()`/`quality_summary()` to sample GLL
+  nodes instead (agrees exactly with corners at order 1).
   `quality_summary()` returns a {class}`~nekmeshpy.core.quality.QualitySummary`
-  **NamedTuple** — `stats.n_inverted`, not `stats["n_inverted"]` — whose `n_poor`
-  field and whose `poor (<…)` report line are both derived from the single constant
-  {data}`~nekmeshpy.core.quality.POOR_THRESHOLD`, so the count and the text
-  describing it cannot drift apart. The schema is shared by both rungs and lives
-  container-free in {mod}`nekmeshpy.core.quality`.
-- **Smoothing is not implemented at `order > 1`** — the relaxers work on the corner
-  graph and would leave mid/interior nodes behind. Rather than degrade silently, a
-  *repositioning* method raises `NotImplementedError` above order 1: `conduction` and
-  `winslow` in {func}`nekmeshpy.quadmesh.smoothing.set_section_smoothing`, and
-  {func}`nekmeshpy.hexmesh.smoothing.smooth`. The no-op strategies (`bilinear` /
-  `tfi` / `none` / `""`) stay legal at any order because they move nothing. Section
-  factories elevate to order N *first* and smooth after, so the smoother sees the true
-  order and the error is raised rather than swallowed.
+  NamedTuple; its `n_poor` and `poor (<…)` line both derive from
+  {data}`~nekmeshpy.core.quality.POOR_THRESHOLD` so they can't drift apart.
+- **Smoothing isn't implemented above order 1** — relaxers work on the corner
+  graph and would leave interior nodes behind, so `conduction`/`winslow` and
+  `hexmesh.smoothing.smooth` raise `NotImplementedError` rather than degrade
+  silently. No-op strategies (`bilinear`/`tfi`/`none`) stay legal at any order.
 
-At `order == 1` every high-order code path is a strict no-op: `.re2`, quality,
-topology, `merge` and the order-1 VTK writers read only `points` and corner
-connectivity, so linear meshes are byte-for-byte unchanged. That is what keeps the
+At `order == 1` every high-order code path is a strict no-op — what keeps the
 golden regression pinned.
+
+(using-a-high-order-mesh-in-nek5000-nekrs)=
+### Using a high-order mesh in Nek5000 / NekRS
+
+`.re2` alone only ever gives the solver a **linear** mesh — the curvature has to
+arrive through a separate field file. Export both:
+
+```python
+export.to_re2(mesh, "case.re2", groups=GROUPS)   # topology + BCs, always linear
+export.to_fld(mesh, "case.f00000")               # FLD file for high order nodes
+```
+
+`to_fld` writes only the `X` field — the mesh's own GLL node positions, at its
+own order — nothing else. Point the solver's `.par` restart at it so the
+solve reads the true curved geometry instead of `.re2`'s corners:
+
+```
+# Nek5000/NekRS .par file
+[GENERAL]
+startFrom = case.f00000
+```
+
+**Restarting a run with velocity while keeping the high-order geometry**: a
+solver checkpoint (`c1.f00000`, say) carries velocity but not the mesh.
+Combine the two files, pulling one field from each with the
+`field` suffix — `v` for velocity, `x` for coordinates:
+
+```
+# Nek5000 .par file
+[GENERAL]
+startFrom = "c1.f00000 v,case.f00000 x"
+
+# NekRS .par file
+[GENERAL]
+startFrom = "c1.f00000+v,case.f00000+x"
+```
 
 ## Physical groups & export
 
-Boundaries are plain **names** during construction. Each name maps to a Nek BC
-code / integer id only at **export**, via the `groups=` argument:
-
-- a `{name: spec}` dict, where a `spec` is one code used from every side or a
-  `{region: code}` mapping (see *asymmetric conditions* above), or
-- a {class}`~nekmeshpy.core.physical.PhysicalGroups` registry.
+Boundaries are plain names during construction; each maps to a Nek BC code
+only at **export**, via `groups=`: a `{name: spec}` dict (a code, or a
+`{region: code}` mapping — see *asymmetric conditions*), or a
+{class}`~nekmeshpy.core.physical.PhysicalGroups` registry.
 
 ```python
 from nekmeshpy import export
 export.to_re2(mesh, "part.re2", groups={"wall": "W  ", "inlet": "v  "})
 ```
 
-**There are no presets, and `to_re2` has no default.** A name-to-code table is a
-statement about one piece of geometry — which opening is the inlet, which surface is a
-measurement plane — so it belongs in the mesher that knows, spelled out next to the
-tags it names. `to_re2` raises without it rather than putting a code the caller never
-chose in front of the solver. The viewer writers (`to_vtu` / `to_mesh`) still accept
-`None`, which auto-numbers the mesh's distinct names: an integer id carries no physics.
+**No presets, no default for `to_re2`** — a name-to-code table is a statement
+about specific geometry, so `to_re2` raises without one rather than guessing.
+Viewer writers (`to_vtu`/`to_mesh`) accept `None` and auto-number instead.
 
-Every writer takes the **full output filename, extension included** — `to_re2`
-writes exactly the binary `.re2` it is given and nothing else. `.re2` element ids
-are written **1-based**; all internal indices are 0-based.
+Every writer takes the full output filename, extension included. `.re2`
+element ids are written 1-based; all internal indices are 0-based.
 
 ## See also
 

@@ -45,7 +45,6 @@ N_SLICES_MAIN = 12            # cross-sections per main leg (hex layers = this -
 N_SLICES_BRANCH = 10          # cross-sections in the branch
 CENTER_SCALE = 0.5            # inner square-core size (fraction of the diameter)
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
-SMOOTHING_METHOD = None    # per-section interior repositioning
 ORDER = 4                     # polynomial order; 1 = linear.  The seam arcs and
                               # openings are meshed at ORDER, so .vtu renders the
                               # curved walls (.re2 stays linear either way)
@@ -139,19 +138,14 @@ def opening_branch(z0):
 def leg_slices(open_ring, seam_ring, n_slices):
     """Blend ``open_ring -> seam_ring`` over ``n_slices`` stations; each station is a
     disc :meth:`QuadMesh.spined_ogrid`-ed over its natural straight A1..A2 diameter
-    (two half-discs welded along it). End stations keep the raw algebraic fill;
-    interior ones use ``SMOOTHING_METHOD``."""
+    (two half-discs welded along it)."""
     loops = linemesh.blend(open_ring, seam_ring, np.linspace(0.0, 1.0, n_slices))
-    slices = []
-    for s, loop in enumerate(loops):
-        m = SMOOTHING_METHOD if 0 < s < n_slices - 1 else None
-        # spined_ogrid splits the loop along its A1..A2 chord (default spine) and
-        # merges the two half-discs; wall_tag names every wall edge (see
-        # flow_past_cylinder.py for the tag-flow-down convention).
-        slices.append(quadmesh.spined_ogrid(
-            loop, RADIAL, center_scale=CENTER_SCALE, quadrant_scale=CENTER_SCALE,
-            wall_tag="wall", smoothing_method=m))
-    return slices
+    # spined_ogrid splits the loop along its A1..A2 chord (default spine) and merges
+    # the two half-discs; wall_tag names every wall edge (see flow_past_cylinder.py
+    # for the tag-flow-down convention).
+    return [quadmesh.spined_ogrid(
+        loop, RADIAL, center_scale=CENTER_SCALE, quadrant_scale=CENTER_SCALE,
+        wall_tag="wall") for loop in loops]
 
 
 # -- analytic wall surface (smoothing projection target) ---------------------

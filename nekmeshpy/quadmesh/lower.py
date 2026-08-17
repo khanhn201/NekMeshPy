@@ -20,14 +20,14 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
     if tag is None:
         sel: IntArray = boundary_edges(mesh)
     else:
-        hit = np.argwhere(named[np.asarray(mesh.quad, dtype=np.int64)] == tag)
+        hit = np.argwhere(named[np.asarray(mesh.quads, dtype=np.int64)] == tag)
         if hit.shape[0] == 0:
             raise ValueError(
                 "boundary_mesh: no edge carries the tag %r; this section has %s"
                 % (tag, sorted(mesh.edge_tags.group_tags) or "no tagged edges"))
         sel = np.column_stack([hit[:, 0], hit[:, 1] + 1]).astype(np.int64)
 
-    pairs: IntArray = mesh.quads[sel[:, 0][:, None],
+    pairs: IntArray = mesh.corners[sel[:, 0][:, None],
                                  QuadMesh.EDGE_POINTS[sel[:, 1] - 1, :]]
     gids: IntArray = np.unique(pairs)
     local: IntArray = np.searchsorted(gids, pairs)
@@ -44,7 +44,7 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
         elem = ElementTags.uniform(pairs.shape[0], tag)
     else:
         elem = ElementTags.from_dense(
-            named[np.asarray(mesh.quad, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
+            named[np.asarray(mesh.quads, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
     return LineMesh(mesh.points[gids], local, en, elem)
 
 

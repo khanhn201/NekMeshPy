@@ -33,7 +33,7 @@ def blend(a: HexMesh, b: HexMesh,
             "blend: blocks must have equal point counts (got %d, %d); build one "
             "from the other's points so they pair by index"
             % (A.shape[0], B.shape[0]))
-    if not np.array_equal(a.hexes, b.hexes):
+    if not np.array_equal(a.corners, b.corners):
         raise ValueError(
             "blend: blocks must share identical connectivity (paired by index)")
     if a.order != b.order:
@@ -54,16 +54,16 @@ def blend(a: HexMesh, b: HexMesh,
     fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
     # the face tags ride the blended ``quads`` themselves -- ``QuadMesh.blend`` keeps
     # ``a``'s edge tags but drops its element tags, so they are put back here
-    return [HexMesh(QuadMesh(faces.line_mesh, faces.quad, faces.orient, faces.interior,
+    return [HexMesh(QuadMesh(faces.line_mesh, faces.quads, faces.orient, faces.interior,
                              a.quad_mesh.element_tags),
-                    a.hex, a.orient,
+                    a.hexes, a.orient,
                     (1.0 - t) * ai + t * bi if ho else None)
             for t, faces in zip(fr, quad_blend(a.quad_mesh, b.quad_mesh, fr))]
 
 
 def _affine(mesh: HexMesh, matrix: FloatArray | None, offset: Vec3) -> HexMesh:
     """Map every coordinate of ``mesh`` through the affine pair ``(matrix, offset)``."""
-    return HexMesh(quad_affine(mesh.quad_mesh, matrix, offset), mesh.hex,
+    return HexMesh(quad_affine(mesh.quad_mesh, matrix, offset), mesh.hexes,
                    mesh.orient, affine.apply(mesh.interior, matrix, offset),
                    mesh.element_tags)
 
@@ -117,10 +117,10 @@ def _rewind(mesh: HexMesh) -> HexMesh:
     the codes are refitted against the unchanged canonical rows rather than reasoned
     about -- the same call ``merge`` makes when a weld hands an element a face in a
     frame it did not choose."""
-    hexes: IntArray = mesh.hexes[:, _REWIND_CORNERS]
-    elem_faces: IntArray = mesh.hex[:, _REWIND_FACES]
+    hexes: IntArray = mesh.corners[:, _REWIND_CORNERS]
+    elem_faces: IntArray = mesh.hexes[:, _REWIND_FACES]
     orient: IntArray = conform.face_frame_code(
-        hexes[:, conform._LOCAL_FACES], mesh.quad_mesh.quads[elem_faces])
+        hexes[:, conform._LOCAL_FACES], mesh.quad_mesh.corners[elem_faces])
     n = mesh.order - 1
     perm: IntArray = (np.arange(n ** 3, dtype=np.int64).reshape(n, n, n)[::-1].ravel()
                       if n else np.zeros(0, dtype=np.int64))

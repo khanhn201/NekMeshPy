@@ -88,8 +88,8 @@ def test_element_sizes_sum_to_the_total():
             for ho in (False, True):
                 parts = getattr(pkg, per)(mesh, high_order=ho)
                 assert parts.shape == (mesh.points[getattr(
-                    mesh, {"length": "lines", "area": "quads",
-                           "volume": "hexes"}[size])].shape[0],)
+                    mesh, {"length": "lines", "area": "corners",
+                           "volume": "corners"}[size])].shape[0],)
                 assert float(parts.sum()) == pytest.approx(
                     _size(pkg, size, mesh, high_order=ho), rel=1e-12)
 

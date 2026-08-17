@@ -18,6 +18,8 @@ matplotlib.use("Agg")
 
 # make the package importable from a source checkout (editable install also works)
 sys.path.insert(0, os.path.abspath(".."))
+# the mesh-viewer directive lives in docs/_ext -- doc-build tooling, not a package
+sys.path.insert(0, os.path.abspath("_ext"))
 
 # -- Project information ------------------------------------------------------
 project = "NekMeshPy"
@@ -37,6 +39,7 @@ extensions = [
     "sphinx.ext.intersphinx",
     "sphinx.ext.viewcode",
     "sphinx_copybutton",
+    "mesh_viewer",
 ]
 
 templates_path: list[str] = []
@@ -74,7 +77,7 @@ napoleon_numpy_docstring = True
 # the project's numpy dtype aliases are documentation aliases with no class page
 _TYPE_ALIASES = [
     "FloatArray", "IntArray", "BoolArray", "StrArray",
-    "Point", "Vec3", "PointArray", "SmoothingMethod",
+    "Point", "Vec3", "PointArray",
 ]
 
 # nitpicky (-n) mode flags every unresolved xref.  Ignore targets we can never
@@ -101,6 +104,31 @@ intersphinx_mapping = {
 html_theme = "furo"
 html_title = f"NekMeshPy {release}"
 html_static_path = ["_static"]
+# furo's footer_icons wants the icon as literal SVG markup (see furo's page.html
+# template) -- there's no "named icon" shorthand, so pull the mark from a CDN
+# (jsdelivr mirrors Simple Icons) rather than inlining the path data here.
+html_theme_options = {
+    "footer_icons": [
+        {
+            "name": "GitHub",
+            "url": "https://github.com/khanhn201/nekmeshpy",
+            "html": (
+                '<img class="github-icon" '
+                'src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/github.svg" '
+                'alt="" width="1em" height="1em" style="vertical-align:middle">'
+            ),
+        },
+    ],
+}
 # furo styles a visited link in a separate purple brand color by default --
 # custom.css makes it match an ordinary link instead, in both light and dark mode.
 html_css_files = ["custom.css"]
+# vtk.js loaded from jsdelivr rather than vendored -- the unscoped "vtk.js" npm
+# package publishes the same prebuilt UMD bundle as @kitware/vtk.js (which itself
+# ships no UMD dist), just at a plain root path. Load order matters: viewer.js
+# reads window.vtk at call time (via a small retry), but declaring vtk.js first keeps
+# the intent obvious.
+html_js_files = [
+    "https://cdn.jsdelivr.net/npm/vtk.js@36.7.1/vtk.js",
+    "viewer.js",
+]

@@ -13,7 +13,6 @@ from .._typing import (
     IntArray,
     Point,
     PointArray,
-    SmoothingMethod,
     StrArray,
     Vec3,
 )
@@ -27,7 +26,7 @@ from ..linemesh.assemble import loft as line_loft
 from ..linemesh.assemble import loft_fn as line_loft_fn
 from ..linemesh.morph import reverse as line_reverse
 from ..linemesh.shape import line
-from ._helpers import Overlay, _apply_smoothing, _check_boundary, _elevate, entities_from_blocks
+from ._helpers import Overlay, _check_boundary, _elevate, entities_from_blocks
 from .assemble import loft_fn, merge
 from .lift import from_grid
 from .quadmesh import NO_TAG, QuadMesh
@@ -67,7 +66,6 @@ def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
               x_frac: FloatArray | None = None,
               y_frac: FloatArray | None = None,
               side_tags: Mapping[str, str] | None = None,
-              smoothing_method: SmoothingMethod | None = None,
               order: int = 1) -> QuadMesh:
     """Structured quad grid over the rectangle with four CCW corners ``corners = [c0,
     c1, c2, c3]``: ``nx`` cells along ``c0->c1`` (bottom/top), ``ny`` along ``c1->c2``
@@ -84,7 +82,7 @@ def rectangle(corners: PointArray | Sequence[Point], nx: int, ny: int, *,
              ("top", c[2], c[3], xf), ("left", c[3], c[0], yf))
     edges = [line(a, b, frac, element_tag=st.get(side, ""), order=order)
              for side, a, b, frac in specs]
-    return structured(edges, smoothing_method=smoothing_method)
+    return structured(edges)
 
 
 def _chain_intervals(edge: LineMesh, name: str) -> IntArray:
@@ -226,8 +224,7 @@ def _slice_chain(chain: LineMesh, a: int, b: int) -> LineMesh:
 
 
 def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
-               side_tags: Mapping[str, str] | None = None,
-               smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
+               side_tags: Mapping[str, str] | None = None) -> QuadMesh:
     """Transfinite (Coons-patch) quad grid over the surface bounded by four open edge
     lines ``edges = [bottom, right, top, left]`` in CCW loop order. The lines must share
     corners (form a closed loop)."""
@@ -339,14 +336,12 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         qm = tag_edges(QuadMesh(lm, elem_edges, flip, interior, qm.element_tags),
                        np.asarray(rows_all, dtype=np.int64).reshape(-1, 2),
                        np.asarray(names_all, dtype=np.str_))
-    # smooth last: a repositioning smoother rejects order > 1 (high-order smoothing
-    # is not implemented).
-    return _apply_smoothing(qm, smoothing_method)
+    return qm
 
 
 def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
           center_scale: float = 0.7, quadrant_scale: float = 0.7,
-          wall_tag: str = "", smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
+          wall_tag: str = "") -> QuadMesh:
     """O-grid filling the closed ``boundary``: four :func:`quadrant_ogrid
     <nekmeshpy.quadmesh.shape.quadrant_ogrid>` quarters meeting at the loop's centroid,
     split at the loop's own quarter points. ``center_scale`` places each quarter's own
@@ -381,17 +376,14 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
             for a, b in zip(starts, starts[1:] + [P])]
     seams = [line(centroid, a.points[0], fr, order=boundary.order) for a in arcs]
     seams.append(seams[0])
-    return _apply_smoothing(
-        merge([quadrant_ogrid(arcs[q], seams[q], seams[q + 1], radial,
-                              center_scale=center_scale, wall_tag=wall_tag)
-              for q in range(4)]),
-        smoothing_method)
+    return merge([quadrant_ogrid(arcs[q], seams[q], seams[q + 1], radial,
+                                 center_scale=center_scale, wall_tag=wall_tag)
+                 for q in range(4)])
 
 
 def half_ogrid(arc: LineMesh, spine: LineMesh,
                radial: int | FloatArray, *, center_scale: float = 0.7,
-               quadrant_scale: float = 0.7, wall_tag: str = "",
-               smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
+               quadrant_scale: float = 0.7, wall_tag: str = "") -> QuadMesh:
     """Structured half-circle O-grid over a half-disk split along the ``spine`` line
     (A1..A2); the wall ``arc`` (``(4*Ntheta+1, 3)``, arc[0]=A1, arc[-1]=A2) is the open
     boundary. Built as two :func:`quadrant_ogrid
@@ -440,7 +432,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
                         center_scale=center_scale, wall_tag=wall_tag)
     qb = quadrant_ogrid(arc_b, seam_apex, seam_a2, radial,
                         center_scale=center_scale, wall_tag=wall_tag)
-    return _apply_smoothing(merge([qa, qb]), smoothing_method)
+    return merge([qa, qb])
 
 
 #: The two nameable seams of a :func:`quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>`, in the order its arguments
@@ -475,8 +467,7 @@ def quadrant_core(arc: LineMesh, seam1: LineMesh, seam2: LineMesh, *,
 def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
                    radial: int | FloatArray, *, center_scale: float = 0.5,
                    wall_tag: str = "",
-                   side_tags: Mapping[str, str] | None = None,
-                   smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
+                   side_tags: Mapping[str, str] | None = None) -> QuadMesh:
     """Quarter-disk O-grid: the 90-degree sibling of :func:`half_ogrid
     <nekmeshpy.quadmesh.shape.half_ogrid>`."""
     apts = _check_boundary(arc, "quadrant_ogrid arc", 3)
@@ -606,8 +597,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
             (core_fan, 4, _sub_chain(seam2, core_fan, s2l2)),
             (q0 + rs * (2 * n) + (2 * n - 1), 2, _sub_chain(seam2, n + rs, s2l2)),
         ]
-    qm = _elevate(qm, order, overlays)
-    return _apply_smoothing(qm, smoothing_method)
+    return _elevate(qm, order, overlays)
 
 
 def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
@@ -661,8 +651,7 @@ def spine_fractions(n_theta: int, radial: int | FloatArray,
 
 def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
                  spine: LineMesh | None = None, center_scale: float = 0.7,
-                 quadrant_scale: float = 0.7, wall_tag: str = "",
-                 smoothing_method: SmoothingMethod | None = None) -> QuadMesh:
+                 quadrant_scale: float = 0.7, wall_tag: str = "") -> QuadMesh:
     """Full-disk O-grid over a closed ``boundary`` split along a spine diameter into two
     :func:`half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` halves (each in turn built
     from two :func:`quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` quarters)
@@ -705,11 +694,9 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
     arc1 = _slice_chain(boundary, 0, nh)
     arc2 = _slice_chain(boundary, nh, M)
     h1 = half_ogrid(arc1, spine, radial, center_scale=center_scale,
-                    quadrant_scale=quadrant_scale, wall_tag=wall_tag,
-                    smoothing_method=smoothing_method)
+                    quadrant_scale=quadrant_scale, wall_tag=wall_tag)
     h2 = half_ogrid(arc2, spine2, radial, center_scale=center_scale,
-                    quadrant_scale=quadrant_scale, wall_tag=wall_tag,
-                    smoothing_method=smoothing_method)
+                    quadrant_scale=quadrant_scale, wall_tag=wall_tag)
     return merge([h1, h2])
 
 
@@ -801,7 +788,7 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
     # the node coordinates move, so there is nothing to re-derive or reconcile.
     lines = LineMesh(project(cube.points), cube.line_mesh.lines,
                      interior=project(cube.line_mesh.interior) if order > 1 else None)
-    return QuadMesh(lines, cube.quad, cube.orient,
+    return QuadMesh(lines, cube.quads, cube.orient,
                     project(cube.interior) if order > 1 else None,
                     element_tags=etags)
 
@@ -872,7 +859,7 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
     etags = ElementTags.uniform(cube.n_quads, element_tag)
     lines = LineMesh(project(cube.points), cube.line_mesh.lines,
                      interior=project(cube.line_mesh.interior) if order > 1 else None)
-    qm = QuadMesh(lines, cube.quad, cube.orient,
+    qm = QuadMesh(lines, cube.quads, cube.orient,
                   project(cube.interior) if order > 1 else None,
                   element_tags=etags)
     return _tag_rim(qm, rim_tag)
