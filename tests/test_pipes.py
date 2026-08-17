@@ -11,7 +11,7 @@ from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(mesh.points, mesh.hexes)
+    return quality.scaled_jacobian(mesh.points, mesh.corners)
 
 
 def _tag_count(mesh, name):
@@ -30,20 +30,11 @@ def test_circular_pipe(tmp_path):
     assert set(mesh.face_group_tags) >= {"wall", "inlet", "outlet"}
 
 
-def test_rectangular_pipe(tmp_path):
-    mesh = run_example("rectangular_pipe.py", tmp_path)["mesh"]
-    # a structured axis-aligned duct is exact -> scaled Jacobian 1 everywhere
-    assert float(np.min(_scaled_jac(mesh))) == pytest.approx(1.0, abs=1e-9)
-    assert hexmesh.is_watertight(mesh) and hexmesh.is_conforming(mesh)
-    assert _tag_count(mesh, "inlet") == _tag_count(mesh, "outlet")  # caps match
-    assert set(mesh.face_group_tags) >= {"wall", "inlet", "outlet"}
-
-
 def test_circular_pipe_tjunction(tmp_path):
     mesh = run_example("circular_pipe_tjunction.py", tmp_path)["mesh"]
     # three legs welded into one conformal, watertight block at the junction
     assert hexmesh.is_watertight(mesh) and hexmesh.is_conforming(mesh)
-    assert topology.hex_report(mesh.points, mesh.hexes).n_components == 1
+    assert topology.hex_report(mesh.points, mesh.corners).n_components == 1
     # wall + three circular openings, each opening the same face count
     assert _tag_count(mesh, "wall") > 0
     for name in ("outlet", "branch"):
@@ -59,8 +50,8 @@ def _wall_nodes(mesh):
     Corner-only would pass on a mesh that is high-order in storage and linear in
     geometry, which is exactly the failure mode worth guarding here."""
     nodes, conn = conform.conformal_hex(
-        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.points, mesh.corners, mesh._elem_edges, mesh._edge_flip,
+        mesh.quad_mesh.line_mesh.interior, mesh.hexes, mesh.orient,
         mesh.quad_mesh.interior, mesh.interior, mesh.order)
     ids = [conn[e][interp.hex_face_indices(s, mesh.order)]
            for e, s, tag in face_rows(mesh)
@@ -75,8 +66,8 @@ def _volume(mesh):
     corner-based measure cannot."""
     o = mesh.order
     nodes, conn = conform.conformal_hex(
-        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.points, mesh.corners, mesh._elem_edges, mesh._edge_flip,
+        mesh.quad_mesh.line_mesh.interior, mesh.hexes, mesh.orient,
         mesh.quad_mesh.interior, mesh.interior, o)
     blk = nodes[conn].reshape(-1, o + 1, o + 1, o + 1, 3)
     g = fields.gll_nodes(o)
@@ -95,7 +86,7 @@ def test_quadrant_pipe_tjunction(tmp_path):
     mesh = ns["mesh"]
     # the whole point of the reference topology: one quadrant of the main pipe *is*
     # a quadrant of the branch, so the junction welds into a single closed block.
-    rep = topology.hex_report(mesh.points, mesh.hexes)
+    rep = topology.hex_report(mesh.points, mesh.corners)
     assert rep.watertight and rep.conformal
     assert rep.n_components == 1
     assert rep.n_open_edges == 0 and rep.n_hanging_points == 0

@@ -77,7 +77,7 @@ def test_a_subset_drops_the_points_nothing_kept_touches():
     numbering is dense and every point is referenced."""
     for mesh, pkg, count in _rungs(2):
         part = pkg.select(mesh, [0, 1])
-        conn = {"n_lines": "lines", "n_quads": "quads", "n_hexes": "hexes"}[count]
+        conn = {"n_lines": "lines", "n_quads": "corners", "n_hexes": "corners"}[count]
         used = np.unique(getattr(part, conn))
         assert used.shape[0] == part.n_points
         assert used[0] == 0 and used[-1] == part.n_points - 1
@@ -87,7 +87,7 @@ def test_a_subset_drops_the_points_nothing_kept_touches():
 def test_select_by_tag_takes_exactly_the_tagged_elements():
     section = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, RADIAL)
     tagged = quadmesh.QuadMesh(
-        section.line_mesh, section.quad, section.orient, section.interior,
+        section.line_mesh, section.quads, section.orient, section.interior,
         ElementTags(np.arange(0, section.n_quads, 3),
                     np.full(len(np.arange(0, section.n_quads, 3)), "core")))
     got = quadmesh.select(tagged, "core")

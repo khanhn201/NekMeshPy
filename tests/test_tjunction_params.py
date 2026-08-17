@@ -56,7 +56,7 @@ def test_the_three_ports_do_not_depend_on_these_parameters(ratio):
     for name in ("disc_minus", "disc_plus", "disc_branch"):
         x, y = getattr(a, name), getattr(b, name)
         assert np.array_equal(x.points, y.points), name
-        assert np.array_equal(x.quads, y.quads), name
+        assert np.array_equal(x.corners, y.corners), name
         assert np.array_equal(x.interior, y.interior), name
     assert not np.array_equal(a.core.points, b.core.points)   # the core really moved
 

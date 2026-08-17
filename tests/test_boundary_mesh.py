@@ -26,13 +26,13 @@ ORDERS = [1, 2, 3]
 
 
 def _hex_nodes(m):
-    return conform.conformal_hex(m.points, m.hexes, m._elem_edges, m._edge_flip,
-                                 m.quad_mesh.line_mesh.interior, m.hex, m.orient,
+    return conform.conformal_hex(m.points, m.corners, m._elem_edges, m._edge_flip,
+                                 m.quad_mesh.line_mesh.interior, m.hexes, m.orient,
                                  m.quad_mesh.interior, m.interior, m.order)[0]
 
 
 def _quad_nodes(m):
-    return conform.conformal_quad(m.points, m.quads, m.quad, m.orient,
+    return conform.conformal_quad(m.points, m.corners, m.quads, m.orient,
                                   m.line_mesh.interior, m.interior, m.order)[0]
 
 
@@ -89,7 +89,7 @@ def test_the_extracted_surface_has_its_own_index_space():
     block = _block(2)
     surf = hexmesh.boundary_mesh(block, "inlet")
     assert surf.n_points < block.n_points
-    assert surf.quads.max() == surf.n_points - 1
+    assert surf.corners.max() == surf.n_points - 1
 
 
 def test_the_whole_boundary_of_a_watertight_block_is_a_closed_surface():
@@ -118,7 +118,7 @@ def test_template_keeps_its_numbering_and_takes_the_parents_coordinates(order):
     block = _block(order)
     template = quadmesh.translate(_section(order), (0.0, 0.0, 2.0))   # the outlet plane
     surf = hexmesh.boundary_mesh(block, "outlet", template=template)
-    assert np.array_equal(surf.quad, template.quad)
+    assert np.array_equal(surf.quads, template.quads)
     assert np.array_equal(surf.orient, template.orient)
     assert _all_on(_hex_nodes(block), _quad_nodes(surf)) == 0.0
 
@@ -133,7 +133,7 @@ def test_template_result_pairs_index_for_index_with_its_template():
     surf = hexmesh.boundary_mesh(block, "outlet", template=template)
     mid = quadmesh.blend(template, surf, [0.0, 1.0])      # would raise on a mismatch
     assert np.array_equal(mid[-1].points, surf.points)
-    assert np.array_equal(surf.quads, template.quads)
+    assert np.array_equal(surf.corners, template.corners)
 
 
 def test_template_that_is_not_this_ports_pattern_is_refused():

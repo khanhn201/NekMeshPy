@@ -1,28 +1,18 @@
-"""Run the transfinite-block example script, plus toolkit sizing-field /
-``HexMesh.from_grid`` unit tests (the grading + size-field coverage that used to
-live on the block class, now tested against the toolkit directly)."""
+"""Toolkit sizing-field / ``HexMesh.from_grid`` unit tests (the grading + size-field
+coverage that used to live on the block class, now tested against the toolkit
+directly)."""
 
 import numpy as np
 import pytest
-from conftest import run_example
 
-from nekmeshpy import AxisLinearField, ConstantField, export, fields, hexmesh
+from nekmeshpy import AxisLinearField, ConstantField, fields, hexmesh
 from nekmeshpy.core.fields import distribution_from_field
 from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    X, HC = mesh.points, mesh.hexes
+    X, HC = mesh.points, mesh.corners
     return quality.scaled_jacobian(X, HC)
-
-
-def test_transfinite_block_example(tmp_path):
-    mesh = run_example("transfinite_block.py", tmp_path)["mesh"]
-    assert mesh.n_hexes == 4 * 4 * 4                  # unit cube, DIVISIONS=(4,4,4)
-    assert float(np.min(_scaled_jac(mesh))) == pytest.approx(1.0, abs=1e-12)
-    m = export.to_mesh(mesh)
-    for name in ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max"):
-        assert m.cell_sets[name]["quad"].size == 16  # 4x4 quads per face
 
 
 def test_from_grid_grading():

@@ -35,9 +35,9 @@ def test_hex_must_index_shared_faces_that_exist():
     against that mesh's quad count -- the top rung of the same check ``QuadMesh`` makes
     against its edges and ``LineMesh`` against its points."""
     blk = _shell(1)
-    with pytest.raises(ValueError, match="hex must index the .* shared faces"):
+    with pytest.raises(ValueError, match="hexes must index the .* shared faces"):
         HexMesh(blk.quad_mesh, np.full((2, 6), 999), np.zeros((2, 6), dtype=np.int64))
-    with pytest.raises(ValueError, match="hex must index the .* shared faces"):
+    with pytest.raises(ValueError, match="hexes must index the .* shared faces"):
         HexMesh(blk.quad_mesh, -np.ones((1, 6), dtype=np.int64),
                 np.zeros((1, 6), dtype=np.int64))
 
@@ -48,7 +48,7 @@ def test_order_n_container_asks_for_the_interior_it_cannot_invent():
     blk = _shell(3)
     assert blk.order == 3
     with pytest.raises(ValueError, match=r"order 3 > 1 requires the per-hex private"):
-        HexMesh(blk.quad_mesh, blk.hex, blk.orient)
+        HexMesh(blk.quad_mesh, blk.hexes, blk.orient)
 
 
 # -- geometric truth: annulus inner wall rides the true sphere ----------
@@ -60,9 +60,9 @@ def test_annulus_inner_wall_on_true_sphere(order):
     assert cb.shape == (hm.n_hexes, (order + 1) ** 3, 3)
     # corner-consistency across the whole block
     cc = cb[:, corner_indices(order, 3), :]
-    assert np.allclose(cc, hm.points[hm.hexes], atol=1e-9)
+    assert np.allclose(cc, hm.points[hm.corners], atol=1e-9)
     # face 5 (inner cap) nodes of the innermost hexes lie on radius 1
-    rc = np.linalg.norm(hm.points[hm.hexes], axis=2)
+    rc = np.linalg.norm(hm.points[hm.corners], axis=2)
     inner = np.all(np.isclose(rc[:, HexMesh.FACE_POINTS[4]], 1.0, atol=1e-9), axis=1)
     fidx = hex_face_indices(5, order)
     nodes = cb[np.where(inner)[0][:, None], fidx[None, :], :]
@@ -80,7 +80,7 @@ def test_extrude_order_n_corner_consistent(order):
     assert hb.order == order
     cb = curved(hb)
     cc = cb[:, corner_indices(order, 3), :]
-    assert np.allclose(cc, hb.points[hb.hexes], atol=1e-9)
+    assert np.allclose(cc, hb.points[hb.corners], atol=1e-9)
     # planar section swept along +z -> every node has integer-free straight geometry;
     # here just assert the block is a straight subdivision (mid nodes between corners)
     assert cb.shape == (hb.n_hexes, (order + 1) ** 3, 3)
@@ -96,7 +96,7 @@ def test_from_grid_order_n_corner_consistent():
     fg = hexmesh.from_grid(grid, order=4)
     assert fg.order == 4
     cc = curved(fg)[:, corner_indices(4, 3), :]
-    assert np.allclose(cc, fg.points[fg.hexes], atol=1e-9)
+    assert np.allclose(cc, fg.points[fg.corners], atol=1e-9)
 
 
 # -- blend / merge ------------------------------------------------------
@@ -105,8 +105,8 @@ def test_blend_morphs_hex_curved_blocks():
     # a uniformly scaled copy, built natively from a's own entity tables -- same B-rep,
     # every stored node doubled, so the two pair by index at every rung
     lines = LineMesh(a.points * 2.0, a.edges, interior=a.edge_nodes * 2.0)
-    quads = QuadMesh(lines, a.quad_mesh.quad, a.quad_mesh.orient, a.face_nodes * 2.0)
-    b = HexMesh(quads, a.hex, a.orient, a.interior * 2.0)
+    quads = QuadMesh(lines, a.quad_mesh.quads, a.quad_mesh.orient, a.face_nodes * 2.0)
+    b = HexMesh(quads, a.hexes, a.orient, a.interior * 2.0)
     lo, mid, hi = hexmesh.blend(a, b, [0.0, 0.5, 1.0])
     assert lo.order == mid.order == hi.order == 3
     ca, cbb = curved(a), curved(b)
@@ -146,14 +146,14 @@ def test_order1_factories_are_linear_no_op():
         assert hm.interior.shape == (hm.n_hexes, 0, 3)
         assert curved(hm).shape == (hm.n_hexes, 8, 3)
         assert np.allclose(curved(hm)[:, corner_indices(1, 3), :],
-                           hm.points[hm.hexes])
+                           hm.points[hm.corners])
 
 
 def test_order1_shell_points_match_high_order_corners():
     lin = _shell(1)
     ho = _shell(4)
     assert np.allclose(lin.points, ho.points)            # corner points identical
-    assert np.array_equal(lin.hexes, ho.hexes)
+    assert np.array_equal(lin.corners, ho.corners)
 
 
 # -- order-N quality metric (opt-in) ------------------------------------

@@ -114,7 +114,7 @@ def test_scaled_jacobian_ho_quad_reduces_at_order1():
     from nekmeshpy.quadmesh import quality as qq
 
     box = quadmesh.box(1.0, (2, 2, 2))                    # order-1 closed surface
-    corner = qq.scaled_jacobian(box.points, box.quads)
+    corner = qq.scaled_jacobian(box.points, box.corners)
     ho = scaled_jacobian_ho(curved(box), box.order, dim=2)
     assert np.allclose(corner, ho, atol=1e-12)
 
@@ -124,10 +124,9 @@ def test_scaled_jacobian_ho_hex_reduces_at_order1():
     from nekmeshpy.hexmesh import quality as hq
 
     loop = linemesh.circle(1.0, 24)
-    qm = quadmesh.ogrid(loop, n_side=6, radial=uniform_spacing(4),
-                        smoothing_method="bilinear")
+    qm = quadmesh.ogrid(loop, n_side=6, radial=uniform_spacing(4))
     blk = hexmesh.extrude(qm, axis=(0, 0, 1), length=5.0, layers=uniform_spacing(6))
-    corner = hq.scaled_jacobian(blk.points, blk.hexes)
+    corner = hq.scaled_jacobian(blk.points, blk.corners)
     ho = scaled_jacobian_ho(curved(blk), blk.order, dim=3)
     assert np.allclose(corner, ho, atol=1e-12)
 
@@ -229,7 +228,7 @@ def test_default_order_is_one_and_brep_is_empty():
     assert qm.interior.shape == (qm.n_quads, 0, 3)
     cb = curved(qm)
     assert cb.shape == (qm.n_quads, 4, 3)
-    assert np.allclose(cb[:, corner_indices(1, 2), :], qm.points[qm.quads])
+    assert np.allclose(cb[:, corner_indices(1, 2), :], qm.points[qm.corners])
 
     hm = hexmesh.from_grid(_unit_hex_grid())
     assert hm.order == 1
@@ -238,7 +237,7 @@ def test_default_order_is_one_and_brep_is_empty():
     assert hm.interior.shape == (hm.n_hexes, 0, 3)
     hb = curved(hm)
     assert hb.shape == (hm.n_hexes, 8, 3)
-    assert np.allclose(hb[:, corner_indices(1, 3), :], hm.points[hm.hexes])
+    assert np.allclose(hb[:, corner_indices(1, 3), :], hm.points[hm.corners])
 
 
 def test_factory_meshes_default_to_order_one():

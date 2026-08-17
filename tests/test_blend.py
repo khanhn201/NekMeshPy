@@ -63,7 +63,7 @@ def test_quadmesh_blend_endpoints_and_connectivity():
     assert np.allclose(lo.points, a.points)
     assert np.allclose(hi.points, b.points)
     assert np.allclose(mid.points, 0.5 * (a.points + b.points))
-    assert np.array_equal(mid.quads, a.quads)
+    assert np.array_equal(mid.corners, a.corners)
 
 
 def test_quadmesh_blend_rejects_connectivity_mismatch():
@@ -91,5 +91,5 @@ def test_hexmesh_blend_endpoints_and_connectivity():
     assert np.allclose(lo.points, a.points)
     assert np.allclose(hi.points, b.points)
     assert np.allclose(mid.points, 0.5 * (a.points + b.points))
-    assert np.array_equal(mid.hexes, a.hexes)
+    assert np.array_equal(mid.corners, a.corners)
 

@@ -170,8 +170,8 @@ def test_order_one_equals_a_plain_loft_of_the_same_sections(loop):
     got = hexmesh.loft_fn(f, fr, loop=loop, order=1)
     want = hexmesh.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
     assert np.array_equal(got.points, want.points)
+    assert np.array_equal(got.corners, want.corners)
     assert np.array_equal(got.hexes, want.hexes)
-    assert np.array_equal(got.hex, want.hex)
     assert np.array_equal(got.orient, want.orient)
     assert np.array_equal(got.element_tags.ids, want.element_tags.ids)
     assert np.array_equal(got.element_tags.tags, want.element_tags.tags)
@@ -297,7 +297,7 @@ def test_sweep_nodes_at_order_one_is_ignored_not_an_error():
     got = hexmesh.loft(slices, sweep_nodes=[[], []])
     want = hexmesh.loft(slices)
     assert np.array_equal(got.points, want.points)
-    assert np.array_equal(got.hexes, want.hexes)
+    assert np.array_equal(got.corners, want.corners)
 
 
 @pytest.mark.parametrize("flipped", [False, True])

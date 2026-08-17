@@ -30,7 +30,7 @@ def retag_element(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
 
     The region vocabulary and the boundary-condition vocabulary are different tables,
     so renaming one never disturbs the other even where they share a word."""
-    return HexMesh(mesh.quad_mesh, mesh.hex, mesh.orient, mesh.interior,
+    return HexMesh(mesh.quad_mesh, mesh.hexes, mesh.orient, mesh.interior,
                    mesh.element_tags.renamed(mapping, "hexmesh.retag_element"))
 
 
@@ -51,7 +51,7 @@ def retag_face(mesh: HexMesh, mapping: Mapping[str, str]) -> HexMesh:
 
     :func:`tag_report <nekmeshpy.hexmesh.query.tag_report>` is what finds those."""
     return HexMesh(quadmesh.retag_element(mesh.quad_mesh, mapping),
-                   mesh.hex, mesh.orient, mesh.interior, mesh.element_tags)
+                   mesh.hexes, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 def tag_faces(mesh: HexMesh, faces: IntArray,
@@ -76,9 +76,9 @@ def tag_faces(mesh: HexMesh, faces: IntArray,
     hit = names != ""
     named[ids[hit]] = names[hit]
     q = mesh.quad_mesh
-    return HexMesh(QuadMesh(q.line_mesh, q.quad, q.orient, q.interior,
+    return HexMesh(QuadMesh(q.line_mesh, q.quads, q.orient, q.interior,
                             ElementTags.from_dense(np.asarray(named, dtype=np.str_))),
-                   mesh.hex, mesh.orient, mesh.interior, mesh.element_tags)
+                   mesh.hexes, mesh.orient, mesh.interior, mesh.element_tags)
 
 
 __all__ = [

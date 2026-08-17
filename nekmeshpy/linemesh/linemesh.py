@@ -76,9 +76,10 @@ class LineMesh:
         self.element_tags.check_within(E)
 
     @property
-    def line(self) -> IntArray:
+    def corners(self) -> IntArray:
         """``(L,2)`` incidence into the point mesh -- the same array ``lines`` holds,
-        under the name the rungs above use for this slot (``quad`` / ``hex``).
+        under the name the rungs above use for this slot (``corners`` on ``QuadMesh`` /
+        ``HexMesh``).
 
         A point *is* its own corner, so at this rung the incidence into the rung below
         and the corner connectivity are one table; the two names exist so code that

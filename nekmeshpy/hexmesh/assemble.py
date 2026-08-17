@@ -85,7 +85,7 @@ def loft(
             "corner ids.  An entity here *is* its corners, so neither is representable."
             % n_prof)
     sec = slices[0]
-    quads = np.asarray(sec.quads, dtype=np.int64).reshape(-1, 4)
+    quads = np.asarray(sec.corners, dtype=np.int64).reshape(-1, 4)
     M = quads.shape[0]
     S = np.stack([np.asarray(s.points, dtype=float).reshape(-1, 3)
                   for s in slices], axis=0)             # (n_prof, nn, 3)
@@ -106,7 +106,7 @@ def loft(
     # the same table.
     sec_lines = np.asarray(sec.line_mesh.lines, dtype=np.int64).reshape(-1, 2)
     for k, sl in enumerate(slices):
-        if not (np.array_equal(np.asarray(sl.quads, dtype=np.int64).reshape(-1, 4), quads)
+        if not (np.array_equal(np.asarray(sl.corners, dtype=np.int64).reshape(-1, 4), quads)
                 and np.array_equal(
                     np.asarray(sl.line_mesh.lines, dtype=np.int64).reshape(-1, 2), sec_lines)):
             raise ValueError(
@@ -133,7 +133,7 @@ def loft(
             for m in level:
                 if (m.order != order or m.n_points != nn
                         or not np.array_equal(
-                            np.asarray(m.quads, dtype=np.int64).reshape(-1, 4), quads)
+                            np.asarray(m.corners, dtype=np.int64).reshape(-1, 4), quads)
                         or not np.array_equal(
                             np.asarray(m.line_mesh.lines, dtype=np.int64).reshape(-1, 2),
                             sec_lines)):
@@ -177,7 +177,7 @@ def loft(
     # An entity only exists where an element carries it: an isolated section point, or a
     # section edge no quad references, would otherwise spawn an unreferenced row.
     used_p: IntArray = np.unique(quads.ravel())
-    used_e: IntArray = np.unique(sec.quad.ravel())
+    used_e: IntArray = np.unique(sec.quads.ravel())
     nu, ne = used_p.shape[0], used_e.shape[0]
     pslot: IntArray = np.full(nn, -1, np.int64)
     pslot[used_p] = np.arange(nu, dtype=np.int64)
@@ -185,7 +185,7 @@ def loft(
     eslot[used_e] = np.arange(ne, dtype=np.int64)
     ab: IntArray = np.sort(sec.line_mesh.lines[used_e], axis=1)       # (ne,2) min-first
     A, B = ab[:, 0], ab[:, 1]
-    sec_side: IntArray = eslot[sec.quad][q_idx][:, fside]         # (E,4) used-edge slot
+    sec_side: IntArray = eslot[sec.quads][q_idx][:, fside]         # (E,4) used-edge slot
     # a section stores each shared edge in its own direction; the rows above are
     # min-first, so this is where a section's edge nodes have to be read backwards.
     rev_e: BoolArray = sec.line_mesh.lines[used_e][:, 0] > sec.line_mesh.lines[used_e][:, 1]
@@ -273,7 +273,7 @@ def loft(
     # carried: the section quad at a level.  Its row is that quad's own CCW corners, so
     # its four sides are the section's own sides, walked in the section's own direction.
     carried_conn: IntArray = stations.at_levels(quads, lvl, nn)
-    carried_sides: IntArray = stations.at_levels(eslot[sec.quad], lvl, ne)
+    carried_sides: IntArray = stations.at_levels(eslot[sec.quads], lvl, ne)
     carried_flip: BoolArray = np.tile(quads > quads[:, [1, 2, 3, 0]], (n_prof, 1))
     # swept: the section edge ``(A, B)`` dragged across a layer.  Its row is
     # ``[A_i, B_i, B_j, A_j]``, so its sides walk [carried at i, rung at B, carried at j
@@ -390,7 +390,7 @@ def _loft_evaluated(
     """The shared tail of every sweep whose sections are **evaluated** on the refined
     node lattice rather than handed in: validate, close the loop, split, delegate."""
     slices, sweep_nodes = stations.split_evaluated(
-        profs, order, loop=loop, conn=lambda m: np.asarray(m.quads, dtype=np.int64).reshape(-1, 4),
+        profs, order, loop=loop, conn=lambda m: np.asarray(m.corners, dtype=np.int64).reshape(-1, 4),
         noun="section", elems="quads", name=name)
     return loft(slices, loop=loop,
                 sweep_nodes=sweep_nodes if order > 1 else None,
@@ -432,13 +432,13 @@ def loft_spline(
 
     ref = prof[0]
     edges: IntArray = np.asarray(ref.line_mesh.lines, dtype=np.int64).reshape(-1, 2)
-    quads: IntArray = np.asarray(ref.quads, dtype=np.int64).reshape(-1, 4)
+    quads: IntArray = np.asarray(ref.corners, dtype=np.int64).reshape(-1, 4)
     # checked before the stack, so a mismatch names the section rather than failing
     # inside numpy with a shape it cannot explain
     for k, m in enumerate(prof):
         if (m.order != order or m.n_points != ref.n_points
                 or not np.array_equal(
-                    np.asarray(m.quads, dtype=np.int64).reshape(-1, 4), quads)
+                    np.asarray(m.corners, dtype=np.int64).reshape(-1, 4), quads)
                 or not np.array_equal(
                     np.asarray(m.line_mesh.lines, dtype=np.int64).reshape(-1, 2), edges)):
             raise ValueError(
@@ -456,7 +456,7 @@ def loft_spline(
         np.stack([np.asarray(s.interior, dtype=float) for s in prof]), t, loop=loop)
     fitted = [QuadMesh(LineMesh(PointMesh(P[k], ref.line_mesh.point_tags), edges, E[k],
                                 ref.line_mesh.element_tags),
-                       ref.quad, ref.orient, F[k], ref.element_tags)
+                       ref.quads, ref.orient, F[k], ref.element_tags)
               for k in range(t.shape[0])]
     return _loft_evaluated(fitted, order, loop=loop, element_tags=element_tags,
                            first_tag=first_tag, last_tag=last_tag, name="loft_spline")
@@ -509,7 +509,7 @@ def merge(
     meshes = list(meshes)
     pos = [m.points for m in meshes]
     counts = [p.shape[0] for p in pos]
-    points, point_id = conform.weld_points(pos, [_boundary_points(m.hexes) for m in meshes], tol)
+    points, point_id = conform.weld_points(pos, [_boundary_points(m.corners) for m in meshes], tol)
 
     # Each block's own B-rep is already correct and already unique; the weld can only
     # ever join entities whose corners are *all* welded, so the tables are concatenated
@@ -524,18 +524,18 @@ def merge(
     etag_list: list[ElementTags] = []
     noff = eoff = foff = elem_off = 0
     for m, c in zip(meshes, counts):
-        hex_list.append(point_id[m.hexes + noff])    # local -> concat -> welded id
+        hex_list.append(point_id[m.corners + noff])    # local -> concat -> welded id
         erow_list.append(point_id[m.edges + noff])
-        frow_list.append(point_id[np.asarray(m.quad_mesh.quads, dtype=np.int64) + noff])
+        frow_list.append(point_id[np.asarray(m.quad_mesh.corners, dtype=np.int64) + noff])
         ee_list.append(m._elem_edges + eoff)
         eflip_list.append(m._edge_flip)
-        ef_list.append(m.hex + foff)
+        ef_list.append(m.hexes + foff)
         forient_list.append(m.orient)
         etag_list.append(m.element_tags.offset(elem_off))
         noff += c
         eoff += m.edges.shape[0]
         foff += m.quad_mesh.n_quads
-        elem_off += m.hexes.shape[0]
+        elem_off += m.corners.shape[0]
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
     etags = ElementTags.concat(etag_list)
@@ -595,7 +595,7 @@ def merge(
                                        mm._edge_flip)
              for mm in meshes], axis=0)                    # (E,12,order-1,3)
         local_f: PointArray = np.concatenate(
-            [conform.gather_face_nodes(mm.quad_mesh.interior, mm.hex, mm.orient)
+            [conform.gather_face_nodes(mm.quad_mesh.interior, mm.hexes, mm.orient)
              for mm in meshes], axis=0)                    # (E,6,(order-1)**2,3)
         tol = conform.entity_tol(points)
         edge_nodes = conform.scatter_edge_nodes(
@@ -607,7 +607,7 @@ def merge(
     faces = _face_brep(points, edges, elem_edges, eflip, elem_faces, face_orient,
                        canonical_conn.shape[0], edge_nodes, face_nodes)
     # A face tag rides the face, so it waits for the merged face table: block ``m``'s
-    # local face ``m.hex[e, f]`` is merged face ``elem_faces[elem_off + e, f]``.  Two
+    # local face ``m.hexes[e, f]`` is merged face ``elem_faces[elem_off + e, f]``.  Two
     # blocks welding onto one shared face can each name it, so the combine is the
     # weld's own conflict rule rather than a concatenation -- which is the point of
     # storing the tag on the face: the disagreement is now visible instead of being
@@ -616,11 +616,11 @@ def merge(
     ftag_list: list[ElementTags] = []
     for m in meshes:
         mine: IntArray = np.full(m.quad_mesh.n_quads, -1, dtype=np.int64)
-        mine[np.asarray(m.hex, dtype=np.int64).ravel()] = np.asarray(
-            elem_faces[off:off + m.hexes.shape[0]], dtype=np.int64).ravel()
+        mine[np.asarray(m.hexes, dtype=np.int64).ravel()] = np.asarray(
+            elem_faces[off:off + m.corners.shape[0]], dtype=np.int64).ravel()
         ftag_list.append(m.face_tags.renumber(mine))
-        off += m.hexes.shape[0]
-    faces = QuadMesh(faces.line_mesh, faces.quad, faces.orient, faces.interior,
+        off += m.corners.shape[0]
+    faces = QuadMesh(faces.line_mesh, faces.quads, faces.orient, faces.interior,
                      welded_element_tags(ftag_list, "HexMesh.merge"))
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
@@ -633,7 +633,7 @@ def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
     them.  The ``face_orient`` codes survive untouched: they describe each hex's frame
     against its own canonical face row, and dropping a *neighbour* changes neither."""
     kept, new_hex_of = conform.renumber_map(keep)
-    hexes: IntArray = mesh.hex[kept]
+    hexes: IntArray = mesh.hexes[kept]
     face_keep: BoolArray = np.zeros(mesh.quad_mesh.n_quads, dtype=bool)
     if hexes.size:
         face_keep[np.unique(hexes)] = True
@@ -680,7 +680,7 @@ def components(mesh: HexMesh) -> list[HexMesh]:
     What :func:`topology_report <nekmeshpy.hexmesh.query.topology_report>` tells you
     *about*
     (a mesh that turned out to be two bodies), this hands you as meshes."""
-    n, labels = conform.element_components(mesh.hexes, mesh.n_points)
+    n, labels = conform.element_components(mesh.corners, mesh.n_points)
     return [_subset(mesh, labels == c)[0] for c in range(n)]
 
 

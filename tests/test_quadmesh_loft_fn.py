@@ -46,7 +46,7 @@ def _ring_fractions(n=NV):
 
 def _nodes(qm):
     """Every conformal node of the section, corners and high-order alike."""
-    nodes, _ = conform.conformal_quad(qm.points, qm.quads, qm.quad, qm.orient,
+    nodes, _ = conform.conformal_quad(qm.points, qm.corners, qm.quads, qm.orient,
                                       qm.line_mesh.interior, qm.interior, qm.order)
     return nodes
 
@@ -94,7 +94,7 @@ def test_loop_gives_a_closed_surface_with_no_duplicated_layer(order):
     assert torus.n_points == NU * NV        # no seam profile duplicated
     assert torus.n_quads == NU * NV         # NV layers, not NV-1
     # a torus is closed: every edge is shared by exactly two quads
-    edges, elem_edges, _ = conform.unique_edges(torus.quads, 2)
+    edges, elem_edges, _ = conform.unique_edges(torus.corners, 2)
     counts = np.zeros(edges.shape[0], dtype=np.int64)
     np.add.at(counts, elem_edges.ravel(), 1)
     assert np.all(counts == 2)
@@ -135,8 +135,8 @@ def test_order_one_equals_a_plain_loft_of_the_same_profiles(loop):
     got = quadmesh.loft_fn(f, fr, loop=loop, order=1)
     want = quadmesh.loft([f(t) for t in (fr[:-1] if loop else fr)], loop=loop)
     assert np.array_equal(got.points, want.points)
+    assert np.array_equal(got.corners, want.corners)
     assert np.array_equal(got.quads, want.quads)
-    assert np.array_equal(got.quad, want.quad)
     assert np.array_equal(got.orient, want.orient)
 
 
@@ -229,7 +229,7 @@ def test_sweep_nodes_at_order_one_is_ignored_not_an_error():
     got = quadmesh.loft(slices, sweep_nodes=[[], []])
     want = quadmesh.loft(slices)
     assert np.array_equal(got.points, want.points)
-    assert np.array_equal(got.quads, want.quads)
+    assert np.array_equal(got.corners, want.corners)
 
 
 def test_straight_sweep_nodes_reproduce_the_plain_loft():

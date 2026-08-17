@@ -7,6 +7,7 @@ from typing import Any, NamedTuple, Union
 import numpy as np
 import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
+from scipy.spatial import cKDTree
 
 from .._typing import IntArray, PointArray
 from . import conform
@@ -119,6 +120,152 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
     return int(np.unique(k[on_edge]).size)
 
 
+#: ``_FACE_POINTS[i]``'s opposite face -- (eta=0, eta=1), (xi=1, xi=0), (zeta=0, zeta=1)
+#: in the corner numbering ``_CN`` (``hexmesh.quality.scaled_jacobian``) also reads
+#: local axes off of. ``fcenter[i] - fcenter[_OPPOSITE[i]]`` is therefore a robust
+#: outward direction for face ``i`` -- along the hex's own parametric axis, wrong only
+#: if the hex is squashed to zero thickness along it, a much weaker degeneracy than
+#: "which side of the centroid".
+_OPPOSITE = np.array([2, 3, 0, 1, 5, 4], dtype=np.int64)
+
+
+def _anchored_face_points(X: PointArray, HC: IntArray) -> PointArray:
+    """``(N,6,4,3)`` face corner points, each face's own 4-point cyclic sequence
+    rotated to start at whichever corner holds the *smallest global point id* --
+    not an arbitrary hex-local starting corner (``_FACE_POINTS``' own ``[0]``).
+
+    This is what lets two hexes that share a face agree, point-set for point-set,
+    on how it splits into 2 triangles: the shared face is one physical quad but two
+    *different* local corner orderings (each hex enumerates it starting from its own
+    unrelated corner 0, one hex's winding the reverse of the other's), so anchoring
+    on ``_FACE_POINTS[..., 0]`` picks two different diagonals -- and on a warped
+    (non-planar) face, routine on curved geometry, those two triangulations are
+    measurably different surfaces, not the same one twice. Anchoring on the global
+    id instead is winding- and starting-point-independent: rotating a cyclic
+    sequence to a fixed *value* rather than a fixed *position* lands on the same
+    physical corner regardless of which hex is doing the enumerating."""
+    fids = HC[:, _FACE_POINTS]                                 # (N,6,4) global ids
+    anchor = np.argmin(fids, axis=2)                           # (N,6)
+    roll = (anchor[:, :, None] + np.arange(4)[None, None, :]) % 4   # (N,6,4)
+    fpts = X[HC][:, _FACE_POINTS, :]                           # (N,6,4,3)
+    return np.take_along_axis(fpts, np.broadcast_to(roll[..., None], fpts.shape),
+                              axis=2)
+
+
+def _hex_geometry(X: PointArray, HC: IntArray) -> tuple[
+        PointArray, PointArray, PointArray, PointArray]:
+    """Per-hex centroid, bounding-sphere radius, and each of its 6 quad faces split
+    into 2 triangles (12 total) as an exact ``(N,12,3)`` vertex + outward unit normal
+    pair -- a genuinely planar constraint each, unlike one average plane per quad
+    face, which a warped (non-planar) face -- routine on curved geometry -- can be
+    off by a fraction of the element's own size, several orders past floating-point
+    noise. Orientation comes from the hex's own parametric axes (a face's triangles
+    vs. its opposite face's centre), not the stored corner winding or a
+    centroid-relative heuristic, either of which a skewed element can fool."""
+    corners = X[HC]                                          # (N,8,3)
+    centroid = corners.mean(axis=1)                           # (N,3)
+    radius = np.linalg.norm(corners - centroid[:, None, :], axis=2).max(axis=1)
+    fpts = _anchored_face_points(X, HC)                        # (N,6,4,3)
+    fcenter = fpts.mean(axis=2)                                # (N,6,3)
+    opp_center = fcenter[:, _OPPOSITE, :]
+    # triangles (a,b,c) and (a,c,d) of each face [a,b,c,d]
+    tri_a = np.stack([fpts[:, :, 0, :], fpts[:, :, 0, :]], axis=2)   # (N,6,2,3)
+    tri_b = np.stack([fpts[:, :, 1, :], fpts[:, :, 2, :]], axis=2)
+    tri_c = np.stack([fpts[:, :, 2, :], fpts[:, :, 3, :]], axis=2)
+    normal = np.cross(tri_b - tri_a, tri_c - tri_a)            # (N,6,2,3)
+    out = fcenter[:, :, None, :] - opp_center[:, :, None, :]
+    sign = np.sign(np.einsum("nftd,nftd->nft", normal, out))
+    sign[sign == 0.0] = 1.0
+    normal = normal * sign[..., None]
+    length = np.linalg.norm(normal, axis=-1, keepdims=True)
+    length[length == 0.0] = 1.0
+    normal = (normal / length).reshape(-1, 12, 3)
+    vertex = tri_a.reshape(-1, 12, 3)
+    return centroid, radius, vertex, normal
+
+
+def _hex_sample_points(X: PointArray, HC: IntArray) -> PointArray:
+    """``(N,20,3)``: each hex's 8 corners plus the centroid of each of its 12
+    triangles (the same anchored split ``_hex_geometry`` constrains against, so a
+    sample point on a face shared with another hex is exactly what that hex's own
+    constraint surface was built from too) -- what
+    :func:`_count_overlapping_pairs` samples from one hex to test against another.
+    Corners alone would miss a face bulging into a neighbour without any corner
+    crossing it; a quad face's own *average*-of-4-corners centre is not that
+    fallback, though -- on a warped face that average can sit slightly off the true
+    (triangulated) surface. A triangle centroid has no such gap: it is exactly on
+    its own (necessarily planar) triangle by construction."""
+    corners = X[HC]                                          # (N,8,3)
+    fpts = _anchored_face_points(X, HC)                        # (N,6,4,3)
+    tri1 = fpts[:, :, (0, 1, 2), :].mean(axis=2)               # (N,6,3)
+    tri2 = fpts[:, :, (0, 2, 3), :].mean(axis=2)               # (N,6,3)
+    return np.concatenate([corners, tri1, tri2], axis=1)       # (N,20,3)
+
+
+#: Pairs processed per :func:`_points_inside` batch. The natural vectorization is one
+#: ``(K,20,12,3)`` array per direction -- at the full candidate count of a large mesh
+#: (bounding-*sphere* broad phase over-collects badly for cube-like elements, whose
+#: corner-to-corner diagonal touches far more neighbours than the faces that matter)
+#: that is gigabytes, not a speed cost but a memory-thrashing one; chunking keeps each
+#: allocation bounded without changing the answer.
+_OVERLAP_BATCH = 50_000
+
+
+def _points_inside(sample: PointArray, vertex: PointArray, normal: PointArray,
+                   tol: float) -> IntArray:
+    """``(K,)`` bool: for each pair ``k``, whether any of ``sample[k]``'s points sits
+    strictly inside the hex whose 12 triangle vertices/normals are
+    ``vertex[k]``/``normal[k]`` (past every triangle's own plane, by ``tol``)."""
+    K = sample.shape[0]
+    out = np.zeros(K, dtype=bool)
+    for lo in range(0, K, _OVERLAP_BATCH):
+        hi = min(lo + _OVERLAP_BATCH, K)
+        diff = sample[lo:hi, :, None, :] - vertex[lo:hi, None, :, :]   # (k,P,12,3)
+        dist = np.einsum("kpfd,kfd->kpf", diff, normal[lo:hi])
+        out[lo:hi] = np.any(np.all(dist < -tol, axis=2), axis=1)
+    return out
+
+
+def _count_overlapping_pairs(X: PointArray, HC: IntArray) -> int:
+    """Pairs of hexes whose volumes geometrically overlap: any of one's own corners
+    or triangle centroids sits strictly inside the other, past a half-space test on
+    all 12 of its (triangulated) face planes (assumes each hex is star-convex about
+    its own centroid, true of any non-degenerate element). Adjacent (face-sharing)
+    pairs are not excluded -- two
+    elements can share a face *and* still fold into each other beyond it, which is
+    exactly the kind of defect this is meant to catch; their shared face's own corners
+    sit exactly on that boundary (distance ~0) rather than strictly inside, so a
+    normal, non-overlapping adjacency does not falsely trip this on its own."""
+    N = HC.shape[0]
+    if N < 2:
+        return 0
+    centroid, radius, vertex, normal = _hex_geometry(X, HC)
+    samples = _hex_sample_points(X, HC)
+    scale = float(np.max(X.max(axis=0) - X.min(axis=0))) if X.size else 0.0
+    tol = 1e-6 * (scale if scale > 0.0 else 1.0)
+
+    tree = cKDTree(centroid)
+    pairs = tree.query_pairs(r=2.0 * float(radius.max()), output_type="ndarray")
+    if pairs.size == 0:
+        return 0
+    d = np.linalg.norm(centroid[pairs[:, 0]] - centroid[pairs[:, 1]], axis=1)
+    keep = d < (radius[pairs[:, 0]] + radius[pairs[:, 1]])
+    pairs, d = pairs[keep], d[keep]
+    if pairs.size == 0:
+        return 0
+
+    i, j = pairs[:, 0], pairs[:, 1]
+    i_in_j = _points_inside(samples[i], vertex[j], normal[j], tol)
+    j_in_i = _points_inside(samples[j], vertex[i], normal[i], tol)
+    # a perfect duplicate (identical geometry stacked on itself) has every one of its
+    # sample points sitting exactly *on* the other's boundary rather than strictly
+    # inside it, which the half-space test above cannot see -- coincident centroids
+    # are the signature of that degenerate case, since two distinct non-overlapping
+    # elements never share one.
+    coincident = d < tol
+    return int(np.count_nonzero(i_in_j | j_in_i | coincident))
+
+
 # -- hex (volume) meshes ------------------------------------------------
 def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
     """Topology / watertightness report for an all-hex mesh."""
@@ -170,6 +317,26 @@ def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
 def is_watertight(points: PointArray, hexes: IntArray) -> bool:
     """``True`` if the all-hex mesh's boundary is a closed 2-manifold."""
     return hex_report(points, hexes).watertight
+
+
+def count_overlapping_pairs(points: PointArray, hexes: IntArray) -> int:
+    """Number of hex pairs whose volumes geometrically overlap (see
+    :func:`_count_overlapping_pairs`) -- independent of, and not part of,
+    :func:`hex_report`: unlike watertight/conformal (a fixed-size facet-incidence
+    scan), this is a geometric broad-then-narrow-phase search whose candidate count
+    can run into the hundreds of thousands on a large mesh, so it is not folded into
+    the fast report every :func:`is_watertight`/:func:`is_conforming` call already
+    pays for -- call it explicitly where the extra work is wanted (a summary,
+    typically, alongside those two)."""
+    X = np.asarray(points, dtype=float)
+    HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
+    return _count_overlapping_pairs(X, HC)
+
+
+def is_overlap_free(points: PointArray, hexes: IntArray) -> bool:
+    """``True`` if no two hexes geometrically overlap (see
+    :func:`count_overlapping_pairs`)."""
+    return count_overlapping_pairs(points, hexes) == 0
 
 
 # -- triangle (surface) meshes ------------------------------------------

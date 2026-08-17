@@ -123,7 +123,7 @@ def test_one_placement_per_fraction(path):
     out = quadmesh.place_on_path(sec, path, fr, orientation="fixed",
                                  up=(0.0, 1.0, 0.0), origin=np.asarray(CENTER))
     assert len(out) == len(fr)
-    assert all(np.array_equal(q.quads, sec.quads) for q in out)
+    assert all(np.array_equal(q.corners, sec.corners) for q in out)
 
 
 def test_placements_are_rigid(path):

@@ -105,7 +105,7 @@ def test_quad_loft_loop_builds_a_closed_torus_surface(order):
     assert torus.n_points == NSEC * NRING
 
     # every stored line is referenced by exactly two quads -> zero free edges
-    counts = np.bincount(torus.quad.ravel(), minlength=torus.line_mesh.n_lines)
+    counts = np.bincount(torus.quads.ravel(), minlength=torus.line_mesh.n_lines)
     assert int(np.sum(counts == 1)) == 0        # free boundary edges
     assert int(np.sum(counts == 0)) == 0        # unreferenced lines
     assert np.all(counts == 2)
@@ -116,12 +116,12 @@ def test_quad_loft_loop_builds_a_closed_torus_surface(order):
 
     # every corner pair shared by two quads resolves to the SAME line index
     seen = {}
-    quads = torus.quads
+    quads = torus.corners
     for e in range(quads.shape[0]):
         for k in range(4):
             u, v = int(quads[e, k]), int(quads[e, (k + 1) % 4])
             pair = (min(u, v), max(u, v))
-            lid = int(torus.quad[e, k])
+            lid = int(torus.quads[e, k])
             assert seen.setdefault(pair, lid) == lid
     assert len(seen) == torus.line_mesh.n_lines
 
@@ -141,7 +141,7 @@ def test_quad_loft_loop_beats_repeating_the_first_profile():
     assert closed.n_points < repeated.n_points
     assert closed.line_mesh.n_lines < repeated.line_mesh.n_lines
     # ... and the repeated stack is *not* closed: it has free cap edges
-    counts = np.bincount(repeated.quad.ravel(),
+    counts = np.bincount(repeated.quads.ravel(),
                          minlength=repeated.line_mesh.n_lines)
     assert int(np.sum(counts == 1)) == 2 * NRING
 
@@ -159,7 +159,7 @@ def test_quad_loft_loop_emits_no_cap_rows_but_keeps_side_walls():
     assert len(closed.edge_tags) == 2 * 4
     # every tagged edge is a swept side wall, never a carried seam edge: the seam ones
     # are the profile's own lines, which a closed sweep leaves unnamed
-    seam = set(np.asarray(closed.quad, dtype=int)[:, (0, 2)].ravel().tolist())
+    seam = set(np.asarray(closed.quads, dtype=int)[:, (0, 2)].ravel().tolist())
     assert not seam & set(closed.edge_tags.ids.tolist())
 
 
@@ -170,7 +170,7 @@ def test_hex_loft_loop_builds_a_watertight_solid_torus(order):
     conformal, one component, and the only free faces are the outer wall."""
     profiles = _disc_profiles(order=order)
     solid = hexmesh.loft(profiles, loop=True)
-    report = topology.hex_report(solid.points, solid.hexes)
+    report = topology.hex_report(solid.points, solid.corners)
     assert report.n_components == 1
     assert report.n_nonmanifold_faces == 0
     assert report.n_hanging_points == 0
@@ -193,8 +193,8 @@ def test_hex_loft_loop_beats_repeating_the_first_profile():
     assert closed.n_hexes == repeated.n_hexes
     assert closed.n_points < repeated.n_points
     # the open stack still has its two cap face layers
-    open_report = topology.hex_report(repeated.points, repeated.hexes)
-    closed_report = topology.hex_report(closed.points, closed.hexes)
+    open_report = topology.hex_report(repeated.points, repeated.corners)
+    closed_report = topology.hex_report(closed.points, closed.corners)
     assert (open_report.n_boundary_faces
             > closed_report.n_boundary_faces)
 

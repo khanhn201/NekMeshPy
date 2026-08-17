@@ -38,7 +38,6 @@ N_SPAN = 4                   # hex layers across the span
 ORDER = 2                    # polynomial order; 1 = linear. High order bows the
                              # ring's inner wall onto the true circle (curved
                              # .vtu; .re2 stays linear either way)
-SMOOTHING_METHOD = None  # per-section interior repositioning
 OUT_NAME = "flow_past_cylinder"
 
 # boundary name -> Nek BC code, applied only at export
@@ -56,8 +55,7 @@ inner = linemesh.circle(R, N_THETA, start_theta=CORNER,
 outer = linemesh.rectangle(2 * HALF_BOX, 2 * HALF_BOX, N_THETA, order=ORDER,
                            side_tags={"bottom": "bottom", "right": "outlet", "top": "top", "left": "inlet"})
 
-section = quadmesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING),
-                           smoothing_method=SMOOTHING_METHOD)
+section = quadmesh.annulus(inner, outer, geometric_spacing(N_RADIAL, RADIAL_GRADING))
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the section along +z; edge names ride onto the side faces

@@ -25,7 +25,7 @@ def _elevate(qm: QuadMesh, order: int,
     if order == 1:
         return qm
     points: PointArray = qm.points
-    quads: IntArray = qm.quads
+    quads: IntArray = qm.corners
     nq = quads.shape[0]
     params = tensor_nodes(order, 2)                     # (M,2) in [0,1], i fastest
     u, v = params[:, 0], params[:, 1]
@@ -78,9 +78,9 @@ def _elevate(qm: QuadMesh, order: int,
         local, elem_edges, flip, edges.shape[0],
         conform.entity_tol(points), "QuadMesh._elevate")
     # the edge table is rebuilt here, so the tags are carried onto the new ids
-    # rather than reused: local edge ``qm.quad[q, s]`` becomes ``elem_edges[q, s]``
+    # rather than reused: local edge ``qm.quads[q, s]`` becomes ``elem_edges[q, s]``
     mine: IntArray = np.full(qm.line_mesh.n_lines, -1, dtype=np.int64)
-    mine[np.asarray(qm.quad, dtype=np.int64).ravel()] = np.asarray(
+    mine[np.asarray(qm.quads, dtype=np.int64).ravel()] = np.asarray(
         elem_edges, dtype=np.int64).ravel()
     lm = LineMesh(points, edges, interior=edge_nodes,
                   element_tags=qm.edge_tags.renumber(mine))
@@ -98,17 +98,6 @@ def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray
         local, elem_edges, flip, edges.shape[0], conform.entity_tol(points), who)
     lm = LineMesh(points, edges, interior=edge_nodes)
     return lm, elem_edges, flip, interior
-
-
-def _apply_smoothing(qm: QuadMesh, smoothing_method: str | None) -> QuadMesh:
-    """``qm`` with its interior points repositioned (``None`` = no smoothing).
-
-    Returns a new section -- the smoothers build one rather than writing through the
-    live ``points`` -- so the result has to be taken, not assumed."""
-    if smoothing_method is None:
-        return qm
-    from . import smoothing
-    return smoothing.set_section_smoothing(qm, smoothing_method)
 
 
 def _check_boundary(obj: LineMesh, name: str, min_pts: int) -> PointArray:

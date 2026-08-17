@@ -32,7 +32,7 @@ def _boundary_mask(quads: IntArray) -> tuple[IntArray, BoolArray]:
 def boundary_edges(mesh: QuadMesh) -> IntArray:
     """``(K,2)`` array of ``[quad id, local edge (1-4)]`` for every edge on
     the section boundary (borne by a single quad)."""
-    _, mask = _boundary_mask(mesh.quads)
+    _, mask = _boundary_mask(mesh.corners)
     rows = np.flatnonzero(mask)
     return np.column_stack([rows // 4, rows % 4 + 1]).astype(np.int64)
 
@@ -42,7 +42,7 @@ def boundary_elements(mesh: QuadMesh) -> IntArray:
 
 def boundary_points(mesh: QuadMesh) -> IntArray:
     """Sorted unique point ids lying on the section boundary."""
-    edges, mask = _boundary_mask(mesh.quads)
+    edges, mask = _boundary_mask(mesh.corners)
     be = edges[mask]
     return np.unique(be) if be.size else np.zeros(0, dtype=np.int64)
 
@@ -51,7 +51,7 @@ def scaled_jacobian(mesh: QuadMesh, *, high_order: bool = False) -> FloatArray:
     from . import quality
     if high_order:
         return quality.scaled_jacobian_ho(mesh, mesh.order)
-    return quality.scaled_jacobian(mesh.points, mesh.quads)
+    return quality.scaled_jacobian(mesh.points, mesh.corners)
 
 def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>` for the
@@ -59,7 +59,7 @@ def quality_summary(mesh: QuadMesh, *, high_order: bool = False) -> QualitySumma
     from . import quality
     if high_order:
         return quality.summary_ho(mesh, mesh.order)
-    return quality.summary(mesh.points, mesh.quads)
+    return quality.summary(mesh.points, mesh.corners)
 
 def plane_normal(mesh: QuadMesh, *,
                  hint: Vec3 | Sequence[float] | None = None,
@@ -87,9 +87,9 @@ def element_blocks(mesh: QuadMesh) -> PointArray:
     order = mesh.order
     row = order + 1
     out: PointArray = np.empty((mesh.n_quads, row * row, 3), dtype=float)
-    out[:, corner_indices(order, 2), :] = mesh.points[mesh.quads]
+    out[:, corner_indices(order, 2), :] = mesh.points[mesh.corners]
     out[:, conform._edge_slots(2, order)[:, 1:-1], :] = conform.gather_edge_nodes(
-        mesh.line_mesh.interior, mesh.quad, mesh.orient)
+        mesh.line_mesh.interior, mesh.quads, mesh.orient)
     out[:, conform._interior_slots(2, order), :] = mesh.interior
     return out
 
@@ -99,7 +99,7 @@ def _blocks(mesh: QuadMesh, high_order: bool) -> PointArray:
     straight-sided corner blocks it reduces to."""
     if high_order:
         return element_blocks(mesh)
-    return measure.corner_blocks(mesh.points, mesh.quads, 2)
+    return measure.corner_blocks(mesh.points, mesh.corners, 2)
 
 
 def bounds(mesh: QuadMesh, *, high_order: bool = False) -> measure.Bounds:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import struct
 from collections.abc import Callable, Mapping
@@ -17,9 +18,11 @@ from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
 from ..core.physical import PhysicalGroup, PhysicalGroups
 from ..hexmesh import HexMesh
+from ..hexmesh.lower import boundary_mesh
 from ..hexmesh.query import face_tag_rows
 from ..linemesh import LineMesh
 from ..quadmesh import QuadMesh
+from ..quadmesh.assemble import select as quadmesh_select
 
 # VTK cell-type ids: linear + high-order (Lagrange) line / quad / hex.
 _VTK_LINE = 3
@@ -52,7 +55,7 @@ def _export_rows(mesh: HexMesh, g: PhysicalGroups
     the face has a single name. A region whose code is ``None`` contributes no row,
     which is how a face gets a condition from one side only."""
     rows, names = face_tag_rows(mesh)
-    regions = mesh.element_tags.dense(mesh.hex.shape[0])
+    regions = mesh.element_tags.dense(mesh.hexes.shape[0])
     out: list[tuple[int, int, str, str]] = []
     for (elem, face), name in zip(rows.tolist(), names.tolist()):
         grp = g.get(name)
@@ -90,7 +93,7 @@ def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
 def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
-    X, HC = mesh.points, mesh.hexes
+    X, HC = mesh.points, mesh.corners
     g = _as_groups(mesh, groups)
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
@@ -156,7 +159,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg) -> HexMesh:
             'e.g. groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "}.'
             % (", ".join(repr(n) for n in mesh.face_group_tags) or "no named faces"))
     g = _as_groups(mesh, groups)
-    elements = mesh.points[mesh.hexes]            # (N,8,3) per-element coords
+    elements = mesh.points[mesh.corners]            # (N,8,3) per-element coords
     bnd = _export_rows(mesh, g)
     num_elem = elements.shape[0]
     with open(filename, "wb") as fid:
@@ -190,8 +193,8 @@ def to_fld(mesh: HexMesh, filename: str, *,
         raise ValueError("wdsz must be 4 (single) or 8 (double), got %r" % (wdsz,))
     order = mesh.order
     nodes, conn_ho = conform.conformal_hex(
-        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.points, mesh.corners, mesh._elem_edges, mesh._edge_flip,
+        mesh.quad_mesh.line_mesh.interior, mesh.hexes, mesh.orient,
         mesh.quad_mesh.interior, mesh.interior, order)
     blocks = nodes[conn_ho]                       # (E, (order+1)**3, 3), i fastest
     nel = blocks.shape[0]
@@ -317,7 +320,7 @@ def _hex_arrays(mesh: HexMesh,
     conformal (shared-node) ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per
     cell) above it, whose face nodes inherit the boundary face's tag."""
     if mesh.order == 1:
-        elements = mesh.points[mesh.hexes]               # (N,8,3) per-element coords
+        elements = mesh.points[mesh.corners]               # (N,8,3) per-element coords
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
@@ -329,8 +332,8 @@ def _hex_arrays(mesh: HexMesh,
     order = mesh.order
     perm = _lagrange_hex_perm(order)
     nodes, conn_ho = conform.conformal_hex(
-        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.points, mesh.corners, mesh._elem_edges, mesh._edge_flip,
+        mesh.quad_mesh.line_mesh.interior, mesh.hexes, mesh.orient,
         mesh.quad_mesh.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
@@ -361,11 +364,11 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
     (shared-node) ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes per cell)
     above it."""
     if mesh.order == 1:
-        blocks = mesh.points[mesh.quads]                 # (Q,4,3)
+        blocks = mesh.points[mesh.corners]                 # (Q,4,3)
         Q, m, _ = blocks.shape
         return blocks.reshape(Q * m, 3), _unwelded(Q, m), _VTK_QUAD
     nodes, conn_ho = conform.conformal_quad(
-        mesh.points, mesh.quads, mesh.quad, mesh.orient, mesh.line_mesh.interior,
+        mesh.points, mesh.corners, mesh.quads, mesh.orient, mesh.line_mesh.interior,
         mesh.interior, mesh.order)
     perm = _lagrange_quad_perm(mesh.order)
     nodes = _to_equispaced(nodes, conn_ho, mesh.order, 2)
@@ -478,14 +481,118 @@ def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True) -> QuadMesh:
     return mesh
 
 
+# -- .vtp (lightweight surface, for e.g. an in-browser viewer) ----------
+def _write_vtp(fname: str, X: PointArray, conn: IntArray, *,
+               bc_out: IntArray | None = None, binary: bool = True) -> None:
+    """XML VTK PolyData (``.vtp``): ``X`` is the ``(P,3)`` point array and ``conn`` the
+    ``(N,4)`` per-quad **corner** connectivity into it (shared/welded ids), written as
+    4-point polygons -- no triangulation needed, a VTK polygon takes any vertex count.
+    ``bc_out``, when given, is a per-cell ``bc_id`` (one tag id per quad; a surface has
+    no interior, so this is cell data rather than the ``.vtu`` writer's point data)."""
+    P = X.shape[0]
+    N, m = conn.shape
+    offsets: IntArray = np.arange(m, m * N + 1, m, dtype=np.int64)
+    fmt = "binary" if binary else "ascii"
+
+    def block(a: IntArray | PointArray, rows: Callable[[], str]) -> str:
+        return "          %s\n" % _b64(a) if binary else rows()
+
+    with open(fname, "w") as fid:
+        fid.write('<?xml version="1.0"?>\n')
+        fid.write('<VTKFile type="PolyData" version="1.0" '
+                  'byte_order="LittleEndian" header_type="UInt64">\n')
+        fid.write("  <PolyData>\n")
+        fid.write('    <Piece NumberOfPoints="%d" NumberOfVerts="0" NumberOfLines="0" '
+                  'NumberOfStrips="0" NumberOfPolys="%d">\n' % (P, N))
+        fid.write("      <Points>\n")
+        fid.write('        <DataArray type="Float64" NumberOfComponents="3" '
+                  'format="%s">\n' % fmt)
+        fid.write(block(np.asarray(X, dtype=np.float64),
+                        lambda: "".join("          %.17g %.17g %.17g\n" % (x, y, z)
+                                        for x, y, z in X.tolist())))
+        fid.write("        </DataArray>\n")
+        fid.write("      </Points>\n")
+        fid.write("      <Polys>\n")
+        fid.write('        <DataArray type="Int64" Name="connectivity" '
+                  'format="%s">\n' % fmt)
+        fid.write(block(np.asarray(conn, dtype=np.int64),
+                        lambda: "".join("          %s\n" % " ".join(map(str, row))
+                                        for row in conn.tolist())))
+        fid.write("        </DataArray>\n")
+        fid.write('        <DataArray type="Int64" Name="offsets" format="%s">\n' % fmt)
+        fid.write(block(offsets,
+                        lambda: "".join("          %d\n" % o for o in offsets.tolist())))
+        fid.write("        </DataArray>\n")
+        fid.write("      </Polys>\n")
+        if bc_out is not None:
+            fid.write('      <CellData Scalars="bc_id">\n')
+            fid.write('        <DataArray type="Int32" Name="bc_id" '
+                      'format="%s">\n' % fmt)
+            fid.write(block(np.asarray(bc_out, dtype=np.int32),
+                            lambda: "".join("          %d\n" % v
+                                            for v in bc_out.tolist())))
+            fid.write("        </DataArray>\n")
+            fid.write("      </CellData>\n")
+        fid.write("    </Piece>\n")
+        fid.write("  </PolyData>\n")
+        fid.write("</VTKFile>\n")
+
+
+def boundary_to_vtp(mesh: HexMesh, fname: str, *, tag: str | None = None,
+                    binary: bool = True) -> QuadMesh:
+    """Write ``mesh``'s named faces as a lightweight VTK PolyData (``.vtp``) and a
+    per-poly ``bc_id``.
+
+    With no ``tag``, every face ``mesh.face_tags`` names is exported (via
+    :func:`quadmesh.select <nekmeshpy.quadmesh.assemble.select>` on ``mesh.quad_mesh``)
+    -- **not** :func:`hexmesh.boundary_mesh <nekmeshpy.hexmesh.lower.boundary_mesh>`'s
+    topological boundary, which drops interior planes on purpose (a T-junction's flux
+    plane, say) even though they carry a name. A mesh with no named faces at all falls
+    back to the topological boundary, untagged, so an unlabelled block still exports
+    *something*. Passing an explicit ``tag`` still selects one named group by way of
+    ``boundary_mesh`` (unchanged).
+
+    Always written **corners only**, regardless of ``mesh``'s order -- ``.vtp``'s
+    ``<Polys>`` has no curved-cell type (a VTK PolyData polygon is always flat), and a
+    viewer only needs the outline, not curved-node fidelity. Interior *volume* nodes are
+    dropped either way -- a viewer only shows the surface.
+
+    When the surface carries names, a sidecar ``<fname minus .vtp>.groups.json``
+    (``{bc_id: name}``) is written alongside it -- ``.vtp``'s own field-data support
+    is a poor fit for strings, and a viewer needs the names to label a per-group
+    visibility toggle (e.g. hiding a far-field box to see the body it encloses)."""
+    if tag is not None:
+        surf = boundary_mesh(mesh, tag)
+    elif len(mesh.face_tags):
+        surf = quadmesh_select(mesh.quad_mesh, mesh.face_tags.ids)
+    else:
+        surf = boundary_mesh(mesh)
+    nodes, conn = surf.points, surf.corners
+    names = surf.element_group_tags
+    bc_out: IntArray | None = None
+    if names:
+        name_to_id = {name: i + 1 for i, name in enumerate(names)}
+        dense = surf.element_tags.dense(surf.n_quads)
+        bc_out = np.array(
+            [name_to_id.get(str(n), 0) for n in dense.tolist()], dtype=np.int64)
+        groups_path = (fname[:-4] if fname.endswith(".vtp") else fname) + ".groups.json"
+        with open(groups_path, "w") as fid:
+            json.dump({str(i): name for name, i in name_to_id.items()}, fid)
+    _write_vtp(fname, nodes, conn, bc_out=bc_out, binary=binary)
+    return surf
+
+
 # -- reporting ----------------------------------------------------------
 def summary(mesh: HexMesh) -> None:
     """Log element/boundary counts, per-name face totals, and the topology report."""
     _log.info("mesh: %d hex elements, %d boundary faces",
-              mesh.hexes.shape[0], len(mesh.face_tags))
+              mesh.corners.shape[0], len(mesh.face_tags))
     for name in mesh.face_group_tags:
         _log.info("  %-14s: %d faces", name, mesh.face_tags.count(name))
-    rep = topology.hex_report(mesh.points, mesh.hexes)
+    rep = topology.hex_report(mesh.points, mesh.corners)
+    # topology.count_overlapping_pairs left out here too -- see hexmesh.query.report's
+    # own note; it is a geometric search too costly to run by default.
+    # n_overlap = topology.count_overlapping_pairs(mesh.points, mesh.corners)
     _log.info("  watertight=%s  conformal=%s  components=%d  "
               "non-manifold faces=%d  hanging points=%d",
               rep.watertight, rep.conformal, rep.n_components,

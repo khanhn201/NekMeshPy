@@ -2,82 +2,64 @@
 
 ## Indexing & coordinates
 
-- Triangle/vertex indices are **0-based** internally (input `.tri` is 1-based,
-  converted on load; `.re2` element ids are written 1-based).
-- Coordinates are plain NumPy arrays — **no `Point` class**; a single point is a
-  `(3,)` array. `LineMesh` holds a `(N,3)` `points` array + `(L,2)` `lines` (**3-D
-  input required — a `(N,2)` array is rejected, not padded**; `lines` is a
-  **required** constructor argument — the container never synthesizes a default
-  chain, so nothing in it can imply a wrap. Connectivity is authored one rung up by
-  {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>`, whose `loop=False` / `loop=True` spell
-  the chain and the ring); the mesh containers
-  (`TriMesh` / `QuadMesh` / `HexMesh` / `Mesh`) store a `(P,3)` `points` array
-  (mutate with `mesh.points[:] = X`).
+- Indices are **0-based** internally (input `.tri` is 1-based, converted on
+  load; `.re2` element ids are written 1-based).
+- No `Point` class — a single point is a `(3,)` array; every container stores
+  a `(P,3)` `points` array, mutable in place (`mesh.points[:] = X`).
+- `LineMesh` requires 3-D input (a `(N,2)` array is rejected, not padded) and a
+  **required** `lines` connectivity argument — nothing implies a default
+  chain or wrap. {func}`linemesh.loft <nekmeshpy.linemesh.assemble.loft>`
+  authors one explicitly via `loop=False`/`loop=True`.
 
 ## HexMesh immutability & storage
 
-`HexMesh` is **immutable by construction**: build it with a factory (`extrude` /
-`loft` / `annulus` / `merge` / `from_grid`) or the array constructor. `extrude` /
-`loft` are shared-point (conformal slices → index arithmetic); `merge` is the one
-place seam points are coordinate-welded. `loft` is the **same primitive at all three
-rungs** (`LineMesh` / `QuadMesh` / `HexMesh`), each with a `loop: bool = False` flag
-that closes the sweep back onto the first profile — see
-[Concepts](../user/concepts.md).
+`HexMesh` is immutable by construction: build it with a factory (`extrude`/
+`loft`/`annulus`/`merge`/`from_grid`) or the array constructor. `extrude`/
+`loft` are shared-point (index arithmetic, no weld); `merge` is the one place
+seam points are coordinate-welded. `loft` is the same primitive at all three
+rungs, each with `loop: bool = False` closing the sweep — see {doc}`concepts`.
 
-Its stored state is the **B-rep**: a `quads` `QuadMesh` of the shared faces, `hex`
-`(E,6)` face incidence, `orient` `(E,6)` D4 codes and `interior`
-`(E,(order-1)**3,3)`. `points` `(P,3)` and `hexes` `(E,8)` (Nek point order) are
-**derived read-only views** over it, so corner consistency is structural rather than
-maintained — see [Concepts](../user/concepts.md#high-order-order-n-elements).
-Alongside it is `element_tags`, an `ElementTags` naming only the hexes that carry a
-region tag. `face_tags` is not a second table: it reads through to `quads.element_tags`,
-so a face is named **once, by id**, as the one object both its hexes reference. It is
-also *not* "the boundary" — it is the named subset of faces, while `boundary_faces()`
-derives the topological domain boundary from connectivity, and `tag_report()` counts
-where the two disagree. A **region** name (`"fluid"`, `"solid"`) belongs to the top
-rung's `element_tags` only: one rung down an element is a piece of a *surface*, so its
-`element_tags` should be the boundary name that face will carry once lifted. Nothing
-enforces it, but `first_tag`/`last_tag` default to the bounding slice's own
-`element_tags`, so a section tagged `"fluid"` exports its caps as a `"fluid"` boundary
-condition. Renaming either vocabulary without touching the other is what
-`retag_element` / `retag_face` are for.
-`QuadMesh` mirrors this one dimension down (a `lines` `LineMesh` of the shared edges +
-`quad`/`orient`/`interior`, its `edge_tags` reading through to
-`line_mesh.element_tags`);
-`LineMesh` does the same onto a `PointMesh`, which is the ladder's bottom rung and
-carries nothing but coordinates and their tags. Exporters expand via `points[hexes]`. Coordinates may be repositioned in place — writing
-`mesh.points[:] = X` hits the single source of truth and every rung sees it —
-but topology is fixed.
+Stored state is the B-rep: a `quad_mesh` (`QuadMesh` of the shared faces),
+`hexes` `(E,6)` face incidence, `orient` `(E,6)` D4 codes, `interior`
+`(E,(order-1)**3,3)`. `points` and `corners` `(E,8)` are **derived read-only
+views** — corner consistency is structural, not maintained (see
+{doc}`concepts` § high-order elements). `element_tags` names only the hexes
+carrying a region tag. `face_tags` reads through to `quad_mesh.element_tags`
+— a face is named once, by id, as the one object both its hexes reference —
+and is **not** "the boundary": it's the named subset of faces, while
+`boundary_faces()` derives the topological boundary from connectivity;
+`tag_report()` counts where the two disagree. A region name (`"fluid"`,
+`"solid"`) belongs only to the top rung's `element_tags` — one rung down, an
+element's `element_tags` is the boundary name it becomes once lifted (not
+enforced, but `first_tag`/`last_tag` default to the bounding slice's own tag,
+so a `"fluid"`-tagged section exports `"fluid"` caps). `retag_element`/
+`retag_face` rename one vocabulary without touching the other.
+
+`QuadMesh` mirrors this one rung down (`line_mesh` + `quads`/`orient`/
+`interior`, `edge_tags` reading through to `line_mesh.element_tags`);
+`LineMesh` does the same onto a `PointMesh`, the ladder's bottom rung, holding
+only coordinates and their tags. Topology is fixed; coordinates aren't.
 
 ## Strong typing
 
-Enforced — `mypy` runs with `disallow_untyped_defs`, `check_untyped_defs`, and
+Enforced — `mypy` runs `disallow_untyped_defs`, `check_untyped_defs`,
 `disallow_any_generics`. Everything in `nekmeshpy/` is annotated.
 
-- Geometry-object parameters take the concrete type (`LineMesh`, etc.), no
-  `| np.ndarray` fallback; open-vs-closed is not a type and not a stored flag —
-  it is read off the `lines` connectivity. Only vector
-  *literals* (axis / origin / center) use `Sequence[float] | FloatArray`.
-- Numeric internals use the dtype aliases in `nekmeshpy._typing` — `FloatArray`
-  (`NDArray[np.float64]`), `IntArray` (`NDArray[np.int64]`), `BoolArray` (masks),
-  `StrArray` (`NDArray[np.str_]`, tags) — **never a bare `np.ndarray`**, which
-  `disallow_any_generics` rejects (use an explicit `NDArray[...]` for other dtypes).
-- `Point` / `Vec3` / `PointArray` are **shape-documentation aliases** of
-  `FloatArray` for a single `(3,)` location / a single `(3,)` direction / **any**
-  array of point coordinates whose **trailing axis is the 3 spatial components**
-  (any leading shape — `(P,3)`, `(L,order-1,3)`, `(ni+1,nj+1,3)`,
-  `(E,6,(order-1)**2,3)`). The concrete shape belongs in the field's or parameter's
-  docstring; the alias does not encode it. Real data that is *not* a position stays
-  `FloatArray` — blend fractions, layer positions, grading, GLL nodes/weights and
-  interpolation matrices, quality metrics, tolerances. numpy has
-  no static shape checking, so they are interchangeable with `FloatArray` to mypy.
-- `SmoothingMethod` — the literal set every section factory's `smoothing_method=`
-  accepts — lives there too, rather than in the region-fill module that happens to
-  be its heaviest user.
-
+- Geometry parameters take the concrete type (`LineMesh`, etc.), no
+  `| np.ndarray` fallback. Open-vs-closed isn't a type or stored flag — read
+  it off `lines`. Vector *literals* (axis/origin/center) use
+  `Sequence[float] | FloatArray`.
+- Use the dtype aliases in `nekmeshpy._typing` — `FloatArray`, `IntArray`,
+  `BoolArray`, `StrArray` — never a bare `np.ndarray` (`disallow_any_generics`
+  rejects it).
+- `Point`/`Vec3`/`PointArray` are shape-*documentation* aliases of
+  `FloatArray` (single `(3,)` location/direction, or any array whose trailing
+  axis is the 3 spatial components) — the concrete shape belongs in the
+  docstring. Non-position float data (fractions, grading, GLL nodes, quality
+  metrics, tolerances) stays plain `FloatArray`.
 The package ships a `py.typed` marker.
 
 ## Logging
 
-Progress goes through the `nekmeshpy` logger; configure it in your script (e.g.
-`logging.basicConfig(level=logging.INFO, format="%(message)s")`).
+Progress goes through the `nekmeshpy` logger; configure it in your script
+(e.g. `logging.basicConfig(level=logging.INFO, format="%(message)s")`).

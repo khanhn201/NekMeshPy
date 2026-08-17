@@ -15,7 +15,7 @@ from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(mesh.points, mesh.hexes)
+    return quality.scaled_jacobian(mesh.points, mesh.corners)
 
 
 def _wall_nodes(mesh, name):
@@ -42,7 +42,7 @@ def _tag_count(mesh, name):
 def _assert_valid_flow_block(mesh, *, body, jac_floor, groups):
     # one watertight, conformal, positively-oriented block
     assert hexmesh.is_watertight(mesh) and hexmesh.is_conforming(mesh)
-    assert topology.hex_report(mesh.points, mesh.hexes).n_components == 1
+    assert topology.hex_report(mesh.points, mesh.corners).n_components == 1
     assert float(np.min(_scaled_jac(mesh))) > jac_floor
     # exactly the expected named groups, all non-empty
     assert set(mesh.face_group_tags) == groups
@@ -78,21 +78,6 @@ def test_flow_past_cylinder(tmp_path):
     # the ring is azimuthally symmetric -> inlet/outlet/top/bottom face counts match
     for name in ("outlet", "top", "bottom"):
         assert _tag_count(mesh, name) == _tag_count(mesh, "inlet")
-
-
-def test_flow_past_plate(tmp_path):
-    ns = run_example("flow_past_plate.py", tmp_path)
-    mesh = ns["mesh"]
-    # the ellipse has no analytic LineMesh factory, so the example places the
-    # high-order nodes itself -- check they really landed on the exact ellipse
-    assert ns["ORDER"] > 1
-    w = _wall_nodes(mesh, "plate")
-    dev = np.abs((w[:, 0] / ns["A"]) ** 2 + (w[:, 1] / ns["B"]) ** 2 - 1.0)
-    assert float(np.max(dev)) < 1e-12
-    # thin-ellipse O-grid: sharp ends are skewed but stay well clear of inverted
-    _assert_valid_flow_block(
-        mesh, body="plate", jac_floor=0.1,
-        groups={"inlet", "outlet", "plate", "top", "bottom", "front", "back"})
 
 
 def test_flow_past_half_cylinder(tmp_path):

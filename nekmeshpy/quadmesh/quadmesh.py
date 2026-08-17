@@ -83,14 +83,14 @@ class QuadMesh:
     def __init__(
         self,
         line_mesh: LineMesh,
-        quad: IntArray,
+        quads: IntArray,
         orient: BoolArray,
         interior: PointArray | None = None,
         element_tags: ElementTags | None = None,
     ) -> None:
         """Construct from the B-rep directly: ``line_mesh`` (a ``LineMesh`` holding every
         shared edge -- its ``points`` are the shared corners, its ``lines`` the shared
-        edge connectivity, its ``interior`` the shared edge-interior HO nodes), ``quad``
+        edge connectivity, its ``interior`` the shared edge-interior HO nodes), ``quads``
         ``(Q,4)`` edge indices into ``line_mesh.lines`` (CCW local edge order), ``orient``
         ``(Q,4)`` bool (True where the quad traverses that edge anti-canonically), and
         ``interior`` ``(Q,(order-1)**2,3)`` private per-quad nodes (omit / ``None`` at
@@ -100,17 +100,17 @@ class QuadMesh:
                             % type(line_mesh).__name__)
         self.line_mesh = line_mesh
 
-        self.quad: IntArray = np.asarray(quad, dtype=np.int64).reshape(-1, 4)
+        self.quads: IntArray = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
         self.orient: BoolArray = np.asarray(orient, dtype=bool).reshape(-1, 4)
-        if self.orient.shape[0] != self.quad.shape[0]:
-            raise ValueError("QuadMesh: orient length (%d) must match quad (%d)"
-                             % (self.orient.shape[0], self.quad.shape[0]))
+        if self.orient.shape[0] != self.quads.shape[0]:
+            raise ValueError("QuadMesh: orient length (%d) must match quads (%d)"
+                             % (self.orient.shape[0], self.quads.shape[0]))
         F = line_mesh.n_lines                        # the rung below: shared edges
-        if self.quad.size and (self.quad.min() < 0 or self.quad.max() >= F):
+        if self.quads.size and (self.quads.min() < 0 or self.quads.max() >= F):
             raise ValueError(
-                "QuadMesh: quad must index the %d shared edges of ``line_mesh``; got ids "
-                "in [%d, %d]" % (F, int(self.quad.min()), int(self.quad.max())))
-        E = self.quad.shape[0]
+                "QuadMesh: quads must index the %d shared edges of ``line_mesh``; got ids "
+                "in [%d, %d]" % (F, int(self.quads.min()), int(self.quads.max())))
+        E = self.quads.shape[0]
 
         if interior is None:
             if self.order > 1:
@@ -132,7 +132,7 @@ class QuadMesh:
         self.element_tags = ElementTags.empty() if element_tags is None else element_tags
         self.element_tags.check_within(E)
 
-        # corner connectivity is derived from quad/flip and immutable post-construction
+        # corner connectivity is derived from quads/orient and immutable post-construction
         # (point moves don't change it), so memoize it once.
         self._corners: IntArray = self._derive_corners()
 
@@ -159,7 +159,7 @@ class QuadMesh:
                 "QuadMesh.loft(slices) from order-%d profiles), while the grid / "
                 "analytic factories take it directly (QuadMesh.from_grid(P, order=%d), "
                 "QuadMesh.rectangle(corners, nx, ny, order=%d)). Or construct "
-                "QuadMesh(lines, quad, flip, interior=...) directly from the entity "
+                "QuadMesh(lines, quads, flip, interior=...) directly from the entity "
                 "fields, where the order rides in on lines."
                 % (order, order, order, order, order))
         pts: PointArray = np.asarray(points, dtype=float).reshape(-1, 3)
@@ -181,9 +181,9 @@ class QuadMesh:
     def _derive_corners(self) -> IntArray:
         """Corner connectivity ``(Q,4)`` recovered from the edge indices + flip: column
         ``k`` of quad ``q`` is the directed **start** of its local edge ``k`` --
-        ``lines.lines[quad[q,k], 1 if flip[q,k] else 0]``."""
+        ``lines.lines[quads[q,k], 1 if flip[q,k] else 0]``."""
         ln = self.line_mesh.lines                          # (Ne,2) canonical edges
-        eid = self.quad                                # (Q,4) edge ids
+        eid = self.quads                                # (Q,4) edge ids
         start = np.where(self.orient, ln[eid, 1], ln[eid, 0])   # (Q,4)
         return start.astype(np.int64)
 
@@ -195,7 +195,7 @@ class QuadMesh:
         try:
             return ("<QuadMesh %d points, %d quads, order %d, element_tags=%s, "
                     "edge_tags=%s>"
-                    % (self.line_mesh.points.shape[0], self.quad.shape[0], self.order,
+                    % (self.line_mesh.points.shape[0], self.quads.shape[0], self.order,
                        _repr_tags(self.element_group_tags),
                        _repr_tags(self.edge_group_tags)))
         except Exception:                     # a repr must never break a debug session
@@ -214,9 +214,9 @@ class QuadMesh:
         return self.line_mesh.points
 
     @property
-    def quads(self) -> IntArray:
+    def corners(self) -> IntArray:
         """``(Q,4)`` CCW corner connectivity, derived (memoized) from the stored edge
-        indices + flip.  Read-only; the B-rep ``quad`` / ``flip`` are the source of
+        indices + flip.  Read-only; the B-rep ``quads`` / ``flip`` are the source of
         truth."""
         return self._corners
 

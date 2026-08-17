@@ -52,10 +52,6 @@ PROJECT_TO_STL = True
 # all a flat half-disc seam needs.
 ORDER = 3
 FOURIER_KEEP = 0.5            # fraction of the rFFT modes kept in the wall refit
-# Smoothing is off: both relaxers move corner nodes only and reject order > 1, and
-# the Fourier wall already removes the facet-scale noise they were there to polish.
-# To exercise them, set ORDER = 1 with "conduction" / SMOOTH_ITERS = 8.
-SMOOTHING_METHOD = None    # "none" | "bilinear" | "conduction" | "winslow"
 SMOOTH_ITERS = 0             # post-assembly untangle/polish sweeps (0 = off)
 SMOOTH_LAMBDA = 0.5
 FLUX_OFFSET = 2              # hex layers in from the outlet cap (0 = off)
@@ -87,7 +83,7 @@ def order_openings(surf):
 
 # -- O-grid leg builder ------------------------------------------------------
 def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
-              radial, center_scale, quadrant_scale, project_to_stl, smoothing_method):
+              radial, center_scale, quadrant_scale, project_to_stl):
     """Turn a stack of fine interior rings (opening -> seam) into ``nr`` full-disk
     :class:`QuadMesh` slices: each station's two half-O-grids are repositioned
     then merged along the shared spine."""
@@ -147,14 +143,12 @@ def ogrid_leg(fine_rings, seam_ring, spine, surface, frlev, *,
         # deviation comes off the STL, so the chord is the honest interpolant).
         spn = trimesh.ops.resample_polyline(
             spn, quadmesh.spine_fractions(nh // 4, radial, quadrant_scale))
-        # reposition interior stations; leave opening cap (k=0) and pinned seam
-        # (k=nr-1) as raw algebraic fill.  Wall tagged on the loop (see
-        # flow_past_cylinder.py) so spined_ogrid rides it onto the wall edges.
-        m = smoothing_method if 0 < k < nr - 1 else None
-        slices.append(quadmesh.spined_ogrid(
+        # wall tagged on the loop (see flow_past_cylinder.py) so spined_ogrid rides
+        # it onto the wall edges.
+        slice_ = quadmesh.spined_ogrid(
             wall, radial, spine=linemesh.loft(spn, order=ORDER),
-            center_scale=center_scale, quadrant_scale=quadrant_scale,
-            smoothing_method=m))
+            center_scale=center_scale, quadrant_scale=quadrant_scale)
+        slices.append(slice_)
     return slices
 
 
@@ -210,8 +204,7 @@ for leg in range(3):
     slices = ogrid_leg(fr, rings[leg], spine, surf, frlev,
                        radial=RADIAL, center_scale=CENTER_SCALE,
                        quadrant_scale=QUADRANT_SCALE,
-                       project_to_stl=PROJECT_TO_STL,
-                       smoothing_method=SMOOTHING_METHOD)
+                       project_to_stl=PROJECT_TO_STL)
     flux_name = flux_name_for(outlet_name[leg])
     off = FLUX_OFFSET
     # opening cap = leg outlet; seam end is interior.  With a flux plane, split

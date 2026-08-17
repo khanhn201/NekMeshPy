@@ -102,7 +102,7 @@ def _lattice(patch: IntArray, blocks: PointArray, order: int) -> PointArray:
 def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
     """Recover a triangular face as its three patches, each a node lattice indexed
     **from its corner**: ``[0, 0]`` is the corner and ``[-1, -1]`` the face centre."""
-    quads: IntArray = qm.quads
+    quads: IntArray = qm.corners
     val = np.bincount(quads.ravel(), minlength=qm.points.shape[0])
     corners: IntArray = np.flatnonzero(val == 1)
     centres: IntArray = np.flatnonzero(val == 3)
@@ -113,7 +113,7 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
             "1 node on exactly three, got %d and %d"
             % (who, corners.shape[0], centres.shape[0]))
     order = qm.order
-    nodes, conn = conform.conformal_quad(qm.points, quads, qm.quad, qm.orient,
+    nodes, conn = conform.conformal_quad(qm.points, quads, qm.quads, qm.orient,
                                          qm.line_mesh.interior, qm.interior, order)
     blocks: PointArray = nodes[conn]
     sides = _side_map(quads)

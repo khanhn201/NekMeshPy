@@ -43,7 +43,7 @@ def boundary_face_ids(mesh: HexMesh) -> BoolArray:
     ``face_tags.ids`` outside this mask are the tagged interior faces
     :func:`tag_report` counts."""
     return np.asarray(
-        np.bincount(np.asarray(mesh.hex, dtype=np.int64).ravel(),
+        np.bincount(np.asarray(mesh.hexes, dtype=np.int64).ravel(),
                     minlength=mesh.quad_mesh.n_quads) == 1, dtype=bool)
 
 def _boundary_points(hexes: IntArray) -> IntArray:
@@ -55,7 +55,7 @@ def boundary_faces(mesh: HexMesh) -> IntArray:
     """``(K,2)`` of ``[element id, local face (1-6)]`` for every face on the
     topological domain boundary (a quad carried by a single hex). Distinct from
     the tagged ``face_tags``, which may also carry interior planes."""
-    _, mask = _boundary_mask(mesh.hexes)
+    _, mask = _boundary_mask(mesh.corners)
     rows = np.flatnonzero(mask)
     return np.column_stack([rows // 6, rows % 6 + 1]).astype(np.int64)
 
@@ -65,7 +65,7 @@ def boundary_elements(mesh: HexMesh) -> IntArray:
 
 def boundary_points(mesh: HexMesh) -> IntArray:
     """Sorted unique point ids lying on the domain boundary."""
-    return _boundary_points(mesh.hexes)
+    return _boundary_points(mesh.corners)
 
 def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     """``((K,2) [element, local face 1-6] rows, their tags)`` for every named face,
@@ -82,7 +82,7 @@ def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     named = mesh.quad_mesh.element_tags
     if not len(named):
         return np.zeros((0, 2), dtype=np.int64), _empty_str()
-    flat: IntArray = np.asarray(mesh.hex, dtype=np.int64).ravel()
+    flat: IntArray = np.asarray(mesh.hexes, dtype=np.int64).ravel()
     order = np.argsort(flat, kind="stable")
     lo = np.searchsorted(flat[order], named.ids, side="left")
     hi = np.searchsorted(flat[order], named.ids, side="right")
@@ -104,7 +104,7 @@ def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
     from . import quality
     if high_order:
         return quality.scaled_jacobian_ho(mesh, mesh.order)
-    return quality.scaled_jacobian(mesh.points, mesh.hexes)
+    return quality.scaled_jacobian(mesh.points, mesh.corners)
 
 def quality_summary(mesh: HexMesh, *, high_order: bool = True) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` for the
@@ -112,14 +112,14 @@ def quality_summary(mesh: HexMesh, *, high_order: bool = True) -> QualitySummary
     from . import quality
     if high_order:
         return quality.summary_ho(mesh, mesh.order)
-    return quality.summary(mesh.points, mesh.hexes)
+    return quality.summary(mesh.points, mesh.corners)
 
 
 def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     """Flag welded points: ``(is_wall, is_fixed)``.  Faces named ``wall`` are
     wall; all other tagged faces are fixed.  A point on both is treated as
     fixed."""
-    HC, nu = mesh.hexes, mesh.n_points
+    HC, nu = mesh.corners, mesh.n_points
     is_wall: BoolArray = np.zeros(nu, dtype=bool)
     is_fixed: BoolArray = np.zeros(nu, dtype=bool)
     rows, names = face_tag_rows(mesh)
@@ -135,7 +135,7 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
 def topology_report(mesh: HexMesh) -> TopologyReport:
     """Watertightness / connectivity report of the mesh."""
     from ..core import topology
-    return topology.hex_report(mesh.points, mesh.hexes)
+    return topology.hex_report(mesh.points, mesh.corners)
 
 def is_watertight(mesh: HexMesh) -> bool:
     """``True`` if the mesh boundary is a closed, leak-tight 2-manifold and the
@@ -146,6 +146,18 @@ def is_watertight(mesh: HexMesh) -> bool:
 def is_conforming(mesh: HexMesh) -> bool:
     """``True`` if the mesh has no hanging points (no T-junctions)."""
     return topology_report(mesh).conformal
+
+def is_overlap_free(mesh: HexMesh) -> bool:
+    """``True`` if no two elements geometrically overlap. Independent of
+    :func:`is_watertight <nekmeshpy.hexmesh.query.is_watertight>` and :func:`is_conforming
+    <nekmeshpy.hexmesh.query.is_conforming>`, which are purely topological (facet-sharing)
+    checks -- a duplicated or mis-placed piece that never shares a face with the rest of
+    the mesh would still read watertight and conformal. Not part of :func:`topology_report
+    <nekmeshpy.hexmesh.query.topology_report>`: this is a geometric search whose cost a
+    plain watertight/conforming check should not have to pay, so it is computed only
+    when asked for."""
+    from ..core import topology
+    return topology.is_overlap_free(mesh.points, mesh.corners)
 
 class TagReport(NamedTuple):
     """How a mesh's ``face_tags`` table lines up with its **topological** boundary.
@@ -194,7 +206,15 @@ def report(mesh: HexMesh) -> str:
     tags = tag_report(mesh)
     lines.append("  %-14s : %d faces" % ("untagged bdry", tags.n_untagged_boundary))
     lines.append("  %-14s : %d rows" % ("interior tags", tags.n_tagged_interior))
-    lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.hexes)))
+    lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.corners)))
+    # topology.count_overlapping_pairs is a geometric broad-then-narrow-phase search,
+    # not a fixed-size facet-incidence scan like the rest of this summary -- its
+    # candidate count can run into the hundreds of thousands on a large mesh, and it
+    # was slow enough there to be worth pulling back out of the default summary.
+    # Call it explicitly (or hexmesh.is_overlap_free) where the cost is worth paying.
+    # n_overlap = topology.count_overlapping_pairs(mesh.points, mesh.corners)
+    # lines.append("overlap-free   : %s (%d overlapping pair%s)"
+    #              % (n_overlap == 0, n_overlap, "" if n_overlap == 1 else "s"))
     return "\n".join(lines)
 
 def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
@@ -215,11 +235,11 @@ def element_blocks(mesh: HexMesh) -> PointArray:
     order = mesh.order
     row = order + 1
     out: PointArray = np.empty((mesh.n_hexes, row ** 3, 3), dtype=float)
-    out[:, corner_indices(order, 3), :] = mesh.points[mesh.hexes]
+    out[:, corner_indices(order, 3), :] = mesh.points[mesh.corners]
     out[:, conform._edge_slots(3, order)[:, 1:-1], :] = conform.gather_edge_nodes(
         mesh.edge_nodes, mesh._elem_edges, mesh._edge_flip)
     out[:, conform._face_interior_slots(order), :] = conform.gather_face_nodes(
-        mesh.face_nodes, mesh.hex, mesh.orient)
+        mesh.face_nodes, mesh.hexes, mesh.orient)
     out[:, conform._interior_slots(3, order), :] = mesh.interior
     return out
 
@@ -229,7 +249,7 @@ def _blocks(mesh: HexMesh, high_order: bool) -> PointArray:
     straight-sided corner blocks it reduces to."""
     if high_order:
         return element_blocks(mesh)
-    return measure.corner_blocks(mesh.points, mesh.hexes, 3)
+    return measure.corner_blocks(mesh.points, mesh.corners, 3)
 
 
 def bounds(mesh: HexMesh, *, high_order: bool = False) -> measure.Bounds:
@@ -282,6 +302,7 @@ __all__ = [
     "element_blocks",
     "element_volumes",
     "is_conforming",
+    "is_overlap_free",
     "is_watertight",
     "quality_summary",
     "report",

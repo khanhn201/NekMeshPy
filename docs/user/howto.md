@@ -1,7 +1,7 @@
 # How-to recipes
 
 Recipes distilled from runnable scripts under
-[`examples/`](https://github.com/nekmeshpy/nekmeshpy/tree/main/examples) — flat
+[`examples/`](https://github.com/khanhn201/nekmeshpy/tree/main/examples) — flat
 gmsh-style scripts (constants at top, assign to a `mesh` global, export). Edit the
 constants and re-run:
 
@@ -17,9 +17,8 @@ its script disagree, the **script is the source of truth**.
 Fill a tagged circular loop with an O-grid section and sweep it along an axis.
 
 ```python
-boundary = linemesh.circle(radius, 4 * n_side, element_tags=["wall"] * (4 * n_side))
-section  = quadmesh.ogrid(boundary, n_side=n_side, radial=4,
-                          smoothing_method="bilinear")
+boundary = linemesh.circle(radius, 4 * n_side, element_tag="wall")
+section  = quadmesh.ogrid(boundary, n_side=n_side, radial=4)
 mesh     = hexmesh.extrude(section, axis=(0, 0, 1), length=L, layers=n_axial,
                            first_tag="inlet", last_tag="outlet")
 ```
@@ -36,8 +35,7 @@ uniform side name; resolution comes from the edges' own points. Prefer the
 give a plausible-looking twisted patch. `side_tags=` (the same four keys) overrides
 the edges' own tags.
 
-→ `examples/rectangular_pipe.py`, and `examples/transfinite_block.py` for the
-eight-corners → trilinear → `hexmesh.from_grid` path.
+→ `examples/flow_past_half_cylinder.py`.
 
 ## Sweep a section along a curved path
 
@@ -71,7 +69,6 @@ end caps.
 
 - `examples/flow_past_cylinder.py` — `quadmesh.annulus` between a circle and a
   tagged far-field box (the box's per-line tags split the outer ring into sides).
-- `examples/flow_past_plate.py` — same pattern around a thin ellipse.
 - `examples/flow_past_half_cylinder.py` — a single `structured` section whose
   bottom edge is a composite curve (ground → semicircular bump → ground).
 - `examples/backward_facing_step.py` — merged structured rectangles.

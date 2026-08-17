@@ -32,7 +32,7 @@ def _line_nodes(m):
 
 
 def _quad_nodes(m):
-    return conform.conformal_quad(m.points, m.quads, m.quad, m.orient,
+    return conform.conformal_quad(m.points, m.corners, m.quads, m.orient,
                                   m.line_mesh.interior, m.interior, m.order)[0]
 
 

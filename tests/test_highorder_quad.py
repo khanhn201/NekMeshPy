@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from conftest import curved, vtu_cell_types
 
-from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh
+from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh, set_section_smoothing
 from nekmeshpy.core.fields import uniform_spacing
 from nekmeshpy.core.interp import corner_indices, quad_edge_indices
 from nekmeshpy.io import export
@@ -34,7 +34,7 @@ def test_sphere_nodes_lie_on_the_true_sphere(order):
                        atol=1e-12)
     # corner sub-slice coincides with the linear corner points
     corners = corner_indices(order, 2)
-    assert np.allclose(cb[:, corners, :], s.points[s.quads])
+    assert np.allclose(cb[:, corners, :], s.points[s.corners])
 
 
 @pytest.mark.parametrize("order", [2, 4])
@@ -48,7 +48,7 @@ def test_box_nodes_on_flat_faces(order):
     c = np.abs(cb)
     assert np.all(np.isclose(np.max(c, axis=2), 1.0, atol=1e-12))
     corners = corner_indices(order, 2)
-    assert np.allclose(cb[:, corners, :], b.points[b.quads])
+    assert np.allclose(cb[:, corners, :], b.points[b.corners])
 
 
 # -- region walls: ogrid / annulus curved nodes ride the true loop ------
@@ -66,7 +66,7 @@ def test_ogrid_wall_nodes_on_the_circle(order):
     idx = quad_edge_indices(1, order)
     # collect all nodes that lie on the wall arc: pick quads whose side-1 corners
     # are both at radius r
-    corner = qm.points[qm.quads]
+    corner = qm.points[qm.corners]
     rc = np.linalg.norm(corner[:, :, :2], axis=2)
     v0, v1 = QuadMesh.EDGE_POINTS[0]
     on_wall = np.isclose(rc[:, v0], r, atol=1e-9) & np.isclose(rc[:, v1], r, atol=1e-9)
@@ -93,7 +93,7 @@ def test_structured_stamps_its_edges_high_order_nodes(order):
     assert qm.order == order
     cb = curved(qm)
     idx = quad_edge_indices(1, order)                  # the bottom side's nodes
-    corner = qm.points[qm.quads]
+    corner = qm.points[qm.corners]
     rc = np.linalg.norm(corner[:, :, :2], axis=2)
     v0, v1 = QuadMesh.EDGE_POINTS[0]
     on_wall = np.isclose(rc[:, v0], r, atol=1e-9) & np.isclose(rc[:, v1], r, atol=1e-9)
@@ -230,7 +230,7 @@ def test_annulus_wall_nodes_on_both_rings(order):
     qm = quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
     assert qm.order == order
     cb = curved(qm)
-    corner = qm.points[qm.quads]
+    corner = qm.points[qm.corners]
     rc = np.linalg.norm(corner[:, :, :2], axis=2)
     # inner wall on side 1, outer wall on side 3
     for side, radius in ((1, r_in), (3, r_out)):
@@ -247,15 +247,16 @@ def test_annulus_wall_nodes_on_both_rings(order):
 @pytest.mark.parametrize("method", ["conduction", "winslow"])
 def test_high_order_smoothing_rejected(method):
     # a repositioning smoother moves only corner nodes, so it cannot smooth an
-    # order-N section; the factory must raise rather than silently degrade.
+    # order-N section; set_section_smoothing must raise rather than silently degrade.
     loop = linemesh.circle(2.0, 16, order=3)
+    qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
     with pytest.raises(NotImplementedError, match="order-3"):
-        quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
+        set_section_smoothing(qm, method)
     inner = linemesh.circle(1.0, 16, order=3)
     outer = linemesh.circle(3.0, 16, order=3)
+    ann = quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
     with pytest.raises(NotImplementedError, match="order-3"):
-        quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0],
-                         smoothing_method=method)
+        set_section_smoothing(ann, method)
 
 
 def test_high_order_noop_smoothing_allowed():
@@ -263,7 +264,7 @@ def test_high_order_noop_smoothing_allowed():
     # stay allowed at any order (e.g. circular_pipe.py runs order 2 + "bilinear").
     loop = linemesh.circle(2.0, 16, order=3)
     for method in ("bilinear", "tfi", "none"):
-        qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0], smoothing_method=method)
+        qm = set_section_smoothing(quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0]), method)
         assert qm.order == 3
 
 
@@ -275,7 +276,7 @@ def test_rectangle_nodes_corner_consistent(order):
     assert qm.order == order
     corners = corner_indices(order, 2)
     cb = curved(qm)
-    assert np.allclose(cb[:, corners, :], qm.points[qm.quads])
+    assert np.allclose(cb[:, corners, :], qm.points[qm.corners])
     # planar: every node stays at z=0
     assert np.allclose(cb[..., 2], 0.0)
 
@@ -289,7 +290,7 @@ def test_from_grid_order_n_corner_consistent():
     qm = quadmesh.from_grid(grid, order=3)
     assert qm.order == 3
     corners = corner_indices(3, 2)
-    assert np.allclose(curved(qm)[:, corners, :], qm.points[qm.quads])
+    assert np.allclose(curved(qm)[:, corners, :], qm.points[qm.corners])
 
 
 def test_blend_morphs_quad_curved_blocks():
@@ -335,14 +336,14 @@ def test_order1_factories_are_linear_no_op():
         assert qm.interior.shape == (qm.n_quads, 0, 3)
         assert curved(qm).shape == (qm.n_quads, 4, 3)
         assert np.allclose(curved(qm)[:, corner_indices(1, 2), :],
-                           qm.points[qm.quads])
+                           qm.points[qm.corners])
 
 
 def test_order1_sphere_points_match_high_order_corners():
     lin = quadmesh.sphere(1.7, 3)
     ho = quadmesh.sphere(1.7, 3, order=4)
     assert np.allclose(lin.points, ho.points)            # corner points identical
-    assert np.array_equal(lin.quads, ho.quads)
+    assert np.array_equal(lin.corners, ho.corners)
 
 
 # -- order-N quality metric (opt-in) ------------------------------------

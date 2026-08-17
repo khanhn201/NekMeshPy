@@ -137,7 +137,7 @@ def _twist_slices(a, b, fracs):
         pts = (c_t + ax_t[:, None] * axis
                + (r_t * np.cos(th_t))[:, None] * e1
                + (r_t * np.sin(th_t))[:, None] * e2)
-        linear = QuadMesh.from_corners(pts, a.quads)
+        linear = QuadMesh.from_corners(pts, a.corners)
         slices.append(_quad_elevate(linear, a.order))
     return slices
 
@@ -288,7 +288,7 @@ def build_t1(mirror=False):
     tj = build_eqtee(R_MAIN, L1, H1, order=ORDER, n_half=N_HALF,
                      radial=np.array([0.0, 0.6, 1.0]), n_layers_main=n_slices,
                      n_layers_branch=n_slices, center_scale=0.75,
-                     quadrant_scale=0.55, element_tag=FLUID_TAG)
+                     quadrant_scale=0.7, element_tag=FLUID_TAG)
     ang, axis = ROT_T1, AXIS_T1
     core, da, db, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))

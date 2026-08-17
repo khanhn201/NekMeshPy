@@ -46,7 +46,7 @@ def _with_points(qm: QuadMesh, X: PointArray) -> QuadMesh:
     lm = qm.line_mesh
     return QuadMesh(LineMesh(PointMesh(X, lm.point_tags), lm.lines, lm.interior,
                              lm.element_tags),
-                    qm.quad, qm.orient, qm.interior, qm.element_tags)
+                    qm.quads, qm.orient, qm.interior, qm.element_tags)
 
 
 def conduction_section(qm: QuadMesh) -> QuadMesh:
@@ -56,14 +56,14 @@ def conduction_section(qm: QuadMesh) -> QuadMesh:
     on a copy rather than writing through it."""
     X = qm.points.copy()
     nu = X.shape[0]
-    edges, _ = _section_edges(qm.quads)
+    edges, _ = _section_edges(qm.corners)
     A = sp.coo_matrix((np.ones(edges.shape[0] * 2),
                        (np.concatenate([edges[:, 0], edges[:, 1]]),
                         np.concatenate([edges[:, 1], edges[:, 0]]))),
                       shape=(nu, nu)).tocsr()
     d = np.asarray(A.sum(axis=1)).ravel()
     L = sp.diags(d) - A
-    bc = _section_boundary(qm.quads, nu)
+    bc = _section_boundary(qm.corners, nu)
     I = np.flatnonzero(~bc)
     if I.size == 0:
         return qm
@@ -82,13 +82,13 @@ def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMe
     live ``points``."""
     X = qm.points.copy()
     nu = X.shape[0]
-    edges, _ = _section_edges(qm.quads)
+    edges, _ = _section_edges(qm.corners)
     adj: list[Any] = [[] for _ in range(nu)]
     for a, b in edges:
         adj[a].append(b)
         adj[b].append(a)
     adj = [np.asarray(a, dtype=np.int64) for a in adj]
-    interior = np.flatnonzero(~_section_boundary(qm.quads, nu))
+    interior = np.flatnonzero(~_section_boundary(qm.corners, nu))
     if interior.size == 0:
         return qm
     dfloor = np.zeros(nu)
@@ -150,6 +150,6 @@ def set_section_smoothing(qm: QuadMesh, method: str | None, **opts: Any) -> Quad
         raise NotImplementedError(
             'set_section_smoothing: method "%s" cannot smooth an order-%d section '
             "(the relaxers move only corner nodes; high-order smoothing is not "
-            "implemented yet). Use order=1, or drop smoothing_method for a straight "
-            "high-order interior." % (m, qm.order))
+            "implemented yet). Use order=1, or skip set_section_smoothing for a "
+            "straight high-order interior." % (m, qm.order))
     return fn(qm, **opts)

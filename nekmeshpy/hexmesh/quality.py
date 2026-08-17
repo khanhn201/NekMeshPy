@@ -38,8 +38,8 @@ def _ho_block(mesh: HexMesh, order: int) -> PointArray:
     """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample."""
     from ..core import conform
     nodes, conn_ho = conform.conformal_hex(
-        mesh.points, mesh.hexes, mesh._elem_edges, mesh._edge_flip,
-        mesh.quad_mesh.line_mesh.interior, mesh.hex, mesh.orient,
+        mesh.points, mesh.corners, mesh._elem_edges, mesh._edge_flip,
+        mesh.quad_mesh.line_mesh.interior, mesh.hexes, mesh.orient,
         mesh.quad_mesh.interior, mesh.interior, order)
     block: PointArray = nodes[conn_ho]
     return block

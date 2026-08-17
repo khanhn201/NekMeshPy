@@ -138,12 +138,12 @@ def test_the_row_fit_reproduces_the_hex_read_where_the_frames_coincide(order):
     agree with :func:`gather_face_nodes` node for node -- the cross-check that the new
     path is the old one, not merely a different one."""
     block = _pipe(order)[2]
-    local = conform.gather_face_nodes(block.face_nodes, block.hex, block.orient)
-    canonical = np.asarray(block.quad_mesh.quads, dtype=np.int64)
+    local = conform.gather_face_nodes(block.face_nodes, block.hexes, block.orient)
+    canonical = np.asarray(block.quad_mesh.corners, dtype=np.int64)
     for f in range(6):
         if not np.array_equal(conform._FACE_CORNER_UV[f], conform._CCW_UV):
             continue
-        poly = block.hexes[:, hexmesh.HexMesh.FACE_POINTS[f]]
+        poly = block.corners[:, hexmesh.HexMesh.FACE_POINTS[f]]
         idx = conform.locate_rows(block.faces, poly, who="test", what="face")
         got = conform.face_nodes_in_frame(
             np.asarray(block.face_nodes, dtype=float)[idx], poly, canonical[idx])
@@ -157,4 +157,4 @@ def test_the_extraction_keeps_the_parent_corners_exactly(order):
     block = _pipe(order)[2]
     wall = hexmesh.boundary_mesh(block, "wall")
     B = quadmesh.element_blocks(wall)
-    assert np.allclose(B[:, corner_indices(order, 2), :], wall.points[wall.quads])
+    assert np.allclose(B[:, corner_indices(order, 2), :], wall.points[wall.corners])

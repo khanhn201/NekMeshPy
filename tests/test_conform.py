@@ -50,7 +50,7 @@ def test_quad_round_trip_through_entity_store(order):
     back through ``quad_from_entities`` rebuilds an identical mesh."""
     qm = quadmesh.rectangle([[0, 0, 0], [4, 0, 0], [4, 3, 0], [0, 3, 0]],
                             3, 2, order=order)
-    rebuilt = quad_from_entities(qm.points, qm.quads, edge_nodes=qm.edge_nodes,
+    rebuilt = quad_from_entities(qm.points, qm.corners, edge_nodes=qm.edge_nodes,
                                  interior=qm.interior, order=order)
     assert np.array_equal(rebuilt.edges, qm.edges)
     assert np.allclose(rebuilt.edge_nodes, qm.edge_nodes, atol=1e-12)
@@ -65,13 +65,13 @@ def test_ogrid_round_trip(order):
     loop = linemesh.circle(2.0, 16, order=order)
     qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
     assert qm.order == order
-    rebuilt = quad_from_entities(qm.points, qm.quads, edge_nodes=qm.edge_nodes,
+    rebuilt = quad_from_entities(qm.points, qm.corners, edge_nodes=qm.edge_nodes,
                                  interior=qm.interior, order=order)
     assert np.allclose(curved(rebuilt), curved(qm), atol=1e-12)
     # the walk reconstructs the curved wall exactly across the shared O-ring edges
     nodes, conn = conformal(qm)
     assert np.allclose(nodes[conn][:, corner_indices(order, 2), :],
-                       qm.points[qm.quads], atol=1e-12)
+                       qm.points[qm.corners], atol=1e-12)
     assert nodes.shape[0] < qm.n_quads * (order + 1) ** 2   # dedup happened
 
 
@@ -88,7 +88,7 @@ def test_conformal_walk_dedups_and_reconstructs(order):
     # the B-rep: corners from points[quads], private nodes from .interior
     assert conn.shape == (qm.n_quads, m)
     block = nodes[conn]
-    assert np.allclose(block[:, corner_indices(order, 2), :], qm.points[qm.quads],
+    assert np.allclose(block[:, corner_indices(order, 2), :], qm.points[qm.corners],
                        atol=1e-12)
     assert np.allclose(block[:, conform._interior_slots(2, order), :], qm.interior,
                        atol=1e-12)
@@ -131,11 +131,11 @@ def test_edge_nodes_canonical_between_incident_quads(order):
     # edge_nodes has one row per unique edge, each (order-1, 3)
     assert qm.edge_nodes.shape == (qm.edges.shape[0], order - 1, 3)
     # every unique edge is referenced by some quad
-    assert set(np.unique(qm.quad).tolist()) == set(range(qm.edges.shape[0]))
+    assert set(np.unique(qm.quads).tolist()) == set(range(qm.edges.shape[0]))
     # gather/scatter round-trip: at least one quad traverses an edge anti-canonically
     assert qm.orient.any()
-    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.orient)
-    back = conform.scatter_edge_nodes(local, qm.quad, qm.orient, qm.edges.shape[0],
+    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quads, qm.orient)
+    back = conform.scatter_edge_nodes(local, qm.quads, qm.orient, qm.edges.shape[0],
                                       conform.entity_tol(qm.points), "test")
     assert np.allclose(back, qm.edge_nodes, atol=1e-12)
 
@@ -147,12 +147,12 @@ def test_non_conforming_edge_nodes_rejected(order):
     are a loud error, never a silent weld."""
     qm = quadmesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
                             2, 2, order=order)
-    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quad, qm.orient)
+    local = conform.gather_edge_nodes(qm.edge_nodes, qm.quads, qm.orient)
     # perturb every edge-interior node of quad 0 -- at least one of its edges is
     # internal (shared), so the incident copies now disagree beyond tol
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order edge"):
-        conform.scatter_edge_nodes(local, qm.quad, qm.orient, qm.edges.shape[0],
+        conform.scatter_edge_nodes(local, qm.quads, qm.orient, qm.edges.shape[0],
                                    conform.entity_tol(qm.points), "QuadMesh.test")
 
 
@@ -163,10 +163,10 @@ def test_corners_are_single_sourced_so_cannot_disagree():
     qm = quadmesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0]],
                             2, 2, order=3)
     nodes, conn = conformal(qm)
-    assert np.allclose(nodes[conn][:, corner_indices(3, 2), :], qm.points[qm.quads])
+    assert np.allclose(nodes[conn][:, corner_indices(3, 2), :], qm.points[qm.corners])
     qm.points[:] = qm.points + np.array([10.0, -3.0, 1.0])      # in-place corner move
     nodes, conn = conformal(qm)
-    assert np.allclose(nodes[conn][:, corner_indices(3, 2), :], qm.points[qm.quads])
+    assert np.allclose(nodes[conn][:, corner_indices(3, 2), :], qm.points[qm.corners])
 
 
 # -- line: interior is private (no shared edges) ------------------------
@@ -190,8 +190,8 @@ def test_order1_conformal_is_points_and_conn():
     assert np.allclose(nodes, qm.points)
     # conn is in lexicographic block order (== quads under the corner winding perm)
     assert conn.shape == (qm.n_quads, 4)
-    assert np.allclose(nodes[conn][:, corner_indices(1, 2), :], qm.points[qm.quads])
-    assert conn[:, corner_indices(1, 2)].tolist() == qm.quads.tolist()
+    assert np.allclose(nodes[conn][:, corner_indices(1, 2), :], qm.points[qm.corners])
+    assert conn[:, corner_indices(1, 2)].tolist() == qm.corners.tolist()
     # edges are first-class B-rep storage at every order: the shared edge topology is
     # present at order 1 (a 2x2 quad grid has 12 unique edges); only the per-edge
     # interior HO nodes are empty at order 1.
@@ -205,25 +205,25 @@ def test_order1_conformal_is_points_and_conn():
 def test_quadmesh_brep_storage(order):
     """QuadMesh stores its edges as a shared LineMesh (structural conformality): the
     corners live once on ``lines.points``, ``quad``/``flip`` index its edges, and the
-    derived ``.points``/``.quads`` round-trip the corner input exactly."""
+    derived ``.points``/``.corners`` round-trip the corner input exactly."""
     # two quads in a row, sharing exactly the middle vertical edge
     src = quadmesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                              2, 1, order=order)
-    qm = quad_from_entities(src.points, src.quads, edge_nodes=src.edge_nodes,
+    qm = quad_from_entities(src.points, src.corners, edge_nodes=src.edge_nodes,
                             interior=src.interior, order=order)
 
     # B-rep fields: a real LineMesh holding the shared edges + per-quad edge indices.
     assert isinstance(qm.line_mesh, LineMesh)
     assert qm.line_mesh.order == order
-    assert qm.quad.shape == (2, 4) and qm.quad.dtype == np.int64
+    assert qm.quads.shape == (2, 4) and qm.quads.dtype == np.int64
     assert qm.orient.shape == (2, 4) and qm.orient.dtype == bool
     # the two quads share exactly one edge
-    assert len(set(qm.quad[0].tolist()) & set(qm.quad[1].tolist())) == 1
+    assert len(set(qm.quads[0].tolist()) & set(qm.quads[1].tolist())) == 1
 
     # .points is a live view of the shared corners (single source of truth)
     assert qm.points is qm.line_mesh.points
-    # .quads is the lossless inverse of the edge decomposition
-    assert np.array_equal(qm.quads, src.quads)
+    # .corners is the lossless inverse of the edge decomposition
+    assert np.array_equal(qm.corners, src.corners)
     # the conformal walk reproduces the source block exactly (flip handling included)
     assert np.allclose(curved(qm), curved(src))
 
@@ -235,7 +235,7 @@ def test_quadmesh_brep_shares_edge_nodes_across_incident_quads():
     qm = quadmesh.rectangle([[0, 0, 0], [2, 0, 0], [2, 1, 0], [0, 1, 0]],
                             2, 1, order=order)
     # the shared seam edge is one row of the edge LineMesh, referenced by both quads
-    shared = set(qm.quad[0].tolist()) & set(qm.quad[1].tolist())
+    shared = set(qm.quads[0].tolist()) & set(qm.quads[1].tolist())
     assert len(shared) == 1
     e = shared.pop()
     # its interior nodes are stored once on the edge LineMesh
@@ -344,7 +344,7 @@ def test_hex_round_trip_curved_shell(order):
     assert np.allclose(curved(rebuilt), curved(hm), atol=1e-12)
     nodes, conn = conformal(hm)
     assert np.allclose(nodes[conn][:, corner_indices(order, 3), :],
-                       hm.points[hm.hexes], atol=1e-12)
+                       hm.points[hm.corners], atol=1e-12)
 
 
 # -- element_blocks: the B-rep gathered back into element order --------
@@ -384,7 +384,7 @@ def test_face_edges_from_hexes_matches_a_dedup_of_the_face_table():
               hexmesh.loft(stack, loop=True),
               hexmesh.merge([_shell(1, n_face=1, n_radial=1)])]
     for hm in blocks:
-        hexes = np.asarray(hm.hexes, np.int64)
+        hexes = np.asarray(hm.corners, np.int64)
         edges, elem_edges, eflip = conform.unique_edges(hexes, 3)
         conn, elem_faces, orient = conform.canonical_faces(hexes)
         want_e, want_i, want_f = conform.unique_edges(conn, 2)
@@ -415,7 +415,7 @@ def test_hex_edges_from_faces_resolve_to_their_own_corner_pairs():
     for hm in blocks:
         rows = hm.edges[hm._elem_edges]                     # (E,12,2) as stored
         walked = np.where(hm._edge_flip[:, :, None], rows[:, :, ::-1], rows)
-        assert np.array_equal(walked, hm.hexes[:, conform._LOCAL_EDGES[3]])
+        assert np.array_equal(walked, hm.corners[:, conform._LOCAL_EDGES[3]])
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -430,9 +430,9 @@ def test_hex_does_not_care_what_order_its_edges_are_stored_in(order):
     lines = LineMesh(hm.points, hm.edges[sigma],
                      interior=hm.edge_nodes[sigma])
     inv = np.argsort(sigma)
-    faces = quadmesh.QuadMesh(lines, inv[hm.quad_mesh.quad], hm.quad_mesh.orient,
+    faces = quadmesh.QuadMesh(lines, inv[hm.quad_mesh.quads], hm.quad_mesh.orient,
                               hm.face_nodes)
-    relabelled = HexMesh(faces, hm.hex, hm.orient, hm.interior)
+    relabelled = HexMesh(faces, hm.hexes, hm.orient, hm.interior)
     assert not np.array_equal(relabelled._elem_edges, hm._elem_edges)
     assert np.allclose(curved(relabelled), curved(hm), atol=1e-12)
 
@@ -445,7 +445,7 @@ def test_hex_conformal_walk_dedups(order):
     m = (order + 1) ** 3
     assert conn.shape == (hm.n_hexes, m)
     block = nodes[conn]
-    assert np.allclose(block[:, corner_indices(order, 3), :], hm.points[hm.hexes],
+    assert np.allclose(block[:, corner_indices(order, 3), :], hm.points[hm.corners],
                        atol=1e-12)
     assert np.allclose(block[:, conform._interior_slots(3, order), :], hm.interior,
                        atol=1e-12)
@@ -474,8 +474,8 @@ def test_shared_hex_face_resolves_to_same_nodes(order):
     # a full shared face: (order+1)^2 nodes (4 corners + 4 edges + interior)
     assert len(shared) == (order + 1) ** 2
     # and the two hexes share exactly one face in the topology
-    fa = {tuple(sorted(hm.hexes[0, HexMesh.FACE_POINTS[f]].tolist())) for f in range(6)}
-    fb = {tuple(sorted(hm.hexes[1, HexMesh.FACE_POINTS[f]].tolist())) for f in range(6)}
+    fa = {tuple(sorted(hm.corners[0, HexMesh.FACE_POINTS[f]].tolist())) for f in range(6)}
+    fb = {tuple(sorted(hm.corners[1, HexMesh.FACE_POINTS[f]].tolist())) for f in range(6)}
     assert len(fa & fb) == 1
 
 
@@ -483,11 +483,11 @@ def test_shared_hex_face_resolves_to_same_nodes(order):
 @pytest.mark.parametrize("order", [2, 3])
 def test_non_conforming_hex_face_rejected(order):
     hm = _shell(order)
-    local = conform.gather_face_nodes(hm.face_nodes, hm.hex, hm.orient)
+    local = conform.gather_face_nodes(hm.face_nodes, hm.hexes, hm.orient)
     # perturb every face-interior node of hex 0; its shared faces now disagree
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order face"):
-        conform.scatter_face_nodes(local, hm.hex, hm.orient, hm.faces.shape[0],
+        conform.scatter_face_nodes(local, hm.hexes, hm.orient, hm.faces.shape[0],
                                    conform.entity_tol(hm.points), "HexMesh.test")
 
 
@@ -513,9 +513,9 @@ def test_hex_entity_gather_scatter_round_trip(order):
         conform.scatter_edge_nodes(e_local, hm._elem_edges, hm._edge_flip,
                                    hm.edges.shape[0], tol, "test"),
         hm.edge_nodes, atol=1e-12)
-    f_local = conform.gather_face_nodes(hm.face_nodes, hm.hex, hm.orient)
+    f_local = conform.gather_face_nodes(hm.face_nodes, hm.hexes, hm.orient)
     assert np.allclose(
-        conform.scatter_face_nodes(f_local, hm.hex, hm.orient,
+        conform.scatter_face_nodes(f_local, hm.hexes, hm.orient,
                                    hm.faces.shape[0], tol, "test"),
         hm.face_nodes, atol=1e-12)
 
@@ -527,7 +527,7 @@ def test_order1_hex_conformal():
     hm = hexmesh.from_grid(np.stack([X, Y, Z], axis=-1))
     nodes, conn = conformal(hm)
     assert np.allclose(nodes, hm.points)
-    assert np.allclose(nodes[conn][:, corner_indices(1, 3), :], hm.points[hm.hexes])
+    assert np.allclose(nodes[conn][:, corner_indices(1, 3), :], hm.points[hm.corners])
     # edges/faces are first-class B-rep storage: present at every order (a 2x2x2 grid
     # has 54 unique edges, 36 unique faces); only the HO interior nodes are empty.
     assert hm.edges.shape == (54, 2)

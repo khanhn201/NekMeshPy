@@ -73,8 +73,8 @@ def test_mirror_rewinds_the_quad_corner_order():
     """Structurally: ``(c0,c1,c2,c3)`` becomes ``(c0,c3,c2,c1)``.  Mirroring renumbers
     no point, so the two connectivities are directly comparable."""
     section = _rungs(3)[1][0]
-    assert np.array_equal(quadmesh.mirror(section, NORMAL).quads,
-                          section.quads[:, [0, 3, 2, 1]])
+    assert np.array_equal(quadmesh.mirror(section, NORMAL).corners,
+                          section.corners[:, [0, 3, 2, 1]])
 
 
 def test_the_quad_rung_mirror_halves_merge_into_a_consistent_section():
@@ -137,11 +137,11 @@ def test_face_tags_follow_their_faces_through_the_rewind():
     assert len(got.face_tags) == len(block.face_tags)
     for tag, z in (("inlet", 0.0), ("outlet", 2.0)):
         rows = np.array([(e, f) for e, f, t in face_rows(got) if t == tag])
-        corners = got.hexes[rows[:, 0][:, None],
+        corners = got.corners[rows[:, 0][:, None],
                             hexmesh.HexMesh.FACE_POINTS[rows[:, 1] - 1]]
         assert np.allclose(got.points[corners][..., 2], z)
     wall = np.array([(e, f) for e, f, t in face_rows(got) if t == "wall"])
-    corners = got.hexes[wall[:, 0][:, None],
+    corners = got.corners[wall[:, 0][:, None],
                         hexmesh.HexMesh.FACE_POINTS[wall[:, 1] - 1]]
     assert np.allclose(np.linalg.norm(got.points[corners][..., :2], axis=-1), 1.0)
 
