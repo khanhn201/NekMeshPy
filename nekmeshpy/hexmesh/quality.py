@@ -14,7 +14,7 @@ _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
                dtype=np.int64)
 
 
-def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
+def corner_scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
     """Per-hex minimum corner scaled Jacobian, shape ``(N,)``."""
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
@@ -34,7 +34,7 @@ def scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
     return sj
 
 
-def _ho_block(mesh: HexMesh, order: int) -> PointArray:
+def _curved_block(mesh: HexMesh, order: int) -> PointArray:
     """The per-hex ``(N,(order+1)**3,3)`` node block the order-N metrics sample."""
     from ..core import conform
     nodes, conn_ho = conform.conformal_hex(
@@ -45,12 +45,12 @@ def _ho_block(mesh: HexMesh, order: int) -> PointArray:
     return block
 
 
-def scaled_jacobian_ho(mesh: HexMesh, order: int) -> FloatArray:
+def scaled_jacobian(mesh: HexMesh, order: int) -> FloatArray:
     """Per-hex minimum scaled Jacobian sampled at the ``(order+1)**3`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
     :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`."""
-    from ..core.interp import scaled_jacobian_ho as _sj
-    return _sj(_ho_block(mesh, order), order, dim=3)
+    from ..core.interp import scaled_jacobian as _sj
+    return _sj(_curved_block(mesh, order), order, dim=3)
 
 
 def _summary(sj: FloatArray) -> QualitySummary:
@@ -66,20 +66,20 @@ def _summary(sj: FloatArray) -> QualitySummary:
     )
 
 
-def summary(points: PointArray, hexes: IntArray) -> QualitySummary:
+def corner_summary(points: PointArray, hexes: IntArray) -> QualitySummary:
     """Aggregate quality statistics for a hex mesh."""
-    return _summary(scaled_jacobian(points, hexes))
+    return _summary(corner_scaled_jacobian(points, hexes))
 
 
-def summary_ho(mesh: HexMesh, order: int) -> QualitySummary:
-    """Aggregate statistics for the order-N :func:`scaled_jacobian_ho` metric."""
-    return _summary(scaled_jacobian_ho(mesh, order))
+def summary(mesh: HexMesh, order: int) -> QualitySummary:
+    """Aggregate statistics for the order-N :func:`scaled_jacobian` metric."""
+    return _summary(scaled_jacobian(mesh, order))
 
 
 def histogram(points: PointArray, hexes: IntArray, bins: int = 10,
               lo: float = 0.0, hi: float = 1.0) -> tuple[IntArray, FloatArray]:
     """``(counts, edges)`` histogram of the scaled Jacobian distribution."""
-    sj = scaled_jacobian(points, hexes)
+    sj = corner_scaled_jacobian(points, hexes)
     return np.histogram(sj, bins=bins, range=(lo, hi))
 
 

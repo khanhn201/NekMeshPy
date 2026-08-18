@@ -45,13 +45,13 @@ import numpy as np
 from nekmeshpy import (
     TetMesh,
     TriMesh,
-    export,
     fields,
     hexmesh,
     linemesh,
     quadmesh,
     tetmesh,
     trimesh,
+    writer,
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1528,9 +1528,9 @@ print("femoral: branch %.0f deg, R %.3g / %.3g, seam z %.4f, trough %.3g deep x 
       % (BRANCH_ANGLE, R_MAIN, R_BRANCH, Z_SEAM, TROUGH_DEPTH, TROUGH_WIDTH))
 
 if EXPORT_VTK:
-    export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+    writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 if EXPORT_RE2:
-    export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+    writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 if EXPORT_FLD:
-    export.to_fld(mesh, OUT_NAME + ".f00000")
+    writer.to_fld(mesh, OUT_NAME + ".f00000")
 print("femoral: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))

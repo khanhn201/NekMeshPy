@@ -24,7 +24,7 @@ The pattern is always: describe the **boundary** as a
 rides up onto the swept faces — so no post-hoc face detection is needed.
 
 ```python
-from nekmeshpy import export, linemesh, quadmesh, hexmesh
+from nekmeshpy import writer, linemesh, quadmesh, hexmesh
 
 # 1. Boundary: a closed circular loop, tagged "wall" at the lowest level.
 n = 4 * 6                                   # 4 * n_side points around the ring
@@ -73,9 +73,9 @@ Boundary **names** map to Nek BC codes (or integer ids) only at export.
 
 ```python
 codes = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-export.to_re2(mesh, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
-export.to_vtu(mesh, "pipe.vtu", groups=codes) # ParaView / VisIt (XML VTK)
-export.write(mesh, "pipe.msh", groups=codes)  # anything meshio supports
+writer.to_re2(mesh, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
+writer.to_vtu(mesh, "pipe.vtu", groups=codes) # ParaView / VisIt (XML VTK)
+writer.write(mesh, "pipe.msh", groups=codes)  # anything meshio supports
 ```
 
 ## Visualize it (optional)

@@ -18,7 +18,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import QuadMesh, export, hexmesh, quadmesh
+from nekmeshpy import QuadMesh, hexmesh, quadmesh, writer
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -72,6 +72,6 @@ mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

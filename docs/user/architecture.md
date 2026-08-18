@@ -21,7 +21,7 @@ TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft
  cotan Laplacian,                                                                 │
  Dirichlet solve,         ┌──────────────────────────────────────────────────────┤
  boundary loops)          ▼               ▼            ▼               ▼          ▼
-             quadmesh.smoothing/  quadmesh|hexmesh   core.topology   io.export  io.viz
+             quadmesh.smoothing/  quadmesh|hexmesh   core.topology   io.writer  io.viz
              hexmesh.smoothing    .quality           (watertight/    (re2/vtu/  (plot)
                    (relax)        (scaled Jac)       conformal)      mesh, meshio)
 ```
@@ -29,7 +29,7 @@ TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft
 ## Containers are pure data; operations are free functions
 
 Everything acting on a finished mesh is a **free function** taking the container
-as its first argument — `io.export`, `io.viz`, `core.topology`, and the per-type
+as its first argument — `io.writer`, `io.viz`, `core.topology`, and the per-type
 modules beside their container (`hexmesh.quality`/`quadmesh.quality`,
 `trimesh.ops`, `hexmesh.smoothing`/`quadmesh.smoothing`).
 
@@ -70,7 +70,7 @@ container** except `mesh.py` and `topology.py`:
 | `core/topology.py` | watertight/manifold/connectivity + hanging-point checks; returns a `TopologyReport` |
 | `core/quality.py` | shared `QualitySummary` NamedTuple + `POOR_THRESHOLD` used by both quality modules |
 | `core/fields.py` | sizing `Field`s, graded 1-D distributions, `gll_nodes`/`lagrange_derivative_matrix`/`validate_layers` |
-| `core/interp.py` | order-N kernel over GLL reference nodes: `tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`, `scaled_jacobian_ho` |
+| `core/interp.py` | order-N kernel over GLL reference nodes: `tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`, `scaled_jacobian` |
 | `core/measure.py` | one GLL quadrature over a node block, behind every rung's `length`/`area`/`volume`/`centroid` — corner and curved readings are the same code on different blocks |
 | `core/affine.py` | affine maps behind `translate`/`rotate`/`scale`/`mirror`; `reflection` has det −1, so its caller must pair it with a re-winding |
 | `core/frames.py` | moving-frame machinery behind `sweep`: `tangents`, frame generators (`fixed_up`/`parallel_transport`/`frenet`/`plane_frame`), `sweep_placements` |
@@ -78,7 +78,7 @@ container** except `mesh.py` and `topology.py`:
 | `core/surfaces.py` | `SurfaceCurve` + `ruled`/`blend`/`reverse`/`shift`/`reparam` — curves carried as parametrization, since a point-space lerp between two curves on a cylinder dips inside it |
 | `core/conform.py` | topology/orientation engine behind the B-rep: `unique_edges`/`unique_faces`/`canonical_faces`, `entity_tol`, `scatter_*`/`gather_*`, `conformal_*` walks, D4 helpers |
 
-**`io/`** — `io/export.py` (`to_re2`/`to_vtu`/`to_mesh`/`to_meshio`/`write`),
+**`io/`** — `io/writer.py` (`to_re2`/`to_vtu`/`to_mesh`/`to_meshio`/`write`),
 `io/viz.py` (`plot`).
 
 **`_typing.py`** — shared numpy dtype aliases; see {doc}`conventions`.

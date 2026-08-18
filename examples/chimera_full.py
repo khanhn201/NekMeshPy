@@ -77,7 +77,7 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import export, hexmesh, quadmesh
+from nekmeshpy import hexmesh, quadmesh, writer
 from nekmeshpy.core import paths
 from nekmeshpy.core.paths import turtle_path
 from nekmeshpy.quadmesh._helpers import _elevate as _quad_elevate
@@ -169,7 +169,7 @@ def loft_between(a, b, n_layers, element_tags=None):
     def _try(aa):
         slices = _twist_slices(aa, b, fracs)
         block = hexmesh.loft(slices, element_tags=element_tags)
-        return block, float(hexmesh.scaled_jacobian(block, high_order=True).min())
+        return block, float(hexmesh.scaled_jacobian(block).min())
 
     try:
         block, m = _try(a)
@@ -800,9 +800,9 @@ mesh = mesh_out
 OUT_NAME = "chimera_full"
 GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", SOLID_FACE_TAG: "I  ",
           INTERFACE_TAG: {"fluid": "W  ", "solid": None}}
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
-export.to_fld(mesh, OUT_NAME + ".f00000")
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_fld(mesh, OUT_NAME + ".f00000")
 print("groups:", ", ".join(mesh.face_group_tags))
 
 stats = hexmesh.quality_summary(mesh)

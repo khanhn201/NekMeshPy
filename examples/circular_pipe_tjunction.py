@@ -27,11 +27,11 @@ import numpy as np
 
 from nekmeshpy import (
     TriMesh,
-    export,
     hexmesh,
     linemesh,
     quadmesh,
     smoothing,
+    writer,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -223,5 +223,5 @@ if SMOOTH_ITERS > 0:
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
 
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

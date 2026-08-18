@@ -111,7 +111,7 @@ html_theme_options = {
     "footer_icons": [
         {
             "name": "GitHub",
-            "url": "https://github.com/khanhn201/nekmeshpy",
+            "url": "https://github.com/khanhn201/NekMeshPy",
             "html": (
                 '<img class="github-icon" '
                 'src="https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/github.svg" '

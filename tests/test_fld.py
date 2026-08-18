@@ -1,4 +1,4 @@
-"""The Nek5000 field-file writer (``export.to_fld``).
+"""The Nek5000 field-file writer (``writer.to_fld``).
 
 ``.re2`` has no high-order format, so it ships only the 8 corners of each hex; the
 field file (``<prefix>0.f00001``) stores the full ``lx1*ly1*lz1`` GLL block and is
@@ -15,7 +15,7 @@ import pytest
 from conftest import conformal
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
-from nekmeshpy.io import export
+from nekmeshpy.io import writer
 
 LAYERS = np.array([0.0, 0.5, 1.0])
 
@@ -64,7 +64,7 @@ def test_fld_round_trips_the_gll_block(tmp_path, order):
     mesh = _mesh(order)
     assert mesh.order == order
     path = str(tmp_path / "m0.f00001")
-    export.to_fld(mesh, path)
+    writer.to_fld(mesh, path)
     got = readnek(path)
     nodes, conn_ho = conformal(mesh)
     want = nodes[conn_ho]
@@ -83,7 +83,7 @@ def test_fld_header_and_framing(tmp_path):
     """
     mesh = _mesh(3)
     path = str(tmp_path / "m0.f00001")
-    export.to_fld(mesh, path, time=1.5, istep=7)
+    writer.to_fld(mesh, path, time=1.5, istep=7)
     got = readnek(path)
     assert len(got["header"]) == 132
     assert got["header"] == (
@@ -100,7 +100,7 @@ def test_fld_metadata_is_the_per_element_extent(tmp_path):
     always single precision regardless of ``wdsz``."""
     mesh = _mesh(3)
     path = str(tmp_path / "m0.f00001")
-    export.to_fld(mesh, path)
+    writer.to_fld(mesh, path)
     got = readnek(path)
     nodes, conn_ho = conformal(mesh)
     want = nodes[conn_ho]
@@ -112,8 +112,8 @@ def test_fld_single_precision(tmp_path):
     """``wdsz = 4`` halves the coordinate block and keeps it readable to float32."""
     mesh = _mesh(2)
     p8, p4 = str(tmp_path / "d0.f00001"), str(tmp_path / "s0.f00001")
-    export.to_fld(mesh, p8)
-    export.to_fld(mesh, p4, wdsz=4)
+    writer.to_fld(mesh, p8)
+    writer.to_fld(mesh, p4, wdsz=4)
     g8, g4 = readnek(p8), readnek(p4)
     assert g4["wdsz"] == 4 and g8["wdsz"] == 8
     assert g4["data"] == pytest.approx(g8["data"], abs=1e-6)
@@ -125,4 +125,4 @@ def test_fld_single_precision(tmp_path):
 
 def test_fld_rejects_bad_word_size(tmp_path):
     with pytest.raises(ValueError, match="wdsz"):
-        export.to_fld(_mesh(1), str(tmp_path / "m0.f00001"), wdsz=6)
+        writer.to_fld(_mesh(1), str(tmp_path / "m0.f00001"), wdsz=6)

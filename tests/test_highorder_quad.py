@@ -14,7 +14,7 @@ from conftest import curved, vtu_cell_types
 from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh, set_section_smoothing
 from nekmeshpy.core.fields import uniform_spacing
 from nekmeshpy.core.interp import corner_indices, quad_edge_indices
-from nekmeshpy.io import export
+from nekmeshpy.io import writer
 
 
 # -- geometric truth: sphere nodes lie on the true sphere --------------
@@ -346,28 +346,31 @@ def test_order1_sphere_points_match_high_order_corners():
     assert np.array_equal(lin.corners, ho.corners)
 
 
-# -- order-N quality metric (opt-in) ------------------------------------
-def test_high_order_quality_matches_corner_at_order1():
+# -- order-N quality metric (the only one) -------------------------------
+def test_curved_quality_matches_corner_at_order1():
+    """At order 1 there are no interior nodes, so the curved reading -- which is now the
+    only public one -- must reproduce the corner metric exactly."""
+    from nekmeshpy.quadmesh import quality
     qm = quadmesh.sphere(1.7, 3)
-    assert np.allclose(quadmesh.scaled_jacobian(qm, high_order=True),
-                       quadmesh.scaled_jacobian(qm), atol=1e-12)
+    assert np.allclose(quadmesh.scaled_jacobian(qm),
+                       quality.corner_scaled_jacobian(qm.points, qm.corners), atol=1e-12)
 
 
 @pytest.mark.parametrize("order", [2, 3])
 def test_high_order_quality_non_degenerate_on_curved_sphere(order):
     qm = quadmesh.sphere(1.7, 3, order=order)
-    sj = quadmesh.scaled_jacobian(qm, high_order=True)
+    sj = quadmesh.scaled_jacobian(qm)
     assert sj.shape == (qm.n_quads,)
     assert np.all(np.isfinite(sj))
     assert float(sj.min()) > 0.0                         # no folded surface nodes
-    assert quadmesh.quality_summary(qm, high_order=True).n_elements == qm.n_quads
+    assert quadmesh.quality_summary(qm).n_elements == qm.n_quads
 
 
 # -- VTK Lagrange quad node ordering ------------------------------------
 def test_lagrange_quad_perm_order2():
     # order 2: 3x3 lexicographic (i fastest); VTK wants
     # corners [0,2,8,6], edges [1, 5, 7, 3], interior [4]
-    perm = export._lagrange_quad_perm(2)
+    perm = writer._lagrange_quad_perm(2)
     assert np.array_equal(perm, [0, 2, 8, 6, 1, 5, 7, 3, 4])
 
 
@@ -380,14 +383,14 @@ def _vtu_num_points(path):
 
 def test_vtu_order1_is_plain_quad(tmp_path):
     p = str(tmp_path / "lin.vtu")
-    export.quad_to_vtu(quadmesh.box(1.0, 1), p)
+    writer.quad_to_vtu(quadmesh.box(1.0, 1), p)
     assert vtu_cell_types(p) == {9}                   # VTK_QUAD
     assert _vtu_num_points(p) == 24                      # 6 faces x 4 nodes
 
 
 def test_vtu_high_order_is_lagrange_quad(tmp_path):
     p = str(tmp_path / "ho.vtu")
-    export.quad_to_vtu(quadmesh.box(1.0, 1, order=3), p)
+    writer.quad_to_vtu(quadmesh.box(1.0, 1, order=3), p)
     assert vtu_cell_types(p) == {70}                  # VTK_LAGRANGE_QUADRILATERAL
     # conformal (welded) numbering: shared corners and shared edge-interior nodes
     # are written once.  A closed cube surface at order 3 has 8 corners
@@ -398,7 +401,7 @@ def test_vtu_high_order_is_lagrange_quad(tmp_path):
 def test_vtu_meshio_roundtrip(tmp_path):
     meshio = pytest.importorskip("meshio")
     p = str(tmp_path / "ho.vtu")
-    export.quad_to_vtu(quadmesh.sphere(1.0, 2, order=3), p)
+    writer.quad_to_vtu(quadmesh.sphere(1.0, 2, order=3), p)
     mm = meshio.read(p)
     assert {c.type for c in mm.cells} == {"VTK_LAGRANGE_QUADRILATERAL"}
 
@@ -422,13 +425,13 @@ def test_lagrange_quad_perm_matches_vtk_order3():
                 ij(1, n), ij(2, n),                          # top,    ascending i
                 ij(0, 1), ij(0, 2),                          # left,   ascending j
                 ij(1, 1), ij(2, 1), ij(1, 2), ij(2, 2)]      # interior, i fastest
-    assert list(export._lagrange_quad_perm(3)) == expected
+    assert list(writer._lagrange_quad_perm(3)) == expected
 
 
 def test_vtu_quad_nodes_land_on_the_bilinear_lattice(tmp_path):
     """Every emitted node of an affine quad must sit on that quad's **equispaced**
     lattice -- the parametrization a VTK Lagrange cell is defined on, and therefore the
-    one the writer relabels to (``export._to_equispaced``).  The toolkit *stores* GLL,
+    one the writer relabels to (``writer._to_equispaced``).  The toolkit *stores* GLL,
     so this is also the check that the relabel actually happened: at orders 3 and 4 the
     two lattices differ, and a writer that shipped the GLL nodes verbatim would land
     them here at the wrong slots.
@@ -443,11 +446,11 @@ def test_vtu_quad_nodes_land_on_the_bilinear_lattice(tmp_path):
         p = str(tmp_path / ("aff%d.vtu" % order))
         corners = np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0],
                             [3.0, 2.0, 0.0], [0.0, 2.0, 0.0]])
-        export.quad_to_vtu(quadmesh.rectangle(corners, 2, 2, order=order), p)
+        writer.quad_to_vtu(quadmesh.rectangle(corners, 2, 2, order=order), p)
         mm = meshio.read(p)
         conn = np.vstack([c.data for c in mm.cells])
         pts = np.asarray(mm.points, dtype=float)
-        inv = np.argsort(export._lagrange_quad_perm(order))
+        inv = np.argsort(writer._lagrange_quad_perm(order))
         g = uniform_spacing(order)          # VTK's Lagrange node parameters
         for cell in conn:
             block = pts[cell][inv]          # back to lexicographic (i fastest)

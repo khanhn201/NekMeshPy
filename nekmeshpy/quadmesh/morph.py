@@ -15,12 +15,15 @@ from .._typing import (
     Vec3,
 )
 from ..core import affine, conform, frames
+from ..core.interp import _element_tangents
 from ..core.paths import SpacePath
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
+from ..linemesh.morph import offset_shift
 from ..pointmesh import PointMesh
 from .quadmesh import QuadMesh
+from .query import element_blocks
 
 
 def blend(a: QuadMesh, b: QuadMesh,
@@ -133,6 +136,43 @@ def mirror(mesh: QuadMesh, normal: Vec3 | Sequence[float],
     return _rewind(_affine(mesh, *affine.reflection(normal, point)))
 
 
+def offset(mesh: QuadMesh, distance: float,
+           crease: float = np.deg2rad(30.0)) -> QuadMesh:
+    """A new section displaced by ``distance`` along its own surface normal -- the
+    cross product of the two parametric tangents (computed from the underlying GLL
+    nodes, so high-order interior nodes follow the same rule as corners). Consistent
+    CCW winding across the section gives every quad's normal the same sign, so no
+    reference direction is needed.
+
+    At a point shared by more than one quad (a corner, or a shared-edge node), the
+    offset direction is the average of every incident quad's own normal at that node,
+    renormalized -- so a quad's private interior node (touched by no other quad) is
+    simply displaced by its own element's normal.
+
+    This is the building block for skinning: loft a section and its ``offset`` copy to
+    get a thin, perpendicular boundary-layer hex shell."""
+    order = mesh.order
+    curved = element_blocks(mesh)                          # (Q, (order+1)**2, 3)
+    t_u, t_v = _element_tangents(curved, order, 2)
+    dirs = np.cross(t_u, t_v)
+    dirs = dirs / np.linalg.norm(dirs, axis=2, keepdims=True)
+
+    lm = mesh.line_mesh
+    nodes, conn_ho = conform.conformal_quad(
+        mesh.points, mesh.corners, mesh.quads, mesh.orient, lm.interior,
+        mesh.interior, order)
+    moved = nodes + offset_shift(dirs, conn_ho, nodes.shape[0], distance, crease)
+    p = mesh.points.shape[0]
+    ne = lm.lines.shape[0]
+    k = order - 1
+    new_points = moved[:p]
+    new_edge_interior = moved[p:p + ne * k].reshape(ne, k, 3)
+    new_interior = moved[p + ne * k:].reshape(mesh.quads.shape[0], k * k, 3)
+    new_lines = LineMesh(PointMesh(new_points, lm.point_tags), lm.lines,
+                         new_edge_interior, lm.element_tags)
+    return QuadMesh(new_lines, mesh.quads, mesh.orient, new_interior, mesh.element_tags)
+
+
 def reindex(structure: QuadMesh, target: QuadMesh,
             sigma: IntArray | Sequence[int]) -> QuadMesh:
     """``target``'s own geometry, reached through ``structure``'s own index labels:
@@ -207,6 +247,7 @@ def place_on_path(section: QuadMesh, path: SpacePath,
 __all__ = [
     "blend",
     "mirror",
+    "offset",
     "place_on_path",
     "reindex",
     "rotate",

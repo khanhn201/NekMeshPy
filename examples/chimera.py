@@ -111,7 +111,7 @@ import sys
 
 import numpy as np
 
-from nekmeshpy import export, hexmesh, linemesh, quadmesh
+from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import paths
 from nekmeshpy.core.paths import turtle_path
 from nekmeshpy.core.tags import ElementTags
@@ -565,5 +565,5 @@ mesh = hexmesh.tag_faces(mesh, _interface, INTERFACE_TAG)
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))
 
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

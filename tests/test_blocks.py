@@ -12,7 +12,7 @@ from nekmeshpy.hexmesh import quality
 
 def _scaled_jac(mesh):
     X, HC = mesh.points, mesh.corners
-    return quality.scaled_jacobian(X, HC)
+    return quality.corner_scaled_jacobian(X, HC)
 
 
 def test_from_grid_grading():

@@ -8,7 +8,7 @@ and ``CLAUDE.md``'s Commands block), same as a human running it locally:
 
 Each example is executed the same way ``tests/test_examples.py`` does (``runpy.run_path``,
 cwd inside a scratch directory so any files an example writes don't land in the repo),
-and its ``mesh`` global is exported through ``export.boundary_to_vtp`` -- the boundary
+and its ``mesh`` global is exported through ``writer.boundary_to_vtp`` -- the boundary
 surface only, corners only, never the interior volume a ``.vtu`` would carry. That is
 what keeps even the largest example (``chimera_full.py``, a few hundred MB as a ``.vtu``)
 web-sized: a viewer only ever shows the outer surface anyway.
@@ -54,7 +54,7 @@ def _run(name: str, scratch: str) -> dict:
 
 def main() -> None:
     from nekmeshpy import HexMesh
-    from nekmeshpy.io import export
+    from nekmeshpy.io import writer
 
     os.makedirs(_OUT, exist_ok=True)
     for name in _examples():
@@ -67,7 +67,7 @@ def main() -> None:
             print("  skip: %s defines no HexMesh `mesh`" % name)
             continue
         out_path = os.path.join(_OUT, "%s.vtp" % stem)
-        export.boundary_to_vtp(mesh, out_path)
+        writer.boundary_to_vtp(mesh, out_path)
         size = os.path.getsize(out_path)
         print("  %s: %.2f MB" % (os.path.basename(out_path), size / 1e6))
 

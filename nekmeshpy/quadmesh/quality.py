@@ -12,7 +12,7 @@ from .quadmesh import QuadMesh
 _CN = np.array([[0, 1, 3], [1, 2, 0], [2, 3, 1], [3, 0, 2]], dtype=np.int64)
 
 
-def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
+def corner_scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
     """Per-quad minimum corner scaled Jacobian, shape ``(N,)``."""
     X = np.asarray(points, dtype=float)
     QC = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
@@ -38,7 +38,7 @@ def scaled_jacobian(points: PointArray, quads: IntArray) -> FloatArray:
     return np.where(good, sj, 0.0)
 
 
-def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
+def _curved_block(mesh: QuadMesh, order: int) -> PointArray:
     """The per-quad ``(Q,(order+1)**2,3)`` node block the order-N metrics sample."""
     from ..core import conform
     nodes, conn_ho = conform.conformal_quad(
@@ -48,12 +48,12 @@ def _ho_block(mesh: QuadMesh, order: int) -> PointArray:
     return block
 
 
-def scaled_jacobian_ho(mesh: QuadMesh, order: int) -> FloatArray:
+def scaled_jacobian(mesh: QuadMesh, order: int) -> FloatArray:
     """Per-quad minimum scaled Jacobian sampled at the ``(order+1)**2`` GLL nodes of the
     curved element block, shape ``(N,)`` -- the order-N generalization of
     :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>`."""
-    from ..core.interp import scaled_jacobian_ho as _sj
-    return _sj(_ho_block(mesh, order), order, dim=2)
+    from ..core.interp import scaled_jacobian as _sj
+    return _sj(_curved_block(mesh, order), order, dim=2)
 
 
 def _summary(sj: FloatArray) -> QualitySummary:
@@ -69,20 +69,20 @@ def _summary(sj: FloatArray) -> QualitySummary:
     )
 
 
-def summary(points: PointArray, quads: IntArray) -> QualitySummary:
+def corner_summary(points: PointArray, quads: IntArray) -> QualitySummary:
     """Aggregate quality statistics for a quad mesh."""
-    return _summary(scaled_jacobian(points, quads))
+    return _summary(corner_scaled_jacobian(points, quads))
 
 
-def summary_ho(mesh: QuadMesh, order: int) -> QualitySummary:
-    """Aggregate statistics for the order-N :func:`scaled_jacobian_ho` metric."""
-    return _summary(scaled_jacobian_ho(mesh, order))
+def summary(mesh: QuadMesh, order: int) -> QualitySummary:
+    """Aggregate statistics for the order-N :func:`scaled_jacobian` metric."""
+    return _summary(scaled_jacobian(mesh, order))
 
 
 def histogram(points: PointArray, quads: IntArray, bins: int = 10,
               lo: float = 0.0, hi: float = 1.0) -> tuple[IntArray, FloatArray]:
     """``(counts, edges)`` histogram of the scaled Jacobian distribution."""
-    sj = scaled_jacobian(points, quads)
+    sj = corner_scaled_jacobian(points, quads)
     return np.histogram(sj, bins=bins, range=(lo, hi))
 
 

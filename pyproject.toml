@@ -47,7 +47,7 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/khanhn201/nekmeshpy"
+Homepage = "https://github.com/khanhn201/NekMeshPy"
 
 [tool.setuptools.packages.find]
 include = ["nekmeshpy*"]

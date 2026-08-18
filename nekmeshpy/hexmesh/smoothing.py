@@ -63,7 +63,7 @@ def smooth(
     free = ~is_fixed
     wtri = _wall_tri_neighbourhoods(X, is_wall, Oxyz, Otri)
 
-    sj = quality.scaled_jacobian(X, HC)
+    sj = quality.corner_scaled_jacobian(X, HC)
     _log.info("smoothing: untangle<=%d, polish %d, lambda=%.2f  (points=%d, wall=%d, fixed=%d)",
               nUnt, smooth_iters, lam0, nu, int(np.sum(is_wall)), int(np.sum(is_fixed)))
     _log.info("  quality before: min scaled Jac=%.4f  mean=%.4f", np.min(sj), np.mean(sj))
@@ -73,13 +73,13 @@ def smooth(
     for _ in range(nUnt):
         if mn >= qfloor:
             break
-        active = _active_points(quality.scaled_jacobian(X, HC), HC, adj, free, qfloor)
+        active = _active_points(quality.corner_scaled_jacobian(X, HC), HC, adj, free, qfloor)
         if active.size == 0:
             break
         for v in active:
             tgt = X[adj[v], :].mean(axis=0)
             els = NH[v]
-            base = float(np.min(quality.scaled_jacobian(X, HC[els, :])))
+            base = float(np.min(quality.corner_scaled_jacobian(X, HC[els, :])))
             bestq = base
             bestx = X[v, :].copy()
             for fr in (1.0, 0.7, 0.4, 0.15):
@@ -88,20 +88,20 @@ def smooth(
                     cand = ops.project_to_surface(surface, cand[None, :], Otri[wtri[v], :])[0]
                 xo = X[v, :].copy()
                 X[v, :] = cand
-                q = float(np.min(quality.scaled_jacobian(X, HC[els, :])))
+                q = float(np.min(quality.corner_scaled_jacobian(X, HC[els, :])))
                 X[v, :] = xo
                 if q > bestq + 1e-12:
                     bestq = q
                     bestx = cand
             X[v, :] = bestx
-        mn_new = float(np.min(quality.scaled_jacobian(X, HC)))
+        mn_new = float(np.min(quality.corner_scaled_jacobian(X, HC)))
         if mn_new <= mn + 1e-9:
             mn = mn_new
             break
         mn = mn_new
 
     # stage 2: global Jacobi polish
-    mn = float(np.min(quality.scaled_jacobian(X, HC)))
+    mn = float(np.min(quality.corner_scaled_jacobian(X, HC)))
     for _ in range(smooth_iters):
         target = Avg @ X
         lam = lam0
@@ -111,7 +111,7 @@ def smooth(
             Xn[free, :] = (1 - lam) * X[free, :] + lam * target[free, :]
             if proj and np.any(is_wall):
                 Xn[is_wall, :] = ops.project_to_surface(surface, Xn[is_wall, :])
-            mnn = float(np.min(quality.scaled_jacobian(Xn, HC)))
+            mnn = float(np.min(quality.corner_scaled_jacobian(Xn, HC)))
             if mnn >= mn - 1e-9:
                 X = Xn
                 mn = mnn
@@ -124,7 +124,7 @@ def smooth(
     if proj and np.any(is_wall):
         X[is_wall, :] = ops.project_to_surface(surface, X[is_wall, :])
 
-    sj = quality.scaled_jacobian(X, HC)
+    sj = quality.corner_scaled_jacobian(X, HC)
     _log.info("  quality after : min scaled Jac=%.4f  mean=%.4f", np.min(sj), np.mean(sj))
     if np.min(sj) <= 0:
         _log.warning("  %d element(s) still non-positive after smoothing",

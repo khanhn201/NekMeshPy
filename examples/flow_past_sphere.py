@@ -19,7 +19,7 @@ Produces ``flow_past_sphere.re2`` and ``flow_past_sphere.vtu``.
 
 import logging
 
-from nekmeshpy import export, hexmesh, quadmesh
+from nekmeshpy import hexmesh, quadmesh, writer
 from nekmeshpy.core.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -56,6 +56,6 @@ mesh = hexmesh.annulus(sphere, cube,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 print("groups:", ", ".join(mesh.face_group_tags))

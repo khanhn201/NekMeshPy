@@ -8,12 +8,12 @@ from nekmeshpy import (
     SECTION_METHODS,
     PhysicalGroup,
     PhysicalGroups,
-    export,
     hexmesh,
     linemesh,
     quadmesh,
     register_section_smoothing,
     set_section_smoothing,
+    writer,
 )
 from nekmeshpy.hexmesh import quality
 
@@ -39,7 +39,7 @@ def test_physical_group_pads_code():
 
 
 def test_to_mesh_groups(built_mesh):
-    m = export.to_mesh(built_mesh["mesh"], built_mesh["groups"])
+    m = writer.to_mesh(built_mesh["mesh"], built_mesh["groups"])
     assert m.cells["hexahedron"].shape == (7200, 8)
     assert m.cells["quad"].shape == (1840, 4)
     assert set(m.cell_sets) >= {"wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"}
@@ -50,7 +50,7 @@ def test_to_mesh_without_groups_cannot_orient_an_interior_plane(built_mesh):
     """With no registry there is no side rule, so a named *interior* face contributes
     the row each of its two hexes carries -- 160 more than the directed export. Which
     side a measurement plane belongs to is a property of the groups, not the mesh."""
-    m = export.to_mesh(built_mesh["mesh"])
+    m = writer.to_mesh(built_mesh["mesh"])
     assert m.cells["quad"].shape == (2000, 4)
 
 
@@ -74,16 +74,17 @@ def test_section_smoothing_registry_extensible():
 def test_quality_module_matches_mesh(built_mesh):
     mesh = built_mesh["mesh"]
     X, HC = mesh.points, mesh.corners
-    sj = quality.scaled_jacobian(X, HC)
-    assert np.allclose(sj, hexmesh.scaled_jacobian(mesh))
-    stats = quality.summary(X, HC)
-    assert stats.n_inverted == 0
-    # ``quality.summary`` reads corners -- it is handed points and connectivity, and a
-    # welded array carries no curved nodes to read.  ``hexmesh.quality_summary``
-    # defaults to the curved reading, so the two agree only when asked the same
-    # question, and on this order-3 carotid they genuinely differ (0.121 vs 0.093).
-    assert hexmesh.quality_summary(mesh, high_order=False) == stats
-    assert hexmesh.quality_summary(mesh).min <= stats.min
+    # the public readings are curved-only now, so the module twin to compare against is
+    # the mesh-taking pair, not the bare-array corner one
+    assert np.allclose(quality.scaled_jacobian(mesh, mesh.order),
+                       hexmesh.scaled_jacobian(mesh))
+    assert quality.summary(mesh, mesh.order) == hexmesh.quality_summary(mesh)
+    # the corner reading still exists inside ``quality`` and still disagrees -- on this
+    # order-3 carotid it is the more flattering of the two, which is the whole reason it
+    # is no longer reachable from the rung namespace
+    corner = quality.corner_summary(X, HC)
+    assert corner.n_inverted == 0
+    assert hexmesh.quality_summary(mesh).min <= corner.min
 
 
 # -- validate_layers: an int is n uniform layers ------------------------------
