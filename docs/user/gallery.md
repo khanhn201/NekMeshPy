@@ -125,3 +125,14 @@ External flow around a hemisphere on the ground.
 ```
 
 [`examples/flow_past_hemisphere.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/flow_past_hemisphere.py)
+
+## rod_bundle
+
+61-rod hexagonal fuel bundle with a helical wire wrap: solid rods, coolant, and the
+duct wall as three conjugate regions. The wire is a bulge in the rod's own wall profile
+rather than a body of its own, and the shared cell walls slide out of its way.
+
+```{mesh-viewer} rod_bundle
+```
+
+[`examples/rod_bundle.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/rod_bundle.py)
