@@ -21,7 +21,7 @@ per-hex quality metrics.
 `scaled_jacobian` here is **not** the same function as `hexmesh.scaled_jacobian`
 below, despite the shared name: this one takes raw `(points, hexes)` and reads
 corners only; the one re-exported on `hexmesh` (defined in `hexmesh.query`) takes a
-`HexMesh` and can read the curved order-N block via `high_order=True` — the split
+`HexMesh` and always reads the curved order-N block — the split
 that matters most here, since a mesh reading `0 inverted` at the corners can still
 be inverted once its curved nodes are read (see
 [Concepts](../user/concepts.md#high-order-order-n-elements)). Call through

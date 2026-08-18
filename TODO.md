@@ -1,11 +1,14 @@
 Local, immediate simple tasks that can be done right away, not to be commited.
-- [ ] 1) Need a quadmesh and linemesh .morph.offset to create an offseted surface based on
+- [x] 1) Need a quadmesh and linemesh .morph.offset to create an offseted surface based on
 surface tangent. The offset vector
 at each point should be average of that point's tangent across
 all elements sharing that point. Ofcourse high order nodes follow the same rule.
 Tangent and derivative should be calculated based on the underlying GLL nodes and
 functions.
-toolkit
+The point of this is for skinning a mesh, which generates a thin, perpendicular 
+boundary layers near a surface. These thin skin layers can then be loft to generate a hexmesh
+or quadmesh.
+
 - [ ] 2) API for attaching to known surface without needing to merge (continue loft, solid-fluid in chimera, bifurcation interfaces)
 - [ ] 3) New Tjunction topology
 - [ ] 4) Plottings utils or simply vtk export the full scene

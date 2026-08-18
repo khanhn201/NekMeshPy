@@ -6,6 +6,7 @@ from .lower import boundary_mesh
 from .morph import (
     blend,
     mirror,
+    offset,
     place_on_path,
     reindex,
     rotate,
@@ -82,6 +83,7 @@ __all__ = [
     "lower",
     "merge",
     "morph",
+    "offset",
     "ogrid",
     "place_on_path",
     "plane_normal",

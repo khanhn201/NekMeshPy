@@ -36,7 +36,7 @@ def test_counts_and_orientation(n, order):
     assert q.corners.shape[0] == n * n + 2 * n * NR
     assert q.order == order
     assert quadmesh.scaled_jacobian(q).min() > 0.0
-    assert quadmesh.scaled_jacobian(q, high_order=True).min() > 0.0
+    assert quadmesh.scaled_jacobian(q).min() > 0.0
 
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])

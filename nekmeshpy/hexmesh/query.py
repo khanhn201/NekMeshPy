@@ -99,20 +99,22 @@ def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     return rows[p], tags[p]
 
 
-def scaled_jacobian(mesh: HexMesh, *, high_order: bool = False) -> FloatArray:
-    """Per-hex minimum scaled Jacobian ``(n_hexes,)``."""
-    from . import quality
-    if high_order:
-        return quality.scaled_jacobian_ho(mesh, mesh.order)
-    return quality.scaled_jacobian(mesh.points, mesh.corners)
+def scaled_jacobian(mesh: HexMesh) -> FloatArray:
+    """Per-hex minimum scaled Jacobian ``(n_hexes,)``, read off the **curved**
+    element the mesh actually stores.
 
-def quality_summary(mesh: HexMesh, *, high_order: bool = True) -> QualitySummary:
-    """Aggregate scaled-Jacobian statistics (see :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>` for the
-    ``high_order`` flag)."""
+    There is deliberately no corner-only reading. A corner scaled Jacobian cannot see
+    where the high-order nodes went, so it reports a contented number for a mesh whose
+    interior nodes are anywhere at all -- a node moved clean outside the element still
+    scores the same. Anything that has to be trusted must read the curved block."""
     from . import quality
-    if high_order:
-        return quality.summary_ho(mesh, mesh.order)
-    return quality.summary(mesh.points, mesh.corners)
+    return quality.scaled_jacobian(mesh, mesh.order)
+
+def quality_summary(mesh: HexMesh) -> QualitySummary:
+    """Aggregate scaled-Jacobian statistics over the **curved** elements -- see
+    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`."""
+    from . import quality
+    return quality.summary(mesh, mesh.order)
 
 
 def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:

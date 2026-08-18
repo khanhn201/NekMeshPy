@@ -94,7 +94,7 @@ def test_flat_tet_stays_flat_at_order_n(order):
     p = t.points
     assert p[:, 0].min() > -1e-12 and p[:, 1].min() > -1e-12
     assert p[:, 2].min() > -1e-12 and p.sum(axis=1).max() < 1.0 + 1e-12
-    assert float(np.min(hexmesh.scaled_jacobian(t, high_order=True))) > 0.0
+    assert float(np.min(hexmesh.scaled_jacobian(t))) > 0.0
 
 
 def test_tags_follow_their_face():

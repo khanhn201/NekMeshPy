@@ -70,8 +70,9 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
 # improves the cell.  Sweeping N_BUMP at fixed NX = 120 gives min scaled Jacobian
 # 0.107 at N_BUMP = 10, 0.147 at 18, 0.222 at 24 and 0.272 at 30: monotone above
 # ~10, so N_BUMP = 24 is the coarsest bump that still clears the 0.2 floor the tests
-# assert.  (That floor is the corner metric; scaled_jacobian(high_order=True) on the
-# same mesh reads 0.181 -- the curved wall genuinely costs quality at the GLL nodes.)
+# assert.  (Those figures are the corner metric this note was measured with; the
+# curved reading -- now the only one -- gives 0.181 on the same mesh, since the
+# curved wall genuinely costs quality at the GLL nodes.)
 left_ground = linemesh.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
                             np.linspace(0.0, 1.0, N_GROUND + 1),
                             element_tag="wall", order=ORDER)

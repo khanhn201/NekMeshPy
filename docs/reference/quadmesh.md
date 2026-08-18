@@ -23,7 +23,7 @@ per-quad quality metrics.
 `scaled_jacobian` here is **not** the same function as `quadmesh.scaled_jacobian`
 below, despite the shared name: this one takes raw `(points, quads)` and reads
 corners only; the one re-exported on `quadmesh` (defined in `quadmesh.query`) takes
-a `QuadMesh` and can read the curved order-N block via `high_order=True`. Call
+a `QuadMesh` and always reads the curved order-N block. Call
 through `quadmesh.scaled_jacobian`/`quadmesh.quality_summary` unless you are
 working with bare arrays.
 

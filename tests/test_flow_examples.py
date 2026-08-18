@@ -15,7 +15,7 @@ from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(mesh.points, mesh.corners)
+    return quality.corner_scaled_jacobian(mesh.points, mesh.corners)
 
 
 def _wall_nodes(mesh, name):

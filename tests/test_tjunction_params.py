@@ -105,7 +105,7 @@ def test_the_junction_is_valid_across_the_whole_range(ratio):
     assert hexmesh.is_watertight(core)
     # 0.10 is the measured floor of the rule over ratios 0.10 to 0.99; it is a
     # guarantee about the *worst* ratio, not a typical value (most are above 0.25)
-    assert hexmesh.scaled_jacobian(core, high_order=True).min() > 0.10
+    assert hexmesh.scaled_jacobian(core).min() > 0.10
 
 
 @pytest.mark.parametrize("ratio", [0.90, 0.95, 0.999])
@@ -115,11 +115,11 @@ def test_it_fixes_ratios_the_old_fixed_values_could_not_mesh(ratio):
     try:
         old = hexmesh.scaled_jacobian(
             _core(ratio, PHI_W=np.deg2rad(100.0), CAP_TIP_BIAS=1 / 3,
-                  ORIGIN=(0, 0, 0)), high_order=True).min()
+                  ORIGIN=(0, 0, 0))).min()
     except ValueError:
         old = None                      # would not even build
     assert old is None or old < 0.0
-    assert hexmesh.scaled_jacobian(_core(ratio), high_order=True).min() > 0.10
+    assert hexmesh.scaled_jacobian(_core(ratio)).min() > 0.10
 
 
 @pytest.mark.parametrize("ratio", RATIOS)
@@ -127,10 +127,10 @@ def test_it_never_does_worse_than_the_old_fixed_values(ratio):
     try:
         old = hexmesh.scaled_jacobian(
             _core(ratio, PHI_W=np.deg2rad(100.0), CAP_TIP_BIAS=1 / 3,
-                  ORIGIN=(0, 0, 0)), high_order=True).min()
+                  ORIGIN=(0, 0, 0))).min()
     except ValueError:
         return                          # the old values could not build this at all
-    assert hexmesh.scaled_jacobian(_core(ratio), high_order=True).min() > old
+    assert hexmesh.scaled_jacobian(_core(ratio)).min() > old
 
 
 def test_an_explicit_value_still_overrides_just_that_one():

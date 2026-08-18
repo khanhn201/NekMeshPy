@@ -11,7 +11,7 @@ from nekmeshpy.hexmesh import quality
 
 
 def _scaled_jac(mesh):
-    return quality.scaled_jacobian(mesh.points, mesh.corners)
+    return quality.corner_scaled_jacobian(mesh.points, mesh.corners)
 
 
 def _tag_count(mesh, name):
@@ -108,7 +108,7 @@ def test_quadrant_pipe_tjunction(tmp_path):
     assert np.all(on_main | on_branch)
     assert on_main.any() and on_branch.any()
     # and the order-N geometry is not merely stored, it is sound
-    assert float(np.min(hexmesh.scaled_jacobian(mesh, high_order=True))) > 0.2
+    assert float(np.min(hexmesh.scaled_jacobian(mesh))) > 0.2
 
     # The mesh fills exactly the union of the two cylinders.  This is the check that
     # separates high-order *geometry* from high-order storage: straight-subdivided

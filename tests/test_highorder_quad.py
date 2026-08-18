@@ -346,21 +346,24 @@ def test_order1_sphere_points_match_high_order_corners():
     assert np.array_equal(lin.corners, ho.corners)
 
 
-# -- order-N quality metric (opt-in) ------------------------------------
-def test_high_order_quality_matches_corner_at_order1():
+# -- order-N quality metric (the only one) -------------------------------
+def test_curved_quality_matches_corner_at_order1():
+    """At order 1 there are no interior nodes, so the curved reading -- which is now the
+    only public one -- must reproduce the corner metric exactly."""
+    from nekmeshpy.quadmesh import quality
     qm = quadmesh.sphere(1.7, 3)
-    assert np.allclose(quadmesh.scaled_jacobian(qm, high_order=True),
-                       quadmesh.scaled_jacobian(qm), atol=1e-12)
+    assert np.allclose(quadmesh.scaled_jacobian(qm),
+                       quality.corner_scaled_jacobian(qm.points, qm.corners), atol=1e-12)
 
 
 @pytest.mark.parametrize("order", [2, 3])
 def test_high_order_quality_non_degenerate_on_curved_sphere(order):
     qm = quadmesh.sphere(1.7, 3, order=order)
-    sj = quadmesh.scaled_jacobian(qm, high_order=True)
+    sj = quadmesh.scaled_jacobian(qm)
     assert sj.shape == (qm.n_quads,)
     assert np.all(np.isfinite(sj))
     assert float(sj.min()) > 0.0                         # no folded surface nodes
-    assert quadmesh.quality_summary(qm, high_order=True).n_elements == qm.n_quads
+    assert quadmesh.quality_summary(qm).n_elements == qm.n_quads
 
 
 # -- VTK Lagrange quad node ordering ------------------------------------

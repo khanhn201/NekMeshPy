@@ -170,6 +170,9 @@ def _element_tangents(curved: PointArray, order: int,
     d1 = lagrange_derivative_matrix(g, g)             # (row,row): d1[a,i]=L'_i(g[a])
     row = order + 1
     e = curved.shape[0]
+    if dim == 1:
+        t = np.einsum("mi,eic->emc", d1, curved)
+        return (t,)
     if dim == 2:
         b = curved.reshape(e, row, row, 3)            # axes (j, i)
         t_i = np.einsum("mi,ejid->ejmd", d1, b).reshape(e, row * row, 3)
@@ -181,10 +184,10 @@ def _element_tangents(curved: PointArray, order: int,
         t_j = np.einsum("mj,ekjid->ekmid", d1, b).reshape(e, row ** 3, 3)
         t_k = np.einsum("mk,ekjid->emjid", d1, b).reshape(e, row ** 3, 3)
         return t_i, t_j, t_k
-    raise ValueError("scaled-Jacobian metric supports dim 2 or 3, got %d" % dim)
+    raise ValueError("_element_tangents supports dim 1, 2 or 3, got %d" % dim)
 
 
-def scaled_jacobian_ho(curved: PointArray, order: int, dim: int) -> FloatArray:
+def scaled_jacobian(curved: PointArray, order: int, dim: int) -> FloatArray:
     """Per-element minimum scaled Jacobian sampled at the ``(order+1)**dim`` GLL nodes
     of a ``curved`` block, shape ``(E,)``."""
     tang = _element_tangents(curved, order, dim)

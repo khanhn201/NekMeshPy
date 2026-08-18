@@ -1,6 +1,6 @@
 # NekMeshPy
 
-[![docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://khanhn201.github.io/nekmeshpy/)
+[![docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://khanhn201.github.io/NekMeshPy/)
 
 Conformal high order all-hex meshing.
 
@@ -8,14 +8,14 @@ Conformal high order all-hex meshing.
 
 ## Documentation
 
-📖 **Full documentation: <https://khanhn201.github.io/nekmeshpy/>**
+📖 **Full documentation: <https://khanhn201.github.io/NekMeshPy/>**
 
-- **[Getting started](https://khanhn201.github.io/nekmeshpy/user/getting-started.html)** — install, build your first mesh, export.
-- **[Concepts](https://khanhn201.github.io/nekmeshpy/user/concepts.html)** — the line→quad→hex ladder, tags, section factories, smoothing, high-order geometry.
-- **[How-to recipes](https://khanhn201.github.io/nekmeshpy/user/howto.html)** — O-grid pipe, external flow, sphere shell, structured duct.
-- **[API reference](https://khanhn201.github.io/nekmeshpy/reference/)** — every public module, class, and function.
-- **[Architecture](https://khanhn201.github.io/nekmeshpy/user/architecture.html)** — how the toolkit is laid out and why.
-- **[Conventions](https://khanhn201.github.io/nekmeshpy/user/conventions.html)** — typing, naming, and the invariants the code holds to.
+- **[Getting started](https://khanhn201.github.io/NekMeshPy/user/getting-started.html)** — install, build your first mesh, export.
+- **[Concepts](https://khanhn201.github.io/NekMeshPy/user/concepts.html)** — the line→quad→hex ladder, tags, section factories, smoothing, high-order geometry.
+- **[How-to recipes](https://khanhn201.github.io/NekMeshPy/user/howto.html)** — O-grid pipe, external flow, sphere shell, structured duct.
+- **[API reference](https://khanhn201.github.io/NekMeshPy/reference/)** — every public module, class, and function.
+- **[Architecture](https://khanhn201.github.io/NekMeshPy/user/architecture.html)** — how the toolkit is laid out and why.
+- **[Conventions](https://khanhn201.github.io/NekMeshPy/user/conventions.html)** — typing, naming, and the invariants the code holds to.
 
 ## Install
 
@@ -51,7 +51,7 @@ print(hexmesh.quality_summary(block).min)   # a QualitySummary NamedTuple, not a
 ```
 
 For sweeping (`loft`/`sweep`) and high-order geometry, see
-[Concepts](https://khanhn201.github.io/nekmeshpy/user/concepts.html).
+[Concepts](https://khanhn201.github.io/NekMeshPy/user/concepts.html).
 
 ## Examples
 
@@ -64,7 +64,7 @@ PYTHONPATH=. python examples/circular_pipe.py      # all-hex O-grid pipe
 PYTHONPATH=. python examples/flow_past_cylinder.py # external flow around a body
 ```
 
-See the [how-to recipes](https://khanhn201.github.io/nekmeshpy/user/howto.html)
+See the [how-to recipes](https://khanhn201.github.io/NekMeshPy/user/howto.html)
 for a guided tour of each.
 
 ## Development

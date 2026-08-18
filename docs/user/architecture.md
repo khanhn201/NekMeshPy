@@ -70,7 +70,7 @@ container** except `mesh.py` and `topology.py`:
 | `core/topology.py` | watertight/manifold/connectivity + hanging-point checks; returns a `TopologyReport` |
 | `core/quality.py` | shared `QualitySummary` NamedTuple + `POOR_THRESHOLD` used by both quality modules |
 | `core/fields.py` | sizing `Field`s, graded 1-D distributions, `gll_nodes`/`lagrange_derivative_matrix`/`validate_layers` |
-| `core/interp.py` | order-N kernel over GLL reference nodes: `tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`, `scaled_jacobian_ho` |
+| `core/interp.py` | order-N kernel over GLL reference nodes: `tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`, `scaled_jacobian` |
 | `core/measure.py` | one GLL quadrature over a node block, behind every rung's `length`/`area`/`volume`/`centroid` — corner and curved readings are the same code on different blocks |
 | `core/affine.py` | affine maps behind `translate`/`rotate`/`scale`/`mirror`; `reflection` has det −1, so its caller must pair it with a re-winding |
 | `core/frames.py` | moving-frame machinery behind `sweep`: `tangents`, frame generators (`fixed_up`/`parallel_transport`/`frenet`/`plane_frame`), `sweep_placements` |

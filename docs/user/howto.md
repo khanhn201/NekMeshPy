@@ -1,7 +1,7 @@
 # How-to recipes
 
 Recipes distilled from runnable scripts under
-[`examples/`](https://github.com/khanhn201/nekmeshpy/tree/main/examples) — flat
+[`examples/`](https://github.com/khanhn201/NekMeshPy/tree/main/examples) — flat
 gmsh-style scripts (constants at top, assign to a `mesh` global, export). Edit the
 constants and re-run:
 

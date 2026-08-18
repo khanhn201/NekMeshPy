@@ -447,9 +447,12 @@ lowest rung — the toolkit never resamples.
   {func}`nekmeshpy.io.export.to_fld` writes the full GLL block as the `X`
   field; see [Using a high-order mesh in Nek5000 / NekRS](#using-a-high-order-mesh-in-nek5000-nekrs)
   below.
-- **Quality metrics are opt-in** — defaults stay corner-based. Pass
-  `high_order=True` to `scaled_jacobian()`/`quality_summary()` to sample GLL
-  nodes instead (agrees exactly with corners at order 1).
+- **Quality metrics always read the curved element.** `scaled_jacobian()` and
+  `quality_summary()` sample the GLL nodes the mesh actually stores; there is no
+  corner-only option, and at order 1 the two coincide anyway. A corner reading cannot
+  see where the high-order nodes went — a node displaced clean outside its element
+  scores exactly the same — so it is not something a caller should be able to ask for
+  by accident.
   `quality_summary()` returns a {class}`~nekmeshpy.core.quality.QualitySummary`
   NamedTuple; its `n_poor` and `poor (<…)` line both derive from
   {data}`~nekmeshpy.core.quality.POOR_THRESHOLD` so they can't drift apart.

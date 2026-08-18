@@ -156,23 +156,28 @@ def test_order1_shell_points_match_high_order_corners():
     assert np.array_equal(lin.corners, ho.corners)
 
 
-# -- order-N quality metric (opt-in) ------------------------------------
-def test_high_order_quality_matches_corner_at_order1():
+# -- order-N quality metric (the only one) -------------------------------
+def test_curved_quality_matches_corner_at_order1():
+    """At order 1 there are no interior nodes, so the curved reading -- which is now the
+    only public one -- must reproduce the corner metric exactly."""
+    from nekmeshpy.hexmesh import quality
     hm = _shell(1)
-    assert np.allclose(hexmesh.scaled_jacobian(hm, high_order=True),
-                       hexmesh.scaled_jacobian(hm), atol=1e-12)
+    assert np.allclose(hexmesh.scaled_jacobian(hm),
+                       quality.corner_scaled_jacobian(hm.points, hm.corners), atol=1e-12)
 
 
 @pytest.mark.parametrize("order", [2, 3])
 def test_high_order_quality_non_degenerate_on_curved_shell(order):
     hm = _shell(order, n_face=3, n_radial=2)
-    sj = hexmesh.scaled_jacobian(hm, high_order=True)
+    sj = hexmesh.scaled_jacobian(hm)
     assert sj.shape == (hm.n_hexes,)
     assert np.all(np.isfinite(sj))
     assert float(sj.min()) > 0.0                         # no folded GLL nodes
-    # sampling the curved interior differs from the corner-only metric
-    assert not np.allclose(sj, hexmesh.scaled_jacobian(hm))
-    assert hexmesh.quality_summary(hm, high_order=True).n_elements == hm.n_hexes
+    # sampling the curved interior differs from the corner-only metric, which is
+    # precisely why the corner one is no longer reachable from the public API
+    from nekmeshpy.hexmesh import quality
+    assert not np.allclose(sj, quality.corner_scaled_jacobian(hm.points, hm.corners))
+    assert hexmesh.quality_summary(hm).n_elements == hm.n_hexes
 
 
 # -- re2 export stays linear regardless of order ------------------------

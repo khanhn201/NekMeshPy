@@ -169,7 +169,7 @@ def loft_between(a, b, n_layers, element_tags=None):
     def _try(aa):
         slices = _twist_slices(aa, b, fracs)
         block = hexmesh.loft(slices, element_tags=element_tags)
-        return block, float(hexmesh.scaled_jacobian(block, high_order=True).min())
+        return block, float(hexmesh.scaled_jacobian(block).min())
 
     try:
         block, m = _try(a)

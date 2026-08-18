@@ -13,10 +13,11 @@ from .._typing import (
     PointArray,
     Vec3,
 )
-from ..core import affine
+from ..core import affine, conform
+from ..core.interp import _element_tangents
 from ..pointmesh import PointMesh
 from .linemesh import LineMesh
-from .query import boundary_points
+from .query import boundary_points, element_blocks
 
 
 def blend(a: LineMesh, b: LineMesh,
@@ -153,9 +154,110 @@ def mirror(mesh: LineMesh, normal: Vec3 | Sequence[float],
     return _affine(mesh, *affine.reflection(normal, point))
 
 
+def offset_shift(dirs: PointArray, conn_ho: IntArray, n_nodes: int, distance: float,
+                 crease: float) -> PointArray:
+    """``(n_nodes, 3)`` displacement for an offset, the way a CAD offset resolves it.
+
+    Averaging a node's incident normals and stepping ``distance`` along the mean is right
+    only where the surface is smooth.  Across a crease it is simply wrong: the mean
+    bisects the two normals, so the perpendicular distance to each incident face comes out
+    ``distance * cos(theta/2)`` and the layer pinches -- at a square corner it keeps only
+    71% of its thickness.
+
+    A CAD offset never moves points at all: it offsets each *face* along its own normal
+    and re-intersects the neighbours, so every face keeps its full ``distance``.  The
+    discrete form of that is one equation per incident face, ``n_i . u = distance``,
+    solved in the least-squares sense -- one normal gives ``distance * n`` back, two give
+    the miter, three the trihedral corner.
+
+    The other half of what CAD does is treat tangent-continuous faces as *one* surface and
+    only miter across genuine edges, and that half matters just as much: mitering every
+    facet of a discretized cylinder would push its nodes out to ``R + distance/cos(pi/n)``
+    rather than ``R + distance``.  So incident normals within ``crease`` radians of the
+    node's mean are first collapsed into a single plane, and only what is left over is
+    intersected."""
+    flat: IntArray = conn_ho.ravel()
+    n: PointArray = dirs.reshape(-1, 3)
+    total: PointArray = np.zeros((n_nodes, 3))
+    np.add.at(total, flat, n)
+    mag = np.linalg.norm(total, axis=1)
+    unit: PointArray = total / np.where(mag > 0.0, mag, 1.0)[:, None]
+
+    # the sharpest departure of any incident face from the node's own mean normal
+    worst: FloatArray = np.ones(n_nodes)
+    np.minimum.at(worst, flat, np.sum(n * unit[flat], axis=1))
+    shift: PointArray = distance * unit
+
+    sharp: IntArray = np.flatnonzero(worst < np.cos(crease))
+    if sharp.size == 0:
+        return shift
+    order: IntArray = np.argsort(flat, kind="stable")
+    srt: IntArray = flat[order]
+    lo: IntArray = np.asarray(np.searchsorted(srt, sharp, "left"), dtype=np.int64)
+    hi: IntArray = np.asarray(np.searchsorted(srt, sharp, "right"), dtype=np.int64)
+    cos_c = float(np.cos(crease))
+    for k, node in enumerate(sharp.tolist()):
+        planes: list[PointArray] = []
+        for v in n[order[lo[k]:hi[k]]]:
+            for j, acc in enumerate(planes):
+                if float(v @ (acc / np.linalg.norm(acc))) > cos_c:
+                    planes[j] = acc + v
+                    break
+            else:
+                planes.append(v.astype(float).copy())
+        N: PointArray = np.stack([p / np.linalg.norm(p) for p in planes])
+        shift[node] = np.linalg.lstsq(N, np.full(N.shape[0], distance), rcond=None)[0]
+    return shift
+
+
+def _auto_plane_normal(points: PointArray) -> Vec3:
+    """Least-squares plane normal of a point cloud (the smallest right singular vector
+    of the centred points), used when :func:`offset` is not told which plane its curve
+    lies in."""
+    c = points.mean(axis=0)
+    n: Vec3 = np.linalg.svd(points - c)[2][2]
+    return n
+
+
+def offset(mesh: LineMesh, distance: float,
+           normal: Vec3 | Sequence[float] | None = None,
+           crease: float = np.deg2rad(30.0)) -> LineMesh:
+    """A new curve displaced by ``distance`` along its in-plane normal -- the tangent
+    (computed from the underlying GLL nodes, so high-order interior nodes follow the
+    same rule as corners) rotated a quarter turn within the plane given by ``normal``.
+
+    ``normal`` need not be supplied for a planar curve: it defaults to the curve's own
+    least-squares plane. At a point shared by more than one line (a chain's interior
+    corners, or a junction where several lines meet), the offset direction is the
+    average of every incident line's own direction at that point, renormalized -- so a
+    private high-order node (touched by exactly one line) is simply displaced by its
+    own element's direction.
+
+    This is the building block for skinning: loft a curve and its ``offset`` copy to
+    get a thin, perpendicular boundary-layer quad strip."""
+    order = mesh.order
+    n: Vec3 = (np.asarray(normal, dtype=float).reshape(3) if normal is not None
+              else _auto_plane_normal(mesh.points))
+    n = n / np.linalg.norm(n)
+
+    curved = element_blocks(mesh)                          # (L, order+1, 3)
+    (tangent,) = _element_tangents(curved, order, 1)        # (L, order+1, 3)
+    dirs = np.cross(n[None, None, :], tangent)
+    dirs = dirs / np.linalg.norm(dirs, axis=2, keepdims=True)
+
+    nodes, conn_ho = conform.conformal_line(mesh.points, mesh.lines, mesh.interior, order)
+    moved = nodes + offset_shift(dirs, conn_ho, nodes.shape[0], distance, crease)
+    p = mesh.points.shape[0]
+    new_points = moved[:p]
+    new_interior = moved[p:].reshape(mesh.lines.shape[0], order - 1, 3)
+    return LineMesh(PointMesh(new_points, mesh.point_tags), mesh.lines, new_interior,
+                    element_tags=mesh.element_tags)
+
+
 __all__ = [
     "blend",
     "mirror",
+    "offset",
     "reverse",
     "rotate",
     "scale",

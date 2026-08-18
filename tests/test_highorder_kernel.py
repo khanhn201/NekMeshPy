@@ -20,7 +20,7 @@ from nekmeshpy.core.interp import (
     coons_grid,
     corner_indices,
     nodes_per_element,
-    scaled_jacobian_ho,
+    scaled_jacobian,
     subdivide_element,
     tensor_nodes,
 )
@@ -110,24 +110,24 @@ def test_lagrange_derivative_differentiates_a_polynomial_exactly():
 
 
 # -- order-N scaled-Jacobian metric reduces to the corner metric --------
-def test_scaled_jacobian_ho_quad_reduces_at_order1():
+def test_curved_scaled_jacobian_quad_reduces_at_order1():
     from nekmeshpy.quadmesh import quality as qq
 
     box = quadmesh.box(1.0, (2, 2, 2))                    # order-1 closed surface
-    corner = qq.scaled_jacobian(box.points, box.corners)
-    ho = scaled_jacobian_ho(curved(box), box.order, dim=2)
+    corner = qq.corner_scaled_jacobian(box.points, box.corners)
+    ho = scaled_jacobian(curved(box), box.order, dim=2)
     assert np.allclose(corner, ho, atol=1e-12)
 
 
-def test_scaled_jacobian_ho_hex_reduces_at_order1():
+def test_curved_scaled_jacobian_hex_reduces_at_order1():
     from nekmeshpy.core.fields import uniform_spacing
     from nekmeshpy.hexmesh import quality as hq
 
     loop = linemesh.circle(1.0, 24)
     qm = quadmesh.ogrid(loop, n_side=6, radial=uniform_spacing(4))
     blk = hexmesh.extrude(qm, axis=(0, 0, 1), length=5.0, layers=uniform_spacing(6))
-    corner = hq.scaled_jacobian(blk.points, blk.corners)
-    ho = scaled_jacobian_ho(curved(blk), blk.order, dim=3)
+    corner = hq.corner_scaled_jacobian(blk.points, blk.corners)
+    ho = scaled_jacobian(curved(blk), blk.order, dim=3)
     assert np.allclose(corner, ho, atol=1e-12)
 
 
