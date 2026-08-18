@@ -250,7 +250,11 @@ override *to* untagged** — the difference shows where a tag would otherwise be
 - **Reports are `NamedTuple`s**, and `_fn` names the functional variant (`loft` /
   `loft_fn`).
 - **Export.** `.re2` is binary-only, takes the full filename, and stays linear (corners
-  only) — a mesh exports byte-identically at any order. `.vtu` emits VTK Lagrange cells.
+  only) — a mesh exports byte-identically at any order. `.vtu` emits VTK Lagrange cells,
+  per-**point** `bc_id` and per-**cell** `element_tag` (region ids: 1-based positions in
+  `sorted(element_tags.group_tags)`, 0 untagged, no `CellData` at all when untagged — a
+  region belongs to the element, and on a conjugate mesh a per-point one would be
+  ambiguous at every interface node).
   `.re2` element ids are 1-based on write; every internal index is 0-based.
 - `mypy` only checks `nekmeshpy/`, so a wrong-rung call in tests or examples surfaces as
   a pytest `AttributeError`, not a type error.

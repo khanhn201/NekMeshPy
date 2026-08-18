@@ -21,6 +21,7 @@ from conftest import face_rows, read_re2_boundary
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.quadmesh import QuadMesh
 
 VOCAB = ["", "wall", "inlet", "outlet", "a_much_longer_region_name"]
 
@@ -365,3 +366,74 @@ def test_a_region_the_codes_do_not_name_is_an_error(tmp_path):
     with pytest.raises(ValueError, match="borders an element in region 'solid'"):
         writer.to_re2(mesh, str(tmp_path / "m.re2"),
                       groups={"interface": {"fluid": "W  "}})
+
+
+# -- element_tag in the .vtu -------------------------------------------------
+# A region belongs to the element, so it is written as *cell* data, unlike ``bc_id``,
+# which is per point.  That is not a stylistic choice: on a conjugate mesh every
+# interface node is shared by both regions, so a per-point region would have to pick
+# one of them and would be wrong on the other side.
+
+
+def _vtu_arrays(path):
+    """``{name: values}`` for every ``DataArray`` in a binary ``.vtu``."""
+    import base64
+    import xml.etree.ElementTree as ET
+    dtypes = {"Float64": "<f8", "Int64": "<i8", "Int32": "<i4", "UInt8": "u1"}
+    out = {}
+    for da in ET.parse(path).getroot().iter("DataArray"):
+        raw = base64.b64decode(da.text.strip())
+        n = int(np.frombuffer(raw[:8], "<u8")[0])
+        out[da.get("Name") or "Points"] = np.frombuffer(raw[8:8 + n],
+                                                        dtypes[da.get("type")])
+    return out
+
+
+def _two_region_section():
+    """Two stacked unit squares, the lower ``solid`` and the upper ``fluid``."""
+    lower = quadmesh.rectangle([(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0)], 2, 1)
+    upper = quadmesh.rectangle([(0, 1, 0), (2, 1, 0), (2, 2, 0), (0, 2, 0)], 2, 1)
+    section = quadmesh.merge([lower, upper])
+    return QuadMesh(section.line_mesh, section.quads, section.orient,
+                    section.interior,
+                    ElementTags.from_dense(["solid", "solid", "fluid", "fluid"]))
+
+
+def test_element_tag_ids_are_the_sorted_vocabulary_one_based():
+    """Ids are a function of the mesh alone -- the sorted vocabulary, 1-based, with 0
+    for untagged -- so a reader recovers the legend without the file carrying one."""
+    tags = ElementTags.from_dense(["fluid", "", "solid", "fluid"])
+    ids, names = writer.element_tag_ids(tags, 4)
+    assert names == ["fluid", "solid"]
+    assert list(ids) == [1, 0, 2, 1]
+
+
+def test_quad_vtu_carries_element_tag_per_cell(tmp_path):
+    section = _two_region_section()
+    out = str(tmp_path / "section.vtu")
+    writer.quad_to_vtu(section, out)
+    ids, names = writer.element_tag_ids(section.element_tags, section.n_quads)
+    assert names == ["fluid", "solid"]
+    assert np.array_equal(_vtu_arrays(out)["element_tag"], ids)
+
+
+def test_hex_vtu_carries_element_tag_per_cell(tmp_path):
+    """One value per hex, not per node: the swept column keeps its section quad's
+    region, so the count is ``n_quads * layers``."""
+    mesh = hexmesh.extrude(_two_region_section(), 1.0, 3,
+                           element_tags=_two_region_section().element_tags,
+                           first_tag="front", last_tag="back")
+    out = str(tmp_path / "block.vtu")
+    writer.to_vtu(mesh, out, groups={"front": "SYM", "back": "SYM"})
+    got = _vtu_arrays(out)["element_tag"]
+    assert got.shape == (mesh.n_hexes,)
+    assert np.array_equal(got, writer.element_tag_ids(mesh.element_tags,
+                                                      mesh.n_hexes)[0])
+
+
+def test_untagged_mesh_writes_no_cell_data(tmp_path):
+    """An untagged mesh gets no ``CellData`` at all rather than a column of zeros."""
+    plain = quadmesh.rectangle([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], 2, 2)
+    out = str(tmp_path / "plain.vtu")
+    writer.quad_to_vtu(plain, out)
+    assert "element_tag" not in _vtu_arrays(out)
