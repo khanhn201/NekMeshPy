@@ -113,7 +113,6 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import paths
-from nekmeshpy.core.paths import turtle_path
 from nekmeshpy.core.tags import ElementTags
 from nekmeshpy.pointmesh import PointMesh
 
@@ -312,18 +311,17 @@ def outlet_return(disc):
     frame and carried onto pipe B by the caller's :func:`to_b`."""
     z0 = Z_J[-1] + Z_NEAR
     run = (Z_J[-1] - Z_J[0]) + Z_NEAR + END_MARGIN + 2.0 * L_HALF * (N_COPIES - 1)
-    # the walk's own +u is world +z (down the chain) and its +v world +y (the fold),
-    # so it starts at u = z0 and paths.embed places it with no origin offset.
-    walk = turtle_path([("arc", RETURN_BEND_R, -180.0), ("line", run, 0.0)],
-                       start=(z0, 0.0), heading=0.0)
-    path = paths.embed(walk, u=(0.0, 0.0, 1.0), v=(0.0, 1.0, 0.0))
+    # the walk heads down the chain (+z) and folds toward +y, which pins its up to
+    # heading x left = -x; the sweep below reads that frame off the path itself.
+    path = paths.walk([paths.arc(RETURN_BEND_R, -180.0), paths.line(run)],
+                      start=(0.0, 0.0, z0), heading=(0.0, 0.0, 1.0),
+                      up=(-1.0, 0.0, 0.0))
     n_bend = max(1, round(RETURN_BEND_R * np.pi / BEND_CELL))
     n_run = max(1, round(run / AXIAL_CELL))
     breaks = path.break_fractions
     station_fr = np.concatenate([np.linspace(0.0, breaks[0], n_bend + 1),
                                  np.linspace(breaks[0], 1.0, n_run + 1)[1:]])
     return hexmesh.sweep_path(disc, path, fractions=station_fr,
-                              orientation="fixed", up=(1.0, 0.0, 0.0),
                               origin=(0.0, 0.0, z0), last_tag="outlet",
                               element_tags=FLUID_TAG)
 
@@ -342,9 +340,12 @@ def to_b(m):
 #: pipe B ends up offset purely along ``-x``, not diagonally, with its arm facing
 #: ``-x`` to meet it. Every move keeps the previous move's heading, so the path is C1
 #: by construction.
-_WALK = turtle_path([("arc", R_BEND, 180.0), ("line", LOOP_LEN, 0.0),
-                    ("arc", R_BEND, 180.0)], start=(X_MID, 0.0), heading=0.0)
-_BREAKS = _WALK.break_fractions
+_MOVES = [paths.arc(R_BEND, 180.0), paths.line(LOOP_LEN), paths.arc(R_BEND, 180.0)]
+
+#: The junction plane ``z0`` only translates the walk, so one reference walk settles the
+#: junction fractions for every copy.
+_BREAKS = paths.walk(_MOVES, start=(X_MID, 0.0, 0.0), heading=(1.0, 0.0, 0.0),
+                     up=(0.0, 0.0, 1.0)).break_fractions
 
 #: Sweep stations, one exactly on every straight<->arc junction, each of the three
 #: pieces graded at its own layer count rather than one global linspace.
@@ -362,14 +363,13 @@ def bend(z0, opening_disc):
     """One junction's hairpin, at height ``z0``: the arm's ending disc (``opening_disc``,
     a **local**-frame ``disc_branch`` from any one :func:`build_junction` call -- they
     are all bit-identical, so one is built and reused rather than rebuilt per
-    junction) carried along ``_WALK`` lifted into the plane ``z = z0``, landing on
+    junction) carried along ``_MOVES`` walked in the plane ``z = z0``, landing on
     pipe B's own (rotated) arm end by construction -- no separate return arm is
     built."""
-    path = paths.embed(_WALK, u=(1.0, 0.0, 0.0), v=(0.0, 1.0, 0.0),
-                       origin=(0.0, 0.0, z0))
+    path = paths.walk(_MOVES, start=(X_MID, 0.0, z0), heading=(1.0, 0.0, 0.0),
+                      up=(0.0, 0.0, 1.0))
     section = quadmesh.translate(opening_disc, (ARM_LEN, 0.0, z0))
     return hexmesh.sweep_path(section, path, fractions=_STATION_FR,
-                              orientation="fixed", up=(0.0, 0.0, 1.0),
                               origin=(X_MID, 0.0, z0), element_tags=FLUID_TAG)
 
 

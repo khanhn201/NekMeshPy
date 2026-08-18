@@ -79,7 +79,6 @@ from scipy.spatial import cKDTree
 
 from nekmeshpy import hexmesh, quadmesh, writer
 from nekmeshpy.core import paths
-from nekmeshpy.core.paths import turtle_path
 from nekmeshpy.quadmesh._helpers import _elevate as _quad_elevate
 from nekmeshpy.quadmesh.quadmesh import QuadMesh
 
@@ -305,7 +304,7 @@ def build_t1(mirror=False):
 
 
 def elbow_backward(target_pt, target_dir_sign, start_heading_sign, bend_r, run_len,
-                    plane_v_index=2, vertical_run=0.0):
+                    vertical_run=0.0):
     """Solve, in the (x, z) plane, the start point of a [line, 90-arc,
     line] path that starts heading +x (start_heading_sign*x) and ends at
     `target_pt` heading (0,0,target_dir_sign) -- by building the path
@@ -318,30 +317,30 @@ def elbow_backward(target_pt, target_dir_sign, start_heading_sign, bend_r, run_l
     # backward: start at target, heading -target_dir (heading angle pi/2 * sign),
     # first undo the final vertical run, then the arc, then the horizontal line.
     heading0 = np.pi / 2 * (1 if target_dir_sign > 0 else -1) + np.pi
-    back = turtle_path([("line", vertical_run, 0.0), ("arc", bend_r, -turn),
-                        ("line", run_len, 0.0)],
-                       start=(target_pt[0], target_pt[plane_v_index]), heading=heading0)
-    x0, v0 = back.centerline(np.array([1.0]))[0]
+    back = xz_path([paths.line(vertical_run), paths.arc(bend_r, -turn),
+                    paths.line(run_len)],
+                   (target_pt[0], target_pt[2]), heading0, target_pt[1])
+    x0, _, v0 = back.centerline(np.array([1.0]))[0]
     fwd_heading = 0.0 if start_heading_sign > 0 else np.pi
-    return ((x0, v0), [("line", run_len, 0.0), ("arc", bend_r, turn),
-                       ("line", vertical_run, 0.0)], fwd_heading)
+    return ((x0, v0), [paths.line(run_len), paths.arc(bend_r, turn),
+                       paths.line(vertical_run)], fwd_heading)
 
 
 def xz_path(moves, start_xz, heading, y_fixed):
-    """A turtle walk lifted into the world ``(x, z)`` plane at fixed ``y`` -- every
-    connector in this file lives in such a plane, so the walk's own ``+u`` is world
-    ``+x`` and its ``+v`` world ``+z``.  ``paths.embed`` is what keeps ``y_fixed`` out
-    of the tangent (a direction, not a point)."""
-    return paths.embed(turtle_path(moves, start=start_xz, heading=heading),
-                       u=(1.0, 0.0, 0.0), v=(0.0, 0.0, 1.0),
-                       origin=(0.0, y_fixed, 0.0))
+    """A turtle walk in the world ``(x, z)`` plane at fixed ``y`` -- every connector in
+    this file lives in such a plane, so ``heading`` stays the 2-D angle from ``+x``
+    toward ``+z`` the rest of this file solves in.  A positive turn goes toward the
+    walk's left, which in this plane pins the frame's up to ``-y``; the sweeps read that
+    frame off the path rather than restating it."""
+    return paths.walk(moves, start=(start_xz[0], y_fixed, start_xz[1]),
+                      heading=(np.cos(heading), 0.0, np.sin(heading)),
+                      up=(0.0, -1.0, 0.0))
 
 
 def build_bend_mesh(section, start_pt3, moves, heading2d, y_fixed, n_layers, last_tag=""):
     path = xz_path(moves, (start_pt3[0], start_pt3[2]), heading2d, y_fixed)
-    return hexmesh.sweep_path(section, path, layers=n_layers, orientation="fixed",
-                              up=(0.0, 1.0, 0.0), origin=start_pt3, last_tag=last_tag,
-                              element_tags=FLUID_TAG)
+    return hexmesh.sweep_path(section, path, layers=n_layers, origin=start_pt3,
+                              last_tag=last_tag, element_tags=FLUID_TAG)
 
 
 BEND_R1 = 2.0 * R_MAIN
@@ -415,8 +414,7 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
         and the path's own start agree, and by exactly this residual when
         they don't)."""
         path = xz_path(moves, (db_c[0], db_c[2]), heading, db_c[1])
-        end = quadmesh.place_on_path(disc, path, [0.0, 1.0], orientation="fixed",
-                                     up=(0.0, 1.0, 0.0), origin=db_c)[-1]
+        end = quadmesh.place_on_path(disc, path, [0.0, 1.0], origin=db_c)[-1]
         return quadmesh.port(end, outward=path.tangent(np.array([1.0]))[0])
 
     conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
@@ -432,8 +430,9 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
     # turn, so both flip regardless of which side is mirrored.
     a_sign = -b_sign
-    moves_r = [("line", RUN_TO_RISER, 0.0), ("arc", BEND_R1, -90.0 if a_sign > 0 else 90.0),
-              ("line", VERTICAL_RISE, 0.0)]
+    moves_r = [paths.line(RUN_TO_RISER),
+               paths.arc(BEND_R1, -90.0 if a_sign > 0 else 90.0),
+               paths.line(VERTICAL_RISE)]
     da_c = da.points.mean(axis=0)
     # da_c[1], not the nominal t1_center[1] -- same reasoning as _end_section
     # above (da is no more exactly centred on t1_center than db is).
@@ -641,9 +640,9 @@ print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
 # serpentine_pipe.py, which builds the same physical part standing alone.
 COIL_MOVES = COIL_MOVES_LIB
 
-_coil_local = turtle_path(COIL_MOVES, start=(0.0, 0.0), heading=0.0)
-_coil_end_uv = _coil_local.centerline(np.array([1.0]))[0]
-COIL_DV = _coil_end_uv[1]   # local (u, v) end offset is (0, COIL_DV) exactly
+_coil_local = xz_path(COIL_MOVES, (0.0, 0.0), 0.0, 0.0)
+_coil_end = _coil_local.centerline(np.array([1.0]))[0]
+COIL_DV = _coil_end[2]   # in-plane end offset is (0, COIL_DV) exactly
 
 BEND_R_CONN = 3.0
 VERTICAL_RUN = 16.0
@@ -664,15 +663,16 @@ def _dx_of(line_len, turn_sign, heading0):
     alone (the vertical run after it is pure +/-z and contributes zero) --
     affine in line_len, so two probes pin down the line length that lands
     exactly on a given total dx without re-deriving the arc's own x-throw by
-    hand for each heading/turn-sign combination."""
-    mv = [("line", line_len, 0.0), ("arc", BEND_R_CONN, turn_sign)]
-    return turtle_path(mv, start=(0.0, 0.0), heading=heading0).centerline(
-        np.array([1.0]))[0][0]
+    hand for each heading/turn-sign combination.  Both probes are positive:
+    every move of a walk advances it, so there is no zero-length line to
+    probe the intercept with directly."""
+    mv = [paths.line(line_len), paths.arc(BEND_R_CONN, turn_sign)]
+    return xz_path(mv, (0.0, 0.0), heading0, 0.0).centerline(np.array([1.0]))[0][0]
 
 
 def _solve_line_len(turn_sign, heading0, target_dx):
-    dx0, dx1 = _dx_of(0.0, turn_sign, heading0), _dx_of(1.0, turn_sign, heading0)
-    return (target_dx - dx0) / (dx1 - dx0)
+    dx1, dx2 = _dx_of(1.0, turn_sign, heading0), _dx_of(2.0, turn_sign, heading0)
+    return 1.0 + (target_dx - dx1) / (dx2 - dx1)
 
 
 def _end_section(section, moves, heading, y_fixed):
@@ -681,8 +681,7 @@ def _end_section(section, moves, heading, y_fixed):
     re-derived) -- so a piece built to continue from it lands seamlessly."""
     c = section.points.mean(axis=0)
     path = xz_path(moves, (c[0], c[2]), heading, y_fixed)
-    end = quadmesh.place_on_path(section, path, [0.0, 1.0], orientation="fixed",
-                                 up=(0.0, 1.0, 0.0), origin=c)[-1]
+    end = quadmesh.place_on_path(section, path, [0.0, 1.0], origin=c)[-1]
     # the tube's own downstream tangent is the port's outward direction; port() takes
     # it only as a sign hint and reads the precision off the section's fitted plane
     return quadmesh.port(end, outward=path.tangent(np.array([1.0]))[0])
@@ -715,10 +714,10 @@ def build_coil(dbr_i, dbr_o):
     total_dx = (gap - abs(COIL_DV)) / 2.0
     assert total_dx > 0.5, "T2 branches too close together for this coil's own span"
 
-    moves_in = [("line", _solve_line_len(90.0, 0.0, total_dx), 0.0),
-                ("arc", BEND_R_CONN, 90.0), ("line", VERTICAL_RUN, 0.0)]
-    moves_out = [("line", _solve_line_len(-90.0, np.pi, -total_dx), 0.0),
-                 ("arc", BEND_R_CONN, -90.0), ("line", VERTICAL_RUN - GAP_Z, 0.0)]
+    moves_in = [paths.line(_solve_line_len(90.0, 0.0, total_dx)),
+                paths.arc(BEND_R_CONN, 90.0), paths.line(VERTICAL_RUN)]
+    moves_out = [paths.line(_solve_line_len(-90.0, np.pi, -total_dx)),
+                 paths.arc(BEND_R_CONN, -90.0), paths.line(VERTICAL_RUN - GAP_Z)]
 
     # The inbound connector and the coil are the SAME planar (x, z) turtle walk
     # -- the connector ends heading +z and the coil's own local +u is +z, with
@@ -736,8 +735,7 @@ def build_coil(dbr_i, dbr_o):
     inflow_moves = moves_in + COIL_MOVES
     path = xz_path(inflow_moves, (ci[0], ci[2]), 0.0, ci[1])
     inflow = hexmesh.sweep_path(dbr_i, path, target_length=COIL_TARGET_LEN,
-                                orientation="fixed", up=(0.0, 1.0, 0.0), origin=ci,
-                                element_tags=FLUID_TAG)
+                                origin=ci, element_tags=FLUID_TAG)
     assert hexmesh.is_conforming(inflow), "coil sweep produced a non-conforming mesh"
     conn_o = build_bend_mesh(dbr_o, co, moves_out, np.pi, co[1], n_slices)
 

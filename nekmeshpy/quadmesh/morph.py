@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
 
 import numpy as np
 
@@ -16,7 +15,7 @@ from .._typing import (
 )
 from ..core import affine, conform, frames
 from ..core.interp import _element_tangents
-from ..core.paths import SpacePath
+from ..core.paths import Orientation, SpacePath, UpSpec, resolve_frame, sample_up
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
@@ -225,8 +224,8 @@ def reindex(structure: QuadMesh, target: QuadMesh,
 def place_on_path(section: QuadMesh, path: SpacePath,
                   fractions: FloatArray | Sequence[float], *,
                   origin: Point | Sequence[float] | None = None,
-                  orientation: Literal["transport", "fixed", "frenet"] = "transport",
-                  up: Vec3 | Sequence[float] | PointArray | None = None,
+                  orientation: Orientation | None = None,
+                  up: UpSpec | None = None,
                   twist: float = 0.0,
                   close_twist: bool = True,
                   normal: Vec3 | Sequence[float] | None = None,
@@ -234,11 +233,15 @@ def place_on_path(section: QuadMesh, path: SpacePath,
     """Where :func:`sweep <nekmeshpy.hexmesh.lift.sweep_path>` **would** put ``section``
     at each of ``fractions``, without building the block: one rigidly placed copy per
     station, through the same :func:`frames.sweep_placements
-    <nekmeshpy.core.frames.sweep_placements>` the sweep itself uses."""
-    P: PointArray = path.centerline(np.asarray(fractions, dtype=float).ravel())
-    T: PointArray = path.tangent(np.asarray(fractions, dtype=float).ravel())
+    <nekmeshpy.core.frames.sweep_placements>` the sweep itself uses -- ``orientation``
+    and ``up`` included, so a path carrying its own frame places the same way here as it
+    sweeps."""
+    fr: FloatArray = np.asarray(fractions, dtype=float).ravel()
+    P: PointArray = path.centerline(fr)
+    T: PointArray = path.tangent(fr)
+    orientation, up = resolve_frame(path, orientation, up)
     places = frames.sweep_placements(
-        section.points, P, orientation=orientation, up=up, twist=twist,
+        section.points, P, orientation=orientation, up=sample_up(up, fr), twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,
         path_tangents=T)
     return [transform(section, M, o) for M, o in places]

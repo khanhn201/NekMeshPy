@@ -17,9 +17,9 @@ beyond the two names) and sweeps its own copy between the branches of each pair 
 T2 junctions rather than standing it alone the way this script does; the two are the
 same physical part, so the numbers are defined here once rather than in both.
 
-The centerline is a declarative **turtle walk** of straight runs and circular arcs:
-every move starts at the previous move's end point *and* keeps its heading, so the
-path is C1 by construction -- no fillet fitting, no corner rounding, no numerical
+The centerline is a declarative **turtle walk** (``paths.walk``) of straight runs and
+circular arcs: every move starts at the previous move's end point *and* keeps its
+frame, so the path is C1 by construction -- no fillet fitting, no corner rounding, no numerical
 inversion anywhere.  The cumulative length table is accumulated from exact closed
 forms (a straight's length, ``radius * angle`` for an arc), so the arc-length
 parametrization ``s in [0, 1]`` is exact to machine precision.
@@ -47,7 +47,6 @@ import numpy as np
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import paths
 from nekmeshpy.core.fields import uniform_spacing
-from nekmeshpy.core.paths import turtle_path
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -67,13 +66,13 @@ RAISE = 4.0       # extra length on passes 1/4/5/8 -- what lifts the middle brid
 
 #: The two end hooks, each the other's time reversal (reverse the order, negate every
 #: turn) -- which is what lands both openings on the same ``v`` facing the same way.
-HOOK_IN = [("line", HOOK_DROP, 0.0), ("arc", R_HOOK, 90.0),
-           ("line", HOOK_JOG, 0.0), ("arc", R_HOOK, -90.0)]
-HOOK_OUT = [("arc", R_HOOK, -90.0), ("line", HOOK_JOG, 0.0),
-            ("arc", R_HOOK, 90.0), ("line", HOOK_DROP, 0.0)]
+HOOK_IN = [paths.line(HOOK_DROP), paths.arc(R_HOOK, 90.0),
+           paths.line(HOOK_JOG), paths.arc(R_HOOK, -90.0)]
+HOOK_OUT = [paths.arc(R_HOOK, -90.0), paths.line(HOOK_JOG),
+            paths.arc(R_HOOK, 90.0), paths.line(HOOK_DROP)]
 
-#: ``("line", length, 0.0)`` or ``("arc", radius, signed turn in degrees)``; a positive
-#: turn is counter-clockwise in the ``(u, v)`` plane.  8 vertical passes joined by 7
+#: ``paths.line(length)`` or ``paths.arc(radius, signed turn in degrees)``; a positive
+#: turn bends toward the walk's own left.  8 vertical passes joined by 7
 #: semicircular 180-degree U-bends alternating bottom / top, hooked at both ends.
 #:
 #: The coil is deliberately **not** symmetric top to bottom: passes 4 and 5 are ``RAISE``
@@ -81,14 +80,14 @@ HOOK_OUT = [("arc", R_HOOK, -90.0), ("line", HOOK_JOG, 0.0),
 #: two half-coils sits *above* the two flanking hairpins (``U_R``) rather than level with
 #: them, and passes 1 and 8 are lengthened to match.
 MOVES = (HOOK_IN
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]      # pass 1 -> bottom
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, 180.0)]               # pass 2 -> top hairpin
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]              # pass 3 -> bottom
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R_MID, 180.0)]   # 4 -> RAISED bridge
-    + [("line", PASS_LEN + RAISE, 0.0), ("arc", U_R, -180.0)]      # pass 5 -> bottom
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, 180.0)]               # pass 6 -> top hairpin
-    + [("line", PASS_LEN, 0.0), ("arc", U_R, -180.0)]              # pass 7 -> bottom
-    + [("line", PASS_LEN + RAISE, 0.0)]                            # pass 8
+    + [paths.line(PASS_LEN + RAISE), paths.arc(U_R, -180.0)]      # pass 1 -> bottom
+    + [paths.line(PASS_LEN), paths.arc(U_R, 180.0)]               # pass 2 -> top hairpin
+    + [paths.line(PASS_LEN), paths.arc(U_R, -180.0)]              # pass 3 -> bottom
+    + [paths.line(PASS_LEN + RAISE), paths.arc(U_R_MID, 180.0)]   # 4 -> RAISED bridge
+    + [paths.line(PASS_LEN + RAISE), paths.arc(U_R, -180.0)]      # pass 5 -> bottom
+    + [paths.line(PASS_LEN), paths.arc(U_R, 180.0)]               # pass 6 -> top hairpin
+    + [paths.line(PASS_LEN), paths.arc(U_R, -180.0)]              # pass 7 -> bottom
+    + [paths.line(PASS_LEN + RAISE)]                              # pass 8
     + HOOK_OUT)
 
 #: Target hex length along the sweep.  NOT cubic: the coil is slender (a pass is 272
@@ -106,14 +105,16 @@ TARGET_LEN = 2.0
 # every import would also build and export this script's own standalone mesh.
 if __name__ == "__main__":
     # -- path parameters -------------------------------------------------------
-    # The turtle walks in its own ``(u, v)``: ``u`` is the pass direction, ``v`` the
-    # pass-to-pass stacking.  Mapping u -> world +z and v -> world -x reproduces
-    # chimera_full.py's own placement of this coil (and the reference photo's
-    # orientation, in which "up" is z-).
-    AXIS_U = np.array([0.0, 0.0, 1.0])   # turtle +u -> world +z (along a pass)
-    AXIS_V = np.array([-1.0, 0.0, 0.0])  # turtle +v -> world -x (pass to pass)
-    ORIGIN = np.array([0.0, 0.0, 0.0])   # 3-D image of the in-plane origin
-    PLANE_NORMAL = (0.0, 1.0, 0.0)       # the coil is planar: y is the plane normal
+    # The turtle walks in world space: it heads along a pass and turns pass to pass.
+    # Heading +z with left -x reproduces chimera_full.py's own placement of this coil
+    # (and the reference photo's orientation, in which "up" is z-).
+    HEADING = np.array([0.0, 0.0, 1.0])   # along a pass, world +z
+    LEFT = np.array([-1.0, 0.0, 0.0])     # where a positive turn goes: world -x
+    ORIGIN = np.array([0.0, 0.0, 0.0])    # where the walk sets out
+    # A positive turn bends toward ``up x heading``, so naming the heading and the left
+    # pins the up: ``heading x left``.  Here that is -y, and since the coil is planar it
+    # is the plane normal (up to a sign the sweep's own phase alignment removes).
+    WALK_UP = np.cross(HEADING, LEFT)
 
     # -- mesh parameters --------------------------------------------------------
     N_SIDE = 6                   # central square block cells per side (loop = 4*N_SIDE pts);
@@ -132,22 +133,22 @@ if __name__ == "__main__":
     # boundary name -> Nek BC code, applied only at export
     GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
 
-    # -- turtle-walk the move table, then lift it onto the coil's own plane -------
-    # paths.embed maps the walk's own (u, v) to origin + u*AXIS_U + v*AXIS_V, and gives
-    # back the vectorized centerline/tangent pair HexMesh.sweep wants: it samples the
-    # whole node lattice in one call so a moving frame can be built along it.
+    # -- turtle-walk the move table, in world space -------------------------------
+    # paths.walk gives back the vectorized centerline/tangent pair HexMesh.sweep wants
+    # (it samples the whole node lattice in one call so a moving frame can be built along
+    # it), plus the frame the walk itself carried -- which is why the sweep below names
+    # no orientation.
     #
-    # The tangent is the **analytic** derivative, and worth the twenty lines it costs
-    # turtle_path: without it sweep differences the sampled path, which is only O(h**2)
+    # The tangent is the **analytic** derivative, and worth the closed forms it costs
+    # paths.walk: without it sweep differences the sampled path, which is only O(h**2)
     # and -- because this path's curvature jumps at every junction -- worst exactly where
     # a straight meets an arc.  Each frame inherits that tilt and the section stops being
     # perpendicular to the path.  Measured on this coil: the wall drifts 1.1e-4 inside
     # R_PIPE (0.2% of the tube radius) with differenced tangents, and with these it lands
     # on the true tube to 4e-11 -- the measurement floor of the dense nearest-point probe,
-    # not a residual of the mesh.  (embed is also what keeps ORIGIN out of the tangent: a
-    # tangent is a direction, and translating it would tilt every frame.)
-    _WALK = turtle_path(MOVES, start=(0.0, 0.0), heading=0.0)
-    PATH = paths.embed(_WALK, u=AXIS_U, v=AXIS_V, origin=ORIGIN)
+    # not a residual of the mesh.  (ORIGIN stays out of the tangent: a tangent is a
+    # direction, and translating it would tilt every frame.)
+    PATH = paths.walk(MOVES, start=ORIGIN, heading=HEADING, up=WALK_UP)
     S_BREAKS = PATH.break_fractions
     TOTAL = PATH.total_length
 
@@ -178,15 +179,14 @@ if __name__ == "__main__":
         center_scale=CENTER_SCALE)
 
     # -- sweep it along the coil --------------------------------------------------
-    # The path is planar, so orientation="fixed" against the plane normal is exact,
-    # torsion-free and independent of the sampling density. "frenet" would be wrong
-    # here: the path is C1 but not C2 -- curvature jumps 0 <-> 1/U_R at every
-    # junction and the Frenet normal is undefined on the straights. origin= names the
-    # circle's centre, because the O-grid's centroid misses it slightly. tangent= hands
-    # in the analytic derivative so the sections stay exactly perpendicular (see above).
+    # No orientation= : the walk carries its own frame and the sweep holds it per
+    # station, which on this planar path is the exact, torsion-free, sampling-independent
+    # one. "frenet" would be wrong here anyway -- the path is C1 but not C2, curvature
+    # jumps 0 <-> 1/U_R at every junction and the Frenet normal is undefined on the
+    # straights. origin= names the circle's centre, because the O-grid's centroid misses
+    # it slightly.
     _t0 = time.perf_counter()
-    mesh = hexmesh.sweep_path(section, PATH, fractions=FRACTIONS,
-                              orientation="fixed", up=PLANE_NORMAL, origin=START,
+    mesh = hexmesh.sweep_path(section, PATH, fractions=FRACTIONS, origin=START,
                               first_tag="inlet", last_tag="outlet")
     BUILD_SECONDS = time.perf_counter() - _t0
 
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     # -- report + export ----------------------------------------------------------
     print("serpentine pipe: %d hex elements, %d points, order %d"
           % (mesh.n_hexes, mesh.n_points, mesh.order))
-    _ARC_RADII = [m[1] for m in MOVES if m[0] == "arc"]
+    _ARC_RADII = [m.radius for m in MOVES if isinstance(m, paths.Arc)]
     print("path: L=%.12f, %d segments (%d arcs), %d sweep stations, min bend radius %g"
           % (TOTAL, len(MOVES), len(_ARC_RADII), FRACTIONS.size - 1, min(_ARC_RADII)))
     print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))

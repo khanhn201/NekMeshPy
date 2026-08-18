@@ -73,8 +73,8 @@ container** except `mesh.py` and `topology.py`:
 | `core/interp.py` | order-N kernel over GLL reference nodes: `tensor_nodes`, `corner_indices`, `subdivide_element`, `coons_grid`, `blend_ho`, `scaled_jacobian` |
 | `core/measure.py` | one GLL quadrature over a node block, behind every rung's `length`/`area`/`volume`/`centroid` — corner and curved readings are the same code on different blocks |
 | `core/affine.py` | affine maps behind `translate`/`rotate`/`scale`/`mirror`; `reflection` has det −1, so its caller must pair it with a re-winding |
-| `core/frames.py` | moving-frame machinery behind `sweep`: `tangents`, frame generators (`fixed_up`/`parallel_transport`/`frenet`/`plane_frame`), `sweep_placements` |
-| `core/paths.py` | `turtle_path` (C1, analytic tangent + arc-length param) and `embed`, lifting one onto a `SpacePath` |
+| `core/frames.py` | moving-frame machinery behind `sweep`: `tangents`, frame generators (`fixed_up`/`parallel_transport`/`frenet`/`plane_frame`), `spin`, `sweep_placements` |
+| `core/paths.py` | `walk` — a 3-D turtle of `line`/`arc`/`helix` moves into a `SpacePath` (C1, analytic tangent, arc-length param, and the moving frame the walk carried) |
 | `core/surfaces.py` | `SurfaceCurve` + `ruled`/`blend`/`reverse`/`shift`/`reparam` — curves carried as parametrization, since a point-space lerp between two curves on a cylinder dips inside it |
 | `core/conform.py` | topology/orientation engine behind the B-rep: `unique_edges`/`unique_faces`/`canonical_faces`, `entity_tol`, `scatter_*`/`gather_*`, `conformal_*` walks, D4 helpers |
 

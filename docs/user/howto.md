@@ -58,6 +58,25 @@ differing curvature, derive `fractions` with
 at roughly `target` *on its own*, so every junction carries a station instead of
 being straddled by an element fitted across two geometries.
 
+Rather than hand-writing the centerline, walk it — `paths.walk` turtles a table of
+moves through space and hands back all of that at once, junction table included:
+
+```python
+from nekmeshpy.core import paths
+
+path = paths.walk([paths.line(4.0), paths.arc(2.0, 90.0),
+                   paths.arc(2.0, 90.0, tilt=90.0),   # the second bend leaves the plane
+                   paths.helix(1.5, 720.0, rise=3.0),
+                   paths.line(4.0, roll=90.0)],       # ...twisting as it runs
+                  start=START, heading=(0, 0, 1), up=(1, 0, 0))
+mesh = hexmesh.sweep_path(section, path, target_length=0.5, origin=START,
+                          first_tag="inlet", last_tag="outlet")
+```
+
+No `orientation`/`up` at the sweep: a walked path carries its own frame, so `tilt`
+and `roll` arrive as authored. `target_length`/`layers` replace `fractions` — the
+path knows its own junctions and lands a station on each.
+
 → `examples/serpentine_pipe.py` — one O-grid disc swept along an 8-pass coil of
 straights and 180° U-bends.
 

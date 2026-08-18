@@ -85,10 +85,8 @@ def test_a_non_planar_section_is_refused_unless_check_is_off():
 # -- place_on_path ------------------------------------------------------------
 @pytest.fixture
 def path():
-    walk = paths.turtle_path([("line", 2.0, 0.0), ("arc", 1.2, 90.0),
-                              ("line", 1.5, 0.0)], start=(CENTER[0], CENTER[2]))
-    return paths.embed(walk, u=(1.0, 0.0, 0.0), v=(0.0, 0.0, 1.0),
-                       origin=(0.0, CENTER[1], 0.0))
+    return paths.walk([paths.line(2.0), paths.arc(1.2, 90.0), paths.line(1.5)],
+                      start=CENTER, heading=(1.0, 0.0, 0.0), up=(0.0, -1.0, 0.0))
 
 
 def test_placement_at_station_zero_reproduces_the_section(path):
