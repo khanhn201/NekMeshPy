@@ -64,12 +64,14 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 R_MAIN = 4.0                  # main vessel radius
 R_BRANCH = 3.0                # branch radius (must be < R_MAIN: the branch has to fit)
 BRANCH_ANGLE = 45.0           # degrees between the branch axis and +x (0 < a <= 90)
-SEAM_OFFSET = 0.5             # how far the flat seam sinks below the true intersection's
+SEAM_OFFSET = 0.0             # how far the flat seam sinks below the true intersection's
                               # lowest point
 TROUGH_DEPTH = 1.0            # how far the trough floor sits below that rim
 TROUGH_WIDTH = 3.0            # trough width outward from the rim
 RUN_MAIN = 10 * 2 * R_MAIN    # straight main run each side of the junction, 10 diameters
 RUN_BRANCH = 10 * 2 * R_BRANCH
+
+# -- Total depth is TROUGH_DEPTH+SEAM_OFFSET+1.35
 
 # -- surface tessellation (the "scan" this mesher is handed) -----------------
 NT = 24                       # nodes across each half of the mouth
@@ -110,7 +112,7 @@ RELAX_PASSES = 30             # relaxation sweeps over the junction, to take the
 RELAX_RADIUS = 15.0            # ... within this far of the seam.  0 passes disables.
 SPLIT_TOL = 0.50              # wall/interior cut-off when splitting an interface               # ... over this distance from the junction
 N_HALF = 12                   # half-ring resolution; MULTIPLE OF 4
-NEAR_LEN = 1.5                # the uniform run, in leg **diameters** out from the
+NEAR_LEN = 2.0                # the uniform run, in leg **diameters** out from the
                               # junction.  The junction is where the wall actually does
                               # something -- the crater, the rim, the three-way weld --
                               # and constant layer thickness across it is what draws the
@@ -166,7 +168,7 @@ SURFACE_CACHE = "data/femoral_%s.npz"        # likewise; the built surfaces, key
                               # run is pure waste.  Delete the files (or change a knob,
                               # which invalidates the key) to rebuild.
 OUT_NAME = "femoral"
-EXPORT_STL = True
+EXPORT_STL = False
 PLOT_STL = False              # show the surface and stop, without meshing.  For tuning
                               # NT/NU/NB/NS by eye: change a knob, run, look.
 EXPORT_RE2 = True
@@ -1521,7 +1523,7 @@ for leg in (1, 2, 3):
     blocks.append(hexmesh.loft_spline(slices[joint:]))
 
 mesh = hexmesh.merge(blocks)
-mesh = hexmesh.scale(mesh, 1.0/8.0)
+mesh = hexmesh.scale(mesh, 1.0/(R_MAIN*2.0))
 
 print(hexmesh.report(mesh))
 print("femoral: branch %.0f deg, R %.3g / %.3g, seam z %.4f, trough %.3g deep x %.3g"
