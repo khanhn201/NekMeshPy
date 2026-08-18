@@ -17,6 +17,7 @@ from ..core.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
 from ..core.physical import PhysicalGroup, PhysicalGroups
+from ..core.tags import ElementTags
 from ..hexmesh import HexMesh
 from ..hexmesh.lower import boundary_mesh
 from ..hexmesh.query import face_tag_rows
@@ -291,6 +292,23 @@ def _lagrange_quad_perm(order: int) -> IntArray:
 # connectivity = consecutive blocks) -- byte-for-byte the historical output.  At
 # ``order > 1`` the conformal walk (:mod:`nekmeshpy.core.conform`) emits **shared**
 # nodes: a node on an edge / face between two elements is written once.
+def element_tag_ids(tags: ElementTags, n_elements: int) -> tuple[IntArray, list[str]]:
+    """``(per-element id (n_elements,), name per id)`` for a region table: 1-based
+    positions in the **sorted** tag vocabulary, ``0`` where an element carries no tag.
+
+    A ``.vtu`` cannot hold the names themselves -- VTK's string arrays are per-file
+    field data, not something a cell scalar can point into -- so the array written is
+    integer, exactly as ``bc_id`` already is.  What keeps it readable is that the
+    mapping is a function of the mesh alone: ``sorted(mesh.element_tags.group_tags)``
+    reproduces it anywhere, with no legend to carry alongside the file."""
+    names = sorted(tags.group_tags)
+    dense = tags.dense(n_elements)
+    ids: IntArray = np.zeros(n_elements, dtype=np.int64)
+    for i, name in enumerate(names):
+        ids[dense == name] = i + 1
+    return ids, names
+
+
 def _unwelded(n_elem: int, m: int) -> IntArray:
     """Consecutive-block connectivity ``(n_elem, m)`` for un-welded node arrays."""
     return np.arange(n_elem * m, dtype=np.int64).reshape(n_elem, m)
@@ -376,6 +394,14 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
 
 
 # -- the unstructured-grid writer ---------------------------------------
+def _cell_tags(tags: ElementTags, n_elements: int) -> IntArray | None:
+    """The ``element_tag`` cell array, or ``None`` for an untagged mesh -- which writes
+    no ``CellData`` at all rather than a meaningless column of zeros."""
+    if not tags:
+        return None
+    return element_tag_ids(tags, n_elements)[0]
+
+
 def _b64(a: IntArray | PointArray) -> str:
     """One ``DataArray``'s payload for ``format="binary"``: the byte count followed by
     the bytes, base64-encoded **as a single blob**.
@@ -389,7 +415,8 @@ def _b64(a: IntArray | PointArray) -> str:
 
 
 def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
-               *, bc_out: IntArray | None = None, binary: bool = True) -> None:
+               *, bc_out: IntArray | None = None, cell_out: IntArray | None = None,
+               binary: bool = True) -> None:
     """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
     ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order
     (consecutive blocks when the nodes are un-welded, shared ids when conformal).
@@ -449,6 +476,18 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
                                             for v in bc_out.tolist())))
             fid.write("        </DataArray>\n")
             fid.write("      </PointData>\n")
+        if cell_out is not None:
+            # per-**cell**, unlike bc_id: a region belongs to the element, and painting
+            # it on nodes would make every interface node ambiguous between the two
+            # regions that share it -- which is the whole point of a conjugate mesh.
+            fid.write('      <CellData Scalars="element_tag">\n')
+            fid.write('        <DataArray type="Int32" Name="element_tag" '
+                      'format="%s">\n' % fmt)
+            fid.write(block(np.asarray(cell_out, dtype=np.int32),
+                            lambda: "".join("          %d\n" % v
+                                            for v in cell_out.tolist())))
+            fid.write("        </DataArray>\n")
+            fid.write("      </CellData>\n")
         fid.write("    </Piece>\n")
         fid.write("  </UnstructuredGrid>\n")
         fid.write("</VTKFile>\n")
@@ -458,26 +497,33 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
 def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None,
            binary: bool = True) -> HexMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
-    ``bc_id`` tags.  ``binary=False`` writes the arrays as text instead, which is
-    readable and diffable but costs a Python format per row."""
+    ``bc_id`` tags, and per-cell ``element_tag`` region ids where the mesh carries
+    ``element_tags`` (see :func:`element_tag_ids` for the mapping).  ``binary=False``
+    writes the arrays as text instead, which is readable and diffable but costs a
+    Python format per row."""
     X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
-    _write_vtu(fname, X, conn, cell_type, bc_out=bc_out, binary=binary)
+    _write_vtu(fname, X, conn, cell_type, bc_out=bc_out,
+               cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes), binary=binary)
     return mesh
 
 
 def line_to_vtu(mesh: LineMesh, fname: str, *, binary: bool = True) -> LineMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``LineMesh``, un-welded (one
-    node block per line element)."""
+    node block per line element), with per-cell ``element_tag`` region ids where the
+    mesh carries ``element_tags``."""
     X, conn, cell_type = _line_arrays(mesh)
-    _write_vtu(fname, X, conn, cell_type, binary=binary)
+    _write_vtu(fname, X, conn, cell_type,
+               cell_out=_cell_tags(mesh.element_tags, mesh.n_lines), binary=binary)
     return mesh
 
 
 def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True) -> QuadMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, un-welded (one
-    node block per quad)."""
+    node block per quad), with per-cell ``element_tag`` region ids where the mesh
+    carries ``element_tags``."""
     X, conn, cell_type = _quad_arrays(mesh)
-    _write_vtu(fname, X, conn, cell_type, binary=binary)
+    _write_vtu(fname, X, conn, cell_type,
+               cell_out=_cell_tags(mesh.element_tags, mesh.n_quads), binary=binary)
     return mesh
 
 
