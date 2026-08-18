@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import NamedTuple
 
 import numpy as np
@@ -21,6 +22,7 @@ from ..core.tags import _empty_str
 from ..core.topology import TopologyReport
 from .hexmesh import HexMesh
 
+_log = logging.getLogger(__name__)
 
 def _boundary_mask(hexes: IntArray) -> tuple[IntArray, BoolArray]:
     """``(faces, is_boundary)``: every hex quad face ``(6N,4)`` in Nek order,
@@ -99,22 +101,27 @@ def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     return rows[p], tags[p]
 
 
-def scaled_jacobian(mesh: HexMesh) -> FloatArray:
+def scaled_jacobian(mesh: HexMesh, *, order: int | None = None) -> FloatArray:
     """Per-hex minimum scaled Jacobian ``(n_hexes,)``, read off the **curved**
     element the mesh actually stores.
 
     There is deliberately no corner-only reading. A corner scaled Jacobian cannot see
     where the high-order nodes went, so it reports a contented number for a mesh whose
     interior nodes are anywhere at all -- a node moved clean outside the element still
-    scores the same. Anything that has to be trusted must read the curved block."""
-    from . import quality
-    return quality.scaled_jacobian(mesh, mesh.order)
+    scores the same. Anything that has to be trusted must read the curved block.
 
-def quality_summary(mesh: HexMesh) -> QualitySummary:
+    ``order`` samples that block on a finer GLL lattice than the mesh's own -- what a
+    solver running at ``lx1 = order`` does to it. The default reads the mesh's own
+    order, where the value is exact at the nodes and silent between them: positive
+    there is not a proof the element is not folded."""
+    from . import quality
+    return quality.scaled_jacobian(mesh, mesh.order if order is None else order)
+
+def quality_summary(mesh: HexMesh, *, order: int | None = None) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics over the **curved** elements -- see
     :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`."""
     from . import quality
-    return quality.summary(mesh, mesh.order)
+    return quality.summary(mesh, mesh.order if order is None else order)
 
 
 def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
@@ -202,6 +209,16 @@ def report(mesh: HexMesh) -> str:
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
     lines.append(quality.format_report(quality_summary(mesh)))
+    # The mesh's own order is exact at its nodes and silent between them, so the
+    # summary above cannot certify the element -- read it on finer lattices too, and
+    # say so loudly when one of them disagrees.
+    scan = quality.order_scan(mesh)
+    lines.append(quality.format_scan(scan, mesh.order))
+    if scan.orders and not scan.clean:
+        n, m = scan.worst
+        _log.warning("mesh is clean at order %d but has %d inverted element(s) at "
+                     "sampling order %d (min scaled Jacobian %.4f)",
+                     mesh.order, scan.n_inverted[scan.orders.index(n)], n, m)
     for name in mesh.face_group_tags:
         n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))

@@ -16,6 +16,7 @@ from .morph import (
 )
 from .ports import Port, port
 from .quadmesh import NO_TAG, QuadMesh
+from .quality import order_scan
 from .query import (
     area,
     boundary_edges,
@@ -91,6 +92,7 @@ __all__ = [
     "quadrant_core",
     "quadrant_ogrid",
     "quadrant_seam_fractions",
+    "order_scan",
     "quality_summary",
     "query",
     "rectangle",
