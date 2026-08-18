@@ -11,7 +11,7 @@ import pytest
 from conftest import curved, vtu_cell_types
 
 from nekmeshpy import linemesh
-from nekmeshpy.io import export
+from nekmeshpy.io import writer
 
 
 # -- geometric truth: curved nodes lie on the true shape ---------------
@@ -112,7 +112,7 @@ def test_blend_rejects_mismatched_order():
 # -- VTK Lagrange curve node ordering -----------------------------------
 def test_vtk_curve_perm_puts_endpoints_first():
     # our block is ascending [p0..pN]; VTK curve wants [p0, pN, interior...]
-    perm = export._lagrange_curve_perm(5)
+    perm = writer._lagrange_curve_perm(5)
     assert np.array_equal(perm, [0, 5, 1, 2, 3, 4])
 
 
@@ -125,14 +125,14 @@ def _vtu_num_points(path):
 
 def test_vtu_order1_is_plain_line(tmp_path):
     p = str(tmp_path / "lin.vtu")
-    export.line_to_vtu(linemesh.circle(1.0, 5), p)
+    writer.line_to_vtu(linemesh.circle(1.0, 5), p)
     assert vtu_cell_types(p) == {3}                   # VTK_LINE
     assert _vtu_num_points(p) == 10                      # 5 elems x 2 nodes
 
 
 def test_vtu_high_order_is_lagrange_curve(tmp_path):
     p = str(tmp_path / "ho.vtu")
-    export.line_to_vtu(linemesh.circle(1.0, 4, order=5), p)
+    writer.line_to_vtu(linemesh.circle(1.0, 4, order=5), p)
     assert vtu_cell_types(p) == {68}                  # VTK_LAGRANGE_CURVE
     # conformal (welded) numbering: shared corners are written once.  A closed
     # 4-element loop has 4 corners + 4 x (6-2) private interior nodes = 20.

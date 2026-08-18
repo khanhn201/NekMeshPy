@@ -10,7 +10,7 @@ Produces ``circular_pipe.re2`` and ``circular_pipe.vtu``.
 
 import logging
 
-from nekmeshpy import export, hexmesh, linemesh, quadmesh
+from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -53,6 +53,6 @@ stats = hexmesh.quality_summary(mesh)
 print("circular pipe: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
 print("groups:", ", ".join(mesh.face_group_tags))

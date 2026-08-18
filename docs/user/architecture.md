@@ -21,7 +21,7 @@ TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft
  cotan Laplacian,                                                                 │
  Dirichlet solve,         ┌──────────────────────────────────────────────────────┤
  boundary loops)          ▼               ▼            ▼               ▼          ▼
-             quadmesh.smoothing/  quadmesh|hexmesh   core.topology   io.export  io.viz
+             quadmesh.smoothing/  quadmesh|hexmesh   core.topology   io.writer  io.viz
              hexmesh.smoothing    .quality           (watertight/    (re2/vtu/  (plot)
                    (relax)        (scaled Jac)       conformal)      mesh, meshio)
 ```
@@ -29,7 +29,7 @@ TriMesh ──▶ QuadMesh cross-section slices ──hexmesh.extrude/sweep/loft
 ## Containers are pure data; operations are free functions
 
 Everything acting on a finished mesh is a **free function** taking the container
-as its first argument — `io.export`, `io.viz`, `core.topology`, and the per-type
+as its first argument — `io.writer`, `io.viz`, `core.topology`, and the per-type
 modules beside their container (`hexmesh.quality`/`quadmesh.quality`,
 `trimesh.ops`, `hexmesh.smoothing`/`quadmesh.smoothing`).
 
@@ -78,7 +78,7 @@ container** except `mesh.py` and `topology.py`:
 | `core/surfaces.py` | `SurfaceCurve` + `ruled`/`blend`/`reverse`/`shift`/`reparam` — curves carried as parametrization, since a point-space lerp between two curves on a cylinder dips inside it |
 | `core/conform.py` | topology/orientation engine behind the B-rep: `unique_edges`/`unique_faces`/`canonical_faces`, `entity_tol`, `scatter_*`/`gather_*`, `conformal_*` walks, D4 helpers |
 
-**`io/`** — `io/export.py` (`to_re2`/`to_vtu`/`to_mesh`/`to_meshio`/`write`),
+**`io/`** — `io/writer.py` (`to_re2`/`to_vtu`/`to_mesh`/`to_meshio`/`write`),
 `io/viz.py` (`plot`).
 
 **`_typing.py`** — shared numpy dtype aliases; see {doc}`conventions`.

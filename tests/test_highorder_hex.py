@@ -14,7 +14,7 @@ from conftest import curved, vtu_cell_types
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.interp import corner_indices, hex_face_indices
-from nekmeshpy.io import export
+from nekmeshpy.io import writer
 
 GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
           "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
@@ -184,8 +184,8 @@ def test_high_order_quality_non_degenerate_on_curved_shell(order):
 def test_re2_is_order_invariant(tmp_path):
     lin = _shell(1)
     ho = _shell(4)
-    export.to_re2(lin, str(tmp_path / "lin.re2"), groups=GROUPS)
-    export.to_re2(ho, str(tmp_path / "ho.re2"), groups=GROUPS)
+    writer.to_re2(lin, str(tmp_path / "lin.re2"), groups=GROUPS)
+    writer.to_re2(ho, str(tmp_path / "ho.re2"), groups=GROUPS)
     a = open(tmp_path / "lin.re2", "rb").read()
     b = open(tmp_path / "ho.re2", "rb").read()
     assert a == b                                        # curved nodes never reach re2
@@ -194,7 +194,7 @@ def test_re2_is_order_invariant(tmp_path):
 # -- VTK Lagrange hex node ordering -------------------------------------
 def test_lagrange_hex_perm_is_valid_permutation():
     for order in (2, 3, 5):
-        perm = export._lagrange_hex_perm(order)
+        perm = writer._lagrange_hex_perm(order)
         row = order + 1
         assert sorted(perm.tolist()) == list(range(row ** 3))
         # the first eight VTK slots are the eight corner lexicographic indices
@@ -204,7 +204,7 @@ def test_lagrange_hex_perm_is_valid_permutation():
 def test_lagrange_hex_perm_order2_body_center_last():
     # order 2: 27 nodes; VTK position 26 (last) is the body centre = lexicographic
     # (1,1,1) = 1 + 3*1 + 9*1 = 13
-    perm = export._lagrange_hex_perm(2)
+    perm = writer._lagrange_hex_perm(2)
     assert perm.shape[0] == 27
     assert perm[26] == 13
 
@@ -212,14 +212,14 @@ def test_lagrange_hex_perm_order2_body_center_last():
 # -- VTU (XML) export ---------------------------------------------------
 def test_vtu_order1_is_plain_hex(tmp_path):
     p = str(tmp_path / "lin.vtu")
-    export.to_vtu(_shell(1), p, groups=GROUPS)
+    writer.to_vtu(_shell(1), p, groups=GROUPS)
     assert vtu_cell_types(p) == {12}                  # VTK_HEXAHEDRON
     assert 'Name="bc_id"' in open(p).read()
 
 
 def test_vtu_high_order_is_lagrange_hex(tmp_path):
     p = str(tmp_path / "ho.vtu")
-    export.to_vtu(_shell(3), p, groups=GROUPS)           # 4**3 = 64 nodes/hex
+    writer.to_vtu(_shell(3), p, groups=GROUPS)           # 4**3 = 64 nodes/hex
     assert vtu_cell_types(p) == {72}                  # VTK_LAGRANGE_HEXAHEDRON
     assert 'Name="bc_id"' in open(p).read()
 
@@ -227,7 +227,7 @@ def test_vtu_high_order_is_lagrange_hex(tmp_path):
 def test_vtu_meshio_roundtrip(tmp_path):
     meshio = pytest.importorskip("meshio")
     p = str(tmp_path / "ho.vtu")
-    export.to_vtu(_shell(3), p, groups=GROUPS)
+    writer.to_vtu(_shell(3), p, groups=GROUPS)
     mm = meshio.read(p)
     assert {c.type for c in mm.cells} == {"VTK_LAGRANGE_HEXAHEDRON"}
     assert "bc_id" in mm.point_data

@@ -113,7 +113,7 @@ import sys
 
 import numpy as np
 
-from nekmeshpy import export, hexmesh
+from nekmeshpy import hexmesh, writer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -168,5 +168,5 @@ mesh = hexmesh.merge([core, leg_plus, leg_minus])
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))
 
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

@@ -104,10 +104,10 @@ runs at `ORDER = 4` with its post-assembly smoothing switched off
 (`SMOOTH_ITERS = 0`) for the same reason — set `ORDER = 1` and `SMOOTH_ITERS = 8`
 to exercise it. `.re2` export **stays linear** (8 corners/hex — Nek's
 re2 has no high-order format yet); `.vtu` export emits VTK Lagrange cells that a
-viewer renders as curved geometry via the XML `.vtu` writer (`export.to_vtu` /
+viewer renders as curved geometry via the XML `.vtu` writer (`writer.to_vtu` /
 `line_to_vtu` / `quad_to_vtu`) — ParaView and VisIt render Lagrange cells reliably
 from `.vtu`. To hand the curved geometry to **Nek** rather than to a viewer, use the
-field-file writer `export.to_fld` (`<prefix>0.f00001`, `fields="X"`): unlike `.re2` it
+field-file writer `writer.to_fld` (`<prefix>0.f00001`, `fields="X"`): unlike `.re2` it
 stores the full `lx1³` GLL block per element. `carotid.py` writes one alongside its
 `.re2`/`.vtu` (`EXPORT_FLD`).
 

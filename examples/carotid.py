@@ -17,13 +17,13 @@ import numpy as np
 
 from nekmeshpy import (
     TriMesh,
-    export,
     hexmesh,
     linemesh,
     quadmesh,
     smoothing,
     trimesh,
     viz,
+    writer,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -232,13 +232,13 @@ if SMOOTH_ITERS > 0:
 
 print(hexmesh.report(mesh))
 if EXPORT_VTK:
-    export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+    writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
 if EXPORT_RE2:
-    export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+    writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
 if EXPORT_FLD:
     # .re2 is corner-only at any order; the field file carries the full GLL block,
     # so this is the export that actually preserves the ORDER = 3 geometry.
-    export.to_fld(mesh, OUT_NAME + "0.f00001")
+    writer.to_fld(mesh, OUT_NAME + "0.f00001")
 if PLOT:
     viz.plot(mesh, ["wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"], OUT_NAME)
 print("carotid: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))

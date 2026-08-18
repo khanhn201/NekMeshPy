@@ -40,10 +40,10 @@ from nekmeshpy import (
     HexMesh,
     LineMesh,
     QuadMesh,
-    export,
     hexmesh,
     linemesh,
     quadmesh,
+    writer,
 )
 from nekmeshpy.core.fields import gll_nodes, lagrange_matrix
 from nekmeshpy.pointmesh import PointMesh
@@ -454,5 +454,5 @@ mesh = hexmesh.tag_faces(mesh, free, tags)
 print("core wall %d quads -> %d skin layers -> %d shell hexes"
       % (wall.n_quads, len(R_SKIN) - 1, shell.n_hexes))
 print(hexmesh.report(mesh))
-export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

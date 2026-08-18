@@ -27,7 +27,7 @@ pip install -e ".[all]"       # + matplotlib, meshio, pytest
 ## Quick start
 
 ```python
-from nekmeshpy import export, linemesh, quadmesh, hexmesh
+from nekmeshpy import writer, linemesh, quadmesh, hexmesh
 
 # Tag the wall on the boundary loop; the tag rides up line -> quad -> hex.
 boundary = linemesh.circle(radius=1.0, n=24, element_tag="wall")
@@ -41,8 +41,8 @@ block   = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
 
 # Boundaries are named at build time; map each name -> Nek BC code at export.
 codes = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-export.to_re2(block, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
-export.write(block, "pipe.vtu", groups=codes)  # anything meshio supports
+writer.to_re2(block, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
+writer.write(block, "pipe.vtu", groups=codes)  # anything meshio supports
 
 assert hexmesh.is_watertight(block)            # closed, leak-tight, single body
 assert hexmesh.is_conforming(block)            # no hanging-point / T-junction faces

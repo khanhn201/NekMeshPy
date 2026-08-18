@@ -441,10 +441,10 @@ lowest rung — the toolkit never resamples.
 - **`.re2` stays linear** — no high-order support in the format; exports only
   the 8 corners per hex, byte-identical at any order.
 - **`.vtu` becomes high-order** — VTK Lagrange cells (curve=68, quad=70,
-  hex=72) indexing the conformal node array. Use {func}`nekmeshpy.io.export.to_vtu`
+  hex=72) indexing the conformal node array. Use {func}`nekmeshpy.io.writer.to_vtu`
   — ParaView/VisIt render Lagrange cells reliably from `.vtu`.
 - **A Nek field file carries the curved geometry to the solver** —
-  {func}`nekmeshpy.io.export.to_fld` writes the full GLL block as the `X`
+  {func}`nekmeshpy.io.writer.to_fld` writes the full GLL block as the `X`
   field; see [Using a high-order mesh in Nek5000 / NekRS](#using-a-high-order-mesh-in-nek5000-nekrs)
   below.
 - **Quality metrics always read the curved element.** `scaled_jacobian()` and
@@ -471,8 +471,8 @@ golden regression pinned.
 arrive through a separate field file. Export both:
 
 ```python
-export.to_re2(mesh, "case.re2", groups=GROUPS)   # topology + BCs, always linear
-export.to_fld(mesh, "case.f00000")               # FLD file for high order nodes
+writer.to_re2(mesh, "case.re2", groups=GROUPS)   # topology + BCs, always linear
+writer.to_fld(mesh, "case.f00000")               # FLD file for high order nodes
 ```
 
 `to_fld` writes only the `X` field — the mesh's own GLL node positions, at its
@@ -508,8 +508,8 @@ only at **export**, via `groups=`: a `{name: spec}` dict (a code, or a
 {class}`~nekmeshpy.core.physical.PhysicalGroups` registry.
 
 ```python
-from nekmeshpy import export
-export.to_re2(mesh, "part.re2", groups={"wall": "W  ", "inlet": "v  "})
+from nekmeshpy import writer
+writer.to_re2(mesh, "part.re2", groups={"wall": "W  ", "inlet": "v  "})
 ```
 
 **No presets, no default for `to_re2`** — a name-to-code table is a statement

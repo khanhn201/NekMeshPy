@@ -8,12 +8,12 @@ from nekmeshpy import (
     SECTION_METHODS,
     PhysicalGroup,
     PhysicalGroups,
-    export,
     hexmesh,
     linemesh,
     quadmesh,
     register_section_smoothing,
     set_section_smoothing,
+    writer,
 )
 from nekmeshpy.hexmesh import quality
 
@@ -39,7 +39,7 @@ def test_physical_group_pads_code():
 
 
 def test_to_mesh_groups(built_mesh):
-    m = export.to_mesh(built_mesh["mesh"], built_mesh["groups"])
+    m = writer.to_mesh(built_mesh["mesh"], built_mesh["groups"])
     assert m.cells["hexahedron"].shape == (7200, 8)
     assert m.cells["quad"].shape == (1840, 4)
     assert set(m.cell_sets) >= {"wall", "trunk_outlet", "top_outlet_1", "top_outlet_2"}
@@ -50,7 +50,7 @@ def test_to_mesh_without_groups_cannot_orient_an_interior_plane(built_mesh):
     """With no registry there is no side rule, so a named *interior* face contributes
     the row each of its two hexes carries -- 160 more than the directed export. Which
     side a measurement plane belongs to is a property of the groups, not the mesh."""
-    m = export.to_mesh(built_mesh["mesh"])
+    m = writer.to_mesh(built_mesh["mesh"])
     assert m.cells["quad"].shape == (2000, 4)
 
 

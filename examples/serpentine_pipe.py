@@ -44,7 +44,7 @@ import time
 
 import numpy as np
 
-from nekmeshpy import export, hexmesh, linemesh, quadmesh
+from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import paths
 from nekmeshpy.core.fields import uniform_spacing
 from nekmeshpy.core.paths import turtle_path
@@ -212,6 +212,6 @@ if __name__ == "__main__":
     print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
     print("build time: %.2f s" % BUILD_SECONDS)
 
-    export.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-    export.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
+    writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+    writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
     print("groups:", ", ".join(mesh.face_group_tags))
