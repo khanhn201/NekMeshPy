@@ -208,13 +208,14 @@ def parallel_transport(points: PointArray, tangents: PointArray,
     if loop and distribute:
         theta = _signed_angle(R[0], wrap, T[0])
         k = P.shape[0]
-        R = _spin(R, T, -theta * np.arange(k, dtype=float) / k)
+        R = spin(R, T, -theta * np.arange(k, dtype=float) / k)
     return _assemble(R, T)
 
 
-def _spin(u: PointArray, tangents: PointArray, angles: FloatArray) -> PointArray:
-    """Rotate each cross-section vector ``u[k]`` by ``angles[k]`` about ``tangents[k]``.
-    """
+def spin(u: PointArray, tangents: PointArray, angles: FloatArray) -> PointArray:
+    """Rotate each cross-section vector ``u[k]`` by ``angles[k]`` about ``tangents[k]``,
+    right-handed about the tangent.  ``u`` must already be perpendicular to its tangent;
+    the result is renormalized, not reprojected."""
     c: FloatArray = np.cos(angles)[:, None]
     s: FloatArray = np.sin(angles)[:, None]
     out: PointArray = c * u + s * np.cross(tangents, u)
@@ -407,8 +408,8 @@ def sweep_placements(profile_points: PointArray, path_points: PointArray, *,
     n0 = float(np.linalg.norm(u0))
     if n0 > PLANAR_TOL:
         phase = _signed_angle(R[0, :, 0], u0 / n0, T[0])
-        R = _assemble(_spin(R[:, :, 0], T, np.full(K, phase)), T)
+        R = _assemble(spin(R[:, :, 0], T, np.full(K, phase)), T)
     if twist != 0.0:
         span = float(K if loop else max(K - 1, 1))
-        R = _assemble(_spin(R[:, :, 0], T, twist * np.arange(K) / span), T)
+        R = _assemble(spin(R[:, :, 0], T, twist * np.arange(K) / span), T)
     return [frame_transform(R_from, o_from, R[k], P[k]) for k in range(K)]

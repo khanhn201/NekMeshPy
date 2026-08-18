@@ -286,15 +286,23 @@ Worth knowing:
 - Put a station exactly on every path junction with
   {func}`linemesh.sweep_fractions <nekmeshpy.linemesh.shape.sweep_fractions>`
   — an element straddling one is fitted across two geometries (a visible kink).
-- For a turtle-walked path, use `sweep_path` instead: {func}`paths.embed
-  <nekmeshpy.core.paths.embed>` lifts a 2-D `turtle_path` onto a plane, giving
-  a `SpacePath` with its own tangent and junction table; `sweep_path` then
-  takes a `target_length`/`layers`. The origin enters the centerline, never
-  the tangent (translating a tangent tilts every frame).
-- `orientation` picks the frame field: `"transport"` (default, rotation-
-  minimizing, for non-planar paths), `"fixed"` with `up=` (zero-twist, planar
-  paths only — fails if a tangent turns parallel to `up`), or `"frenet"`.
+- For a walked path, use `sweep_path` instead: {func}`paths.walk
+  <nekmeshpy.core.paths.walk>` turtles a table of {func}`line
+  <nekmeshpy.core.paths.line>` / {func}`arc <nekmeshpy.core.paths.arc>` /
+  {func}`helix <nekmeshpy.core.paths.helix>` moves through space, giving a
+  `Path` with its own analytic tangent, junction table **and moving
+  frame**; `sweep_path` then takes a `target_length`/`layers`. The start point
+  enters the centerline, never the tangent (translating a tangent tilts every
+  frame).
+- `orientation` picks the frame field: `"transport"` (rotation-minimizing, for
+  non-planar paths), `"fixed"` with `up=` (zero-twist against one held
+  direction — fails if a tangent turns parallel to it), or `"frenet"`.
   Station 0 always lands the section exactly as authored.
+- **`sweep_path` needs none of that on a walked path**: with no `orientation`
+  asked for it holds the frame the walk itself carried, so a bend out of plane
+  and a distributed `roll=` arrive as authored. Naming an `orientation` — or an
+  `up` — overrides it. Only a path with no frame of its own falls back to
+  `"transport"`.
 - `tangent=` supplies the analytic derivative; without it, finite-difference
   tangents tilt end stations by ~3e-4 rad on a coarse quarter arc.
 - `origin=` is **required**, no default — it's the section's reference point,

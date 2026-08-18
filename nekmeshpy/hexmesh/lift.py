@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Callable, Literal
+from typing import Callable
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -18,7 +18,7 @@ from .._typing import (
 )
 from ..core import frames, stations
 from ..core.fields import validate_layers
-from ..core.paths import SpacePath
+from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
 from ..core.tags import ElementTags
 from ..linemesh.shape import path_fractions
 from ..quadmesh import QuadMesh
@@ -130,8 +130,8 @@ def sweep(
     *,
     origin: Point | Sequence[float],
     tangent: Callable[[FloatArray], PointArray] | None = None,
-    orientation: Literal["transport", "fixed", "frenet"] = "transport",
-    up: Vec3 | Sequence[float] | PointArray | None = None,
+    orientation: Orientation = "transport",
+    up: UpSpec | None = None,
     twist: float = 0.0,
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
@@ -147,7 +147,7 @@ def sweep(
     tv: FloatArray = t[:-1] if loop else t
     P, T = stations.sweep_path(path, tangent, tv)
     places = frames.sweep_placements(
-        section.points, P, orientation=orientation, up=up, twist=twist,
+        section.points, P, orientation=orientation, up=sample_up(up, tv), twist=twist,
         close_twist=close_twist, loop=loop, origin=origin, normal=normal,
         path_tangents=T)
     profs: list[QuadMesh] = [quad_transform(section, M, o) for M, o in places]
@@ -159,14 +159,14 @@ def sweep(
 
 def sweep_path(
     section: QuadMesh,
-    path: SpacePath,
+    path: Path,
     *,
     origin: Point | Sequence[float],
     target_length: float | None = None,
     layers: int | None = None,
     fractions: FloatArray | Sequence[float] | None = None,
-    orientation: Literal["transport", "fixed", "frenet"] = "transport",
-    up: Vec3 | Sequence[float] | PointArray | None = None,
+    orientation: Orientation | None = None,
+    up: UpSpec | None = None,
     twist: float = 0.0,
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
@@ -175,11 +175,17 @@ def sweep_path(
     first_tag: str | ElementTags | None = None,
     last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
-    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.core.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
-    fractions)`` triple."""
+    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`Path
+    <nekmeshpy.core.paths.Path>` rather than by a loose ``(centerline, tangent,
+    fractions)`` triple.
+
+    A path that also carries its own frame (anything from :func:`paths.walk
+    <nekmeshpy.core.paths.walk>`) needs no ``orientation``: with none asked for, that
+    frame is held per station, so a bend out of plane and a distributed ``roll`` arrive
+    here as authored.  Naming an ``orientation`` (or an ``up``) overrides it."""
     fr = path_fractions(path, target_length=target_length, layers=layers,
                         fractions=fractions)
+    orientation, up = resolve_frame(path, orientation, up)
     return sweep(section, path.centerline, fr, origin=origin, tangent=path.tangent,
                  orientation=orientation, up=up, twist=twist, close_twist=close_twist,
                  normal=normal, loop=loop, element_tags=element_tags,

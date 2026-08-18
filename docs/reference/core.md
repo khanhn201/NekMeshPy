@@ -57,15 +57,15 @@ behind the B-rep) — is internal; see
 
 ## `core.paths`
 
-`Move` — one row of a move table, `("line", length, 0.0)` or `("arc", radius,
-signed_degrees)` — is excluded below: it is a `typing.Tuple` alias, and autodoc
-renders those through `typing`'s own docstring, which does not survive `-n`. The
-module docstring describes the two forms.
+`Move`, `UpSpec` and `Orientation` — the union of the three move types, what a sweep
+accepts for `up`, and the frame-generator names — are excluded below: they are `typing`
+aliases, and autodoc renders those through `typing`'s own docstring, which does not
+survive `-n`. `line`, `arc` and `helix` below document the move forms themselves.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.paths
    :members:
-   :exclude-members: Move
+   :exclude-members: Move, Orientation, UpSpec
 ```
 
 ## `core.surfaces`

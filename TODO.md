@@ -10,15 +10,15 @@ boundary layers near a surface. These thin skin layers can then be loft to gener
 or quadmesh.
 
 - [ ] 2) API for attaching to known surface without needing to merge (continue loft, solid-fluid in chimera, bifurcation interfaces)
-- [ ] 3) New Tjunction topology
+- [x] 3) New Tjunction topology
 - [ ] 4) Plottings utils or simply vtk export the full scene
 - [x] 5) Rendered, live or simplified mesh showcase in docs
-- [ ] 6) Update all staled readme and docs
+- [x] 6) Update all staled readme and docs
 - [ ] 7) Mapping of grid on parametric curves
 - [ ] 8) TriMesh.isosurface should return LineMesh
 - [ ] 9) TetMesh.isosurface should return TriMesh
 - [ ] 10) Offload marching algorithm to skimage or vtk?
-- [ ] 11) Generalize Path in Sweeping to be fully 3D
+- [x] 11) Generalize Path in Sweeping to be fully 3D
 - [ ] 12) Option to select backends for marching?
 - [ ] 13) TJunctions should return only the interface then user can loft on their own
     - [ ]  For quadrant Tjunction, additionally the hexmesh on the sides
