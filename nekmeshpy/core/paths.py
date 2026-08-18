@@ -1,7 +1,7 @@
 """A declarative 3-D turtle-walk path builder.
 
 A path is a **move table** -- :func:`line`, :func:`arc`, :func:`helix` -- walked by
-:func:`walk` into a :class:`SpacePath`.  The turtle carries a full orthonormal frame,
+:func:`walk` into a :class:`Path`.  The turtle carries a full orthonormal frame,
 not just a heading, which is what makes the vocabulary three-dimensional: ``tilt`` rolls
 a bend's own plane about the direction of travel, so one arc verb reaches every
 direction out of the current frame, and ``roll`` spins the frame about that direction as
@@ -13,7 +13,7 @@ quadrature), an exact analytic tangent (differencing a sampled path is only O(h*
 worst exactly at a junction where the curvature jumps), and an ``s in [0, 1]`` that is
 true arc length, so an element length is a station count.
 
-The frame the walk carried comes back on :attr:`SpacePath.up`, and
+The frame the walk carried comes back on :attr:`Path.up`, and
 :func:`hexmesh.sweep_path <nekmeshpy.hexmesh.lift.sweep_path>` holds it per station
 unless told otherwise -- which is the only way an out-of-plane bend or a distributed
 twist can reach the mesh, since a sweep's own generators fix the frame only up to how
@@ -103,10 +103,12 @@ def helix(radius: float, angle: float, *, rise: float = 0.0, tilt: float = 0.0,
     return Helix(float(radius), float(angle), float(rise), float(tilt), float(roll))
 
 
-class SpacePath(NamedTuple):
-    """A path **in space**, exposed as continuous callables of normalized arc length ``s
-    in [0, 1]`` -- what :func:`hexmesh.lift.sweep_path
-    <nekmeshpy.hexmesh.lift.sweep_path>` consumes."""
+class Path(NamedTuple):
+    """A curve in space, exposed as continuous callables of normalized arc length ``s in
+    [0, 1]`` rather than as its own segment table -- what :func:`hexmesh.lift.sweep_path
+    <nekmeshpy.hexmesh.lift.sweep_path>` consumes.  :func:`walk` builds one; so can a
+    caller with a parametrization of their own, which is why every field is a callable
+    and only :attr:`up` may be left out."""
 
     #: ``(K,)`` in ``[0, 1]`` -> ``(K, 3)`` points.
     centerline: Callable[[FloatArray], PointArray]
@@ -238,9 +240,9 @@ def _check_radius(radius: float, index: int, move: Move) -> None:
 def walk(moves: Sequence[Move], *,
          start: Point | Sequence[float] = (0.0, 0.0, 0.0),
          heading: Vec3 | Sequence[float] = (1.0, 0.0, 0.0),
-         up: Vec3 | Sequence[float] = (0.0, 0.0, 1.0)) -> SpacePath:
+         up: Vec3 | Sequence[float] = (0.0, 0.0, 1.0)) -> Path:
     """Walk ``moves`` in space from ``start``, setting out along ``heading`` with the
-    cross-section's own up along ``up``, into a :class:`SpacePath` that carries its own
+    cross-section's own up along ``up``, into a :class:`Path` that carries its own
     moving frame.
 
     ``up`` is normalized and projected off ``heading`` -- it names the frame's phase, not
@@ -320,7 +322,7 @@ def walk(moves: Sequence[Move], *,
         return spin(_rodrigues(ax, th, u0_a[idx]), _rodrigues(ax, th, w0_a[idx]),
                     rol_a[idx] * loc)
 
-    return SpacePath(centerline, tangent, total, breaks, frame_up)
+    return Path(centerline, tangent, total, breaks, frame_up)
 
 
 #: What a sweep accepts for ``up``: one constant world direction, one direction per
@@ -347,7 +349,7 @@ def sample_up(up: UpSpec | None, t: FloatArray) -> PointArray | UpSpec | None:
     return U
 
 
-def resolve_frame(path: SpacePath, orientation: Orientation | None,
+def resolve_frame(path: Path, orientation: Orientation | None,
                   up: UpSpec | None) -> tuple[Orientation, UpSpec | None]:
     """The ``(orientation, up)`` a sweep along ``path`` should run with.
 
@@ -365,5 +367,5 @@ def resolve_frame(path: SpacePath, orientation: Orientation | None,
     return "fixed", path.up
 
 
-__all__ = ["Arc", "Helix", "LENGTH_TOL", "Line", "Move", "Orientation", "SpacePath",
+__all__ = ["Arc", "Helix", "LENGTH_TOL", "Line", "Move", "Orientation", "Path",
            "UpSpec", "arc", "helix", "line", "resolve_frame", "sample_up", "walk"]

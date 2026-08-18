@@ -18,7 +18,7 @@ from .._typing import (
 )
 from ..core import frames, stations
 from ..core.fields import validate_layers
-from ..core.paths import Orientation, SpacePath, UpSpec, resolve_frame, sample_up
+from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
 from ..core.tags import ElementTags
 from ..linemesh.shape import path_fractions
 from ..quadmesh import QuadMesh
@@ -159,7 +159,7 @@ def sweep(
 
 def sweep_path(
     section: QuadMesh,
-    path: SpacePath,
+    path: Path,
     *,
     origin: Point | Sequence[float],
     target_length: float | None = None,
@@ -175,8 +175,8 @@ def sweep_path(
     first_tag: str | ElementTags | None = None,
     last_tag: str | ElementTags | None = None,
 ) -> HexMesh:
-    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.core.paths.SpacePath>` rather than by a loose ``(centerline, tangent,
+    """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`Path
+    <nekmeshpy.core.paths.Path>` rather than by a loose ``(centerline, tangent,
     fractions)`` triple.
 
     A path that also carries its own frame (anything from :func:`paths.walk

@@ -290,7 +290,7 @@ Worth knowing:
   <nekmeshpy.core.paths.walk>` turtles a table of {func}`line
   <nekmeshpy.core.paths.line>` / {func}`arc <nekmeshpy.core.paths.arc>` /
   {func}`helix <nekmeshpy.core.paths.helix>` moves through space, giving a
-  `SpacePath` with its own analytic tangent, junction table **and moving
+  `Path` with its own analytic tangent, junction table **and moving
   frame**; `sweep_path` then takes a `target_length`/`layers`. The start point
   enters the centerline, never the tangent (translating a tangent tilts every
   frame).

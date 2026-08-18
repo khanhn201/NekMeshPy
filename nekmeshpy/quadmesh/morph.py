@@ -15,7 +15,7 @@ from .._typing import (
 )
 from ..core import affine, conform, frames
 from ..core.interp import _element_tangents
-from ..core.paths import Orientation, SpacePath, UpSpec, resolve_frame, sample_up
+from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
 from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
@@ -221,7 +221,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
                     target.element_tags)
 
 
-def place_on_path(section: QuadMesh, path: SpacePath,
+def place_on_path(section: QuadMesh, path: Path,
                   fractions: FloatArray | Sequence[float], *,
                   origin: Point | Sequence[float] | None = None,
                   orientation: Orientation | None = None,

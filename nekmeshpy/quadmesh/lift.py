@@ -15,7 +15,7 @@ from .._typing import (
 )
 from ..core import frames, stations
 from ..core.fields import validate_layers
-from ..core.paths import Orientation, SpacePath, UpSpec, resolve_frame, sample_up
+from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
 from ..core.tags import ElementTags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
@@ -164,7 +164,7 @@ def sweep(
 
 def sweep_path(
     profile: LineMesh,
-    path: SpacePath,
+    path: Path,
     *,
     origin: Point | Sequence[float],
     target_length: float | None = None,
@@ -180,8 +180,8 @@ def sweep_path(
     first_tag: str | ElementTags | None = None,
     last_tag: str | ElementTags | None = None,
 ) -> QuadMesh:
-    """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a :class:`SpacePath
-    <nekmeshpy.core.paths.SpacePath>`, which carries its own analytic tangent and
+    """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a :class:`Path
+    <nekmeshpy.core.paths.Path>`, which carries its own analytic tangent and
     junction table -- so this asks for an element length along the sweep instead of a
     station array.
 

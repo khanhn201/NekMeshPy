@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 import numpy as np
 
 from .._typing import FloatArray, Point, PointArray, Vec3
-from ..core.paths import SpacePath
+from ..core.paths import Path
 from ..core.surfaces import SurfaceCurve, SurfaceMap
 from ..core.tags import ElementTags
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
@@ -127,10 +127,10 @@ def sweep_fractions(breaks: FloatArray | Sequence[float], total_length: float,
     return out
 
 
-def path_fractions(path: SpacePath, *, target_length: float | None = None,
+def path_fractions(path: Path, *, target_length: float | None = None,
                    layers: int | None = None,
                    fractions: FloatArray | Sequence[float] | None = None) -> FloatArray:
-    """Resolve a :class:`SpacePath <nekmeshpy.core.paths.SpacePath>` and exactly one of
+    """Resolve a :class:`Path <nekmeshpy.core.paths.Path>` and exactly one of
     ``target_length`` / ``layers`` / ``fractions`` into the sweep stations themselves.
     """
     given = [n for n, x in (("target_length", target_length), ("layers", layers),
