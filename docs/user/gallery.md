@@ -39,6 +39,16 @@ Welded small-branch T-junction, built from quadrant blocks.
 
 [`examples/quadrant_pipe_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/quadrant_pipe_tjunction.py)
 
+## cob_tjunction
+
+Unequal-radius T-junction with the branch cut straight through the main pipe, so
+there is no hub to degenerate at a small radius ratio.
+
+```{mesh-viewer} cob_tjunction
+```
+
+[`examples/cob_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/cob_tjunction.py)
+
 ## serpentine_pipe
 
 One O-grid disc swept along a path.
