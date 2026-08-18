@@ -13,6 +13,7 @@ from .lift import (
 )
 from .lower import boundary_mesh
 from .morph import blend, mirror, rotate, scale, transform, translate
+from .quality import order_scan
 from .query import (
     boundary_elements,
     boundary_face_ids,
@@ -73,6 +74,7 @@ __all__ = [
     "lower",
     "merge",
     "morph",
+    "order_scan",
     "quality_summary",
     "query",
     "report",

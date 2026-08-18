@@ -148,11 +148,34 @@ inward, and the combinators carry it up.
 When testing curved geometry, assert on the **conformal node set**, not corners —
 corner-only passes on a mesh that is high-order in storage and linear in geometry.
 
-The same split runs through quality: `hexmesh.quality_summary` reads the **curved**
-block by default, `hexmesh.scaled_jacobian` reads **corners**. They disagree, and not
-slightly — a mesh reading `0 inverted` at the corners has been measured at 8 inverted
-and `minSJ -0.98` once its curved nodes are read. Corner-clean is not clean; say which
-reading a number came from.
+A split runs through quality too, though no longer the corner-vs-curved one: since
+`7eb73de` both rungs' `scaled_jacobian` / `quality_summary` read the **curved** block
+and there is no corner-only reading in the namespace (`quality.corner_scaled_jacobian`
+survives for linear meshes). What replaces it is a **sampling** split. The metric is
+exact at the `(order+1)**dim` GLL nodes and silent between them, while an element's
+Jacobian determinant is a polynomial of far higher degree than its map — so a positive
+reading is not a certificate that the element is not folded. Measured: an order-2 quad
+reading `+0.75` on its own 9 nodes reads `-0.99` on 81; a hex reading `+0.35` on 27
+reads `-0.12` on 729; `femoral` reads `+0.042` and `0 inverted` at order 2 and
+`-0.007` with `1 inverted` at 8, which is what Nek5000 at `lx1=8` then rejects.
+
+So **sample at the order the solver will run at**: `quality_summary(mesh, order=8)`
+reads the stored map on the finer lattice (`core.interp.resample_block` — a change of
+nodal basis, inventing no geometry; below `mesh.order` it refuses). Do not assume one
+extra order is enough — the fold can sit between any two lattices, and that same
+`femoral` element reads *positive* again at order 5. Say which order a number came from.
+
+`hexmesh.report` does this for you: `order_scan` re-reads the mesh at `SCAN_ORDER`
+(7 — **the solver's** order; there is no universal right value, change it to match
+yours, and it is read live so assigning it works), prints a `sampling` line, and raises
+a `** WARNING **` plus a `logging.warning` when it inverts. Deliberately one order, not
+a sweep: intermediate orders cost real time and certify nothing, since the reading is
+**not monotone** — a real element reads clean at 2, folded at 3, clean at 4, clean at 7
+and folded at 8. At order 7 the work is 512 points a hex (0.8 s for 8k), so
+`SCAN_BUDGET` admits ~29k elements and *declines* anything larger, naming it in
+`OrderScan.skipped` and reporting `not checked`. Declined is **unchecked, not clean**.
+The sampling is chunked, so peak memory is flat in mesh size and order (unchunked, 500k
+hexes at order 8 is 8.7 GB).
 
 Order-N smoothing is not implemented: a repositioning smoother raises
 `NotImplementedError` above order 1 rather than degrading silently.

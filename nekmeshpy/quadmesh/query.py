@@ -46,22 +46,27 @@ def boundary_points(mesh: QuadMesh) -> IntArray:
     be = edges[mask]
     return np.unique(be) if be.size else np.zeros(0, dtype=np.int64)
 
-def scaled_jacobian(mesh: QuadMesh) -> FloatArray:
+def scaled_jacobian(mesh: QuadMesh, *, order: int | None = None) -> FloatArray:
     """Per-quad minimum scaled Jacobian ``(n_quads,)``, read off the **curved**
     element the mesh actually stores.
 
     There is deliberately no corner-only reading. A corner scaled Jacobian cannot see
     where the high-order nodes went, so it reports a contented number for a mesh whose
     interior nodes are anywhere at all -- a node moved clean outside the element still
-    scores the same. Anything that has to be trusted must read the curved block."""
-    from . import quality
-    return quality.scaled_jacobian(mesh, mesh.order)
+    scores the same. Anything that has to be trusted must read the curved block.
 
-def quality_summary(mesh: QuadMesh) -> QualitySummary:
+    ``order`` samples that block on a finer GLL lattice than the mesh's own -- what a
+    solver running at ``lx1 = order`` does to it. The default reads the mesh's own
+    order, where the value is exact at the nodes and silent between them: positive
+    there is not a proof the element is not folded."""
+    from . import quality
+    return quality.scaled_jacobian(mesh, mesh.order if order is None else order)
+
+def quality_summary(mesh: QuadMesh, *, order: int | None = None) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics over the **curved** elements -- see
     :func:`scaled_jacobian <nekmeshpy.quadmesh.query.scaled_jacobian>`."""
     from . import quality
-    return quality.summary(mesh, mesh.order)
+    return quality.summary(mesh, mesh.order if order is None else order)
 
 def plane_normal(mesh: QuadMesh, *,
                  hint: Vec3 | Sequence[float] | None = None,

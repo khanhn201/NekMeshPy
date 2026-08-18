@@ -456,6 +456,46 @@ lowest rung — the toolkit never resamples.
   `quality_summary()` returns a {class}`~nekmeshpy.core.quality.QualitySummary`
   NamedTuple; its `n_poor` and `poor (<…)` line both derive from
   {data}`~nekmeshpy.core.quality.POOR_THRESHOLD` so they can't drift apart.
+- **But reading the curved element is not the same as certifying it.** The metric is
+  *sampled*: exact at the `(order+1)**dim` GLL nodes and silent between them. An
+  element's map is degree `order` per direction, its Jacobian determinant is a
+  polynomial of much higher degree, and a solver running the same mesh at `lx1 = 8`
+  evaluates that map on far more points. Pass `order=` to ask what it will see:
+
+  ```python
+  hexmesh.quality_summary(mesh)            # the mesh's own order — 27 points a hex
+  hexmesh.quality_summary(mesh, order=8)   # what Nek5000 at lx1=8 computes — 729
+  ```
+
+  This re-reads the stored map on a finer lattice (`core.interp.resample_block`, a
+  change of nodal basis that invents no geometry); below `mesh.order` it raises, since
+  dropping the nodes that make an
+  element curved would report a *better* number for a mesh that isn't the one stored.
+  One extra order is not a rule of thumb — a fold can sit between any two lattices, so
+  ask for the order you will actually run.
+- **`hexmesh.report()` double-checks at the solver's order and warns.** It re-reads
+  the mesh at {data}`~nekmeshpy.core.quality.SCAN_ORDER` and adds a `sampling` line; if
+  that order inverts, the report carries a `** WARNING **` and a `logging.warning` is
+  emitted, because a mesh that is clean at its own order and folded at the solver's
+  must not read as healthy:
+
+  ```
+  scaled Jac   : min=0.0421  mean=0.8894  median=0.9430  max=0.9999
+  inverted(<=0): 0
+  sampling     : N=7 -0.0097(1 inv)
+    ** WARNING ** inverted at sampling order 7 (min -0.0097) though clean at order 2.
+  ```
+
+  There is deliberately **no sweep** of intermediate orders: they cost real time and
+  certify nothing, because the reading is not monotone in the sampling order. Only the
+  order you will actually run predicts what the solver does — so set `SCAN_ORDER` to
+  match yours, or pass `order_scan(mesh, orders=[...])`.
+
+  At `SCAN_ORDER` the work is 512 points a hex — 0.8 s for 8k hexes — so
+  {data}`~nekmeshpy.core.quality.SCAN_BUDGET` admits meshes up to about 29k elements.
+  A larger one is *declined* — named in `OrderScan.skipped`, reported as `not checked`,
+  and **not** counted clean — rather than quietly costing minutes inside a routine
+  report. Both constants are read at call time, so assigning either takes effect.
 - **Smoothing isn't implemented above order 1** — relaxers work on the corner
   graph and would leave interior nodes behind, so `conduction`/`winslow` and
   `hexmesh.smoothing.smooth` raise `NotImplementedError` rather than degrade
