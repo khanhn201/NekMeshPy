@@ -43,6 +43,7 @@ import sys
 import numpy as np
 
 from nekmeshpy import (
+    ElementTags,
     TetMesh,
     TriMesh,
     fields,
@@ -54,6 +55,7 @@ from nekmeshpy import (
     writer,
 )
 from nekmeshpy.core import conform
+from nekmeshpy.hexmesh import Seam
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -1495,7 +1497,22 @@ LEG_NEAR_LEN = [NEAR_LEN, NEAR_LEN_BRANCH, NEAR_LEN]   # leg 2 is the branch
 cap_loops = [surf.points[trimesh.ops.order_boundary_loop(surf, c)]
              for c in order_openings(surf)]
 
+def cap_tags(slice_, first, second):
+    """Name a leg's seam cap by half-disc.  ``spined_ogrid`` welds the two halves in
+    order, so the first half of the quads is ``LEG_ARCS[leg]``'s first arc; each half is
+    shared with a different leg, so one name for the whole cap will not do."""
+    half = slice_.n_quads // 2
+    return ElementTags.from_dense(
+        np.array([first] * half + [second] * (slice_.n_quads - half)))
+
+
+#: The interface names, keyed by the arc the two legs share -- ``LEG_ARCS`` gives each
+#: leg its two arcs in the order its seam loop was welded, which fixes the mapping.
+ARC_TAG = {(1, 2): "attach1", (1, 3): "attach2", (2, 3): "attach3"}
+
 blocks = []
+seam_block: dict = {}
+inner_seams: list = []
 for leg in (1, 2, 3):
     Pl, Tl, u = leg_field_vol(tets, Uvol, caps, leg)
     walker = fvol.FieldWalker(Pl, Tl, u)
@@ -1517,14 +1534,32 @@ for leg in (1, 2, 3):
     # stack it is given -- across that joint it would read the change as curvature and
     # overshoot.  One loft per run keeps each spline inside a region of its own spacing,
     # and the split at the flux plane is what gives that plane a name.
+    # every split is a seam, so each side of it is named: the flux plane by its own
+    # name (``attach_tag`` puts it back on the fused face, which is what makes it the
+    # tagged interior plane), the spacing joint by a private name that is cleared.
+    cap = cap_tags(slices[-1], ARC_TAG[pr], ARC_TAG[qr])
+    joint_tag = "joint_%d" % leg
     if flux and 0 < off < joint:
-        blocks.append(hexmesh.loft_spline(slices[:off + 1], first_tag=name,element_tags=FLUX_DOWNSTREAM))
-        blocks.append(hexmesh.loft_spline(slices[off:joint + 1], first_tag=flux,element_tags=FLUX_UPSTREAM))
+        blocks.append(hexmesh.loft_spline(slices[:off + 1], first_tag=name,
+                                          last_tag=flux, element_tags=FLUX_DOWNSTREAM))
+        blocks.append(hexmesh.loft_spline(slices[off:joint + 1], first_tag=flux,
+                                          last_tag=joint_tag,
+                                          element_tags=FLUX_UPSTREAM))
+        inner_seams.append(Seam(len(blocks) - 2, flux, len(blocks) - 1, flux,
+                                attach_tag=flux))
     else:
-        blocks.append(hexmesh.loft_spline(slices[:joint + 1], first_tag=name))
-    blocks.append(hexmesh.loft_spline(slices[joint:]))
+        blocks.append(hexmesh.loft_spline(slices[:joint + 1], first_tag=name,
+                                          last_tag=joint_tag))
+    blocks.append(hexmesh.loft_spline(slices[joint:], first_tag=joint_tag,
+                                      last_tag=cap))
+    inner_seams.append(Seam(len(blocks) - 2, joint_tag, len(blocks) - 1, joint_tag))
+    seam_block[leg] = len(blocks) - 1
 
-mesh = hexmesh.merge(blocks)
+mesh = hexmesh.attach(blocks, inner_seams + [
+    Seam(seam_block[1], ARC_TAG[1, 2], seam_block[2], ARC_TAG[1, 2]),
+    Seam(seam_block[1], ARC_TAG[1, 3], seam_block[3], ARC_TAG[1, 3]),
+    Seam(seam_block[2], ARC_TAG[2, 3], seam_block[3], ARC_TAG[2, 3]),
+])
 mesh = hexmesh.scale(mesh, 1.0/(R_MAIN*2.0))
 
 print(hexmesh.report(mesh))
