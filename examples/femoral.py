@@ -20,6 +20,16 @@ an exact ellipse at one height, and the trough around it is then the same depth
 everywhere.  ``Z_SEAM`` sits ``SEAM_OFFSET`` below the true intersection's lowest point,
 so the branch is sunk slightly into the main pipe rather than sitting on it.
 
+**``TROUGH_DEPTH = 0`` turns all of that off** and gives the plain junction instead:
+two cylinders and nothing else, welded along their true intersection curve.  There is no
+crater, no flat rim and no sunk seam, so ``SEAM_OFFSET`` has nothing to offset and must
+be zero as well.  The seam is still parametrized by main-pipe angle exactly as below --
+the true intersection point at branch angle ``t`` *is* the main-cylinder point at the
+``theta`` with ``R_MAIN cos theta = R_BRANCH cos t`` -- so the mouth still spans
+``THETA_1 .. THETA_2`` and every patch still meets it node-for-node.  Only the seam's
+height stops being constant: it dips to ``Z_NAT`` at the saddles and rises to ``R_MAIN``
+fore and aft.
+
 **The trough** falls ``TROUGH_DEPTH`` below that rim onto a level floor and climbs back
 onto the cylinder ``TROUGH_WIDTH`` out.  Its two stages are deliberately decoupled: the
 descent uses only the rim and floor heights, so nothing can pull the floor off level, and
@@ -67,7 +77,9 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # -- geometry ----------------------------------------------------------------
 R_MAIN = 4.0                  # main vessel radius
-R_BRANCH = 3.0                # branch radius (must be < R_MAIN: the branch has to fit)
+R_BRANCH = 3.0                # branch radius.  May equal R_MAIN, but only with
+                              # TROUGH_DEPTH = 0: a flat rim at equal radii sits on the
+                              # pipe's equator, so the crater would cut the pipe in half
 BRANCH_ANGLE = 45.0           # degrees between the branch axis and +x (0 < a <= 90)
 SEAM_OFFSET = 0.0             # how far the flat seam sinks below the true intersection's
                               # lowest point
@@ -116,6 +128,12 @@ DELAUNAY_ROUNDS = 20          # edge-flip sweeps toward the surface Delaunay con
 RELAX_PASSES = 30             # relaxation sweeps over the junction, to take the shear out
 RELAX_RADIUS = 15.0            # ... within this far of the seam.  0 passes disables.
 SPLIT_TOL = 0.50              # wall/interior cut-off when splitting an interface               # ... over this distance from the junction
+STACK_RIMS = True             # conformalize every station's rim as one stack, so ring k
+                              # is aligned to ring k+1 and the correspondence drifts
+                              # smoothly, instead of each station matching the seam alone
+                              # through a discrete cyclic shift that can jump a whole fine
+                              # sample (perimeter/128) between neighbours.  Measured: rim
+                              # chain jitter 0.0290 -> 0.0160, interior 0.0171 -> 0.0113.
 N_HALF = 12                   # half-ring resolution; MULTIPLE OF 4
 NEAR_LEN = 2.0                # the uniform run, in leg **diameters** out from the
                               # junction.  The junction is where the wall actually does
@@ -193,8 +211,8 @@ GROUPS = {
 }
 
 # -- derived -----------------------------------------------------------------
-if not 0.0 < R_BRANCH < R_MAIN:
-    raise ValueError("femoral needs 0 < R_BRANCH < R_MAIN (the branch must fit)")
+if not 0.0 < R_BRANCH <= R_MAIN:
+    raise ValueError("femoral needs 0 < R_BRANCH <= R_MAIN (the branch must fit)")
 _A = np.radians(BRANCH_ANGLE)
 COS_A, SIN_A = np.cos(_A), np.sin(_A)
 if SIN_A <= 0.0:
@@ -211,6 +229,18 @@ def _per_cell(total, n):
 
 #: The branch axis: through the origin, on the main axis.
 AXIS = np.array([COS_A, 0.0, SIN_A])
+
+#: With no trough there is nothing to cut a flat rim *for*, so the seam is the honest
+#: cylinder-cylinder intersection and the main wall is left a plain cylinder.
+TROUGH = TROUGH_DEPTH > 0.0
+if not TROUGH and SEAM_OFFSET != 0.0:
+    raise ValueError("femoral with TROUGH_DEPTH=0 is the true cylinder intersection; "
+                     "there is no flat seam to sink, so SEAM_OFFSET must be 0")
+if TROUGH and R_BRANCH >= R_MAIN:
+    # Equal radii put the seam's saddles on the equator, so ``Z_SEAM`` is 0 and the flat
+    # rim -- with the crater under it -- would slice the main pipe through its middle.
+    raise ValueError("femoral needs R_BRANCH < R_MAIN when there is a trough; "
+                     "equal radii are only meshable with TROUGH_DEPTH = 0")
 
 Z_NAT = np.sqrt(R_MAIN ** 2 - R_BRANCH ** 2)   # lowest point of the true intersection
 Z_SEAM = Z_NAT - SEAM_OFFSET                   # the flat seam plane
@@ -229,15 +259,30 @@ def branch_point(t, s):
                      R_BRANCH * np.sin(t) * COS_A + s * SIN_A], axis=-1)
 
 
-def seam_axial(t):
-    """``s`` where the branch cylinder crosses ``z = Z_SEAM``: substitute the branch
-    point's ``z`` and solve.  Every seam point then lands on the plane exactly."""
+def seam_height(t):
+    """The ``z`` the seam sits at, at branch angle ``t``.
+
+    Flat at ``Z_SEAM`` when there is a trough -- that is the whole point of the flat rim.
+    Without one it is the true intersection: the seam point shares its ``y`` with the main
+    cylinder, so ``y**2 + z**2 = R_MAIN**2`` gives the height directly, dipping to
+    ``Z_NAT`` at the saddles and rising to ``R_MAIN`` fore and aft."""
     t = np.asarray(t, dtype=float)
-    return (Z_SEAM - R_BRANCH * np.sin(t) * COS_A) / SIN_A
+    if TROUGH:
+        return np.broadcast_to(np.asarray(Z_SEAM), t.shape)
+    y = R_BRANCH * np.cos(t)
+    return np.sqrt(np.maximum(R_MAIN ** 2 - y * y, 0.0))
+
+
+def seam_axial(t):
+    """``s`` where the branch cylinder reaches ``seam_height(t)``: substitute the branch
+    point's ``z`` and solve.  Every seam point then lands on the seam exactly."""
+    t = np.asarray(t, dtype=float)
+    return (seam_height(t) - R_BRANCH * np.sin(t) * COS_A) / SIN_A
 
 
 def seam_point(t):
-    """The seam -- a plane through a cylinder, so an exact ellipse, all at one ``z``."""
+    """The seam -- an exact ellipse all at one ``z`` when the rim is flat, the true
+    cylinder-cylinder intersection curve when it is not."""
     return branch_point(t, seam_axial(t))
 
 
@@ -297,6 +342,11 @@ def crater_z(u, zc):
 def main_wall(theta, x):
     """The main pipe, cratered down onto the flat rim and the level floor beyond it.
 
+    With ``TROUGH_DEPTH = 0`` there is no crater and this is the bare cylinder.  The seam
+    then lies on it exactly -- the intersection curve belongs to both tubes -- so the rim
+    the patches inject is the value this already returns there, and the two tubes meet
+    with no blend of any kind between them.
+
     ``minimum(..., z)`` keeps the crater one-directional -- it cuts the wall down, never
     lifts it -- which is what makes it fade out by itself down the flanks, where the pipe
     already stands below the floor, and leave the belly alone."""
@@ -304,6 +354,8 @@ def main_wall(theta, x):
     x = np.broadcast_to(np.asarray(x, dtype=float), theta.shape)
     y = R_MAIN * np.cos(theta)
     z0 = R_MAIN * np.sin(theta)
+    if not TROUGH:
+        return np.stack([x, y, z0], axis=-1)
     u = _seam_distance(np.column_stack([x.ravel(), y.ravel()])).reshape(theta.shape)
     z = crater_z(u, np.abs(z0))
     return np.stack([x, y, np.where(z0 > 0.0, np.minimum(z, z0), z0)], axis=-1)
@@ -320,6 +372,8 @@ def _nearest_on_main(Q, iters=16):
     Q = np.asarray(Q, dtype=float).reshape(-1, 3)
     th = np.arctan2(Q[:, 2], Q[:, 1])
     x = Q[:, 0].copy()
+    if not TROUGH:
+        return main_wall(th, x)     # a plain cylinder: the radial reset *is* the nearest
     # Away from the crater the wall is a plain cylinder, where the radial reset already
     # *is* the nearest point -- so only iterate on the points the crater actually reaches.
     # That is a few percent of a leg, and the iteration is the expensive part.
@@ -352,7 +406,7 @@ def _nearest_on_main(Q, iters=16):
     return out
 
 
-def snap_to_wall(Q):
+def snap_to_wall(Q, return_declined=False):
     """Snap points onto the **exact** analytic wall -- the crater or the branch tube --
     *except* where snapping is not a well-posed thing to do.
 
@@ -376,7 +430,11 @@ def snap_to_wall(Q):
     0.013 and the 90th percentile 0.023, but the tail runs to 1.07 -- on a trough 1 deep.
     Those are the nodes that drew the creases, and they are better left on the surface they
     were lifted onto, slightly off the wall, than snapped somewhere consistent with
-    nothing."""
+    nothing.
+
+    ``return_declined`` hands back the mask of those two cases alongside the points, so a
+    caller that *moved* a node here can put it back rather than leave it stranded off the
+    wall -- see ``relax_junction``."""
     Q = np.asarray(Q, dtype=float).reshape(-1, 3)
     a = _nearest_on_main(Q)
     s = Q @ AXIS
@@ -389,7 +447,9 @@ def snap_to_wall(Q):
     out = np.where((da <= db)[:, None], a, b)
     undecidable = np.abs(da - db) < SNAP_AMBIG
     too_far = np.minimum(da, db) > SNAP_MAX
-    return np.where((undecidable | too_far)[:, None], Q, out)
+    declined = undecidable | too_far
+    snapped = np.where(declined[:, None], Q, out)
+    return (snapped, declined) if return_declined else snapped
 
 
 def delaunay_flip(V, F, rounds=DELAUNAY_ROUNDS):
@@ -476,7 +536,13 @@ def relax_junction(V, F, passes=RELAX_PASSES, radius=RELAX_RADIUS):
     a radial reset it sheared back whatever the relaxation had just fixed, and smoothing
     measured worse than doing nothing.
 
-    Pinned: the openings, and the mouth rim, which *is* a crease and has to stay put."""
+    Pinned: the openings, and the mouth rim, which *is* a crease and has to stay put --
+    and, by the taper below, everything at ``radius`` and beyond.
+
+    A node whose snap is *declined* is rolled back to where it was instead of being kept.
+    Relaxing a node and then failing to project it leaves it hanging off the wall, and the
+    band where the projection is ambiguous hugs the seam -- widest with no trough, where
+    the two tubes meet near-tangentially at the crown."""
     if not passes:
         return V
     V = np.array(V, dtype=float, copy=True)
@@ -491,20 +557,34 @@ def relax_junction(V, F, passes=RELAX_PASSES, radius=RELAX_RADIUS):
     pin[np.unique(uk[cnt == 1])] = True                     # the three openings
     rim = seam_point(np.linspace(0.0, 2.0 * np.pi, 4096, endpoint=False))
     pin[cKDTree(rim).query(V)[0] < 1e-9] = True             # the mouth rim
-    near = np.linalg.norm(V - np.array([0.0, 0.0, Z_SEAM]), axis=1) < radius
+    # Taper the step to zero at ``radius`` rather than cutting it off there.  A hard
+    # cut-off shears the ring of triangles straddling it -- the nodes just inside slide,
+    # the nodes just outside are pinned -- and that shear *is* a sliver: measured on a
+    # fine scaffold with no trough, cutting off at 15 gave a 0.345-degree triangle at
+    # r=15.4 and a worst aspect ratio of 30, which gmsh then rejected as a
+    # self-intersecting PLC.  Tapered, the same run reads 15.0 degrees and 3.8, and the
+    # radius stops mattering.  With a trough it changes nothing: 0 of 31271 nodes move.
+    dist = np.linalg.norm(V - np.array([0.0, 0.0, Z_SEAM]), axis=1)
+    near = dist < radius
+    w = np.clip(1.0 - dist / max(float(radius), 1e-30), 0.0, 1.0)
+    w = w * w * (3.0 - 2.0 * w)
     free = near & ~pin
     if not free.any():
         return V
 
+    idx = np.flatnonzero(free)
     for _ in range(int(passes)):
+        was = V[idx].copy()
         for lam in (0.5, -0.53):                            # Taubin: shrink, unshrink
             acc = np.zeros_like(V)
             tot = np.zeros(V.shape[0])
             np.add.at(acc, e[:, 0], V[e[:, 1]])
             np.add.at(tot, e[:, 0], 1.0)
             ok = free & (tot > 0)
-            V[ok] += lam * (acc[ok] / tot[ok, None] - V[ok])
-        V[free] = snap_to_wall(V[free])
+            V[ok] += (lam * w[ok])[:, None] * (acc[ok] / tot[ok, None] - V[ok])
+        moved, declined = snap_to_wall(V[idx], return_declined=True)
+        moved[declined] = was[declined]
+        V[idx] = moved
     return V
 
 
@@ -538,13 +618,16 @@ def plot_stl(surface, radius=9.0):
     mid = np.array([0.0, 0.0, Z_SEAM])
     rad = np.linalg.norm(cen - mid, axis=1)
     u = _seam_distance(np.column_stack([cen[:, 0], cen[:, 1]]))
-    dent = (u > 0.0) & (u < TROUGH_WIDTH) & (cen[:, 2] > 0.0)
+    dent = TROUGH & (u > 0.0) & (u < TROUGH_WIDTH) & (cen[:, 2] > 0.0)
     print("surface: %d tris | aspect med %.2f p95 %.2f max %.2f | edge %.3f..%.3f"
           % (T.shape[0], np.median(ar), np.percentile(ar, 95), ar.max(),
              lo.min(), hi.max()))
-    print("   indent: %d tris, median edge %.3f -> %.1f cells across a %.1f-wide trough"
-          % (int(dent.sum()), np.median(hi[dent]),
-             TROUGH_WIDTH / max(np.median(hi[dent]), 1e-30), TROUGH_WIDTH))
+    if TROUGH:
+        print("   indent: %d tris, median edge %.3f -> %.1f cells across a %.1f-wide trough"
+              % (int(dent.sum()), np.median(hi[dent]),
+                 TROUGH_WIDTH / max(np.median(hi[dent]), 1e-30), TROUGH_WIDTH))
+    else:
+        print("   no trough: plain intersection of two cylinders")
 
     state = {"view": "junction", "colour": "plain", "wire": True}
     fig = plt.figure(figsize=(13, 9))
@@ -1115,15 +1198,140 @@ def lift_section(dm, sec):
     put there -- parameter-plane coordinates, in the wrong place entirely -- and two
     sections mapped through different parametrizations then disagree about a shared edge,
     which is what stops the seam halves merging.  Each array is lifted from its own planar
-    values, so all three land on the surface together."""
+    values, so all three land on the surface together.
+
+    An edge's curved nodes are then **re-placed by arclength**, because lifting their
+    parameter positions is not enough.  ``DiscMap`` is a Tutte embedding, and Tutte
+    distorts area hardest at the rim: measured on one station here, parameter radius
+    0.94 / 0.97 / 1.00 lifted to physical 3.583 / 3.645 / 4.000, so the node that sits
+    exactly midway in parameter space landed 13.5% of the way along its own edge.  A
+    quadratic edge folds once its middle node leaves the middle half, so that station
+    read -0.98 -- inverted in its own stored map, before any loft touched it.
+
+    The corners are untouched (the lift is a homeomorphism, so they are where they
+    belong); only the nodes *between* them are re-spaced, onto the same lifted curve
+    they already lay on.  Sampling that curve densely and reading GLL fractions of its
+    arclength keeps every node on the surface, so nothing here can undo the wall
+    accuracy ``blend_to_wall`` goes on to add."""
+    # the planar values, kept before the lift overwrites them in place
+    uv_pts = sec.points[:, :2].copy()
+    uv_edge = (sec.line_mesh.interior[..., :2].copy()
+               if sec.line_mesh.interior.size else None)
     for arr in (sec.line_mesh.interior, sec.interior):
         if arr.size:
             arr[:] = dm.lift(arr[..., :2].reshape(-1, 2)).reshape(arr.shape)
     sec.points[:] = dm.lift(sec.points[:, :2])
+    uv_edge_fixed = _respace_edges(dm, sec, uv_pts, uv_edge)
+    _respace_faces(dm, sec, uv_pts, uv_edge_fixed)
     return sec
 
 
+def _respace_edges(dm, sec, uv_pts, uv_edge, samples=65):
+    """Re-place each edge's interior nodes at GLL fractions of the **lifted** edge's
+    arclength, rather than at the lift of its parameter-space GLL positions.
+
+    The parameter-space edge is the order-N curve through the section's own planar nodes,
+    so it is rebuilt from them -- endpoints plus stored interiors -- and sampled densely
+    before lifting, which is what makes the arclength a property of the curve on the
+    surface rather than of the straight chord in the plane."""
+    arr = sec.line_mesh.interior
+    if not arr.size or uv_edge is None:
+        return
+    order = sec.order
+    g = fields.gll_nodes(order)
+    if g.size <= 2:
+        return
+    E = np.asarray(sec.line_mesh.lines, dtype=np.int64).reshape(-1, 2)
+    L, n_int = E.shape[0], arr.shape[1]
+    # the parameter-space control values of each edge, in GLL order: A, interiors, B
+    ctrl = np.empty((L, order + 1, 2))
+    ctrl[:, 0] = uv_pts[E[:, 0]]
+    ctrl[:, -1] = uv_pts[E[:, 1]]
+    ctrl[:, 1:-1] = uv_edge
+    # Lagrange basis on the GLL nodes, evaluated on a dense sweep of the edge parameter
+    t = np.linspace(0.0, 1.0, samples)
+    Bas = np.ones((samples, order + 1))
+    for a in range(order + 1):
+        for b in range(order + 1):
+            if a != b:
+                Bas[:, a] *= (t - g[b]) / (g[a] - g[b])
+    Q = np.einsum("sa,lad->lsd", Bas, ctrl)                    # (L, samples, 2)
+    P = dm.lift(Q.reshape(-1, 2)).reshape(L, samples, 3)
+    seg = np.linalg.norm(np.diff(P, axis=1), axis=2)
+    cum = np.concatenate([np.zeros((L, 1)), np.cumsum(seg, axis=1)], axis=1)
+    tot = cum[:, -1]
+    ok = tot > 1e-30
+    out = np.array(arr, dtype=float)
+    out = np.array(arr, dtype=float)
+    uv_out = np.array(uv_edge, dtype=float)
+    idx = np.flatnonzero(ok)
+    for k in range(n_int):
+        want = g[k + 1] * tot
+        # the edge parameter whose lifted arclength hits the target, then that point --
+        # kept as *parameter* too, so the face fill below inherits the same correction
+        for i in idx:
+            tk = float(np.interp(want[i], cum[i], t))
+            uv_out[i, k] = np.array(
+                [np.interp(tk, t, Q[i, :, d]) for d in range(2)])
+            out[i, k] = np.array(
+                [np.interp(want[i], cum[i], P[i, :, d]) for d in range(3)])
+    arr[:] = out
+    return uv_out
+
+
+def _respace_faces(dm, sec, uv_pts, uv_edge, samples=65):
+    """Re-place a quad's face node the same way its edges were.
+
+    An edge node was the visible offender, but the face node is lifted from its own
+    parameter position too and the map distorts it no differently -- fixing only the
+    boundary leaves the centre pulled toward whichever side the map compresses, which is
+    the same fold one dimension in.
+
+    Only the order-2 case is handled, which is the order this mesher builds at: a single
+    centre node, placed at the arclength middle of the lifted segment joining each pair
+    of opposite edge nodes, and the two answers averaged **in parameter space** so the
+    result is still a lift and therefore still exactly on the isosurface.  At higher
+    order the face block is a lattice rather than one node and the same argument needs a
+    2-D construction, so it is left alone rather than half-done."""
+    face = sec.interior
+    if not face.size or uv_edge is None or sec.order != 2 or face.shape[1] != 1:
+        return
+    C = np.asarray(sec.corners, dtype=np.int64).reshape(-1, 4)
+    E = np.asarray(sec.line_mesh.lines, dtype=np.int64).reshape(-1, 2)
+    key = {}
+    for j, e in enumerate(E):
+        key[(int(min(e)), int(max(e)))] = j
+    mid = uv_edge[:, 0, :]                                  # corrected edge-node params
+    eid = np.empty((C.shape[0], 4), dtype=np.int64)
+    for k in range(4):
+        for q in range(C.shape[0]):
+            a, b = int(C[q, k]), int(C[q, (k + 1) % 4])
+            eid[q, k] = key.get((min(a, b), max(a, b)), -1)
+    if (eid < 0).any():
+        return
+    t = np.linspace(0.0, 1.0, samples)
+    acc = np.zeros((C.shape[0], 2))
+    for pair in ((0, 2), (1, 3)):
+        A, B = mid[eid[:, pair[0]]], mid[eid[:, pair[1]]]
+        Q = A[:, None, :] + t[None, :, None] * (B - A)[:, None, :]
+        P = dm.lift(Q.reshape(-1, 2)).reshape(C.shape[0], samples, 3)
+        seg = np.linalg.norm(np.diff(P, axis=1), axis=2)
+        cum = np.concatenate([np.zeros((C.shape[0], 1)), np.cumsum(seg, axis=1)], axis=1)
+        tot = cum[:, -1]
+        for q in range(C.shape[0]):
+            tk = float(np.interp(0.5 * tot[q], cum[q], t)) if tot[q] > 1e-30 else 0.5
+            acc[q] += 0.5 * (A[q] + tk * (B[q] - A[q]))
+    face[:, 0, :] = dm.lift(acc)
+
+
 def map_section(pts, tris, ring_ids, seam_loop, frac, *, radial, center_scale):
+    """``plan_section`` then ``finish_section``, for a station nothing will slide."""
+    return finish_section(plan_section(pts, tris, ring_ids, seam_loop, frac,
+                                       radial=radial, center_scale=center_scale))
+
+
+def plan_section(pts, tris, ring_ids, seam_loop, frac, *, radial, center_scale,
+                 rim=None):
     """O-grid a triangulated disc by mapping onto it through a parametrization rather
     than projecting onto it.
 
@@ -1140,8 +1348,11 @@ def map_section(pts, tris, ring_ids, seam_loop, frac, *, radial, center_scale):
     # way round; only the interior is what the parametrization decides
     seam_pts = seam_loop.points
     nh = seam_pts.shape[0] // 2
-    rim = trimesh.ops.conform_ring_stack([pts[ring_ids]], seam_pts,
-                                         np.array([frac]), nh)[0]
+    if rim is None:
+        # a station conformalized on its own -- see ``station_rims`` for why the stack
+        # wants them done together instead
+        rim = trimesh.ops.conform_ring_stack([pts[ring_ids]], seam_pts,
+                                             np.array([frac]), nh)[0]
     ruv = dm.ring_uv(rim)
 
     # the same O-grid, built in the circle: a planar loop through the rim's parameters,
@@ -1160,6 +1371,13 @@ def map_section(pts, tris, ring_ids, seam_loop, frac, *, radial, center_scale):
     uv_edge = (sec.line_mesh.interior[..., :2].copy()
                if sec.line_mesh.interior.size else None)
     uv_face = sec.interior[..., :2].copy() if sec.interior.size else None
+    return dict(dm=dm, sec=sec, uv_pts=uv_pts, uv_edge=uv_edge, uv_face=uv_face)
+
+
+def finish_section(rec):
+    """Lift a planned section and put its wall on the analytic surface."""
+    dm, sec = rec["dm"], rec["sec"]
+    uv_pts, uv_edge, uv_face = rec["uv_pts"], rec["uv_edge"], rec["uv_face"]
     lift_section(dm, sec)
     return (blend_to_wall(sec, uv_pts, uv_edge, uv_face)
             if PROJECT_TO_STL else sec)
@@ -1352,17 +1570,37 @@ def pin_curve(sec, uv, flat, curve):
         sec.line_mesh.interior[k] = nodes if a[k] < b[k] else nodes[::-1]
 
 
-def level_section(walker, level, seam_loop, *, radial, center_scale):
-    """A station: the leg field's ``u = level`` isosurface, O-gridded."""
+def station_disc(walker, level):
+    """The raw ``u = level`` isosurface and its outer boundary loop, nothing placed yet."""
     pts, tris = walker.isosurface(level)
     disc = TriMesh(pts, tris)
     ring_ids = trimesh.ops.order_boundary_loop(
         disc, max(trimesh.ops.boundary_loops(disc), key=lambda c: c.size))
-    return map_section(pts, tris, ring_ids, seam_loop, level,
-                       radial=radial, center_scale=center_scale)
+    return pts, tris, ring_ids
 
 
-def cap_section(loop_xyz, seam_loop, *, radial, center_scale):
+def station_rims(discs, seam_loop, levels):
+    """Every station's rim correspondence, conformalized **as a stack**.
+
+    ``conform_ring_stack`` aligns ring ``k`` to the already-aligned ring ``k+1``, walking
+    down from the seam, which is what ties consecutive stations to each other.  Handed one
+    ring at a time it cannot do that: each station is matched against the seam alone, and
+    the match is a *discrete* cyclic shift, quantized to one of ``4*M`` fine samples.  As
+    the ring's shape evolves down the leg the best shift jumps by a whole sample, moving
+    the correspondence about ``perimeter/128`` -- a step change in who node ``k`` is, with
+    nothing to say the neighbouring station made the same choice.
+
+    That is measurable in the finished mesh: the rim nodes, the ones this pins, carried
+    *more* chain jitter (1.2% of a layer, 12.6% of their second difference) than the
+    interior nodes it leaves alone (0.8%, 8.3%).  Conformalizing the whole stack in one
+    call is what the function was written to do."""
+    return trimesh.ops.conform_ring_stack(
+        [np.asarray(pts, dtype=float)[ring] for pts, _t, ring in discs],
+        seam_loop.points, np.asarray(levels, dtype=float),
+        seam_loop.points.shape[0] // 2)
+
+
+def cap_section(loop_xyz, seam_loop, *, radial, center_scale, rim=None):
     """The opening itself, O-gridded.
 
     The stations are interior level sets -- ``u = 0`` is the cap's own Dirichlet
@@ -1375,8 +1613,9 @@ def cap_section(loop_xyz, seam_loop, *, radial, center_scale):
     c = R.shape[0]
     tris = np.column_stack([np.arange(c), np.roll(np.arange(c), -1),
                             np.full(c, c)])
-    return map_section(pts, tris, np.arange(c), seam_loop, 0.0,
-                       radial=radial, center_scale=center_scale)
+    return finish_section(plan_section(pts, tris, np.arange(c), seam_loop, 0.0,
+                                       radial=radial, center_scale=center_scale,
+                                       rim=rim))
 
 
 def ogrid_leg(walker, levels, cap_loop, seam_loop, spine, ifaces, *,
@@ -1407,9 +1646,22 @@ def ogrid_leg(walker, levels, cap_loop, seam_loop, spine, ifaces, *,
     seam = quadmesh.attach(halves, [EdgeSeam(0, "attach_spine", 1, "attach_spine")])
     loop = linemesh.attach([seam_loop[0], linemesh.reverse(seam_loop[1])],
                            [PointSeam(0, "A1", 1, "A1"), PointSeam(0, "A2", 1, "A2")])
-    slices = [cap_section(cap_loop, loop, radial=radial, center_scale=center_scale)]
-    slices += [level_section(walker, float(lv), loop, radial=radial,
-                             center_scale=center_scale) for lv in levels]
+    # The cap goes into the stack too.  The chain is anchored at the seam and walks down
+    # from there, so whatever correspondence it drifts to arrives at the *cap* -- and a cap
+    # conformalized on its own would not have made the same choice, putting the whole
+    # drift into one interval at the quiet end of the leg.
+    Rc = np.asarray(cap_loop, dtype=float).reshape(-1, 3)
+    discs = [(np.vstack([Rc, Rc.mean(axis=0)]), None, np.arange(Rc.shape[0]))]
+    discs += [station_disc(walker, float(lv)) for lv in levels]
+    lv_all = np.concatenate([[0.0], np.asarray(levels, dtype=float)])
+    rims = (station_rims(discs, loop, lv_all) if STACK_RIMS
+            else [None] * len(discs))
+    slices = [cap_section(cap_loop, loop, radial=radial, center_scale=center_scale,
+                          rim=rims[0])]
+    slices += [finish_section(plan_section(d[0], d[1], d[2], loop, float(lv),
+                                           radial=radial, center_scale=center_scale,
+                                           rim=rm))
+               for d, lv, rm in zip(discs[1:], levels, rims[1:])]
     slices.append(seam)
     return slices
 
@@ -1580,8 +1832,12 @@ mesh = hexmesh.attach(blocks, inner_seams + [
 mesh = hexmesh.scale(mesh, 1.0/(R_MAIN*2.0))
 
 print(hexmesh.report(mesh))
-print("femoral: branch %.0f deg, R %.3g / %.3g, seam z %.4f, trough %.3g deep x %.3g"
-      % (BRANCH_ANGLE, R_MAIN, R_BRANCH, Z_SEAM, TROUGH_DEPTH, TROUGH_WIDTH))
+if TROUGH:
+    print("femoral: branch %.0f deg, R %.3g / %.3g, seam z %.4f, trough %.3g deep x %.3g"
+          % (BRANCH_ANGLE, R_MAIN, R_BRANCH, Z_SEAM, TROUGH_DEPTH, TROUGH_WIDTH))
+else:
+    print("femoral: branch %.0f deg, R %.3g / %.3g, true intersection seam, z %.4f..%.4f"
+          % (BRANCH_ANGLE, R_MAIN, R_BRANCH, Z_NAT, R_MAIN))
 
 if EXPORT_VTK:
     writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)

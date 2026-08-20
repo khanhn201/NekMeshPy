@@ -535,3 +535,72 @@ def test_order1_hex_conformal():
     assert hm.edge_nodes.shape == (54, 0, 3)
     assert hm.face_nodes.shape == (36, 0, 3)
     assert hm.interior.shape == (hm.n_hexes, 0, 3)
+
+
+# -- the one length scale every relative tolerance is a coefficient of ---------
+def test_bbox_scale_is_the_largest_axis_range():
+    """Not the diagonal (up to sqrt(3) larger) and not the smallest range (zero for the
+    planar sections the quad and line rungs are usually built from).  Both readings of
+    the same coefficient have appeared in a docstring here, and they differ by 73%."""
+    P = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+                  [0.0, 2.0, 0.0], [0.0, 0.0, 100.0]])
+    assert conform.bbox_scale(P) == 100.0
+    assert conform.bbox_scale(P) < float(np.linalg.norm(P.max(axis=0) - P.min(axis=0)))
+    assert conform.bbox_scale(P) != float(np.min(P.max(axis=0) - P.min(axis=0)))
+
+
+def test_bbox_scale_of_a_planar_section_is_its_in_plane_size():
+    flat = np.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0],
+                     [3.0, 2.0, 0.0], [0.0, 2.0, 0.0]])
+    assert conform.bbox_scale(flat) == 3.0
+    assert conform.entity_tol(flat) > 0.0
+
+
+def test_bbox_scale_of_an_empty_cloud_is_zero():
+    assert conform.bbox_scale(np.zeros((0, 3))) == 0.0
+    assert conform.entity_tol(np.zeros((0, 3))) == 1e-12
+
+
+def test_entity_tol_is_one_coefficient_times_that_scale():
+    P = np.array([[0.0, 0.0, 0.0], [7.0, 1.0, 2.0]])
+    assert conform.entity_tol(P) == 1e-8 * conform.bbox_scale(P)
+
+
+def _welded(gap, length, **kw):
+    """Two parallel bars ``gap`` apart and ``length`` long: 4 weldable points, fused to
+    2 if the seam takes."""
+    a = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, length]])
+    b = np.array([[gap, 0.0, 0.0], [gap, 0.0, length]])
+    seams = [np.array([0, 1]), np.array([0, 1])]
+    pts, _ = conform.weld_points([a, b], seams, **kw)
+    return pts.shape[0] == 2
+
+
+def test_the_merge_default_scales_with_the_largest_range():
+    """``merge``'s default tolerance is ``1e-7 * bbox_scale``, so the *same* seam gap
+    welds or does not purely according to how large the model around it is.  Stretching
+    the assembly along z -- touching neither block's own seam -- loosens the weld."""
+    gap = 3e-6
+    assert conform.bbox_scale(np.array([[0.0, 0.0, 0.0], [gap, 0.0, 10.0]])) == 10.0
+    assert not _welded(gap, 10.0)      # radius 1e-6 < gap
+    assert _welded(gap, 100.0)         # radius 1e-5 > gap
+
+
+def test_weld_tol_is_a_fraction_of_the_scale_not_a_distance():
+    """One parameter, one unit.  ``tol`` used to be a distance when supplied and a
+    fraction when defaulted; at a fixed model size the gap now welds or not according to
+    ``tol * bbox_scale``, and the same fraction behaves identically at any size."""
+    gap = 3e-6
+    assert not _welded(gap, 10.0, tol=1e-7)      # radius 1e-6
+    assert _welded(gap, 10.0, tol=1e-6)          # radius 1e-5
+    # scale-free: 10x the model with 1/10th the fraction is the same radius
+    assert _welded(gap, 100.0, tol=1e-7)
+    assert not _welded(gap, 100.0, tol=1e-8)
+
+
+def test_an_absolute_distance_passed_as_tol_is_refused():
+    """The units change is otherwise silent: ``tol=0.005`` used to mean 5 thousandths of
+    a model unit and would now mean half a percent of the whole model.  Anything at or
+    above 10% of the model is not a coincidence tolerance under any reading."""
+    with pytest.raises(ValueError, match="fraction.*not a distance"):
+        _welded(3e-6, 10.0, tol=0.5)

@@ -49,6 +49,10 @@ docs/_static/meshes/
 # like the carotid's car.vtx/car.tri.
 examples/data/femoral_*.npz
 
+# Runs/scratch/workspace
+runs/
+scratch/
+
 # Generated mesh outputs (byte-identity references live under tests/golden/)
 /*.re2
 /*.rea

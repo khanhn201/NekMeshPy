@@ -12,9 +12,8 @@ from scipy.spatial import cKDTree
 from .._typing import IntArray, PointArray
 from . import conform
 
-# Nek face -> the 4 corner point positions (0-based), cyclic order.
-_FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
-                        [3, 0, 4, 7], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int64)
+# Nek face -> the 4 corner point positions (0-based), cyclic and outward-wound.
+_FACE_POINTS = conform._LOCAL_FACES
 
 
 class TopologyReport(NamedTuple):
@@ -84,7 +83,7 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
     if E.shape[0] == 0 or cand.size == 0 or X.shape[0] == 0:
         return 0
     from scipy.spatial import cKDTree
-    scale = float(np.max(X.max(axis=0) - X.min(axis=0)))
+    scale = conform.bbox_scale(X)
     tol = rtol * (scale if scale > 0 else 1.0)
     Xc = X[cand]
     tree = cKDTree(Xc)
@@ -241,7 +240,7 @@ def _count_overlapping_pairs(X: PointArray, HC: IntArray) -> int:
         return 0
     centroid, radius, vertex, normal = _hex_geometry(X, HC)
     samples = _hex_sample_points(X, HC)
-    scale = float(np.max(X.max(axis=0) - X.min(axis=0))) if X.size else 0.0
+    scale = conform.bbox_scale(X)
     tol = 1e-6 * (scale if scale > 0.0 else 1.0)
 
     tree = cKDTree(centroid)

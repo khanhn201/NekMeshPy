@@ -269,12 +269,28 @@ one pass, and measured 230 ms against 17 ms.
 Note this inverts the cap-argument convention below: here `attach_tag=None` means
 "clear", because burying a seam is what attaching is for.
 
-**Coincidence is a radius, not a bin.** `conform.coincident_clusters` decides it as
-"same lattice cell **or** within `tol`". The lattice alone missed any two points that
-straddled a cell boundary however close they were — a 1.78e-15 disagreement was enough —
-and a missed weld does not raise, it silently leaves a seam open. The cell rule is kept
-as well as the radius, not replaced: a shared cell reaches `tol*sqrt(3)`, and tolerances
-already tuned by hand against that reach (chimera_full's) reopen if it is narrowed.
+**Coincidence is a radius, and only a radius.** `conform.coincident_clusters` fuses two
+points when they are **strictly closer than `tol`**, transitively. It was a lattice,
+`round(x / tol)`, which missed any two points straddling a cell boundary however close
+they were — 1.78e-15 was enough — and a missed weld does not raise, it silently leaves a
+seam open. The lattice was then kept *alongside* the radius for one release under a
+"weld more, never less" rule, so the fix could not reopen a hand-tuned seam. It is gone
+now, because the two rules are not redundant in the direction that matters: a shared cell
+reaches `tol*sqrt(3)`, so the lattice welded pairs up to 1.73x further apart than asked —
+and *which* pairs depended on where the model sat in space, since translating everything
+by `tol/2` moves the cell edges. Measured: a pair 1.697*tol apart welded. It also made
+`tol` a lie exactly where it was load-bearing — chimera_full picks 0.04 to stay under a
+real 0.05 feature, and `0.04*sqrt(3)` is 0.069.
+
+**`merge`'s `tol` is a fraction, not a distance** — of `conform.bbox_scale`, the largest
+of the x/y/z ranges over every point handed in, so the radius is `tol * bbox_scale` and
+the default `1e-7` means the same thing at any model size. It used to be a distance when
+supplied and a fraction when defaulted, which is two meanings for one name. `weld_points`
+refuses anything at or above `MAX_WELD_FRACTION` (0.1), since 10% of the model is not a
+coincidence tolerance under any reading and is much likelier to be a distance passed by
+mistake. A caller who knows a real distance divides — `examples/chimera_full.py`'s
+`merge_at(blocks, d)` does exactly that, keeping the two numbers the choice turns on (a
+~0.03 residual to bridge, a 0.05 feature not to fuse) visible instead of pre-divided.
 
 ## Tags
 
@@ -372,3 +388,6 @@ objective is to maintain long sessions that retains high level understanding, mi
 number of conversation compacting and a clear transcript.
 - When attempting to web search, do it from local machine since Claude API server do not have access
 to internet
+- Use ./scratch/sessionname as a scratch workspace to do debugging, runs, tests
+or iterations
+

@@ -652,6 +652,58 @@ class DiscMap:
         self._v1 = self.uv[tris[:, 2]] - a
         den = self._v0[:, 0] * self._v1[:, 1] - self._v1[:, 0] * self._v0[:, 1]
         self._den = np.where(np.abs(den) < 1e-300, 1e-300, den)
+        self._finder = None
+
+    def _locate(self, q):
+        """Containing triangle per query point, ``-1`` where there is none.
+
+        A **trapezoid map**, which is exact point location -- not the nearest-centroid
+        guess ``lift`` rightly refuses, which Tutte's area distortion defeats.  Exactness
+        is the whole point: it either names the containing triangle or says there is
+        none, and the caller falls back to the brute-force scan for the handful that miss.
+        Worth the trouble because the scan is O(triangles) *per query*, and arclength
+        re-spacing samples every edge densely -- measured, that scan was 408 s of a 480 s
+        run."""
+        if self._finder is None:
+            try:
+                from matplotlib.tri import Triangulation
+                self._finder = Triangulation(self.uv[:, 0], self.uv[:, 1],
+                                             self.tris).get_trifinder()
+            except Exception:
+                self._finder = False
+        if self._finder is False:
+            return np.full(q.shape[0], -1, dtype=np.int64)
+        return np.asarray(self._finder(q[:, 0], q[:, 1]), dtype=np.int64)
+
+    def _bary(self, q, tri):
+        """Clamped barycentric weights of ``q`` in triangles ``tri``."""
+        a = self._a[tri]
+        v0, v1 = self._v0[tri], self._v1[tri]
+        den = self._den[tri]
+        d = q - a
+        w1 = (d[:, 0] * v1[:, 1] - v1[:, 0] * d[:, 1]) / den
+        w2 = (v0[:, 0] * d[:, 1] - d[:, 0] * v0[:, 1]) / den
+        L = np.clip(np.stack([1.0 - w1 - w2, w1, w2], axis=1), 0.0, None)
+        return L / np.maximum(L.sum(axis=1, keepdims=True), 1e-30)
+
+    def _scan(self, q):
+        """The exhaustive containment scan: the triangle whose worst weight is largest."""
+        v2 = q[:, None, :] - self._a[None, :, :]
+        w1 = (v2[..., 0] * self._v1[None, :, 1]
+              - self._v1[None, :, 0] * v2[..., 1]) / self._den
+        w2 = (self._v0[None, :, 0] * v2[..., 1]
+              - v2[..., 0] * self._v0[None, :, 1]) / self._den
+        lam = np.stack([1.0 - w1 - w2, w1, w2], axis=2)
+        return np.argmax(lam.min(axis=2), axis=1)
+
+    def _find(self, q, chunk=4096):
+        """Containing triangle for every query -- exact structure first, scan for misses."""
+        tri = self._locate(q)
+        miss = np.flatnonzero(tri < 0)
+        for s in range(0, miss.size, chunk):
+            m = miss[s:s + chunk]
+            tri[m] = self._scan(q[m])
+        return tri
 
     def ring_uv(self, Q):
         """Parameter coordinates of points known to lie on the boundary polyline."""
@@ -678,23 +730,9 @@ class DiscMap:
         precisely the failure this class exists to prevent.  An exact test has no
         preconditions on the triangulation and cannot be fooled by the distortion."""
         Q2 = np.asarray(Q2, dtype=float).reshape(-1, 2)
-        out = np.empty((Q2.shape[0], 3))
-        for s in range(0, Q2.shape[0], chunk):
-            q = Q2[s:s + chunk]
-            v2 = q[:, None, :] - self._a[None, :, :]
-            w1 = (v2[..., 0] * self._v1[None, :, 1]
-                  - self._v1[None, :, 0] * v2[..., 1]) / self._den
-            w2 = (self._v0[None, :, 0] * v2[..., 1]
-                  - v2[..., 0] * self._v0[None, :, 1]) / self._den
-            lam = np.stack([1.0 - w1 - w2, w1, w2], axis=2)
-            best = np.argmax(lam.min(axis=2), axis=1)
-            rows = np.arange(q.shape[0])
-            L = np.clip(lam[rows, best], 0.0, None)
-            L /= np.maximum(L.sum(axis=1, keepdims=True), 1e-30)
-            out[s:s + chunk] = np.einsum("qi,qij->qj", L,
-                                         self.pts[self.tris[best]])
-        return out
-
+        tri = self._find(Q2)
+        L = self._bary(Q2, tri)
+        return np.einsum("qi,qij->qj", L, self.pts[self.tris[tri]])
 
 def split_boundary_by_cut(ring, cut):
     """Split an interface's boundary into ``(wall arc, spine)`` by reading the *clip*.

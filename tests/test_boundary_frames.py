@@ -158,3 +158,43 @@ def test_the_extraction_keeps_the_parent_corners_exactly(order):
     wall = hexmesh.boundary_mesh(block, "wall")
     B = quadmesh.element_blocks(wall)
     assert np.allclose(B[:, corner_indices(order, 2), :], wall.points[wall.corners])
+
+
+# -- the winding the extraction hands back -------------------------------
+def test_face_points_is_one_array_not_three_copies():
+    """``conform`` owns the table; the other two names are aliases of it, and it is
+    read-only so they cannot be edited apart."""
+    from nekmeshpy.core import topology
+
+    assert hexmesh.HexMesh.FACE_POINTS is conform._LOCAL_FACES
+    assert topology._FACE_POINTS is conform._LOCAL_FACES
+    assert not conform._LOCAL_FACES.flags.writeable
+
+
+def test_every_local_face_is_wound_outward():
+    """The table itself, on the reference unit hex: all six right-hand normals point
+    out.  Face 5 is the one this pins -- the Nek corner order invites ``[0,1,2,3]``
+    there, which winds the ``k=0`` plane *inward* and used to make every caller of
+    :func:`hexmesh.boundary_mesh` re-wind the surface by hand."""
+    from nekmeshpy.core.interp import _CORNER_IJK
+
+    ref = np.array(_CORNER_IJK[3], dtype=float)
+    for f, fp in enumerate(hexmesh.HexMesh.FACE_POINTS):
+        p = ref[fp]
+        n = np.cross(p[1] - p[0], p[3] - p[0])
+        assert float(np.dot(n, p.mean(axis=0) - 0.5)) > 0.0, "face %d winds inward" % f
+
+
+@pytest.mark.parametrize("order", [1, 3])
+def test_the_extracted_boundary_is_outward_wound_throughout(order):
+    """The caller-facing half: every quad of a whole extracted boundary faces out of
+    the block, with no re-winding pass.  The pipe is an O-grid, so the surface mixes
+    lateral faces with both caps -- the two families that used to disagree."""
+    block = _pipe(order)[2]
+    surf = hexmesh.boundary_mesh(block)
+    P = surf.points[surf.corners]
+    n = np.cross(P[:, 1] - P[:, 0], P[:, 3] - P[:, 0])
+    # the block is star-shaped about its centroid, so "away from the centroid" is an
+    # honest outward reference for every one of its boundary faces
+    away = P.mean(axis=1) - block.points.mean(axis=0)
+    assert np.all(np.einsum("ij,ij->i", n, away) > 0.0)

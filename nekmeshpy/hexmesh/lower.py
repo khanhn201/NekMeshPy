@@ -30,8 +30,11 @@ def _selected_faces(mesh: HexMesh, tag: str | None) -> IntArray:
 
 
 def _face_corners(mesh: HexMesh, sel: IntArray) -> IntArray:
-    """``(K,4)`` global corner ids of each selected face, in the hex's own CCW
-    winding for that local face."""
+    """``(K,4)`` global corner ids of each selected face, in the owning hex's
+    ``FACE_POINTS`` winding -- which points the right-hand normal **out of** that hex
+    for every one of the six faces, so an extracted surface is outward-wound and
+    consistent without a re-winding pass.  Outward *of the hex*: a negatively-oriented
+    element hands back an inward face, and nothing here can tell the difference."""
     return mesh.corners[sel[:, 0][:, None], HexMesh.FACE_POINTS[sel[:, 1] - 1, :]]
 
 

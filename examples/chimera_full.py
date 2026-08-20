@@ -65,10 +65,11 @@ this manifold rather than about meshes in general.
 And where a seam can be removed rather than made exact, it is: the inbound
 connector and the coil sweep as ONE turtle walk (see ``build_coil``).  They
 used to be two pieces welded together, which broke as soon as the coils were
-stacked -- ``_weld`` fuses by rounding to a ``tol``-sized *bucket*, so the
+stacked: the weld then fused by rounding to a ``tol``-sized *bucket*, so the
 ~1 ULP disagreement between the connector's last layer and the coil's
-recomputed first one fails to weld wherever a coordinate happens to land on a
-bucket edge, pinching the surface open.
+recomputed first one failed to weld wherever a coordinate happened to land on a
+bucket edge, pinching the surface open.  The weld is a plain radius now and
+would survive that, but a seam that does not exist cannot open at all.
 """
 
 import os
@@ -78,7 +79,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from nekmeshpy import hexmesh, quadmesh, writer
-from nekmeshpy.core import paths
+from nekmeshpy.core import conform, paths
 from nekmeshpy.quadmesh._helpers import _elevate as _quad_elevate
 from nekmeshpy.quadmesh.quadmesh import QuadMesh
 
@@ -89,6 +90,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from serpentine_pipe import MOVES as COIL_MOVES_LIB  # noqa: E402  (needs the path above)
 from serpentine_pipe import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
 from tjunction_lib import build_eqtee, build_tjunction  # noqa: E402
+
+
+def merge_at(blocks, distance):
+    """``hexmesh.merge`` welding at an absolute ``distance`` in model units.
+
+    ``merge``'s ``tol`` is a *fraction* of the assembly's largest x/y/z range, which is
+    the right default -- but every tolerance in this file is known absolutely, not
+    proportionally: a measured ~0.03 residual to bridge and a real 0.05 feature not to
+    fuse.  Writing those as pre-divided fractions would bury the two numbers the choice
+    actually turns on, so divide here instead, by the same scale ``weld_points`` will."""
+    return hexmesh.merge(
+        blocks, tol=distance / conform.bbox_scale(
+            np.vstack([b.points for b in blocks])))
 
 
 def _twist_slices(a, b, fracs):
@@ -440,19 +454,19 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
                             da_c[1], n_slices*8, last_tag=tag)
     # conn_chi's own end and the connector's own start are the *same* physical
     # points (both derived from db via the same sweep_placements machinery), but
-    # T1's own disc is only *near*-exactly symmetric (a ~0.03-unit residual, well
-    # under merge()'s global tol=0.005 default) -- so weld *this one seam* locally,
+    # T1's own disc is only *near*-exactly symmetric (a ~0.03-unit residual, six times
+    # the 0.005 this file welds the assembly at) -- so weld *this one seam* locally,
     # at a tolerance sized to that specific residual, rather than loosening the
     # tolerance for the whole assembly (which welded an unrelated, closer-together
     # pair by mistake the one time this was tried globally).
     #
     # 0.04, not 0.05: the nearest *real* feature separation here is 0.05 (measured
     # 0.04999999999999716), so a tolerance of 0.05 says that gap is coincident and
-    # collapses the element across it.  That used to pass only because the weld
-    # bucketed coordinates on a lattice and the pair happened to land in different
-    # cells; now that coincidence is a genuine radius, the tolerance has to sit
-    # strictly between the residual it must bridge and the feature it must not.
-    conn_chi = hexmesh.merge([conn_chi, connector], tol=0.04)
+    # collapses the element across it.  The tolerance has to sit strictly between the
+    # residual it must bridge and the feature it must not -- and it really is that
+    # window now: coincidence is a plain radius, where it was once a radius *or* a
+    # shared lattice cell, and a cell reached 0.04*sqrt(3) = 0.069, past the feature.
+    conn_chi = merge_at([conn_chi, connector], 0.04)
     return core, [conn_chi], riser, dbr, t1_center
 
 
@@ -476,7 +490,7 @@ for _nm, _m in [("core_in", core_in), ("conn_chi_in", conn_chi_in[0]), ("riser_i
 
 pieces += [core_in, *conn_chi_in, riser_in, core_out, *conn_chi_out, riser_out]
 
-mesh1 = hexmesh.merge(pieces, tol=0.005)
+mesh1 = merge_at(pieces, 0.005)
 # one report, read twice: is_watertight and is_conforming each recompute the
 # whole thing, which is seconds apiece at this size.
 _rep1 = hexmesh.topology_report(mesh1)
@@ -577,7 +591,7 @@ def place_t2(source_disc, t2_y, mirror=False):
     # seam to core (which carries db's real curvature) locally, at a tolerance sized to
     # that residual, same as place_t1's own conn_chi <-> connector weld above -- and
     # 0.04 for the same reason it is 0.04 there: 0.05 is a real feature separation.
-    core = hexmesh.merge([core, conn], tol=0.04)
+    core = merge_at([core, conn], 0.04)
     return core, da, dbr, t2_center
 
 
@@ -613,7 +627,7 @@ chain_out = t2_chain(br_out, mirror=True)
 
 pieces2 = pieces + [p for lv in (*chain_in, *chain_out)
                     for p in (lv["core"], *([lv["dead"]] if "dead" in lv else []))]
-mesh2 = hexmesh.merge(pieces2, tol=0.005)
+mesh2 = merge_at(pieces2, 0.005)
 _rep2 = hexmesh.topology_report(mesh2)
 print("stage2:", mesh2.n_hexes, "hexes,", 2 * N_T2, "T2 junctions, watertight",
       _rep2.watertight and _rep2.n_components == 1, "conforming", _rep2.conformal,
@@ -733,13 +747,13 @@ def build_coil(dbr_i, dbr_o):
     # the two sweep as ONE piece.  That is not just tidier, it removes a real
     # failure: built separately, the coil's start section is recomputed from
     # the path rather than taken from the connector's own last layer, and the
-    # two agree only to ~1 ULP.  HexMesh.merge welds by rounding to a
-    # tol-sized *bucket* (see _weld -- "two points on opposite sides of a
-    # bucket edge do not weld however close they are"), and this geometry sits
-    # on a decimal lattice commensurate with tol, so a coordinate can land
-    # exactly on a bucket edge (measured: y = -15.7375 = -3147.5 * 0.005 at
-    # T2 level 1) and a 1.78e-15 disagreement then fails to weld, pinching the
-    # surface into one open edge.  One sweep has no such seam at all.
+    # two agree only to ~1 ULP.  That was once fatal: merge welded by rounding to a
+    # tol-sized bucket, and this geometry sits on a decimal lattice commensurate with
+    # tol, so a coordinate could land exactly on a bucket edge (measured:
+    # y = -15.7375 = -3147.5 * 0.005 at T2 level 1) and a 1.78e-15 disagreement then
+    # failed to weld, pinching the surface into one open edge.  Coincidence is a plain
+    # radius now, which has no edges to land on -- but one sweep has no such seam at
+    # all, and that is still the better answer.
     inflow_moves = moves_in + COIL_MOVES
     path = xz_path(inflow_moves, (ci[0], ci[2]), 0.0, ci[1])
     inflow = hexmesh.sweep_path(dbr_i, path, target_length=COIL_TARGET_LEN,
@@ -761,7 +775,7 @@ coils = [p for lv_i, lv_o in zip(chain_in, chain_out)
          for p in build_coil(lv_i["dbr"], lv_o["dbr"])]
 
 pieces3 = pieces2 + coils
-mesh3 = hexmesh.merge(pieces3, tol=0.005)
+mesh3 = merge_at(pieces3, 0.005)
 _rep3 = hexmesh.topology_report(mesh3)
 print("stage3:", mesh3.n_hexes, "watertight",
       _rep3.watertight and _rep3.n_components == 1,
@@ -788,13 +802,13 @@ if chi_mesh is not None:
     # exterior, which nothing here touches and which a keep-only-"wall" filter would
     # have stripped, dropping 39k boundary faces to no BC at all.
     chi_mesh = hexmesh.retag_face(chi_mesh, {"inlet": "", "outlet": ""})
-    mesh_out = hexmesh.merge([*manifold, chi_mesh], tol=0.005)
+    mesh_out = merge_at([*manifold, chi_mesh], 0.005)
 else:
     chi_in_cap = hexmesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
                                  element_tags=FLUID_TAG)
     chi_out_cap = hexmesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
                                   element_tags=FLUID_TAG)
-    mesh_out = hexmesh.merge([*manifold, chi_in_cap, chi_out_cap], tol=0.005)
+    mesh_out = merge_at([*manifold, chi_in_cap, chi_out_cap], 0.005)
 
 _rep_out = hexmesh.topology_report(mesh_out)
 print("mesh_out:", mesh_out.n_hexes, "hexes, watertight",

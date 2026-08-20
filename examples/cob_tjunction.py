@@ -116,69 +116,6 @@ def map_section(qm, fn):
                     qm.quads, qm.orient, m(qm.interior), qm.element_tags)
 
 
-def orient_outward(qm, axis_of):
-    """The same surface with every quad wound the same way round, facing outward.
-
-    :func:`hexmesh.boundary_mesh <nekmeshpy.hexmesh.lower.boundary_mesh>` hands back each
-    boundary face with the winding its *owning hex* gave it, and ``FACE_POINTS`` is not
-    outward-consistent -- face 5 (``[0,1,2,3]``) is wound inward on a positively-oriented
-    hex.  So a boundary surface generally comes back mixed, and
-    :func:`quadmesh.offset <nekmeshpy.quadmesh.morph.offset>` averages the incident face
-    normals at every node: where the two windings meet they cancel, and the skin folds no
-    matter how thin it is.  Two flood fills fix it -- one to agree, one to face out.
-
-    The re-winding is done on the B-rep, the way :func:`quadmesh.mirror
-    <nekmeshpy.quadmesh.morph.mirror>` does it -- edge columns reversed, traversal bits
-    toggled, private interior transposed.  Rebuilding through ``QuadMesh.from_corners``
-    would be simpler and is wrong above order 1: that constructor is linear, so it would
-    quietly discard every curved node on the wall.
-
-    ``axis_of(centroids)`` returns the outward reference direction at each face.
-    """
-    C = np.asarray(qm.corners, dtype=np.int64)
-    edge = defaultdict(list)
-    for f in range(C.shape[0]):
-        for i in range(4):
-            a, b = int(C[f, i]), int(C[f, (i + 1) % 4])
-            edge[(min(a, b), max(a, b))].append(f)
-
-    turn = np.zeros(C.shape[0], dtype=bool)      # which quads to re-wind
-    walk = C.copy()
-    seen = np.zeros(C.shape[0], dtype=bool)
-    seen[0] = True
-    stack = [0]
-    while stack:                       # neighbours agree iff they walk the shared edge
-        f = stack.pop()                # in *opposite* directions
-        for i in range(4):
-            a, b = int(walk[f, i]), int(walk[f, (i + 1) % 4])
-            for nb in edge[(min(a, b), max(a, b))]:
-                if nb == f or seen[nb]:
-                    continue
-                j = next(k for k in range(4)
-                         if {int(walk[nb, k]), int(walk[nb, (k + 1) % 4])} == {a, b})
-                if (int(walk[nb, j]), int(walk[nb, (j + 1) % 4])) == (a, b):
-                    walk[nb] = walk[nb][::-1]
-                    turn[nb] = True
-                seen[nb] = True
-                stack.append(nb)
-
-    P = qm.points[walk]
-    nrm = np.cross(P[:, 1] - P[:, 0], P[:, 3] - P[:, 0])
-    if float(np.sum(nrm * axis_of(P.mean(axis=1)))) < 0.0:
-        turn = ~turn                   # consistent but inside out -- turn the lot
-
-    k = qm.order - 1
-    perm = (np.arange(k * k).reshape(k, k).T.ravel() if k
-            else np.zeros(0, dtype=np.int64))
-    quads, orient, inner = qm.quads.copy(), qm.orient.copy(), qm.interior.copy()
-    quads[turn] = quads[turn][:, ::-1]
-    orient[turn] = ~orient[turn][:, ::-1]
-    if k:
-        inner[turn] = inner[turn][:, perm, :]
-    return QuadMesh(qm.line_mesh, quads, orient, inner, qm.element_tags)
-
-
-
 # -- the main pipe cross-section, and the cob's band through it ----------------
 section = quadmesh.ogrid(linemesh.circle(RC_MAIN, N_THETA_MAIN, order=ORDER),
                          N_THETA_MAIN // 4, RADIAL_MAIN,
@@ -465,18 +402,7 @@ core = hexmesh.tag_faces(core, free[named[free] == ""], "wall")
 # cap out of it, so the openings are never skinned.  Their rims still ride outward with
 # it, because a free edge of the surface offsets along its own averaged normal, which is
 # radial there and so moves no node in z (or, on the branch, in y).
-raw_wall = hexmesh.boundary_mesh(core, "wall")
-
-
-def outward(cen):
-    """Away from the pipe axis low down, away from the branch axis up the branch."""
-    up = cen[:, 1] > RC_MAIN
-    ref = np.stack([cen[:, 0], cen[:, 1], np.zeros_like(cen[:, 2])], axis=1)
-    ref[up] = np.stack([cen[up, 0], np.zeros_like(cen[up, 1]), cen[up, 2]], axis=1)
-    return ref / np.linalg.norm(ref, axis=1, keepdims=True)
-
-
-wall = orient_outward(raw_wall, outward)
+wall = hexmesh.boundary_mesh(core, "wall")
 skins = [wall] + [quadmesh.offset(wall, (r - R_SKIN[0]) * R_MAIN) for r in R_SKIN[1:]]
 # the inner cap is named apart from the outer one so ``attach`` can be told which face
 # group meets the core -- both would otherwise inherit ``wall`` from the skin they were
