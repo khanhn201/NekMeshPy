@@ -162,7 +162,7 @@ interior points can be repositioned onto a curved boundary afterward with
 
 The two differ in *what they are told*. `merge` is told nothing: it infers every seam
 in the assembly from coordinates, at one tolerance, over every block's whole boundary.
-`attach(a, b, tag_a, tag_b)` is told which face group meets which and takes **no
+`attach(meshes, seams)` is told which face group meets which and takes **no
 tolerance**: inside those two groups the pairing is nearest-neighbour, proved by
 bijectivity rather than by a distance, so a seam with a real gap still joins and a seam
 whose halves do not correspond is refused however close they are. `attach` also clears the faces it welds shut (a named

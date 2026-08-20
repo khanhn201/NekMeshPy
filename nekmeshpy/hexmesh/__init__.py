@@ -1,6 +1,7 @@
 """3-D hex mesh container (``HexMesh``), its operations, and constrained smoothing."""
 
 from .assemble import (
+    Seam,
     attach,
     components,
     loft,
@@ -61,6 +62,7 @@ __all__ = [
     "tag",
     "volume",
     "HexMesh",
+    "Seam",
     "adapter",
     "attach",
     "annulus",

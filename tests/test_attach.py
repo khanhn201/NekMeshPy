@@ -20,8 +20,15 @@ from scipy.spatial import cKDTree
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core import conform
 from nekmeshpy.core.fields import uniform_spacing
+from nekmeshpy.hexmesh import Seam
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 ORDERS = [1, 3]
+
+
+def _join(a, b, tag_a, tag_b, **kw):
+    """Two blocks through the n-ary API -- what a two-block join spells now."""
+    return hexmesh.attach([a, b], [Seam(0, tag_a, 1, tag_b, **kw)])
 
 
 def _block(order, last="outlet"):
@@ -108,7 +115,7 @@ def test_weld_pairs_rejects_an_out_of_range_pair():
 def test_attach_joins_into_one_conformal_body(order):
     a = _block(order)
     b = _stub(a, order)
-    m = hexmesh.attach(a, b, "outlet", "join")
+    m = _join(a, b, "outlet", "join")
     rep = hexmesh.topology_report(m)
     assert rep.watertight and rep.conformal and rep.n_components == 1
     seam_pts = np.unique(a.quad_mesh.corners[hexmesh.tagged_faces(a, "outlet")]).size
@@ -123,7 +130,7 @@ def test_the_seam_is_joined_across_a_gap_no_global_tolerance_could_take(order):
     bijectivity, so the separation is irrelevant."""
     a = _block(order)
     b = _stub(a, order, shift=0.4)                 # 80% of the stub's own length
-    m = hexmesh.attach(a, b, "outlet", "join")
+    m = _join(a, b, "outlet", "join")
     rep = hexmesh.topology_report(m)
     assert rep.watertight and rep.conformal and rep.n_components == 1
 
@@ -138,7 +145,7 @@ def test_the_owner_side_keeps_its_nodes_bit_for_bit(order, own):
     a = _block(order)
     b = _stub(a, order, shift=0.05)
     keeper, tag = (a, "outlet") if own == "a" else (b, "join")
-    m = hexmesh.attach(a, b, "outlet", "join", own=own)
+    m = _join(a, b, "outlet", "join", own=own)
     seam = keeper.points[np.unique(keeper.quad_mesh.corners[
         hexmesh.tagged_faces(keeper, tag)])]
     assert float(cKDTree(m.points).query(seam)[0].max()) == 0.0
@@ -148,7 +155,7 @@ def test_attach_mutates_neither_input():
     a, b = _block(3), None
     b = _stub(a, 3, shift=0.05)
     pa, pb = a.points.copy(), b.points.copy()
-    hexmesh.attach(a, b, "outlet", "join")
+    _join(a, b, "outlet", "join")
     assert np.array_equal(pa, a.points) and np.array_equal(pb, b.points)
 
 
@@ -156,14 +163,14 @@ def test_the_joined_faces_are_cleared_by_default():
     """They are interior now, and a *named* interior face makes the exporter write one
     boundary row from each side of it -- which callers used to strip by hand."""
     a = _block(2)
-    m = hexmesh.attach(a, _stub(a, 2), "outlet", "join")
+    m = _join(a, _stub(a, 2), "outlet", "join")
     assert "join" not in m.face_tags.group_tags
     assert hexmesh.tag_report(m).n_tagged_interior == 0
 
 
 def test_attach_tag_names_the_interface_instead():
     a = _block(2)
-    m = hexmesh.attach(a, _stub(a, 2), "outlet", "join", attach_tag="interface")
+    m = _join(a, _stub(a, 2), "outlet", "join", attach_tag="interface")
     assert "interface" in m.face_tags.group_tags
     assert hexmesh.tag_report(m).n_tagged_interior == len(
         hexmesh.tagged_faces(a, "outlet"))
@@ -172,7 +179,7 @@ def test_attach_tag_names_the_interface_instead():
 def test_groups_of_different_size_are_refused():
     a = _block(1)
     with pytest.raises(ValueError, match="different face counts"):
-        hexmesh.attach(a, _stub(a, 1), "wall", "join")
+        _join(a, _stub(a, 1), "wall", "join")
 
 
 def _collapse(block, tag, k):
@@ -195,7 +202,7 @@ def test_coincident_points_within_a_group_are_refused():
     a = _collapse(_block(1), "outlet", 3)
     b = _stub(_block(1), 1)
     with pytest.raises(ValueError, match="not one-to-one"):
-        hexmesh.attach(a, b, "outlet", "join")
+        _join(a, b, "outlet", "join")
 
 
 def test_the_message_counts_how_many_points_collapsed():
@@ -204,7 +211,7 @@ def test_the_message_counts_how_many_points_collapsed():
     a = _collapse(_block(1), "outlet", 4)
     b = _stub(_block(1), 1)
     with pytest.raises(ValueError, match=r"3 of a's \d+ seam points"):
-        hexmesh.attach(a, b, "outlet", "join")
+        _join(a, b, "outlet", "join")
 
 
 def test_matching_degeneracy_on_both_sides_is_still_refused():
@@ -214,7 +221,7 @@ def test_matching_degeneracy_on_both_sides_is_still_refused():
     a = _collapse(_block(1), "outlet", 3)
     b = _collapse(_stub(_block(1), 1), "join", 3)
     with pytest.raises(ValueError, match="not one-to-one"):
-        hexmesh.attach(a, b, "outlet", "join")
+        _join(a, b, "outlet", "join")
 
 
 def test_a_non_corresponding_group_is_refused_at_the_hex_rung():
@@ -227,26 +234,26 @@ def test_a_non_corresponding_group_is_refused_at_the_hex_rung():
     P[sp] = P[sp[0]]
     b.points[:] = P
     with pytest.raises(ValueError, match="not one-to-one"):
-        hexmesh.attach(a, b, "outlet", "join")
+        _join(a, b, "outlet", "join")
 
 
 def test_a_buried_face_group_is_refused():
     """Joining onto a face that already has a hex on both sides would be non-manifold."""
     a = _block(1)
-    m = hexmesh.attach(a, _stub(a, 1), "outlet", "join", attach_tag="interface")
+    m = _join(a, _stub(a, 1), "outlet", "join", attach_tag="interface")
     with pytest.raises(ValueError, match="hex on both sides"):
-        hexmesh.attach(m, _block(1), "interface", "inlet")
+        _join(m, _block(1), "interface", "inlet")
 
 
 def test_mismatched_order_is_refused():
     with pytest.raises(ValueError, match="same order"):
-        hexmesh.attach(_block(1), _stub(_block(2), 2), "outlet", "join")
+        _join(_block(1), _stub(_block(2), 2), "outlet", "join")
 
 
 def test_own_must_name_a_side():
     a = _block(1)
     with pytest.raises(ValueError, match="own must be"):
-        hexmesh.attach(a, _stub(a, 1), "outlet", "join", own="left")
+        _join(a, _stub(a, 1), "outlet", "join", own="left")
 
 
 def test_face_ids_may_be_given_instead_of_a_tag():
@@ -254,9 +261,84 @@ def test_face_ids_may_be_given_instead_of_a_tag():
     subset it, and hand it straight back."""
     a = _block(2)
     b = _stub(a, 2)
-    m = hexmesh.attach(a, b, hexmesh.tagged_faces(a, "outlet"),
-                       hexmesh.tagged_faces(b, "join"))
+    m = hexmesh.attach([a, b], [Seam(0, hexmesh.tagged_faces(a, "outlet"),
+                                     1, hexmesh.tagged_faces(b, "join"))])
     assert hexmesh.topology_report(m).n_components == 1
+
+
+# -- the n-ary form -----------------------------------------------------------
+def _stack(n, order=2):
+    ring = linemesh.circle(0.5, 8, element_tag="wall", order=order)
+    sec = quadmesh.ogrid(ring, 2, uniform_spacing(2), wall_tag="wall")
+    return [hexmesh.translate(
+        hexmesh.extrude(sec, 1.0, 2, first_tag="lo", last_tag="hi"), (0, 0, float(k)))
+        for k in range(n)]
+
+
+def test_one_pass_equals_chaining_two_block_joins():
+    """The n-ary form exists for speed, not for a different answer: welding a chain in
+    one pass must give the same mesh as folding two-block joins across it."""
+    bl = _stack(4)
+    one = hexmesh.attach(bl, [Seam(k, "hi", k + 1, "lo") for k in range(3)])
+    acc = bl[0]
+    for k in range(1, 4):
+        acc = _join(acc, bl[k], "hi", "lo")
+    assert one.n_points == acc.n_points and one.n_hexes == acc.n_hexes
+    assert np.array_equal(one.points, acc.points)
+    assert np.array_equal(one.hexes, acc.hexes)
+    assert np.array_equal(one.quad_mesh.quads, acc.quad_mesh.quads)
+
+
+def test_a_block_may_carry_several_seams():
+    """A middle block is welded on both faces in the same pass, so its ``own`` copies
+    have to accumulate rather than the last one winning."""
+    bl = _stack(3)
+    m = hexmesh.attach(bl, [Seam(0, "hi", 1, "lo"), Seam(1, "hi", 2, "lo")])
+    r = hexmesh.topology_report(m)
+    assert r.watertight and r.conformal and r.n_components == 1
+    assert m.n_hexes == sum(b.n_hexes for b in bl)
+
+
+def test_seams_may_name_blocks_by_object_or_by_index():
+    bl = _stack(3)
+    by_obj = hexmesh.attach(bl, [Seam(bl[0], "hi", bl[1], "lo"),
+                                 Seam(bl[1], "hi", bl[2], "lo")])
+    by_idx = hexmesh.attach(bl, [Seam(0, "hi", 1, "lo"), Seam(1, "hi", 2, "lo")])
+    assert np.array_equal(by_obj.points, by_idx.points)
+
+
+def test_each_seam_carries_its_own_name_and_owner():
+    bl = _stack(3)
+    m = hexmesh.attach(bl, [Seam(0, "hi", 1, "lo", attach_tag="first"),
+                            Seam(1, "hi", 2, "lo")])
+    assert "first" in m.face_tags.group_tags
+    # the unnamed seam is buried, so exactly one interface is tagged
+    assert hexmesh.tag_report(m).n_tagged_interior == len(
+        hexmesh.tagged_faces(bl[0], "hi"))
+
+
+def test_a_seam_naming_a_mesh_outside_the_list_is_refused():
+    bl = _stack(2)
+    stray = _stack(1)[0]
+    with pytest.raises(ValueError, match="not in the meshes list"):
+        hexmesh.attach(bl, [Seam(stray, "hi", 1, "lo")])
+
+
+def test_a_seam_naming_a_block_out_of_range_is_refused():
+    with pytest.raises(ValueError, match="names block"):
+        hexmesh.attach(_stack(2), [Seam(0, "hi", 7, "lo")])
+
+
+def test_a_single_mesh_with_no_seams_is_returned_unchanged():
+    only = _stack(1)[0]
+    assert hexmesh.attach([only], []) is only
+
+
+def test_errors_name_which_seam_failed():
+    """With several seams the message has to say *which* one, or it is unactionable."""
+    bl = _stack(3)
+    with pytest.raises(ValueError, match=r"seams\[1\]"):
+        hexmesh.attach(bl, [Seam(0, "hi", 1, "lo"), Seam(1, "hi", 2, "nope")])
 
 
 # -- the tag accessors --------------------------------------------------------
@@ -277,7 +359,7 @@ def test_an_unknown_tag_names_what_is_available():
 def test_quad_attach_joins_two_sections_along_an_edge_group(order):
     a = _rect(0, 1, order, {"right": "seam", "left": "west"})
     b = _rect(1, 2, order, {"left": "seam", "right": "east"})
-    m = quadmesh.attach(a, b, "seam", "seam")
+    m = quadmesh.attach([a, b], [EdgeSeam(0, "seam", 1, "seam")])
     assert m.n_quads == a.n_quads + b.n_quads
     assert m.n_points == a.n_points + b.n_points - 4        # the shared column
     assert quadmesh.area(m) == pytest.approx(2.0)
@@ -287,8 +369,8 @@ def test_quad_attach_joins_two_sections_along_an_edge_group(order):
 def test_quad_attach_tag_names_the_seam():
     a = _rect(0, 1, 2, {"right": "seam"})
     b = _rect(1, 2, 2, {"left": "seam"})
-    assert "mid" in quadmesh.attach(a, b, "seam", "seam",
-                                    attach_tag="mid").edge_tags.group_tags
+    assert "mid" in quadmesh.attach([a, b], [EdgeSeam(0, "seam", 1, "seam",
+                                             attach_tag="mid")]).edge_tags.group_tags
 
 
 def test_quad_attach_refuses_unequal_groups():
@@ -297,7 +379,7 @@ def test_quad_attach_refuses_unequal_groups():
     b = quadmesh.rectangle([[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], 3, 5,
                            side_tags={"left": "seam"})
     with pytest.raises(ValueError, match="different edge counts"):
-        quadmesh.attach(a, b, "seam", "seam")
+        quadmesh.attach([a, b], [EdgeSeam(0, "seam", 1, "seam")])
 
 
 def test_quad_attach_refuses_a_group_that_is_not_the_same_curve():
@@ -306,7 +388,7 @@ def test_quad_attach_refuses_a_group_that_is_not_the_same_curve():
     a = _rect(0, 1, 1, {"right": "seam", "bottom": "b"})
     b = _rect(1, 2, 1, {"left": "seam"})
     with pytest.raises(ValueError, match="not one-to-one"):
-        quadmesh.attach(a, b, "b", "seam")
+        quadmesh.attach([a, b], [EdgeSeam(0, "b", 1, "seam")])
 
 
 # -- the stated-join fast path ------------------------------------------------

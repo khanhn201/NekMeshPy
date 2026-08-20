@@ -221,13 +221,14 @@ every block's whole boundary at once. That is why `examples/chimera_full.py:444-
 runs one seam at `tol=0.05` and the assembly at `0.005` — "loosening the tolerance for
 the whole assembly welded an unrelated, closer-together pair by mistake."
 
-`attach(a, b, tag_a, tag_b)` is told **which** face group meets which (`face_tags` at
-the hex rung, `edge_tags` at the quad rung; `tagged_faces` / `tagged_edges` are the
-public accessors, and either argument also takes an explicit id array), and so takes
-**no tolerance at all**. Inside those two groups the pairing is nearest-neighbour, and
-what proves it is **bijectivity** — equal point counts plus an injective map is a
-one-to-one correspondence however far apart the halves sit. A seam with a real gap
-joins; a seam whose halves do not correspond is refused however close they are.
+`attach(meshes, seams)` is told, by a `Seam` apiece, **which** face group meets which
+(`face_tags` at the hex rung, `edge_tags` at the quad rung; `tagged_faces` /
+`tagged_edges` are the public accessors, and either argument also takes an explicit id
+array), and so takes **no tolerance at all**. Inside those two groups the pairing is
+nearest-neighbour, and what proves it is **bijectivity** — equal point counts plus an
+injective map is a one-to-one correspondence however far apart the halves sit. A seam
+with a real gap joins; a seam whose halves do not correspond is refused however close
+they are.
 
 One case no tolerance could have caught either: a seam with a rotational symmetry whose
 halves are relatively rotated by a symmetry element pairs injectively, bijectively, and
@@ -239,6 +240,11 @@ shared-node re-scatter in `_stitch` checks the two sides against `conform.entity
 orders tighter than any pairing distance, and a merely-close seam fails it. The welded-shut
 faces are **cleared** unless `attach_tag` names them — a named interior face makes the
 exporter write one boundary row from *each* side, which callers used to strip by hand.
+
+`attach` is **n-ary** -- `attach(meshes, seams)` -- and welds the whole assembly in one
+pass. Chaining two-block joins instead rebuilds the accumulated mesh per link, which is
+quadratic in the block count: 32 blocks cost 63240 hex-passes chained against 3840 in
+one pass, and measured 230 ms against 17 ms.
 
 Note this inverts the cap-argument convention below: here `attach_tag=None` means
 "clear", because burying a seam is what attaching is for.

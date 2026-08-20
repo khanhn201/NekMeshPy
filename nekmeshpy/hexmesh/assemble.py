@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from typing import NamedTuple
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -524,16 +525,18 @@ def merge(
 
 def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *,
             who: str, seam_faces: Mapping[int, IntArray] | None = None,
-            seam_tag: str | None = None) -> HexMesh:
+            named_seams: Sequence[tuple[int, IntArray, str]] = ()) -> HexMesh:
     """Everything a weld does *after* the point remap is decided, shared by
     :func:`merge` and :func:`attach`: concatenate the blocks' B-rep tables, fuse the
     entities whose corners all welded, refit the seam's D4 codes, re-pin the shared
     high-order nodes, and combine the face tags.
 
-    ``seam_faces`` names, per block index, the **local** face ids the caller welded
-    shut, and ``seam_tag`` what they should be called afterwards (``None`` clears them).
-    That is how :func:`attach` buries or renames the faces it joins; :func:`merge`, which
-    was never told what met what, passes neither."""
+    ``seam_faces`` names, per block index, the **local** face ids the caller welded shut
+    -- those lose their names, since a buried face that keeps one makes the exporter
+    write a boundary row from each side.  ``named_seams`` re-names a subset of them,
+    ``(block, local faces, name)`` apiece, which is how one interface of an n-ary join
+    can be named while the rest vanish.  :func:`merge`, never told what met what, passes
+    neither."""
     meshes = list(meshes)
     counts = [m.points.shape[0] for m in meshes]
 
@@ -650,17 +653,21 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     off = 0
     ftag_list: list[ElementTags] = []
     seam_merged: list[IntArray] = []
+    local_to_merged: list[IntArray] = []
     for bi, m in enumerate(meshes):
         mine: IntArray = np.full(m.quad_mesh.n_quads, -1, dtype=np.int64)
         mine[np.asarray(m.hexes, dtype=np.int64).ravel()] = np.asarray(
             elem_faces[off:off + m.corners.shape[0]], dtype=np.int64).ravel()
         ftag_list.append(m.face_tags.renumber(mine))
+        local_to_merged.append(mine)
         if seam_faces is not None and bi in seam_faces:
             # the seam in this block's local numbering, carried onto the merged one
             seam_merged.append(mine[np.asarray(seam_faces[bi], dtype=np.int64)])
         off += m.corners.shape[0]
+    named = [(local_to_merged[bi][np.asarray(f, dtype=np.int64)], tag)
+             for bi, f, tag in named_seams]
     faces = QuadMesh(faces.line_mesh, faces.quads, faces.orient, faces.interior,
-                     _seam_named(ftag_list, seam_merged, seam_tag, faces.n_quads, who))
+                     _seam_named(ftag_list, seam_merged, named, faces.n_quads, who))
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
 
@@ -723,7 +730,8 @@ def _stated_shared_nodes(
 
 
 def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray],
-                seam_tag: str | None, n_faces: int, who: str) -> ElementTags:
+                named: Sequence[tuple[IntArray, str]], n_faces: int,
+                who: str) -> ElementTags:
     """The merged face tags, with the welded-shut seam renamed to what the caller asked.
 
     The seam's rows are dropped from **both** sides *before* the combine rather than
@@ -736,12 +744,14 @@ def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray
     seam_ids: IntArray = np.unique(np.concatenate(list(seam_merged)))
     kept = [t.select(~np.isin(t.ids, seam_ids)) for t in ftag_list]
     merged = welded_element_tags(kept, who)
-    if not seam_tag:
+    if not named:
         return merged
     # object dtype, as ``tag_faces`` does: the merged table's own dtype is only as wide
-    # as the longest name already in it, and the new one may be longer.
+    # as the longest name already in it, and a new one may be longer.
     dense = np.asarray(merged.dense(n_faces), dtype=object)
-    dense[seam_ids] = seam_tag
+    for ids, tag in named:
+        if tag:
+            dense[ids] = tag
     return ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
 
 
@@ -749,7 +759,12 @@ def _face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
                 side: str) -> IntArray:
     """The seam's face ids on one side, from a tag name or given outright."""
     if isinstance(which, str):
-        ids = tagged_faces(mesh, which)
+        try:
+            ids = tagged_faces(mesh, which)
+        except ValueError as exc:
+            # with several seams in one call, "no face carries the tag" is unactionable
+            # unless it says which seam asked for it
+            raise ValueError("attach: %s: %s" % (side, exc)) from None
     else:
         ids = np.asarray(which, dtype=np.int64).reshape(-1)
         if ids.size and (ids.min() < 0 or ids.max() >= mesh.quad_mesh.n_quads):
@@ -858,63 +873,129 @@ def _adopt_seam(m: HexMesh, faces: IntArray, pts: IntArray, owner: HexMesh,
     return HexMesh(quads, m.hexes, m.orient, m.interior, m.element_tags)
 
 
-def attach(a: HexMesh, b: HexMesh, tag_a: str | IntArray, tag_b: str | IntArray, *,
-           own: str = "a", attach_tag: str | None = None) -> HexMesh:
-    """Join ``b`` onto ``a`` along the face group each one names, welding the two groups
-    into one face apiece.
+class Seam(NamedTuple):
+    """One stated interface: which face group of which block meets which.
 
-    ``tag_a`` selects rows of ``a.face_tags`` -- its ``quad_mesh``'s ``element_tags`` --
-    and ``tag_b`` of ``b``'s. Either may instead be an explicit array of face ids, which
-    is what a tag resolves to (:func:`tagged_faces
-    <nekmeshpy.hexmesh.query.tagged_faces>`). The named faces must still be on their own
-    block's boundary.
+    ``a`` and ``b`` name a block either by its position in ``attach``'s ``meshes`` or by
+    the mesh object itself -- resolved by identity, so a block appearing twice in the
+    list must be named by index.  ``tag_a`` / ``tag_b`` are face-tag names, or explicit
+    arrays of face ids (:func:`tagged_faces <nekmeshpy.hexmesh.query.tagged_faces>`).
 
-    Unlike :func:`merge`, which is told nothing and infers every seam in an assembly
-    from coordinates at one global tolerance, this is told **which** group meets which --
-    and so needs **no tolerance at all**. Within the two named groups the pairing is
-    nearest-neighbour, and what proves it is bijectivity rather than a distance: equal
-    point counts plus an injective map is a one-to-one correspondence however far apart
-    the two halves sit. A seam with a real gap still joins; a seam whose halves do not
-    correspond is refused however close they are.
+    ``own`` says which side's node coordinates the seam keeps.  ``attach_tag`` names the
+    welded-shut faces; ``None`` -- the default -- clears them, because a buried face that
+    keeps its name makes the exporter write one boundary row from *each* side of it."""
+    a: int | HexMesh
+    tag_a: str | IntArray
+    b: int | HexMesh
+    tag_b: str | IntArray
+    own: str = "a"
+    attach_tag: str | None = None
 
-    The joined faces are **cleared** of their names: they are interior now, and a named
-    interior face makes the exporter write one boundary row from each side of it. Pass
-    ``attach_tag`` to name them instead -- a conjugate interface or a flux plane, stated
-    up front rather than recovered from the topology afterwards.
 
-    ``own`` says whose coordinates the seam keeps (``"a"`` by default); the other side's
-    seam nodes are copied from the owner before the weld, so the two agree exactly rather
-    than closely. That moves the other block's seam layer by up to the pairing distance
-    while its hex interiors stay put, so re-read :func:`quality_summary
-    <nekmeshpy.hexmesh.query.quality_summary>` near the seam if the two started far
-    apart."""
-    if own not in ("a", "b"):
-        raise ValueError("attach: own must be 'a' or 'b', got %r" % (own,))
-    if a.order != b.order:
-        raise ValueError("attach: both blocks must share the same order (%d and %d)"
-                         % (a.order, b.order))
-    fa = _face_group(a, tag_a, "tag_a")
-    fb = _face_group(b, tag_b, "tag_b")
-    if fa.size != fb.size:
+def _block_index(ref: int | HexMesh, meshes: Sequence[HexMesh], who: str) -> int:
+    """A ``Seam`` endpoint resolved to a position in ``meshes``."""
+    if isinstance(ref, HexMesh):
+        for i, m in enumerate(meshes):
+            if m is ref:
+                return i
         raise ValueError(
-            "attach: the two groups have different face counts (%d and %d), so they "
-            "cannot be the same interface." % (fa.size, fb.size))
-    if fa.size == 0:
-        raise ValueError("attach: the named groups are empty; there is nothing to join")
+            "attach: %s names a mesh that is not in the meshes list. Pass the block "
+            "itself, or its index." % who)
+    i = int(ref)
+    if not 0 <= i < len(meshes):
+        raise ValueError("attach: %s names block %d of %d" % (who, i, len(meshes)))
+    return i
 
-    pairs, worst = _pair_seam(a, fa, b, fb)
-    _log.debug("attach: %d faces, %d points, worst pairing distance %.3e",
-               fa.size, pairs.shape[0], worst)
 
-    if own == "a":
-        b = _adopt_seam(b, fb, pairs[:, 1], a, fa, pairs[:, 0])
-    else:
-        a = _adopt_seam(a, fa, pairs[:, 0], b, fb, pairs[:, 1])
+def attach(meshes: Sequence[HexMesh], seams: Sequence[Seam]) -> HexMesh:
+    """Join blocks along the interfaces each :class:`Seam` names, in **one pass**.
 
-    cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
-    points, point_id = conform.weld_pairs([a.points, b.points], cat)
-    return _stitch([a, b], points, point_id, who="hexmesh.attach",
-                   seam_faces={0: fa, 1: fb}, seam_tag=attach_tag)
+    Every seam states which face group of which block meets which, so no tolerance is
+    needed anywhere: inside a named pair of groups the pairing is nearest-neighbour, and
+    what proves it is bijectivity -- equal point counts plus an injective map is a
+    one-to-one correspondence however far apart the two halves sit.  A seam with a real
+    gap joins; a seam whose halves do not correspond is refused however close they are.
+
+    Contrast :func:`merge`, which is told nothing and infers every seam in the assembly
+    from coordinates at one global tolerance.
+
+    One pass is the point of the n-ary form.  Chaining binary joins would concatenate and
+    rebuild the whole accumulated mesh once per link -- work quadratic in the block count,
+    since 32 blocks of 120 hexes cost 63240 hex-passes chained against 3840 in a single
+    pass.  Here every seam is paired first (each cheap, and confined to its own groups),
+    then the blocks are welded and stitched exactly once::
+
+        mesh = hexmesh.attach([core, leg_p, leg_m],
+                              [Seam(core, "port_p", leg_p, "join"),
+                               Seam(core, "port_m", leg_m, "join")])
+
+    Blocks are concatenated in list order and a welded point keeps the lowest id, so the
+    first block's own numbering comes through untouched."""
+    meshes = list(meshes)
+    seams = list(seams)
+    if not meshes:
+        raise ValueError("attach: no meshes to join")
+    if len(meshes) == 1 and not seams:
+        return meshes[0]
+    order = meshes[0].order
+    if any(m.order != order for m in meshes):
+        raise ValueError("attach: every block must share the same order, got %s"
+                         % sorted({m.order for m in meshes}))
+
+    # 1. resolve every seam to (block, faces) on each side, and pair its points.  The
+    #    pairing reads only the two named groups, so it is independent of mesh size.
+    resolved: list[tuple[int, IntArray, int, IntArray, str, str | None]] = []
+    for k, sm in enumerate(seams):
+        who = "seams[%d]" % k
+        ia = _block_index(sm.a, meshes, who + ".a")
+        ib = _block_index(sm.b, meshes, who + ".b")
+        if sm.own not in ("a", "b"):
+            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
+        fa = _face_group(meshes[ia], sm.tag_a, who + ".tag_a")
+        fb = _face_group(meshes[ib], sm.tag_b, who + ".tag_b")
+        if fa.size != fb.size:
+            raise ValueError(
+                "attach: %s joins groups of different face counts (%d and %d), so they "
+                "cannot be the same interface." % (who, fa.size, fb.size))
+        if fa.size == 0:
+            raise ValueError("attach: %s names empty groups; there is nothing to join"
+                             % who)
+        resolved.append((ia, fa, ib, fb, sm.own, sm.attach_tag))
+
+    # 2. make each seam's two sides agree bit for bit before anything is welded.  Done
+    #    in seam order and written back into ``meshes``, so a block carrying several
+    #    seams accumulates them rather than losing all but the last.
+    pair_list: list[IntArray] = []
+    for ia, fa, ib, fb, own, _tag in resolved:
+        pairs, worst = _pair_seam(meshes[ia], fa, meshes[ib], fb)
+        _log.debug("attach: %d faces, %d points, worst pairing distance %.3e",
+                   fa.size, pairs.shape[0], worst)
+        if own == "a":
+            meshes[ib] = _adopt_seam(meshes[ib], fb, pairs[:, 1], meshes[ia], fa,
+                                     pairs[:, 0])
+        else:
+            meshes[ia] = _adopt_seam(meshes[ia], fa, pairs[:, 0], meshes[ib], fb,
+                                     pairs[:, 1])
+        pair_list.append(np.stack([pairs[:, 0], pairs[:, 1]], axis=1))
+
+    # 3. one weld and one stitch over the whole assembly
+    offs: IntArray = np.concatenate(
+        [[0], np.cumsum([m.n_points for m in meshes])]).astype(np.int64)
+    cat = [np.stack([pr[:, 0] + offs[ia], pr[:, 1] + offs[ib]], axis=1)
+           for (ia, _fa, ib, _fb, _o, _t), pr in zip(resolved, pair_list)]
+    stated: IntArray = (np.concatenate(cat, axis=0) if cat
+                        else np.zeros((0, 2), dtype=np.int64))
+    points, point_id = conform.weld_pairs([m.points for m in meshes], stated)
+
+    seam_faces: dict[int, list[IntArray]] = {}
+    for ia, fa, ib, fb, _o, _t in resolved:
+        seam_faces.setdefault(ia, []).append(fa)
+        seam_faces.setdefault(ib, []).append(fb)
+    named = [(ia, fa, tag) for ia, fa, _ib, _fb, _o, tag in resolved if tag]
+    return _stitch(meshes, points, point_id, who="hexmesh.attach",
+                   seam_faces={b: np.unique(np.concatenate(v))
+                               for b, v in seam_faces.items()},
+                   named_seams=named)
 
 
 def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
@@ -978,6 +1059,7 @@ def components(mesh: HexMesh) -> list[HexMesh]:
 
 
 __all__ = [
+    "Seam",
     "attach",
     "components",
     "loft",

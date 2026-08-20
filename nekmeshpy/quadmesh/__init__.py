@@ -1,6 +1,6 @@
 """2-D quad mesh container (``QuadMesh``), its operations, and smoothing."""
 
-from .assemble import attach, components, loft, loft_fn, loft_spline, merge, remove, select
+from .assemble import Seam, attach, components, loft, loft_fn, loft_spline, merge, remove, select
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
 from .lower import boundary_mesh
 from .morph import (
@@ -65,6 +65,7 @@ __all__ = [
     "NO_TAG",
     "Port",
     "QuadMesh",
+    "Seam",
     "annulus",
     "attach",
     "assemble",
