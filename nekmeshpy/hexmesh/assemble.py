@@ -39,15 +39,16 @@ _log = logging.getLogger(__name__)
 def _face_brep(points: PointArray, edges: IntArray, elem_edges: IntArray,
                edge_flip: BoolArray, elem_faces: IntArray, face_orient: IntArray,
                n_faces: int, edge_nodes: PointArray | None,
-               face_nodes: PointArray | None) -> QuadMesh:
+               face_nodes: PointArray | None,
+               face_edges: tuple[IntArray, BoolArray] | None = None) -> QuadMesh:
     """The shared-face ``QuadMesh`` of a hex block, read off the hex tables.
 
     The faces' edges *are* the hex edges -- same set, same table -- so this deduplicates
     nothing: it reads each face's incidence through one owning hex."""
-    face_edges, face_flip = conform.face_edges_from_hexes(
+    fe, ff = (conform.face_edges_from_hexes(
         elem_faces, face_orient, elem_edges, edge_flip, n_faces)
-    return QuadMesh(LineMesh(points, edges, interior=edge_nodes),
-                    face_edges, face_flip, face_nodes)
+        if face_edges is None else face_edges)
+    return QuadMesh(LineMesh(points, edges, interior=edge_nodes), fe, ff, face_nodes)
 
 
 def loft(
@@ -552,6 +553,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     forient_list: list[IntArray] = []
     etag_list: list[ElementTags] = []
     noff = eoff = foff = elem_off = 0
+    edge_offs: list[int] = []
     for m, c in zip(meshes, counts):
         hex_list.append(point_id[m.corners + noff])    # local -> concat -> welded id
         erow_list.append(point_id[m.edges + noff])
@@ -561,6 +563,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         ef_list.append(m.hexes + foff)
         forient_list.append(m.orient)
         etag_list.append(m.element_tags.offset(elem_off))
+        edge_offs.append(eoff)
         noff += c
         eoff += m.edges.shape[0]
         foff += m.quad_mesh.n_quads
@@ -642,8 +645,15 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
                 local_f, elem_faces, face_orient, canonical_conn.shape[0], ent_tol,
                 who)
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
+    fe: tuple[IntArray, BoolArray] | None = None
+    if seam_faces is not None:
+        # A face's edge incidence is *stored* on each block's own ``quad_mesh``; the weld
+        # only renumbers it.  Re-deriving it through an owning hex and the D4 tables --
+        # what ``face_edges_from_hexes`` does, and must, for ``merge`` -- was the single
+        # largest remaining cost of a stated join.
+        fe = _stated_face_edges(meshes, e_new, swap, f_keep, edge_offs)
     faces = _face_brep(points, edges, elem_edges, eflip, elem_faces, face_orient,
-                       canonical_conn.shape[0], edge_nodes, face_nodes)
+                       canonical_conn.shape[0], edge_nodes, face_nodes, fe)
     # A face tag rides the face, so it waits for the merged face table: block ``m``'s
     # local face ``m.hexes[e, f]`` is merged face ``elem_faces[elem_off + e, f]``.  Two
     # blocks welding onto one shared face can each name it, so the combine is the
@@ -669,6 +679,32 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     faces = QuadMesh(faces.line_mesh, faces.quads, faces.orient, faces.interior,
                      _seam_named(ftag_list, seam_merged, named, faces.n_quads, who))
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
+
+
+def _stated_face_edges(meshes: Sequence[HexMesh], e_new: IntArray, swap: BoolArray,
+                       f_keep: IntArray,
+                       edge_offs: Sequence[int]) -> tuple[IntArray, BoolArray]:
+    """``(face_edges (F,4), face_flip (F,4))`` for a stated join, read off the blocks'
+    own stored rows rather than re-derived through an owning hex.
+
+    Each block's ``quad_mesh`` already holds every face's edge incidence; a weld changes
+    none of it, only the ids.  So the merged table is the blocks' rows concatenated,
+    renumbered through ``e_new``, with the traversal bit toggled wherever the renumber
+    put a stored edge row the other way round -- the same ``swap`` the hex-level flips
+    were corrected by.  ``f_keep`` then selects the survivors, and since the blocks are
+    concatenated in order the survivor of a fused pair is the earlier block's row, whose
+    frame the face table keeps."""
+    fe_list: list[IntArray] = []
+    ff_list: list[BoolArray] = []
+    for m, eo in zip(meshes, edge_offs):
+        q: IntArray = np.asarray(m.quad_mesh.quads, dtype=np.int64) + eo
+        fe_list.append(e_new[q])
+        ff_list.append(np.asarray(m.quad_mesh.orient, dtype=bool) ^ swap[q])
+    fe: IntArray = (np.concatenate(fe_list, axis=0) if fe_list
+                    else np.zeros((0, 4), np.int64))
+    ff: BoolArray = (np.concatenate(ff_list, axis=0) if ff_list
+                     else np.zeros((0, 4), bool))
+    return fe[f_keep], ff[f_keep]
 
 
 def _first_wins(dst: PointArray, idx: IntArray, src: PointArray) -> None:
