@@ -57,6 +57,7 @@ from nekmeshpy import (
 from nekmeshpy.core import conform
 from nekmeshpy.hexmesh import Seam
 from nekmeshpy.linemesh import Seam as PointSeam
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -1216,7 +1217,11 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     flat_s = np.column_stack([dm.ring_uv(spine.points), np.zeros(spine.n_points)])
     half = quadmesh.half_ogrid(
         linemesh.loft(flat_a, order=ORDER, element_tags="wall"),
-        linemesh.loft(flat_s, order=ORDER), radial, center_scale=center_scale,
+        # the spine is the seam between the disc's two halves; ``half_ogrid`` carries a
+        # boundary loop's own element tags through, so naming it here is what lets the
+        # two halves be joined by name rather than by proximity
+        linemesh.loft(flat_s, order=ORDER, element_tags="attach_spine"),
+        radial, center_scale=center_scale,
         quadrant_scale=center_scale)
     # the parameter positions, kept before the lift overwrites them -- ``pin_curve``
     # finds its nodes by where they sit in the *parameter* plane, which is the only
@@ -1390,14 +1395,16 @@ def ogrid_leg(walker, levels, cap_loop, seam_loop, spine, ifaces, *,
     and ``u = 0`` is the cap's own Dirichlet boundary, so both degenerate; the seam is
     built from its two interfaces and the cap from the opening as given."""
     # each half on the interface it is, rather than an algebraic fill across both
-    seam = quadmesh.merge([
+    halves = [
         seam_section(a, sp, f, radial=radial, center_scale=center_scale)
         # the second half traverses A2 -> A1, arc *and* spine -- reversing only the
         # spine leaves the two halves wound against each other, and every quad of one of
-        # them then reads inverted in the merged disc
+        # them then reads inverted in the joined disc
         for a, sp, f in ((seam_loop[0], spine, ifaces[0]),
                          (linemesh.reverse(seam_loop[1]), linemesh.reverse(spine),
-                          ifaces[1]))])
+                          ifaces[1]))]
+    # the shared spine is the one seam, named on both halves
+    seam = quadmesh.attach(halves, [EdgeSeam(0, "attach_spine", 1, "attach_spine")])
     loop = linemesh.attach([seam_loop[0], linemesh.reverse(seam_loop[1])],
                            [PointSeam(0, "A1", 1, "A1"), PointSeam(0, "A2", 1, "A2")])
     slices = [cap_section(cap_loop, loop, radial=radial, center_scale=center_scale)]
