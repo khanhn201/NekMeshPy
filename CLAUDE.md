@@ -388,3 +388,6 @@ objective is to maintain long sessions that retains high level understanding, mi
 number of conversation compacting and a clear transcript.
 - When attempting to web search, do it from local machine since Claude API server do not have access
 to internet
+- Use ./scratch/sessionname as a scratch workspace to do debugging, runs, tests
+or iterations
+
