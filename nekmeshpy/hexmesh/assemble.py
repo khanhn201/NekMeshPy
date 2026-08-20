@@ -616,19 +616,28 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     face_nodes: PointArray | None = None
     interior: PointArray | None = None
     if order > 1:
-        local_e: PointArray = np.concatenate(
-            [conform.gather_edge_nodes(mm.quad_mesh.line_mesh.interior, mm._elem_edges,
-                                       mm._edge_flip)
-             for mm in meshes], axis=0)                    # (E,12,order-1,3)
-        local_f: PointArray = np.concatenate(
-            [conform.gather_face_nodes(mm.quad_mesh.interior, mm.hexes, mm.orient)
-             for mm in meshes], axis=0)                    # (E,6,(order-1)**2,3)
         ent_tol = conform.entity_tol(points)
-        edge_nodes = conform.scatter_edge_nodes(
-            local_e, elem_edges, eflip, edges.shape[0], ent_tol, who)
-        face_nodes = conform.scatter_face_nodes(
-            local_f, elem_faces, face_orient, canonical_conn.shape[0], ent_tol,
-            who)
+        if seam_faces is not None:
+            # A *stated* join knows which entities fuse, so the shared node tables are a
+            # renumbering of blocks that already agree -- no gather into element-local
+            # order, no scatter back, and no verification of the ~26k entities that did
+            # not move.  Only the seam can disagree, and it is checked below.
+            edge_nodes, face_nodes = _stated_shared_nodes(
+                meshes, e_new, f_new, swap, edges.shape[0], canonical_conn.shape[0],
+                f_rows, canonical_conn, ent_tol, who)
+        else:
+            local_e: PointArray = np.concatenate(
+                [conform.gather_edge_nodes(mm.quad_mesh.line_mesh.interior,
+                                           mm._elem_edges, mm._edge_flip)
+                 for mm in meshes], axis=0)                # (E,12,order-1,3)
+            local_f: PointArray = np.concatenate(
+                [conform.gather_face_nodes(mm.quad_mesh.interior, mm.hexes, mm.orient)
+                 for mm in meshes], axis=0)                # (E,6,(order-1)**2,3)
+            edge_nodes = conform.scatter_edge_nodes(
+                local_e, elem_edges, eflip, edges.shape[0], ent_tol, who)
+            face_nodes = conform.scatter_face_nodes(
+                local_f, elem_faces, face_orient, canonical_conn.shape[0], ent_tol,
+                who)
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
     faces = _face_brep(points, edges, elem_edges, eflip, elem_faces, face_orient,
                        canonical_conn.shape[0], edge_nodes, face_nodes)
@@ -653,6 +662,64 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     faces = QuadMesh(faces.line_mesh, faces.quads, faces.orient, faces.interior,
                      _seam_named(ftag_list, seam_merged, seam_tag, faces.n_quads, who))
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
+
+
+def _first_wins(dst: PointArray, idx: IntArray, src: PointArray) -> None:
+    """``dst[idx] = src`` with the **lowest** source index winning each collision.
+
+    Assigning in reverse leaves the first write last, which is the same owner
+    ``scatter_edge_nodes`` picks (``np.unique``'s first occurrence).  With the blocks
+    concatenated in order, that owner is always the earlier block."""
+    dst[idx[::-1]] = src[::-1]
+
+
+def _stated_shared_nodes(
+    meshes: Sequence[HexMesh], e_new: IntArray, f_new: IntArray, swap: BoolArray,
+    n_edges: int, n_faces: int, f_rows: IntArray, canonical_conn: IntArray,
+    ent_tol: float, who: str,
+) -> tuple[PointArray, PointArray]:
+    """The shared edge- and face-interior tables for a join whose seam was **stated**.
+
+    Every block's own tables are already conformal, so a weld cannot change any node
+    that is not on the seam -- it only renumbers the entity that holds it.  This is
+    therefore a concatenate plus two fixups:
+
+    * an edge whose row came out reversed by the renumber reads its nodes backwards;
+    * a *fused* entity keeps the survivor's block, and the loser's copy is checked
+      against it rather than the whole mesh being re-verified.
+
+    ``merge`` cannot take this path: it is not told what fused, so it has to gather every
+    element's nodes and scatter them back to find out."""
+    edge_src: PointArray = np.concatenate(
+        [np.asarray(m.quad_mesh.line_mesh.interior, dtype=float) for m in meshes], axis=0)
+    if edge_src.size:
+        edge_src = np.where(swap[:, None, None], edge_src[:, ::-1, :], edge_src)
+    face_src: PointArray = np.concatenate(
+        [np.asarray(m.quad_mesh.interior, dtype=float) for m in meshes], axis=0)
+    # a kept face keeps its own stored row, so its nodes stay in their own frame; a fused
+    # one adopts the survivor's row and has to be turned into that frame to compare
+    face_cmp: PointArray = conform.face_nodes_in_frame(
+        face_src, canonical_conn[f_new], f_rows) if face_src.size else face_src
+
+    edge_nodes: PointArray = np.empty((n_edges,) + edge_src.shape[1:], dtype=float)
+    face_nodes: PointArray = np.empty((n_faces,) + face_cmp.shape[1:], dtype=float)
+    _first_wins(edge_nodes, e_new, edge_src)
+    _first_wins(face_nodes, f_new, face_cmp)
+
+    # the conformal guard, on the seam alone: every entity two blocks now share must
+    # agree, exactly as the full scatter would have demanded of all of them
+    for name, new, src, table in (("edge", e_new, edge_src, edge_nodes),
+                                  ("face", f_new, face_cmp, face_nodes)):
+        if not src.size:
+            continue
+        dup: BoolArray = np.bincount(new, minlength=table.shape[0])[new] > 1
+        if dup.any() and not np.allclose(src[dup], table[new[dup]],
+                                         rtol=0.0, atol=ent_tol):
+            raise ValueError(
+                "%s: non-conforming high-order %s -- the two sides disagree on a welded "
+                "shared %s's interior nodes beyond tolerance (%.3e). Pass own= so the "
+                "seam takes one side's nodes outright." % (who, name, name, ent_tol))
+    return edge_nodes, face_nodes
 
 
 def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray],

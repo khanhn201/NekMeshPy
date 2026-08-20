@@ -309,6 +309,72 @@ def test_quad_attach_refuses_a_group_that_is_not_the_same_curve():
         quadmesh.attach(a, b, "b", "seam")
 
 
+# -- the stated-join fast path ------------------------------------------------
+@pytest.mark.parametrize("order", [2, 3, 4])
+def test_the_stated_node_path_equals_the_general_one(order):
+    """``attach`` knows which entities fuse, so it renumbers the shared high-order node
+    tables instead of gathering every element's nodes and scattering them back.  That
+    shortcut must produce *the same mesh* as the general path ``merge`` uses -- it is an
+    optimisation, not a different answer.
+
+    The reference is built with the seam tags cleared, because the general path is
+    ``merge``'s and rightly refuses two different names on one welded face."""
+    from nekmeshpy.core import conform
+    from nekmeshpy.hexmesh import assemble as asm
+
+    sec = quadmesh.rectangle([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], 3, 2,
+                             order=order)
+    a = hexmesh.extrude(sec, 1.0, 4, first_tag="lo", last_tag="hi")
+    b = hexmesh.translate(
+        hexmesh.extrude(sec, 1.0, 3, first_tag="lo", last_tag="hi"), (0.0, 0.0, 1.0))
+    fa, fb = hexmesh.tagged_faces(a, "hi"), hexmesh.tagged_faces(b, "lo")
+    pairs, _ = asm._pair_seam(a, fa, b, fb)
+    b2 = asm._adopt_seam(b, fb, pairs[:, 1], a, fa, pairs[:, 0])
+    cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
+    pts, pid = conform.weld_pairs([a.points, b2.points], cat)
+
+    fast = asm._stitch([a, b2], pts, pid, who="t", seam_faces={0: fa, 1: fb})
+    slow = asm._stitch([hexmesh.retag_face(a, {"hi": ""}),
+                        hexmesh.retag_face(b2, {"lo": ""})], pts, pid, who="t")
+
+    qf, qs = fast.quad_mesh, slow.quad_mesh
+    for name, x, y in (("points", fast.points, slow.points),
+                       ("hexes", fast.hexes, slow.hexes),
+                       ("hex orient", fast.orient, slow.orient),
+                       ("hex interior", fast.interior, slow.interior),
+                       ("quads", qf.quads, qs.quads),
+                       ("quad orient", qf.orient, qs.orient),
+                       ("face interior", qf.interior, qs.interior),
+                       ("edges", qf.line_mesh.lines, qs.line_mesh.lines),
+                       ("edge interior", qf.line_mesh.interior, qs.line_mesh.interior)):
+        assert np.array_equal(np.asarray(x), np.asarray(y)), name
+
+
+def test_the_stated_path_still_catches_a_non_conforming_seam():
+    """The shortcut drops the whole-mesh verification, so it has to keep the seam's:
+    two sides that disagree on a shared face's interior must still raise."""
+    from nekmeshpy.core import conform
+    from nekmeshpy.hexmesh import assemble as asm
+
+    a = _block(3)
+    b = _stub(a, 3)
+    fa, fb = hexmesh.tagged_faces(a, "outlet"), hexmesh.tagged_faces(b, "join")
+    pairs, _ = asm._pair_seam(a, fa, b, fb)
+    # corners agree, but b's shared face interiors are moved -- own= would have copied
+    # them from a; here we deliberately skip that and expect the guard to fire
+    bad = hexmesh.translate(b, (0.0, 0.0, 0.0))
+    fi = np.array(bad.quad_mesh.interior, dtype=float, copy=True)
+    fi[fb] += 0.05
+    q = bad.quad_mesh
+    bad = hexmesh.HexMesh(quadmesh.QuadMesh(q.line_mesh, q.quads, q.orient, fi,
+                                            q.element_tags),
+                          bad.hexes, bad.orient, bad.interior, bad.element_tags)
+    cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
+    pts, pid = conform.weld_pairs([a.points, bad.points], cat)
+    with pytest.raises(ValueError, match="non-conforming high-order"):
+        asm._stitch([a, bad], pts, pid, who="t", seam_faces={0: fa, 1: fb})
+
+
 # -- merge is untouched -------------------------------------------------------
 def test_merge_is_still_the_proximity_join():
     """``attach`` is an addition, not a replacement: ``merge`` still infers its seams."""
