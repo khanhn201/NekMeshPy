@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from .._typing import (
     BoolArray,
@@ -225,6 +227,171 @@ def merge(meshes: Sequence[LineMesh], *,
 
     return LineMesh(PointMesh(points, ptags), lines, interior, etags)
 
+class Seam(NamedTuple):
+    """One stated interface between two line meshes -- the line rung's counterpart of
+    :class:`hexmesh.Seam <nekmeshpy.hexmesh.assemble.Seam>`, naming **point** groups.
+
+    A slice at this rung is a single point, so ``loft``'s ``first_tag`` / ``last_tag``
+    name the two chain ends and are the natural way to make a seam addressable here.
+    ``a`` and ``b`` name a mesh by its position in ``attach``'s ``meshes`` or by the mesh
+    itself; a mesh appearing twice must be named by index."""
+    a: int | LineMesh
+    tag_a: str | IntArray
+    b: int | LineMesh
+    tag_b: str | IntArray
+    own: str = "a"
+    attach_tag: str | None = None
+
+
+def _mesh_index(ref: int | LineMesh, meshes: Sequence[LineMesh], who: str) -> int:
+    if isinstance(ref, LineMesh):
+        for i, m in enumerate(meshes):
+            if m is ref:
+                return i
+        raise ValueError(
+            "attach: %s names a mesh that is not in the meshes list. Pass the mesh "
+            "itself, or its index." % who)
+    i = int(ref)
+    if not 0 <= i < len(meshes):
+        raise ValueError("attach: %s names mesh %d of %d" % (who, i, len(meshes)))
+    return i
+
+
+def _point_group(mesh: LineMesh, which: str | IntArray | Sequence[int],
+                 side: str) -> IntArray:
+    """The seam's point ids on one side, from a point-tag name or given outright.
+
+    Unlike the rungs above, an *interior* point is allowed: a ``LineMesh`` may branch, so
+    joining a chain onto the middle of another is a legitimate junction rather than a
+    non-manifold mistake."""
+    if isinstance(which, str):
+        t = mesh.point_tags
+        ids: IntArray = np.asarray(t.ids[t.mask_for(which)], dtype=np.int64)
+        if ids.size == 0:
+            raise ValueError(
+                "attach: %s: no point carries the tag %r; this mesh has %s"
+                % (side, which, sorted(t.group_tags) or "no tagged points"))
+        return ids
+    ids = np.asarray(which, dtype=np.int64).reshape(-1)
+    if ids.size and (ids.min() < 0 or ids.max() >= mesh.n_points):
+        raise ValueError("attach: %s names point %d, outside this mesh's %d points"
+                         % (side, int(ids.max()), mesh.n_points))
+    return ids
+
+
+def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
+    """Join line meshes at the point groups each :class:`Seam` names, in one pass.
+
+    No tolerance: within a named pair of groups the pairing is nearest-neighbour, and
+    what proves it is bijectivity -- equal counts plus an injective map is a one-to-one
+    correspondence however far apart the two sides sit.
+
+    The line rung has nothing below it but points, so a weld here reconciles nothing:
+    every high-order node of a line is *private*, so the interiors simply concatenate.
+    That also means moving a shared end under ``own=`` leaves the incident lines'
+    interiors where they were -- the same caveat the rungs above carry.
+
+    Welding two chain ends together is the common case, and closing a loop is the same
+    call with both ends stated::
+
+        ring = linemesh.attach([arc_p, arc_q], [Seam(0, "A1", 1, "A1"),
+                                                Seam(0, "A2", 1, "A2")])
+    """
+    meshes = list(meshes)
+    seams = list(seams)
+    if not meshes:
+        raise ValueError("attach: no meshes to join")
+    if len(meshes) == 1 and not seams:
+        return meshes[0]
+    order = meshes[0].order
+    if any(m.order != order for m in meshes):
+        raise ValueError("attach: every mesh must share the same order, got %s"
+                         % sorted({m.order for m in meshes}))
+
+    resolved: list[tuple[int, IntArray, int, IntArray, str, str | None]] = []
+    for k, sm in enumerate(seams):
+        who = "seams[%d]" % k
+        ia = _mesh_index(sm.a, meshes, who + ".a")
+        ib = _mesh_index(sm.b, meshes, who + ".b")
+        if sm.own not in ("a", "b"):
+            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
+        pa = _point_group(meshes[ia], sm.tag_a, who + ".tag_a")
+        pb = _point_group(meshes[ib], sm.tag_b, who + ".tag_b")
+        if pa.size != pb.size:
+            raise ValueError(
+                "attach: %s joins groups of different point counts (%d and %d), so "
+                "they cannot be the same interface." % (who, pa.size, pb.size))
+        if pa.size == 0:
+            raise ValueError("attach: %s names empty groups; there is nothing to join"
+                             % who)
+        resolved.append((ia, pa, ib, pb, sm.own, sm.attach_tag))
+
+    pair_list: list[IntArray] = []
+    pts = [np.array(m.points, dtype=float, copy=True) for m in meshes]
+    for k, (ia, pa, ib, pb, own, _tag) in enumerate(resolved):
+        _d, loc = cKDTree(pts[ib][pb]).query(pts[ia][pa])
+        dup = loc.size - np.unique(loc).size
+        if dup:
+            raise ValueError(
+                "attach: seams[%d]: the pairing is not one-to-one -- %d of a's %d seam "
+                "points share a nearest point on b." % (k, dup, loc.size))
+        pair = np.stack([pa, pb[loc]], axis=1)
+        # the owner's coordinates win outright, so the two sides agree exactly rather
+        # than merely closely
+        if own == "a":
+            pts[ib][pair[:, 1]] = pts[ia][pair[:, 0]]
+        else:
+            pts[ia][pair[:, 0]] = pts[ib][pair[:, 1]]
+        pair_list.append(pair)
+
+    offs: IntArray = np.concatenate(
+        [[0], np.cumsum([p.shape[0] for p in pts])]).astype(np.int64)
+    cat = [np.stack([pr[:, 0] + offs[ia], pr[:, 1] + offs[ib]], axis=1)
+           for (ia, _pa, ib, _pb, _o, _t), pr in zip(resolved, pair_list)]
+    stated: IntArray = (np.concatenate(cat, axis=0) if cat
+                        else np.zeros((0, 2), dtype=np.int64))
+    points, point_id = conform.weld_pairs(pts, stated)
+
+    # The joined points lose their names *before* the renumber, not after: a seam whose
+    # two sides live in the same mesh -- closing a ring is exactly that -- collapses two
+    # tagged points onto one id, and ``renumber`` refuses to put two names on one entity.
+    # Dropping them first is also the right semantics: a seam name that outlives the seam
+    # names something that no longer exists.  ``attach_tag`` puts one back.
+    seam_local: dict[int, list[IntArray]] = {}
+    for (ia, _pa, ib, _pb, _o, _t), pr in zip(resolved, pair_list):
+        seam_local.setdefault(ia, []).append(pr[:, 0])
+        seam_local.setdefault(ib, []).append(pr[:, 1])
+
+    line_list: list[IntArray] = []
+    ptag_list: list[ElementTags] = []
+    etag_list: list[ElementTags] = []
+    loff = 0
+    for i, m in enumerate(meshes):
+        line_list.append(point_id[m.lines + offs[i]])
+        etag_list.append(m.element_tags.offset(loff))
+        pt = m.point_tags
+        if i in seam_local:
+            pt = pt.select(~np.isin(pt.ids, np.concatenate(seam_local[i])))
+        ptag_list.append(pt.renumber(point_id[offs[i]:offs[i + 1]]))
+        loff += m.n_lines
+
+    ptags = welded_element_tags(ptag_list, "linemesh.attach")
+    named = [(point_id[pr[:, 0] + offs[ia]], tag)
+             for (ia, _pa, _ib, _pb, _o, tag), pr in zip(resolved, pair_list) if tag]
+    if named:
+        dense = np.asarray(ptags.dense(points.shape[0]), dtype=object)
+        for ids, tag in named:
+            dense[ids] = tag
+        ptags = ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
+
+    lines = (np.concatenate(line_list, axis=0) if line_list
+             else np.zeros((0, 2), np.int64))
+    interior: PointArray | None = (np.concatenate([m.interior for m in meshes], axis=0)
+                                   if meshes else None)
+    return LineMesh(PointMesh(points, ptags), lines,
+                    interior, ElementTags.concat(etag_list))
+
+
 def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
     """``(the kept lines as a LineMesh, new_line_of)`` -- the rung-1 half of every
     ``select``, and what the rung above calls to carry its shared edges across.
@@ -274,6 +441,8 @@ def components(mesh: LineMesh) -> list[LineMesh]:
 
 
 __all__ = [
+    "Seam",
+    "attach",
     "components",
     "loft",
     "loft_fn",

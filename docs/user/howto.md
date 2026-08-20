@@ -122,6 +122,43 @@ mesh = hexmesh.merge([block_a, block_b])   # welds coincident boundary points on
 
 → used throughout the `flow_past_*` examples and the carotid pipeline.
 
+## Join two blocks along an interface you can name
+
+When you already know which face group meets which, say so instead. `attach` confines
+the pairing to those two groups and needs no tolerance at all — bijectivity proves it —
+and it clears the welded-shut faces for you, which `merge` leaves to the caller.
+
+```python
+cap  = hexmesh.boundary_mesh(block, "outlet")        # the block's own nodes, bit-exact
+stub = hexmesh.extrude(cap, 0.5, 2, first_tag="join", last_tag="outlet")
+mesh = hexmesh.attach([block, stub], [Seam(0, "outlet", 1, "join")])
+```
+
+Growing a solid jacket onto a fluid core is the same call, with the interface named so
+the exporter can give the two sides different codes:
+
+```python
+wall  = hexmesh.boundary_mesh(core, "wall")
+shell = hexmesh.loft([wall, *offsets], element_tags="solid",
+                     first_tag="inner", last_tag="wall")
+mesh  = hexmesh.attach([core, shell],
+                       [Seam(0, "wall", 1, "inner", attach_tag="interface")])
+```
+
+`attach` is **n-ary**: every seam is stated up front and the assembly is welded and
+stitched once.  Chaining two-block joins instead would rebuild the whole accumulated
+mesh per link — 32 blocks cost 63240 hex-passes chained against 3840 in one pass.
+
+```python
+mesh = hexmesh.attach([core, leg_p, leg_m],
+                      [Seam(core, "port_p", leg_p, "join"),
+                       Seam(core, "port_m", leg_m, "join")])
+```
+
+`hexmesh.tagged_faces(mesh, tag)` hands back the ids a tag resolves to, if you want to
+reorder or subset the group before passing it; `quadmesh.attach` / `quadmesh.tagged_edges`
+are the same pair one rung down, joining two sections along an edge group.
+
 ## The carotid vessel pipeline
 
 A `TriMesh` surface (`data/car.{vtx,tri}`) is cut into legs via seam fields, each

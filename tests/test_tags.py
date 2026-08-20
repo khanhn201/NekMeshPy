@@ -437,3 +437,49 @@ def test_untagged_mesh_writes_no_cell_data(tmp_path):
     out = str(tmp_path / "plain.vtu")
     writer.quad_to_vtu(plain, out)
     assert "element_tag" not in _vtu_arrays(out)
+
+
+# -- the authoring bridges take one name or one per row -----------------------
+def _plain_section():
+    return quadmesh.rectangle([(0, 0, 0), (3, 0, 0), (3, 1, 0), (0, 1, 0)], 3, 1)
+
+
+def test_tag_edges_broadcasts_one_name_over_every_row():
+    """A bare string is a sequence *of characters*: zipped against the rows it would tag
+    only the first edge, and truncated to a one-character dtype it would name it ``'w'``.
+    Both are silent, and a seam that lost 2 of its 3 faces is not refused by anything
+    until a weld comes up short."""
+    rows = np.array([[q, 1] for q in range(3)], dtype=np.int64)
+    tagged = quadmesh.tag_edges(_plain_section(), rows, "wall")
+    assert tagged.element_group_tags == []          # elements untouched
+    assert sorted(tagged.edge_tags.group_tags) == ["wall"]
+    assert len(quadmesh.tagged_edges(tagged, "wall")) == 3
+
+
+def test_tag_edges_takes_one_name_per_row():
+    rows = np.array([[0, 1], [1, 1], [2, 1]], dtype=np.int64)
+    tagged = quadmesh.tag_edges(_plain_section(), rows, ["a", "b", "b"])
+    assert sorted(tagged.edge_tags.group_tags) == ["a", "b"]
+    assert len(quadmesh.tagged_edges(tagged, "b")) == 2
+
+
+def test_tag_edges_refuses_a_count_that_is_neither():
+    rows = np.array([[0, 1], [1, 1], [2, 1]], dtype=np.int64)
+    with pytest.raises(ValueError, match="3 rows but 2 tags"):
+        quadmesh.tag_edges(_plain_section(), rows, ["a", "b"])
+
+
+def test_quadrant_ogrid_names_its_own_elements():
+    """A quadrant is one patch of a disc or one side of a tetra, so it has to be able to
+    carry a name of its own -- that is what lets a four-quadrant disc hand a *different*
+    cap name to each quadrant through ``first_tag``."""
+    ring = linemesh.circle(1.0, 8, order=1)
+    arc = linemesh.select(ring, [0, 1])
+    fr = quadmesh.quadrant_seam_fractions(1, 2, 0.7)
+    s1 = linemesh.line(np.zeros(3), arc.points[0], fr)
+    s2 = linemesh.line(np.zeros(3), arc.points[-1], fr)
+    q = quadmesh.quadrant_ogrid(arc, s1, s2, 2, center_scale=0.7, element_tag="patch")
+    assert q.element_group_tags == ["patch"]
+    assert q.element_tags.is_uniform(q.n_quads)
+    plain = quadmesh.quadrant_ogrid(arc, s1, s2, 2, center_scale=0.7)
+    assert plain.element_group_tags == []

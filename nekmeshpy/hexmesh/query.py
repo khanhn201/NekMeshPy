@@ -239,7 +239,8 @@ def report(mesh: HexMesh) -> str:
 def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
     Ei = HC[:, he[:, 0]].ravel()
     Ej = HC[:, he[:, 1]].ravel()
-    return np.unique(np.sort(np.column_stack([Ei, Ej]), axis=1), axis=0)
+    return conform.unique_rows(
+        np.sort(np.column_stack([Ei, Ej]), axis=1))[0]
 
 def element_blocks(mesh: HexMesh) -> PointArray:
     """``(E, (order+1)**3, 3)`` -- each hex's own node block, assembled natively from the
@@ -308,6 +309,26 @@ def centroid(mesh: HexMesh, *, high_order: bool = False) -> Point:
     return measure.centroid_of(_blocks(mesh, high_order), 3, "hexmesh.centroid")
 
 
+def tagged_faces(mesh: HexMesh, tag: str) -> IntArray:
+    """The **shared-face ids** carrying ``tag``, ascending.
+
+    The handle every face group is addressed by at this rung -- ``face_tags`` is stored
+    sparse and sorted, so this is its ``ids`` filtered by name.  It is public because
+    :func:`hexmesh.attach <nekmeshpy.hexmesh.assemble.attach>` works from exactly this
+    list, and a caller who wants to see, reorder or subset the group it will pair needs
+    to be able to get at it.
+
+    A tag that names nothing raises rather than returning an empty group: a mis-spelled
+    interface name is otherwise invisible until the solver reads the mesh."""
+    t = mesh.face_tags
+    hit: IntArray = np.asarray(t.ids[t.mask_for(tag)], dtype=np.int64)
+    if hit.size == 0:
+        raise ValueError(
+            "tagged_faces: no face carries the tag %r; this mesh has %s"
+            % (tag, sorted(t.group_tags) or "no tagged faces"))
+    return hit
+
+
 __all__ = [
     "TagReport",
     "face_tag_rows",
@@ -327,6 +348,7 @@ __all__ = [
     "report",
     "scaled_jacobian",
     "tag_report",
+    "tagged_faces",
     "topology_report",
     "volume",
 ]

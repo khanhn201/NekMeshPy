@@ -1,6 +1,6 @@
 """2-D quad mesh container (``QuadMesh``), its operations, and smoothing."""
 
-from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
+from .assemble import Seam, attach, components, loft, loft_fn, loft_spline, merge, remove, select
 from .lift import annulus, extrude, from_grid, sweep, sweep_path
 from .lower import boundary_mesh
 from .morph import (
@@ -29,6 +29,7 @@ from .query import (
     plane_normal,
     quality_summary,
     scaled_jacobian,
+    tagged_edges,
 )
 from .shape import (
     box,
@@ -47,7 +48,7 @@ from .shape import (
     tri_patch,
     tri_patch_tip,
 )
-from .tag import retag_edge, retag_element
+from .tag import retag_edge, retag_element, tag_edges
 
 __all__ = [
     "area",
@@ -60,11 +61,14 @@ __all__ = [
     "remove",
     "retag_edge",
     "retag_element",
+    "tag_edges",
     "select",
     "NO_TAG",
     "Port",
     "QuadMesh",
+    "Seam",
     "annulus",
+    "attach",
     "assemble",
     "blend",
     "boundary_edges",
@@ -100,6 +104,7 @@ __all__ = [
     "rotate",
     "scale",
     "scaled_jacobian",
+    "tagged_edges",
     "shape",
     "sphere",
     "spine_fractions",

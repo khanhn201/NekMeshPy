@@ -70,16 +70,16 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 
 | module | Δ | contents |
 |---|---|---|
-| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge` — n-ary; `select` / `remove` / `components` — the inverse |
+| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge`, `attach` — n-ary; `select` / `remove` / `components` — the inverse |
 | `lift.py` | +1 | `extrude` / `sweep` / `annulus` / `from_grid`; `adapter` / `bridge` hex-only |
 | `lower.py` | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
 | `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
-| `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` / `weld` |
+| `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` |
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
 | `tag.py` | 0 | `retag_element`; `retag_point` / `retag_edge` / `retag_face` — rename the tag vocabulary, geometry untouched. Plus the authoring bridges: `quadmesh.tag_edges` takes `(quad, side)` rows, since factories think element-locally; `hexmesh.tag_faces` takes face ids, the natural handle after a weld |
 
-**`loft`, `merge`, `select`/`remove`/`components` and `boundary_mesh` are the only
-operations that manufacture a global index space** — `select` and its kin are `merge`
+**`loft`, `merge`, `attach`, `select`/`remove`/`components` and `boundary_mesh` are the
+only operations that manufacture a global index space** — `select` and its kin are `merge`
 run backwards, and sit beside it for that reason. To place a new operation: *invents a
 numbering?* → `assemble` (unless it is boundary extraction → `lower`); *changes rung?* →
 `lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`. `morph` is for the
@@ -211,6 +211,71 @@ Tripling it globally is much worse: the junction stops being resolved. Widening
 `SNAP_MAX` buys wall accuracy by *trading away* that independence — at 0.20 alone the
 mesh was flawless locally and corner-inverted on CI.
 
+## Joining: `merge` infers, `attach` is told
+
+Two welds, and the difference is *what the caller states*.
+
+`merge(meshes, tol=)` is the **proximity** join: it is told nothing about what meets
+what and infers every seam in the assembly from coordinates, at one tolerance, over
+every block's whole boundary at once. That is why `examples/chimera_full.py:444-448`
+runs one seam at `tol=0.05` and the assembly at `0.005` — "loosening the tolerance for
+the whole assembly welded an unrelated, closer-together pair by mistake."
+
+`attach(meshes, seams)` is told, by a `Seam` apiece, **which** group meets which — one
+rung down at each level: `face_tags` at the hex rung, `edge_tags` at the quad rung,
+`point_tags` at the line rung (`tagged_faces` / `tagged_edges` are the public accessors,
+and either argument also takes an explicit id array). It therefore takes **no tolerance
+at all**. Inside those two groups the pairing is
+nearest-neighbour, and what proves it is **bijectivity** — equal point counts plus an
+injective map is a one-to-one correspondence however far apart the halves sit. A seam
+with a real gap joins; a seam whose halves do not correspond is refused however close
+they are.
+
+One case no tolerance could have caught either: a seam with a rotational symmetry whose
+halves are relatively rotated by a symmetry element pairs injectively, bijectively, and
+at distance **zero**, onto a cyclic shift — welding the block in twisted. The point sets
+are identical, so no geometry distinguishes the two readings.
+
+**Naming the interface is the work, and it happens at the rung below.** A section's
+*edge* tags become the swept block's lateral *face* tags, so a seam down a block's side
+is named by tagging the section that swept it. A cap is named by `first_tag` /
+`last_tag`, and those take an `ElementTags` over the slice, so a cap shared with two
+different neighbours — three legs meeting about a spine, where each seam is *half* a
+disc — is named per element. At the line rung a slice is one point, so `first_tag` /
+`last_tag` name the chain ends. Getting a half wrong cannot pass quietly: `attach` pairs
+a named group against a named group and refuses anything not one-to-one.
+
+`attach` welds **only** what it is told, so a `merge` converts all-or-nothing — stating
+one of two touching seams leaves two components, not a partial weld.
+
+**State a seam with the lower block index first** when you care about reproducing a
+`merge` byte for byte. The surviving point id is the lowest of a welded pair, but
+`own="a"` writes the *a*-side's coordinates -- so a seam given as `(3, 0)` keeps block
+0's id carrying block 3's numbers, and two values meant to be equal can differ in the
+last ulp. Closing a ring of blocks is where this bites: the wrap-around seam is the one
+that comes out backwards.
+
+`own=` picks whose nodes the seam keeps, and it is a **byte copy**, not an average: the
+shared-node re-scatter in `_stitch` checks the two sides against `conform.entity_tol`,
+orders tighter than any pairing distance, and a merely-close seam fails it. The welded-shut
+faces are **cleared** unless `attach_tag` names them — a named interior face makes the
+exporter write one boundary row from *each* side, which callers used to strip by hand.
+
+`attach` is **n-ary** -- `attach(meshes, seams)` -- and welds the whole assembly in one
+pass. Chaining two-block joins instead rebuilds the accumulated mesh per link, which is
+quadratic in the block count: 32 blocks cost 63240 hex-passes chained against 3840 in
+one pass, and measured 230 ms against 17 ms.
+
+Note this inverts the cap-argument convention below: here `attach_tag=None` means
+"clear", because burying a seam is what attaching is for.
+
+**Coincidence is a radius, not a bin.** `conform.coincident_clusters` decides it as
+"same lattice cell **or** within `tol`". The lattice alone missed any two points that
+straddled a cell boundary however close they were — a 1.78e-15 disagreement was enough —
+and a missed weld does not raise, it silently leaves a seam open. The cell rule is kept
+as well as the radius, not replaced: a shared cell reaches `tol*sqrt(3)`, and tolerances
+already tuned by hand against that reach (chimera_full's) reopen if it is narrowed.
+
 ## Tags
 
 **A rung's side tags *are* the rung below's `element_tags`.** There is one table type,
@@ -261,6 +326,22 @@ inherited implicitly: an untagged argument tags nothing.
 `inner_tag`/`outer_tag`) **`None` means "not asked for" and `NO_TAG` means an explicit
 override *to* untagged** — the difference shows where a tag would otherwise be inherited
 (`annulus` inherits its input's `element_tags` only when the argument is `None`).
+
+That default is the mechanism for naming a cap **per element** — `tjunction_lib`'s
+transitions tag each quadrant of their disc (`quadrant_ogrid(..., element_tag=)`) and the
+near cap picks up all four names for free. The catch is that it fires at **both** ends: a
+sweep whose every station carries those names has its far cap inherit them too, and an
+unconsumed seam name on an open port exports as a boundary condition. So a sweep that
+names one cap this way must state the other verbatim — `last_tag=port_tag`, not
+`last_tag=port_tag or None`. Same reason the port section handed back to a caller is
+stripped (`unnamed()` there): it is a template to loft off, and `first_tag` would ride the
+core's private seam names onto the caller's pipe.
+
+**A tag lives on the section, so every block built from that section gets it.**
+`cob_tjunction` tags the slot's boundary edges on a *copy*: the legs extrude the same
+section with the band still in, where those very edges are interior, and tagging in place
+named 784 interior faces that no seam consumes — one `.re2` boundary row each, in the
+middle of the pipe. The geometry was identical and only the boundary block gave it away.
 
 ## Conventions
 

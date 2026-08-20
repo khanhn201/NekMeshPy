@@ -43,7 +43,7 @@ def retag_edge(mesh: QuadMesh, mapping: Mapping[str, str]) -> QuadMesh:
 
 
 def tag_edges(mesh: QuadMesh, rows: IntArray,
-              tags: Sequence[str] | StrArray) -> QuadMesh:
+              tags: str | Sequence[str] | StrArray) -> QuadMesh:
     """The same mesh with the shared edge each ``(quad, side)`` row names given its tag.
 
     The authoring bridge. A factory knows its geometry element-locally -- "side 1 of the
@@ -52,11 +52,23 @@ def tag_edges(mesh: QuadMesh, rows: IntArray,
     changes is only where it lands: two rows that name the same edge from either side of
     it no longer become two entries that could disagree, and the later row wins.
 
+    ``tags`` is one name for all the rows or one name per row, as
+    :func:`hexmesh.tag_faces <nekmeshpy.hexmesh.tag.tag_faces>` takes them.
+
     Rows tagged ``NO_TAG`` name nothing, so a partly-tagged row block can be handed over
     whole."""
     edge_of: IntArray = np.asarray(mesh.quads, dtype=np.int64)
     r: IntArray = np.asarray(rows, dtype=np.int64).reshape(-1, 2)
-    names: StrArray = np.asarray(tags, dtype=np.str_).reshape(-1)
+    # One name for all of them, or one per row -- as ``hexmesh.tag_faces`` takes them.
+    # A bare string is a sequence *of characters*, so without this it zipped against the
+    # rows and quietly tagged only the first.  No dtype on the broadcast either:
+    # ``np.str_`` is a one-character width, which clips every name to its first letter.
+    names: StrArray = (np.full(r.shape[0], tags) if isinstance(tags, str)
+                       else np.asarray(tags, dtype=np.str_).reshape(-1))
+    if names.shape[0] != r.shape[0]:
+        raise ValueError(
+            "tag_edges: got %d rows but %d tags -- pass one name for all of them or "
+            "one per row" % (r.shape[0], names.shape[0]))
     named = np.asarray(mesh.edge_tags.dense(mesh.line_mesh.n_lines), dtype=object)
     for (q, side), nm in zip(r, names):
         if nm:

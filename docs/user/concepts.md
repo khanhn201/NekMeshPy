@@ -129,7 +129,7 @@ All build **natively in 3-D** — nothing projected to a plane.
 | {func}`quadmesh.structured <nekmeshpy.quadmesh.shape.structured>` | transfinite grid over 4 edges (mapping keyed by side name preferred over positional `[bottom, right, top, left]`) |
 | {func}`quadmesh.ogrid <nekmeshpy.quadmesh.shape.ogrid>` | O-grid inside a closed loop |
 | {func}`quadmesh.half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` | half-disc O-grid split along a spine |
-| {func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid; four `merge` back into a conforming disk |
+| {func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid; four `attach` back into a conforming disk, one stated seam per pair |
 | {func}`quadmesh.annulus <nekmeshpy.quadmesh.lift.annulus>` | ring O-grid between two closed loops, paired **by index** |
 | {func}`quadmesh.extrude <nekmeshpy.quadmesh.lift.extrude>` / {func}`loft <nekmeshpy.quadmesh.assemble.loft>` | sweep/stack a `LineMesh` into a quad strip |
 | {func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` | one profile along a curved path by a moving frame |
@@ -154,10 +154,20 @@ interior points can be repositioned onto a curved boundary afterward with
 | {func}`hexmesh.loft_spline <nekmeshpy.hexmesh.assemble.loft_spline>` | stack **fitted** by a cubic spline |
 | {func}`hexmesh.annulus <nekmeshpy.hexmesh.lift.annulus>` | shell between two closed `QuadMesh` surfaces, paired by index |
 | {func}`hexmesh.merge <nekmeshpy.hexmesh.assemble.merge>` | stitch blocks, welding coincident boundary points |
+| {func}`hexmesh.attach <nekmeshpy.hexmesh.assemble.attach>` | join two blocks along the face group each **names** |
 | {func}`hexmesh.from_grid <nekmeshpy.hexmesh.lift.from_grid>` | structured `i×j×k` block, `i` fastest / `k` slowest |
 
 `HexMesh` is immutable by construction. `extrude`/`loft` are shared-point
-(index arithmetic, no weld); `merge` is the one place seams get coordinate-welded.
+(index arithmetic, no weld); `merge` and `attach` are where seams get welded.
+
+The two differ in *what they are told*. `merge` is told nothing: it infers every seam
+in the assembly from coordinates, at one tolerance, over every block's whole boundary.
+`attach(meshes, seams)` is told which face group meets which and takes **no
+tolerance**: inside those two groups the pairing is nearest-neighbour, proved by
+bijectivity rather than by a distance, so a seam with a real gap still joins and a seam
+whose halves do not correspond is refused however close they are. `attach` also clears the faces it welds shut (a named
+interior face exports a boundary row from *each* side), or names them via `attach_tag`
+— a conjugate interface stated up front rather than recovered from topology afterwards.
 
 ## Placing a finished mesh: `translate` / `rotate` / `scale`
 

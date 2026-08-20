@@ -43,6 +43,7 @@ import sys
 import numpy as np
 
 from nekmeshpy import (
+    ElementTags,
     TetMesh,
     TriMesh,
     fields,
@@ -53,6 +54,10 @@ from nekmeshpy import (
     trimesh,
     writer,
 )
+from nekmeshpy.core import conform
+from nekmeshpy.hexmesh import Seam
+from nekmeshpy.linemesh import Seam as PointSeam
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -615,8 +620,11 @@ def wall_loop(ring, order, tag="wall"):
     exactly the bulge that shows up along the wall layer.  Carotid has to refit because a
     surface solve gives it nothing in the interior to be consistent with."""
     R = np.asarray(ring, dtype=float).reshape(-1, 3)
-    return linemesh.merge([linemesh.loft(np.vstack([R, R[:1]]), order=order,
-                                         element_tags=tag)])
+    # one open chain whose last point repeats its first, closed by joining the chain to
+    # *itself* -- the ends are named so the closure is stated rather than found
+    chain = linemesh.loft(np.vstack([R, R[:1]]), order=order, element_tags=tag,
+                          first_tag="ring0", last_tag="ring1")
+    return linemesh.attach([chain], [PointSeam(0, "ring0", 0, "ring1")])
 
 
 def build_surface():
@@ -685,8 +693,9 @@ def build_surface():
     F = np.array(tris, dtype=np.int64)
     # weld the patch seams: the rim was injected identically, the band meets the other
     # two on a shared x grid, so this only ever fuses points that are already equal
-    key = np.round(V / (1e-7 * float((V.max(0) - V.min(0)).max()))).astype(np.int64)
-    _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    first, inv = np.unique(
+        conform.coincident_clusters(V, 1e-7 * float((V.max(0) - V.min(0)).max())),
+        return_inverse=True)
     V, F = V[first], inv.ravel()[F]
     F = F[(F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])]
     V = relax_junction(V, F)
@@ -976,7 +985,10 @@ def seam_pieces(mesh, U, wall_pts, n_half, radial, center_scale, fine):
         # wall against 0.0008 for the corners it sits between.  This arc *is* the rim of
         # the cutting O-grid (``pin_curve`` puts it back verbatim), so that is the seam
         # disc sitting off the wall.  Snap the whole curve, nodes included.
-        arc = linemesh.loft(a, order=ORDER, element_tags="wall")
+        # the two ends are the shared triple points A1 / A2 -- naming them is what lets
+        # ``linemesh.attach`` state where two legs' arcs meet instead of finding it
+        arc = linemesh.loft(a, order=ORDER, element_tags="wall",
+                            first_tag="A1", last_tag="A2")
         if arc.interior.size:
             arc.interior[:] = snap_to_wall(
                 arc.interior.reshape(-1, 3)).reshape(arc.interior.shape)
@@ -1205,7 +1217,11 @@ def seam_section(arc, spine, iface, *, radial, center_scale, flip=False):
     flat_s = np.column_stack([dm.ring_uv(spine.points), np.zeros(spine.n_points)])
     half = quadmesh.half_ogrid(
         linemesh.loft(flat_a, order=ORDER, element_tags="wall"),
-        linemesh.loft(flat_s, order=ORDER), radial, center_scale=center_scale,
+        # the spine is the seam between the disc's two halves; ``half_ogrid`` carries a
+        # boundary loop's own element tags through, so naming it here is what lets the
+        # two halves be joined by name rather than by proximity
+        linemesh.loft(flat_s, order=ORDER, element_tags="attach_spine"),
+        radial, center_scale=center_scale,
         quadrant_scale=center_scale)
     # the parameter positions, kept before the lift overwrites them -- ``pin_curve``
     # finds its nodes by where they sit in the *parameter* plane, which is the only
@@ -1379,15 +1395,18 @@ def ogrid_leg(walker, levels, cap_loop, seam_loop, spine, ifaces, *,
     and ``u = 0`` is the cap's own Dirichlet boundary, so both degenerate; the seam is
     built from its two interfaces and the cap from the opening as given."""
     # each half on the interface it is, rather than an algebraic fill across both
-    seam = quadmesh.merge([
+    halves = [
         seam_section(a, sp, f, radial=radial, center_scale=center_scale)
         # the second half traverses A2 -> A1, arc *and* spine -- reversing only the
         # spine leaves the two halves wound against each other, and every quad of one of
-        # them then reads inverted in the merged disc
+        # them then reads inverted in the joined disc
         for a, sp, f in ((seam_loop[0], spine, ifaces[0]),
                          (linemesh.reverse(seam_loop[1]), linemesh.reverse(spine),
-                          ifaces[1]))])
-    loop = linemesh.merge([seam_loop[0], linemesh.reverse(seam_loop[1])])
+                          ifaces[1]))]
+    # the shared spine is the one seam, named on both halves
+    seam = quadmesh.attach(halves, [EdgeSeam(0, "attach_spine", 1, "attach_spine")])
+    loop = linemesh.attach([seam_loop[0], linemesh.reverse(seam_loop[1])],
+                           [PointSeam(0, "A1", 1, "A1"), PointSeam(0, "A2", 1, "A2")])
     slices = [cap_section(cap_loop, loop, radial=radial, center_scale=center_scale)]
     slices += [level_section(walker, float(lv), loop, radial=radial,
                              center_scale=center_scale) for lv in levels]
@@ -1477,7 +1496,9 @@ print("shared spine: %d nodes; arcs %s"
 # each leg's seam ring is the pair of arcs it shares with its neighbours, welded at the
 # triple points -- the same arcs, so adjacent legs meet on identical geometry
 LEG_ARCS = {1: ((1, 2), (1, 3)), 2: ((1, 2), (2, 3)), 3: ((1, 3), (2, 3))}
-seam_loops = {leg: linemesh.merge([arcs[p], linemesh.reverse(arcs[q])])
+seam_loops = {leg: linemesh.attach([arcs[p], linemesh.reverse(arcs[q])],
+                                   [PointSeam(0, "A1", 1, "A1"),
+                                    PointSeam(0, "A2", 1, "A2")])
               for leg, (p, q) in LEG_ARCS.items()}
 
 opening_name = ["inlet", "branch", "outlet"]
@@ -1493,7 +1514,22 @@ LEG_NEAR_LEN = [NEAR_LEN, NEAR_LEN_BRANCH, NEAR_LEN]   # leg 2 is the branch
 cap_loops = [surf.points[trimesh.ops.order_boundary_loop(surf, c)]
              for c in order_openings(surf)]
 
+def cap_tags(slice_, first, second):
+    """Name a leg's seam cap by half-disc.  ``spined_ogrid`` welds the two halves in
+    order, so the first half of the quads is ``LEG_ARCS[leg]``'s first arc; each half is
+    shared with a different leg, so one name for the whole cap will not do."""
+    half = slice_.n_quads // 2
+    return ElementTags.from_dense(
+        np.array([first] * half + [second] * (slice_.n_quads - half)))
+
+
+#: The interface names, keyed by the arc the two legs share -- ``LEG_ARCS`` gives each
+#: leg its two arcs in the order its seam loop was welded, which fixes the mapping.
+ARC_TAG = {(1, 2): "attach1", (1, 3): "attach2", (2, 3): "attach3"}
+
 blocks = []
+seam_block: dict = {}
+inner_seams: list = []
 for leg in (1, 2, 3):
     Pl, Tl, u = leg_field_vol(tets, Uvol, caps, leg)
     walker = fvol.FieldWalker(Pl, Tl, u)
@@ -1515,14 +1551,32 @@ for leg in (1, 2, 3):
     # stack it is given -- across that joint it would read the change as curvature and
     # overshoot.  One loft per run keeps each spline inside a region of its own spacing,
     # and the split at the flux plane is what gives that plane a name.
+    # every split is a seam, so each side of it is named: the flux plane by its own
+    # name (``attach_tag`` puts it back on the fused face, which is what makes it the
+    # tagged interior plane), the spacing joint by a private name that is cleared.
+    cap = cap_tags(slices[-1], ARC_TAG[pr], ARC_TAG[qr])
+    joint_tag = "joint_%d" % leg
     if flux and 0 < off < joint:
-        blocks.append(hexmesh.loft_spline(slices[:off + 1], first_tag=name,element_tags=FLUX_DOWNSTREAM))
-        blocks.append(hexmesh.loft_spline(slices[off:joint + 1], first_tag=flux,element_tags=FLUX_UPSTREAM))
+        blocks.append(hexmesh.loft_spline(slices[:off + 1], first_tag=name,
+                                          last_tag=flux, element_tags=FLUX_DOWNSTREAM))
+        blocks.append(hexmesh.loft_spline(slices[off:joint + 1], first_tag=flux,
+                                          last_tag=joint_tag,
+                                          element_tags=FLUX_UPSTREAM))
+        inner_seams.append(Seam(len(blocks) - 2, flux, len(blocks) - 1, flux,
+                                attach_tag=flux))
     else:
-        blocks.append(hexmesh.loft_spline(slices[:joint + 1], first_tag=name))
-    blocks.append(hexmesh.loft_spline(slices[joint:]))
+        blocks.append(hexmesh.loft_spline(slices[:joint + 1], first_tag=name,
+                                          last_tag=joint_tag))
+    blocks.append(hexmesh.loft_spline(slices[joint:], first_tag=joint_tag,
+                                      last_tag=cap))
+    inner_seams.append(Seam(len(blocks) - 2, joint_tag, len(blocks) - 1, joint_tag))
+    seam_block[leg] = len(blocks) - 1
 
-mesh = hexmesh.merge(blocks)
+mesh = hexmesh.attach(blocks, inner_seams + [
+    Seam(seam_block[1], ARC_TAG[1, 2], seam_block[2], ARC_TAG[1, 2]),
+    Seam(seam_block[1], ARC_TAG[1, 3], seam_block[3], ARC_TAG[1, 3]),
+    Seam(seam_block[2], ARC_TAG[2, 3], seam_block[3], ARC_TAG[2, 3]),
+])
 mesh = hexmesh.scale(mesh, 1.0/(R_MAIN*2.0))
 
 print(hexmesh.report(mesh))

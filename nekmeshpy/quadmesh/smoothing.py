@@ -10,6 +10,7 @@ import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 
 from .._typing import BoolArray, IntArray, PointArray
+from ..core import conform
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from .quadmesh import QuadMesh
@@ -26,7 +27,8 @@ def _section_edges(quads: IntArray) -> tuple[IntArray, IntArray]:
     Ei = quads[:, _QE_RING[:, 0]].ravel()
     Ej = quads[:, _QE_RING[:, 1]].ravel()
     pairs = np.sort(np.column_stack([Ei, Ej]), axis=1)
-    return np.unique(pairs, axis=0, return_counts=True)
+    uniq, _inv, cnt = conform.unique_rows(pairs, return_counts=True)
+    return uniq, cnt
 
 
 def _section_boundary(quads: IntArray, nu: int) -> BoolArray:
@@ -83,11 +85,15 @@ def winslow_section(qm: QuadMesh, iters: int = 30, omega: float = 0.5) -> QuadMe
     X = qm.points.copy()
     nu = X.shape[0]
     edges, _ = _section_edges(qm.corners)
-    adj: list[Any] = [[] for _ in range(nu)]
-    for a, b in edges:
-        adj[a].append(b)
-        adj[b].append(a)
-    adj = [np.asarray(a, dtype=np.int64) for a in adj]
+    # point -> its edge neighbours, through a CSR matrix rather than a Python loop
+    # per edge (see ``hexmesh.smoothing._csr_groups`` for the same construction)
+    _e = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
+    _g = sp.coo_matrix(
+        (np.ones(2 * _e.shape[0], dtype=np.int8),
+         (np.concatenate([_e[:, 0], _e[:, 1]]), np.concatenate([_e[:, 1], _e[:, 0]]))),
+        shape=(nu, nu)).tocsr()
+    adj: list[Any] = [np.asarray(_g.indices[_g.indptr[i]:_g.indptr[i + 1]],
+                                 dtype=np.int64) for i in range(nu)]
     interior = np.flatnonzero(~_section_boundary(qm.corners, nu))
     if interior.size == 0:
         return qm

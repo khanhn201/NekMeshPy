@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
+from scipy.spatial import cKDTree
 
 from .._typing import BoolArray, FloatArray, IntArray, Point, PointArray
+from ..core import conform
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.assemble import loft_fn as line_loft_fn
@@ -75,22 +77,34 @@ def _boundary_edges(surface: TriMesh) -> IntArray:
     tri = surface.tris
     E = np.vstack([tri[:, [0, 1]], tri[:, [1, 2]], tri[:, [2, 0]]])
     E = np.sort(E, axis=1)
-    Eu, ic, cnt = np.unique(E, axis=0, return_inverse=True, return_counts=True)
-    return Eu[cnt == 1, :]
+    # ``conform.unique_rows``, not ``np.unique(axis=0)``: the latter views each row as a
+    # void scalar and argsorts that, which measured 137 ms on a 48k-vertex surface and
+    # was the entire cost of ``boundary_loops`` -- the walk underneath it is free.
+    # Packing the two ids into one int64 gives the same lexicographic order, so the
+    # result is identical rather than merely equivalent.
+    Eu, _ic, cnt = conform.unique_rows(E, return_counts=True)
+    return np.asarray(Eu[cnt == 1, :], dtype=np.int64)
 
 
 def boundary_loops(surface: TriMesh) -> list[IntArray]:
     """Group open-boundary edges into connected loops; returns a list of vertex-index arrays."""
-    nv = surface.n_points
     bnd_edges = _boundary_edges(surface)
-    bnd_verts = np.unique(bnd_edges.ravel())
-    adj: list[list[int]] = [[] for _ in range(nv)]
-    for i, j in bnd_edges:
+    bnd_verts: IntArray = np.unique(bnd_edges.ravel())
+    if bnd_verts.size == 0:
+        return []
+    # Index the adjacency by *boundary* vertex, not by every vertex on the surface.
+    # Allocating one list per surface point cost 48k empty lists to hold the 876 useful
+    # ones on a scan-sized patch -- the walk itself was never the expensive part, so this
+    # keeps the BFS, and with it the discovery order the loop ordering depends on,
+    # exactly as it was.
+    local: IntArray = np.searchsorted(bnd_verts, bnd_edges)
+    adj: list[list[int]] = [[] for _ in range(bnd_verts.size)]
+    for i, j in local:
         adj[i].append(j)
         adj[j].append(i)
-    visited: BoolArray = np.zeros(nv, dtype=bool)
+    visited: BoolArray = np.zeros(bnd_verts.size, dtype=bool)
     loops = []
-    for v0 in bnd_verts:
+    for v0 in range(bnd_verts.size):
         if visited[v0]:
             continue
         comp = [v0]
@@ -103,7 +117,7 @@ def boundary_loops(surface: TriMesh) -> list[IntArray]:
                     visited[w] = True
                     comp.append(w)
                     queue.append(w)
-        loops.append(np.array(comp, dtype=np.int64))
+        loops.append(bnd_verts[np.array(comp, dtype=np.int64)])
     return loops
 
 
@@ -441,11 +455,13 @@ def _chain_segments(segs: FloatArray) -> LineMesh | None:
     ns = segs.shape[0]
     pts_raw = np.vstack([segs[:, 0:3], segs[:, 3:6]])
 
-    # weld coincident endpoints on a scale-relative grid
+    # Weld coincident endpoints by a scale-relative *radius*, not a grid.  Snapping to
+    # a lattice missed any two endpoints that straddled a bin boundary however close
+    # they were, and a single missed weld here does not raise -- it breaks the chain, so
+    # the walk below returns a shorter loop, or ``None``.
     scl = float(np.max(pts_raw.max(axis=0) - pts_raw.min(axis=0)))
     tol = 1e-6 * scl if scl > 0 else 1.0
-    key = np.round(pts_raw / tol).astype(np.int64)
-    _, ic = np.unique(key, axis=0, return_inverse=True)
+    _, ic = np.unique(conform.coincident_clusters(pts_raw, tol), return_inverse=True)
     ic = ic.ravel()
     npts = int(ic.max()) + 1
 
@@ -542,16 +558,16 @@ def _lerp_along(P: PointArray, arclen: FloatArray, targets: FloatArray) -> Point
     ``targets`` (``arclen`` = ``P``'s cumulative arc length); callers pass already
     clamped ``targets``.  Returns ``(len(targets), 3)``."""
     K = P.shape[0]
-    out: PointArray = np.zeros((targets.shape[0], 3))
-    for k in range(targets.shape[0]):
-        s = targets[k]
-        idx = int(np.flatnonzero(arclen <= s)[-1])
-        idx = min(idx, K - 2)
-        span = arclen[idx + 1] - arclen[idx]
-        t = 0.0
-        if span > 0:
-            t = (s - arclen[idx]) / span
-        out[k, :] = P[idx, :] + t * (P[idx + 1, :] - P[idx, :])
+    # ``searchsorted(side="right") - 1`` is the last index with ``arclen[idx] <= s`` --
+    # exactly what the old per-target ``flatnonzero(arclen <= s)[-1]`` scan returned,
+    # ties included, but O(log K) instead of O(K) and without the Python loop.
+    idx: IntArray = np.clip(
+        np.searchsorted(arclen, targets, side="right") - 1, 0, K - 2)
+    span: FloatArray = arclen[idx + 1] - arclen[idx]
+    t: FloatArray = np.where(span > 0.0,
+                             (targets - arclen[idx]) / np.where(span > 0.0, span, 1.0),
+                             0.0)
+    out: PointArray = P[idx, :] + t[:, None] * (P[idx + 1, :] - P[idx, :])
     return out
 
 
@@ -642,20 +658,34 @@ def conform_ring_stack(
 
 
 # -- projection ---------------------------------------------------------
+def _vertex_fans(T: IntArray, nv: int) -> list[IntArray]:
+    """``[triangles touching vertex v]`` for every ``v``, assembled as a sparse matrix
+    rather than by appending to ``nv`` Python lists once per triangle corner."""
+    tri = np.asarray(T, dtype=np.int64).reshape(-1, 3)
+    rows = tri.ravel()
+    cols: IntArray = np.repeat(np.arange(tri.shape[0], dtype=np.int64), 3)
+    m = sp.coo_matrix((np.ones(rows.shape[0], dtype=np.int8), (rows, cols)),
+                      shape=(nv, max(tri.shape[0], 1))).tocsr()
+    ind, ptr = m.indices, m.indptr
+    return [np.asarray(ind[ptr[v]:ptr[v + 1]], dtype=np.int64) for v in range(nv)]
+
+
 def project_points(surface: TriMesh, P: PointArray) -> PointArray:
     """Snap points onto the nearest vertex's triangle fan (points assumed near the surface)."""
     P = np.atleast_2d(np.asarray(P, dtype=float))
     Vx, T = surface.points, surface.tris
     nv = Vx.shape[0]
-    VT: list[list[int]] = [[] for _ in range(nv)]
-    for e in range(T.shape[0]):
-        VT[T[e, 0]].append(e)
-        VT[T[e, 1]].append(e)
-        VT[T[e, 2]].append(e)
+    VT: list[IntArray] = _vertex_fans(T, nv)
+    # one batched tree query instead of a full O(V) scan per point.  Only the *search*
+    # changes: the fan chosen and the arithmetic on it are untouched.  Exact ties are
+    # the one place this can differ -- ``argmin`` took the lowest vertex index, a tree
+    # takes whichever it reaches first -- but a tie means two vertices equidistant from
+    # the query, and their fans overlap on the triangles that matter.
+    nearest: IntArray = cKDTree(Vx).query(P)[1]
     Q = P.copy()
     for i in range(P.shape[0]):
         p = P[i, :]
-        vs = int(np.argmin(np.sum((Vx - p) ** 2, axis=1)))
+        vs = int(nearest[i])
         best = np.inf
         bq = Vx[vs, :]
         for e in VT[vs]:
@@ -678,14 +708,58 @@ def project_to_surface(
     m = P.shape[0]
     Q = P.copy()
     best = np.full(m, np.inf)
-    for e in range(T.shape[0]):
+    for e, pts in _projection_candidates(Vx, T, P):
         A, B, C = Vx[T[e, 0], :], Vx[T[e, 1], :], Vx[T[e, 2], :]
-        q, d2 = _closest_on_tri_vec(P, A, B, C)
-        upd = d2 < best
+        q, d2 = _closest_on_tri_vec(P[pts, :], A, B, C)
+        upd = d2 < best[pts]
         if np.any(upd):
-            best[upd] = d2[upd]
-            Q[upd, :] = q[upd, :]
+            sel = pts[upd]
+            best[sel] = d2[upd]
+            Q[sel, :] = q[upd, :]
     return Q
+
+
+def _projection_candidates(
+    Vx: PointArray, T: IntArray, P: PointArray,
+) -> Iterator[tuple[int, IntArray]]:
+    """``(triangle, the query points it could possibly be closest to)``, ascending by
+    triangle -- the broad phase that keeps :func:`project_to_surface` off an O(T*P) scan.
+
+    Exactness, not approximation. ``r0`` is the distance from a query point to the
+    nearest *vertex* of the surface, so the true closest point is at most ``r0`` away;
+    a triangle holding a point that close has its centroid within ``r0 + reach``, where
+    ``reach`` is the largest centroid-to-vertex distance of any triangle. Every triangle
+    that could win is therefore in the ball, and the ones dropped provably could not.
+
+    Yielding in ascending triangle order matters as much as the bound: the caller keeps
+    a strict ``d2 < best``, so on an exact tie the lowest triangle index wins, exactly as
+    the full scan did. Same kernel, same arithmetic, same reduction order -- the result
+    is bit-identical to testing every triangle."""
+    if T.shape[0] == 0 or P.shape[0] == 0:
+        return
+    cen: PointArray = Vx[T].mean(axis=1)
+    reach = float(np.max(np.linalg.norm(Vx[T] - cen[:, None, :], axis=2)))
+    # the bound must be taken over *this* triangle set's own vertices, not the whole
+    # surface's: with a ``faces`` subset the nearest vertex overall can be nearer than
+    # anything in the subset, which would shrink the ball below the true answer and drop
+    # the winning triangle.
+    r0: FloatArray = cKDTree(Vx[np.unique(T)]).query(P)[0]
+    hits = cKDTree(cen).query_ball_point(P, r=r0 + reach)
+
+    counts: IntArray = np.fromiter((len(h) for h in hits), dtype=np.int64,
+                                   count=len(hits))
+    if not counts.sum():
+        return
+    tri: IntArray = np.concatenate([np.asarray(h, dtype=np.int64)
+                                    for h in hits if len(h)])
+    pt: IntArray = np.repeat(np.arange(P.shape[0], dtype=np.int64), counts)
+    # group the flat (triangle, point) pairs by triangle, ascending
+    order = np.argsort(tri, kind="stable")
+    tri, pt = tri[order], pt[order]
+    edges: IntArray = np.flatnonzero(np.diff(tri)) + 1
+    for lo, hi in zip(np.concatenate([[0], edges]),
+                      np.concatenate([edges, [tri.shape[0]]])):
+        yield int(tri[lo]), pt[lo:hi]
 
 
 # -- closest-point helpers ----------------------------------------------

@@ -24,8 +24,11 @@ from collections import namedtuple
 
 import numpy as np
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
+from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import surfaces
+from nekmeshpy.hexmesh import Seam
+from nekmeshpy.linemesh import Seam as PointSeam
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 TJunction = namedtuple("TJunction", "core disc_minus disc_plus disc_branch")
 
@@ -93,7 +96,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                      RADIAL=None, CENTER_SCALE=0.7, QUADRANT_SCALE=0.7,
                      order=2, PHI_W=None, CAP_TIP_BIAS=None,
                      N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag="",
-                     branch_tag=""):
+                     branch_tag="", port_tags=None):
     RADIAL = _RADIAL_DEFAULT if RADIAL is None else RADIAL
     # each of the three defaults to the ratio-dependent choice; pass one explicitly to
     # override just that one
@@ -149,28 +152,50 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
     def seam(target, fr, center=ORIGIN):
         return linemesh.line(center, target, fr, order=order)
 
-    def quadrant(arc, seam1, seam2, wall_tag=""):
+    def quadrant(arc, seam1, seam2, wall_tag="", side_tags=None, element_tag=""):
         return quadmesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
-                                       center_scale=CENTER_SCALE, wall_tag=wall_tag)
+                                       center_scale=CENTER_SCALE, wall_tag=wall_tag,
+                                       element_tag=element_tag, side_tags=side_tags)
 
-    def disc(pieces):
-        return quadmesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
-                               for arc, s1, s2 in pieces])
+    def ring_sides(q, n):
+        """Quadrant ``q`` of a ring of ``n``: its two seams named so the next quadrant
+        round can be told which one it meets.  ``quadrant_ogrid`` takes them keyed
+        ``seam1`` / ``seam2``, and ``seam2`` of one *is* ``seam1`` of the next."""
+        return {"seam1": "s%d" % q, "seam2": "s%d" % ((q + 1) % n)}
 
-    def disc_at(arcs, center):
+    def ring(quads):
+        """``n`` quadrants closed into a disc about their shared hub.  Every seam is
+        stated, the hub included -- each seam line runs through it, so welding them all
+        welds the hub with them."""
+        n = len(quads)
+        # lower block index first, always.  ``own="a"`` writes the a-side's coordinates
+        # onto the b-side, while the surviving point id is the *lowest* of the welded
+        # pair -- so stating the wrap-around seam as (n-1, 0) would keep block 0's id
+        # carrying block n-1's coordinates, and the two differ in the last ulp.
+        return quadmesh.attach(quads, [
+            EdgeSeam(min(q, (q + 1) % n), "s%d" % ((q + 1) % n),
+                     max(q, (q + 1) % n), "s%d" % ((q + 1) % n))
+            for q in range(n)])
+
+    def disc_at(arcs, center, names=("", "", "", "")):
         # quadrant_disc's own recipe, inlined: quadmesh.ogrid/spined_ogrid now cover the
         # single-boundary-loop case, but this junction's per-station arcs are built
         # independently per quadrant with an off-centroid hub, so they still need the
         # general form.
+        #
+        # ``names`` tags each quadrant as an *element*, which is how the disc, used as a
+        # loft's bounding slice, hands one name per quadrant to that cap: a cap side is
+        # the slice element, so ``first_tag`` picks the four names up on its own.
         fr = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
         seams = [seam(a.points[0], fr, center) for a in arcs]
         seams.append(seams[0])
-        return quadmesh.merge([quadrant(arcs[q], seams[q], seams[q + 1], wall_tag="wall")
-                               for q in range(4)])
+        return ring([quadrant(arcs[q], seams[q], seams[q + 1], wall_tag="wall",
+                              side_tags=ring_sides(q, 4), element_tag=names[q])
+                     for q in range(4)])
 
-    def plain_walls(composite, z, sign):
+    def plain_walls(walls, z, sign):
         ang = sign * np.deg2rad(-45.0 + 90.0 * np.arange(5))
-        return [plain_wall(composite[q], ang[q], ang[q + 1], z) for q in range(4)]
+        return [plain_wall(walls[q], ang[q], ang[q + 1], z) for q in range(4)]
 
     FR = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
 
@@ -199,73 +224,110 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
     SIDE_RP, SIDE_RM = wall_mesh(W_R[1]), wall_mesh(W_R[3])
     SIDE_LM, SIDE_LP = wall_mesh(W_L[1]), wall_mesh(W_L[3])
-    BYPASS = wall_mesh(W_R[2])
-
-    COMPOSITE_R = disc([(linemesh.reverse(FQ[0]), SP[1], SP[0]),
-                        (SIDE_RP, SP[0], SWP),
-                        (BYPASS, SWP, SWM),
-                        (SIDE_RM, SWM, SP[1])])
-    COMPOSITE_L = disc([(linemesh.reverse(FQ[2]), SP[3], SP[2]),
-                        (SIDE_LM, SP[2], SWM),
-                        (linemesh.reverse(BYPASS), SWM, SWP),
-                        (SIDE_LP, SWP, SP[3])])
 
     def arc_mids(walls):
         return [surfaces.node(w, N) for w in walls]
 
-    def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS):
+    def cap(sa, sb, sc, ab, bc, ca, tip_bias=CAP_TIP_BIAS, names=("", "", "")):
         (m_ab, w_ab), (m_bc, w_bc), (m_ca, w_ca) = ab, bc, ca
         mids = arc_mids((w_ab, w_bc, w_ca))
         wc_param = quadmesh.tri_patch_tip(*mids, tip_bias=tip_bias)
         wc = cyl_pts(wc_param[None, :])[0]
-        return hexmesh.tetra([quadrant(m_ab, sa, sb), quadrant(m_bc, sb, sc),
-                              quadrant(m_ca, sc, sa),
+        # three of the four tetrahedron sides are seams against a transition, and
+        # ``tetra`` carries each side's single element tag onto the faces it becomes
+        return hexmesh.tetra([quadrant(m_ab, sa, sb, element_tag=names[0]),
+                              quadrant(m_bc, sb, sc, element_tag=names[1]),
+                              quadrant(m_ca, sc, sa, element_tag=names[2]),
                               quadmesh.tri_patch(cyl_pts, w_ab, w_bc, w_ca,
                                                  order=order, tip_bias=tip_bias,
                                                  mids=mids, element_tag="wall")],
                              center=ORIGIN + CENTER_SCALE* np.sqrt(1.5) * (wc - ORIGIN),
                              element_tag=element_tag)
 
-    def leg(composite, walls, sign):
+    def unnamed(sec, names):
+        """A port disc as the caller gets it: stripped of the interior seam names.
+
+        Those name the core's own nine welds and are the core's business.  The disc is
+        handed out as a template to loft a pipe off, and ``first_tag`` defaults to the
+        bounding slice's own ``element_tags`` -- so left on, they would ride straight onto
+        that pipe's cap and out into the export as boundary conditions."""
+        drop = {n: "" for n in names if n}
+        return quadmesh.retag_element(sec, drop) if drop else sec
+
+    def leg(walls, sign, port_tag, names):
         z = sign * Z_NEAR
         w_plain = plain_walls(walls, z, sign)
 
         def station(s):
             return disc_at(
                 [wall_mesh(surfaces.blend(walls[q], w_plain[q], s)) for q in range(4)],
-                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]))
+                (1.0 - s) * ORIGIN + s * np.array([0.0, 0.0, z]), names)
 
         plain = station(1.0)
+        # ``first_tag`` is left to its default, which is the near station's own
+        # ``element_tags`` -- the four seam names.  ``last_tag`` can no longer be left to
+        # its own: every station carries those names, so the *far* cap would inherit them
+        # too and export four seam names as boundary conditions on the open port.  Hence
+        # ``port_tag`` verbatim rather than ``port_tag or None`` -- "" is an explicit
+        # override to untagged, None is "not asked for".
         transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                                     order=order, element_tags=element_tag or None)
-        return transition, plain
+                                     order=order, element_tags=element_tag or None,
+                                     last_tag=port_tag)
+        return transition, unnamed(plain, names)
 
-    def branch():
+    def branch(names):
         open_arcs = [linemesh.loft_fn(opening, fr, order=order) for fr in FQ_FR]
         t = np.linspace(0.0, 1.0, N_BRANCH + 1)
         walls = [linemesh.blend(f, o, t) for f, o in zip(FQ, open_arcs)]
         c_open = np.array([H_BRANCH, 0.0, 0.0])
         sections = [disc_at([w[i] for w in walls],
-                            (1.0 - t[i]) * ORIGIN + t[i] * c_open)
+                            (1.0 - t[i]) * ORIGIN + t[i] * c_open, names)
                    for i in range(t.size)]
         return (hexmesh.loft(sections, element_tags=element_tag or None,
-                             last_tag=branch_tag or None),
-                sections[-1])
+                             last_tag=branch_tag),      # verbatim: see ``leg``
+                unnamed(sections[-1], names))
 
-    trans_plus, disc_plus = leg(COMPOSITE_R, W_R, 1)
-    trans_minus, disc_minus = leg(COMPOSITE_L, W_L, -1)
-    trans_branch, disc_branch = branch()
+    # ``port_tags`` names the two leg openings on the core so a caller can
+    # ``hexmesh.attach`` its own legs to them by name rather than have ``merge``
+    # rediscover the seam from coordinates.  Off by default: a *named* face that a
+    # later ``merge`` buries is not inert -- the exporter writes one boundary row per
+    # hex carrying one -- so only a caller that means to attach should ask for them.
+    _pt_minus, _pt_plus = port_tags if port_tags else ("", "")
+
+    # The core's nine interior seams, each named identically on the two blocks that meet
+    # across it.  Every pair of the five blocks meets except the two crotch caps, so this
+    # is a complete graph minus one edge -- and each name is carried by exactly one
+    # quadrant of one transition's near disc and one patch of the block opposite.
+    J_PM, J_PB, J_MB = "j_plus_minus", "j_plus_branch", "j_minus_branch"
+    J_P_CP, J_P_CM = "j_plus_capP", "j_plus_capM"
+    J_M_CP, J_M_CM = "j_minus_capP", "j_minus_capM"
+    J_B_CP, J_B_CM = "j_branch_capP", "j_branch_capM"
+
+    # each tuple is in its own disc's quadrant order: a leg's walls run
+    # footprint / one crotch cap / bypass / the other cap, and the branch's run FQ[0..3]
+    trans_plus, disc_plus = leg(W_R, 1, _pt_plus, (J_PB, J_P_CP, J_PM, J_P_CM))
+    trans_minus, disc_minus = leg(W_L, -1, _pt_minus, (J_MB, J_M_CM, J_PM, J_M_CP))
+    trans_branch, disc_branch = branch((J_PB, J_B_CM, J_MB, J_B_CP))
 
     blocks = [trans_plus, trans_minus, trans_branch,
               cap(SP[0], SP[3], SWP,
                   (linemesh.reverse(FQ[3]), foot_wall(FQ_FR[3][::-1])),
                   (linemesh.reverse(SIDE_LP), shift_wall(surfaces.reverse(W_L[3]), 1)),
-                  (linemesh.reverse(SIDE_RP), surfaces.reverse(W_R[1]))),
+                  (linemesh.reverse(SIDE_RP), surfaces.reverse(W_R[1])),
+                  names=(J_B_CP, J_M_CP, J_P_CP)),
               cap(SP[2], SP[1], SWM,
                   (linemesh.reverse(FQ[1]), foot_wall(FQ_FR[1][::-1])),
                   (linemesh.reverse(SIDE_RM), shift_wall(surfaces.reverse(W_R[3]), -1)),
-                  (linemesh.reverse(SIDE_LM), surfaces.reverse(W_L[1])))]
-    core = hexmesh.merge(blocks)
+                  (linemesh.reverse(SIDE_LM), surfaces.reverse(W_L[1])),
+                  names=(J_B_CM, J_P_CM, J_M_CM))]
+    # ``attach``, not ``merge``: the junction is nine stated interfaces, not a proximity
+    # search over five whole boundaries.  Lower block index first in every seam.
+    core = hexmesh.attach(blocks, [
+        Seam(0, J_PM, 1, J_PM), Seam(0, J_PB, 2, J_PB),
+        Seam(0, J_P_CP, 3, J_P_CP), Seam(0, J_P_CM, 4, J_P_CM),
+        Seam(1, J_MB, 2, J_MB),
+        Seam(1, J_M_CP, 3, J_M_CP), Seam(1, J_M_CM, 4, J_M_CM),
+        Seam(2, J_B_CP, 3, J_B_CP), Seam(2, J_B_CM, 4, J_B_CM)])
     return TJunction(core, disc_minus, disc_plus, disc_branch)
 
 
@@ -289,7 +351,8 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
     # -- native frame here is (main=X, branch=Z), circular_pipe_tjunction's own --
     def arc_main_lower():
         return linemesh.arc(R, n_half, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
-                            start_theta=0.0, end_theta=np.pi, order=order)
+                            start_theta=0.0, end_theta=np.pi,
+                            first_tag="A1", last_tag="A2", order=order)
 
     def arc_collar(xside):
         def f(t):
@@ -297,10 +360,15 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
                 [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
         return linemesh.loft_fn(
             f, linemesh.arclength_fractions(f, n_half, t_range=(0.0, np.pi)),
-            order=order)
+            first_tag="A1", last_tag="A2", order=order)
 
     def join_arcs(p, q):
-        return linemesh.merge([p, linemesh.reverse(q)])
+        # both shared ends are named, so the ring closes by two *stated* joins;
+        # ``reverse`` carries a point's tag with it, so ``A1`` still names ``A1``
+        # whichever way round the arc is stored
+        return linemesh.attach([p, linemesh.reverse(q)],
+                               [PointSeam(0, "A1", 1, "A1"),
+                                PointSeam(0, "A2", 1, "A2")])
 
     def opening_main(x0):
         return linemesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
@@ -327,11 +395,27 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
     slices_plus = leg_slices(opening_main(Z_NEAR), seam_right, n_layers_main)
     slices_branch = leg_slices(opening_branch(H_BRANCH), seam_branch, n_layers_branch)
 
-    core = hexmesh.merge([
-        hexmesh.loft(slices_minus, element_tags=element_tag or None),
-        hexmesh.loft(slices_plus, element_tags=element_tag or None),
-        hexmesh.loft(slices_branch, element_tags=element_tag or None,
-                     last_tag=branch_tag or None)])
+    def cap_tags(slice_, first, second):
+        """Name a leg's seam cap by half-disc.  ``spined_ogrid`` welds the two halves in
+        order, so the first half of the quads is ``join_arcs``' first arc -- and each
+        half is shared with a *different* leg, so one name for the whole cap will not
+        do.  ``last_tag`` takes an ``ElementTags`` over the slice's own elements."""
+        half = slice_.n_quads // 2
+        return ElementTags.from_dense(
+            np.array([first] * half + [second] * (slice_.n_quads - half)))
+
+    # the three legs meet pairwise on the three arcs: a_lm joins minus to plus, a_lb
+    # joins minus to branch, a_rb joins plus to branch
+    core = hexmesh.attach(
+        [hexmesh.loft(slices_minus, element_tags=element_tag or None,
+                      last_tag=cap_tags(slices_minus[-1], "attach1", "attach2")),
+         hexmesh.loft(slices_plus, element_tags=element_tag or None,
+                      last_tag=cap_tags(slices_plus[-1], "attach1", "attach3")),
+         hexmesh.loft(slices_branch, element_tags=element_tag or None,
+                      last_tag=cap_tags(slices_branch[-1], "attach2", "attach3"))],
+        [Seam(0, "attach1", 1, "attach1"),
+         Seam(0, "attach2", 2, "attach2"),
+         Seam(1, "attach3", 2, "attach3")])
     disc_minus, disc_plus, disc_branch = (slices_minus[0], slices_plus[0],
                                           slices_branch[0])
 

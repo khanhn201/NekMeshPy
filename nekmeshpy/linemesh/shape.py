@@ -17,16 +17,23 @@ from .linemesh import LineMesh
 
 
 def line(start: Point, end: Point, fractions: float | FloatArray, *,
-         element_tag: str = "", order: int = 1) -> LineMesh:
+         element_tag: str = "", first_tag: str | None = None,
+         last_tag: str | None = None, order: int = 1) -> LineMesh:
     """A straight open line from ``start`` to ``end`` sampled at normalized arc-length
     ``fractions`` in ``[0, 1]`` (``0`` = start, ``1`` = end): the graded-edge sibling of
-    ``circle``/``rectangle``."""
+    ``circle``/``rectangle``.
+
+    ``first_tag`` / ``last_tag`` name the two end **points**, as on
+    :func:`loft <nekmeshpy.linemesh.assemble.loft>` -- a slice at this rung is a single
+    point.  That is what makes an end addressable by
+    :func:`linemesh.attach <nekmeshpy.linemesh.assemble.attach>`."""
     frac = np.atleast_1d(np.asarray(fractions, dtype=float))
     s: Point = np.asarray(start, dtype=float).ravel()
     e: Point = np.asarray(end, dtype=float).ravel()
     pts = s + frac[:, None] * (e - s)
     # the segment is straight, so ``loft``'s default straight GLL interior is exact
-    return loft(pts, loop=False, element_tags=element_tag or None, order=order)
+    return loft(pts, loop=False, element_tags=element_tag or None, order=order,
+                first_tag=first_tag, last_tag=last_tag)
 
 
 def arc(radius: float, n: int, *,
@@ -35,10 +42,15 @@ def arc(radius: float, n: int, *,
         start_theta: float = 0.0,
         end_theta: float = np.pi,
         element_tag: str = "",
+        first_tag: str | None = None,
+        last_tag: str | None = None,
         order: int = 1) -> LineMesh:
     """An **open** circular arc: ``n`` line elements over ``n+1`` points evenly spaced
     in angle from ``start_theta`` to ``end_theta`` on the circle of ``radius`` about
-    ``center``, in the plane with the given ``normal`` (default ``+z``)."""
+    ``center``, in the plane with the given ``normal`` (default ``+z``).
+
+    ``first_tag`` / ``last_tag`` name the two end **points**, which is what makes an end
+    addressable by :func:`linemesh.attach <nekmeshpy.linemesh.assemble.attach>`."""
     ni = int(n)
     if ni < 1:
         raise ValueError("arc needs n >= 1 elements, got %d" % ni)
@@ -50,13 +62,14 @@ def arc(radius: float, n: int, *,
     th: FloatArray = np.linspace(s, e, ni + 1)
     pts: PointArray = _arc_points(radius, c, e1, e2, th)
     if order == 1:
-        return loft(pts, element_tags=element_tag or None)
+        return loft(pts, element_tags=element_tag or None,
+                    first_tag=first_tag, last_tag=last_tag)
     # element l spans th[l] .. th[l] + dth; its private interior rides the exact arc,
     # overriding ``loft``'s default straight chord blend.
     interior: PointArray = _arc_interior(
         radius, c, e1, e2, th[:-1], (e - s) / ni, order)     # (n, order-1, 3)
     return loft(pts, interior=interior, element_tags=element_tag or None,
-                order=order)
+                first_tag=first_tag, last_tag=last_tag, order=order)
 
 
 def _arclength_params(f: Callable[[FloatArray], PointArray], t0: float, t1: float,
