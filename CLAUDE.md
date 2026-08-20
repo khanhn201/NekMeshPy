@@ -327,6 +327,22 @@ inherited implicitly: an untagged argument tags nothing.
 override *to* untagged** — the difference shows where a tag would otherwise be inherited
 (`annulus` inherits its input's `element_tags` only when the argument is `None`).
 
+That default is the mechanism for naming a cap **per element** — `tjunction_lib`'s
+transitions tag each quadrant of their disc (`quadrant_ogrid(..., element_tag=)`) and the
+near cap picks up all four names for free. The catch is that it fires at **both** ends: a
+sweep whose every station carries those names has its far cap inherit them too, and an
+unconsumed seam name on an open port exports as a boundary condition. So a sweep that
+names one cap this way must state the other verbatim — `last_tag=port_tag`, not
+`last_tag=port_tag or None`. Same reason the port section handed back to a caller is
+stripped (`unnamed()` there): it is a template to loft off, and `first_tag` would ride the
+core's private seam names onto the caller's pipe.
+
+**A tag lives on the section, so every block built from that section gets it.**
+`cob_tjunction` tags the slot's boundary edges on a *copy*: the legs extrude the same
+section with the band still in, where those very edges are interior, and tagging in place
+named 784 interior faces that no seam consumes — one `.re2` boundary row each, in the
+middle of the pipe. The geometry was identical and only the boundary block gave it away.
+
 ## Conventions
 
 - **Typing is enforced.** Use the aliases in `_typing.py` — `FloatArray` / `IntArray` /

@@ -466,10 +466,15 @@ def quadrant_core(arc: LineMesh, seam1: LineMesh, seam2: LineMesh, *,
 
 def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
                    radial: int | FloatArray, *, center_scale: float = 0.5,
-                   wall_tag: str = "",
+                   wall_tag: str = "", element_tag: str = NO_TAG,
                    side_tags: Mapping[str, str] | None = None) -> QuadMesh:
     """Quarter-disk O-grid: the 90-degree sibling of :func:`half_ogrid
-    <nekmeshpy.quadmesh.shape.half_ogrid>`."""
+    <nekmeshpy.quadmesh.shape.half_ogrid>`.
+
+    Untagged unless ``element_tag`` is given, like every other factory.  Naming the
+    quadrant itself is what lets a disc assembled from four of them hand a *per-quadrant*
+    cap name to :func:`loft <nekmeshpy.hexmesh.assemble.loft>` or a single patch name to
+    :func:`hexmesh.tetra <nekmeshpy.hexmesh.shape.tetra>`."""
     apts = _check_boundary(arc, "quadrant_ogrid arc", 3)
     na = apts.shape[0]
     if na < 3 or (na - 1) % 2 != 0:
@@ -578,6 +583,8 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     qm = tag_edges(QuadMesh.from_corners(points, quads),
                    np.concatenate([r for r, _ in blocks], axis=0),
                    np.concatenate([n for _, n in blocks]))
+    qm = QuadMesh(qm.line_mesh, qm.quads, qm.orient, qm.interior,
+                  ElementTags.uniform(qm.n_quads, element_tag))
 
     # -- order N.  Overlay every O-ring so the wall's curvature blends inward, and both
     # seams with their *own* nodes so a bowed radius is meshed exactly rather than

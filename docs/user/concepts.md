@@ -129,7 +129,7 @@ All build **natively in 3-D** — nothing projected to a plane.
 | {func}`quadmesh.structured <nekmeshpy.quadmesh.shape.structured>` | transfinite grid over 4 edges (mapping keyed by side name preferred over positional `[bottom, right, top, left]`) |
 | {func}`quadmesh.ogrid <nekmeshpy.quadmesh.shape.ogrid>` | O-grid inside a closed loop |
 | {func}`quadmesh.half_ogrid <nekmeshpy.quadmesh.shape.half_ogrid>` | half-disc O-grid split along a spine |
-| {func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid; four `merge` back into a conforming disk |
+| {func}`quadmesh.quadrant_ogrid <nekmeshpy.quadmesh.shape.quadrant_ogrid>` | quarter-disk O-grid; four `attach` back into a conforming disk, one stated seam per pair |
 | {func}`quadmesh.annulus <nekmeshpy.quadmesh.lift.annulus>` | ring O-grid between two closed loops, paired **by index** |
 | {func}`quadmesh.extrude <nekmeshpy.quadmesh.lift.extrude>` / {func}`loft <nekmeshpy.quadmesh.assemble.loft>` | sweep/stack a `LineMesh` into a quad strip |
 | {func}`quadmesh.sweep <nekmeshpy.quadmesh.lift.sweep>` | one profile along a curved path by a moving frame |

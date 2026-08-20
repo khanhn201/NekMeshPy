@@ -48,7 +48,7 @@ from .shape import (
     tri_patch,
     tri_patch_tip,
 )
-from .tag import retag_edge, retag_element
+from .tag import retag_edge, retag_element, tag_edges
 
 __all__ = [
     "area",
@@ -61,6 +61,7 @@ __all__ = [
     "remove",
     "retag_edge",
     "retag_element",
+    "tag_edges",
     "select",
     "NO_TAG",
     "Port",

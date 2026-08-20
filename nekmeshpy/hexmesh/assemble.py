@@ -827,8 +827,8 @@ def _face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
     return ids
 
 
-def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh,
-               fb: IntArray) -> tuple[IntArray, float]:
+def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh, fb: IntArray,
+               who: str = "attach") -> tuple[IntArray, float]:
     """``((M,2) point pairs in each mesh's own numbering, the worst pairing distance)``
     -- the one place :func:`attach` reads a coordinate.
 
@@ -851,18 +851,18 @@ def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh,
     pb: IntArray = np.unique(np.asarray(b.quad_mesh.corners, dtype=np.int64)[fb])
     if pa.size != pb.size:
         raise ValueError(
-            "attach: the two groups are not the same surface -- %d faces / %d points on "
-            "a, %d faces / %d points on b. Equal face counts with unequal point counts "
-            "usually means the two sides are refined differently, which has no "
-            "conformal weld." % (fa.size, pa.size, fb.size, pb.size))
+            "attach: %s joins groups that are not the same surface -- %d faces / %d "
+            "points on a, %d faces / %d points on b. Equal face counts with unequal "
+            "point counts usually means the two sides are refined differently, which "
+            "has no conformal weld." % (who, fa.size, pa.size, fb.size, pb.size))
     dist, loc = cKDTree(b.points[pb]).query(a.points[pa])
     dup = loc.size - np.unique(loc).size
     if dup:
         raise ValueError(
-            "attach: the pairing is not one-to-one -- %d of a's %d seam points share a "
-            "nearest point on b, so the two patterns do not correspond one for one. "
-            "Either the groups are the same surface meshed differently, or one of them "
-            "is the wrong group." % (dup, loc.size))
+            "attach: %s: the pairing is not one-to-one -- %d of a's %d seam points "
+            "share a nearest point on b, so the two patterns do not correspond one for "
+            "one. Either the groups are the same surface meshed differently, or one of "
+            "them is the wrong group." % (who, dup, loc.size))
     return np.stack([pa, pb[loc]], axis=1), float(np.max(dist)) if dist.size else 0.0
 
 
@@ -1012,8 +1012,9 @@ def attach(meshes: Sequence[HexMesh], seams: Sequence[Seam]) -> HexMesh:
     #    in seam order and written back into ``meshes``, so a block carrying several
     #    seams accumulates them rather than losing all but the last.
     pair_list: list[IntArray] = []
-    for ia, fa, ib, fb, own, _tag in resolved:
-        pairs, worst = _pair_seam(meshes[ia], fa, meshes[ib], fb)
+    for k, (ia, fa, ib, fb, own, _tag) in enumerate(resolved):
+        pairs, worst = _pair_seam(meshes[ia], fa, meshes[ib], fb,
+                                  "seams[%d]" % k)
         _log.debug("attach: %d faces, %d points, worst pairing distance %.3e",
                    fa.size, pairs.shape[0], worst)
         if own == "a":

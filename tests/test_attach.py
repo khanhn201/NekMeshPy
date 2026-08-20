@@ -238,6 +238,22 @@ def test_a_non_corresponding_group_is_refused_at_the_hex_rung():
         _join(a, b, "outlet", "join")
 
 
+def test_a_failed_pairing_names_which_seam_failed():
+    """With nine seams in one call, "the pairing is not one-to-one" on its own does not
+    say which of them to look at.  The tag lookup already named the seam; the geometric
+    checks have to as well, or the index has to be found by bisection."""
+    a = _block(1)
+    b = _stub(a, 1)
+    sp = np.unique(b.quad_mesh.corners[hexmesh.tagged_faces(b, "join")])
+    P = b.points.copy()
+    P[sp] = P[sp[0]]
+    b.points[:] = P
+    c = _stub(_block(1), 1)
+    with pytest.raises(ValueError, match=r"seams\[1\]: the pairing is not one-to-one"):
+        hexmesh.attach([_block(1), c, a, b],
+                       [Seam(0, "outlet", 1, "join"), Seam(2, "outlet", 3, "join")])
+
+
 def test_a_buried_face_group_is_refused():
     """Joining onto a face that already has a hex on both sides would be non-manifold."""
     a = _block(1)

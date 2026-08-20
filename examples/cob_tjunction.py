@@ -36,6 +36,7 @@ from collections import defaultdict
 import numpy as np
 
 from nekmeshpy import (
+    ElementTags,
     LineMesh,
     QuadMesh,
     hexmesh,
@@ -221,6 +222,21 @@ for _, e, q in rim[-NSIDE:] + rim[:NSIDE]:
 band = sorted(set(band))
 band_set = set(band)
 
+# The slot's own boundary, named before the band is removed: an edge with one quad in the
+# band and one outside is where the collar will meet the pipe.  ``quadmesh.remove`` leaves
+# the faces it exposes untagged, so naming them here is the only way the lateral seam is
+# addressable at all -- the tag rides the surviving quad's edge through.
+#
+# It goes on a *copy*, not on ``section``: the legs are extruded from the same section and
+# keep the band, so there the very same edges are interior.  Tagging them in place would
+# name 784 faces that no seam ever consumes, and the exporter would write a boundary row
+# for each -- boundary conditions in the middle of the pipe.
+_slot_rows = np.array([[q, s + 1] for e, lst in edge2q.items() if len(lst) == 2
+                       for (q, s) in lst
+                       if (lst[0][0] in band_set) != (lst[1][0] in band_set)
+                       and q not in band_set], dtype=np.int64)
+slot_section = quadmesh.tag_edges(section, _slot_rows, "att_slot")
+
 # the band's four columns, each walked from the wall it starts on right through
 wall_edges = [e for e, lst in edge2q.items() if len(lst) == 1 and lst[0][0] in band_set]
 foot = sorted(wall_edges, key=lambda e: float(pts[lines[e]].mean(axis=0) @ BRANCH_AXIS))
@@ -337,7 +353,11 @@ def to_cyl(p):
     return np.stack([RC_MAIN * np.cos(phi), RC_MAIN * np.sin(phi), p[:, 2]], axis=1)
 
 
-square = linemesh.rectangle(L, L, N_THETA_BRANCH, normal=BRANCH_AXIS, order=ORDER)
+# the collar's lateral surface is this loop swept: two of its sides face the pipe across
+# the slot, the other two are the collar's own ends where the legs butt against it
+square = linemesh.rectangle(L, L, N_THETA_BRANCH, normal=BRANCH_AXIS, order=ORDER,
+                            side_tags={"left": "att_slot", "right": "att_slot",
+                                       "bottom": "att_endA", "top": "att_endB"})
 # Pair the footprint with the square *angularly* -- one bore node per square node on the
 # same ray from the centre.  Spacing the bore by arc length instead leaves the two loops
 # out of phase and the annulus comes back folded.
@@ -385,16 +405,29 @@ slices.append(TOP)                             # the top one sits exactly on the
 # the band's rows instead of chording across them
 inner = [[map_section(top_p, to_cut(cut_at(k * ORDER + m))) for m in range(1, ORDER)]
          for k in range(nrow)]
-collar = hexmesh.loft(slices, sweep_nodes=inner if ORDER > 1 else None)
+# TOP is the collar's far cap: its bore half is the branch's root, its rim half is wall
+_top_tags = ElementTags.from_dense(
+    np.array(["att_bore"] * bore_p.n_quads + [""] * collar_p.n_quads))
+collar = hexmesh.loft(slices, sweep_nodes=inner if ORDER > 1 else None,
+                      last_tag=_top_tags)
 
 # -- the pipe around the slot, and the legs out to the domain ------------------
-mid_pipe = hexmesh.extrude(quadmesh.remove(section, band), length=L, layers=NSIDE,
-                           axis=(0.0, 0.0, 1.0), origin=(0.0, 0.0, -L / 2))
+# a leg's cap meets *two* blocks: the pipe over the section, the collar over the band it
+# removed.  One name for the whole cap will not do, and ``first_tag`` / ``last_tag`` take
+# an ``ElementTags`` over the slice's own elements for exactly that.
+_leg_cap = ElementTags.from_dense(
+    np.where(np.isin(np.arange(section.n_quads), band), "att_band", "att_pipe"))
+
+mid_pipe = hexmesh.extrude(quadmesh.remove(slot_section, band), length=L, layers=NSIDE,
+                           axis=(0.0, 0.0, 1.0), origin=(0.0, 0.0, -L / 2),
+                           first_tag="att_pipe_lo", last_tag="att_pipe_hi")
 leg = Z_DOMAIN - L / 2
 downstream = hexmesh.extrude(section, length=leg, layers=N_Z_LEG, axis=(0.0, 0.0, 1.0),
-                             origin=(0.0, 0.0, L / 2), last_tag="outlet")
+                             origin=(0.0, 0.0, L / 2), first_tag=_leg_cap,
+                             last_tag="outlet")
 upstream = hexmesh.extrude(section, length=leg, layers=N_Z_LEG, axis=(0.0, 0.0, 1.0),
-                           origin=(0.0, 0.0, -Z_DOMAIN), first_tag="inlet")
+                           origin=(0.0, 0.0, -Z_DOMAIN), first_tag="inlet",
+                           last_tag=_leg_cap)
 
 # -- the branch: the bore disc off the wall, straight out to the tip -----------
 # the disc's own (x, z) are already the bore circle, so holding them and carrying y up to
@@ -407,9 +440,18 @@ bore_wall = map_section(quadmesh.retag_edge(bore_p, {"attach1": ""}), to_cyl)
 flat = map_section(bore_wall, lambda p: np.stack(
     [p[:, 0], np.full(p.shape[0], H_BRANCH), p[:, 2]], axis=1))
 stations = quadmesh.blend(bore_wall, flat, np.linspace(0.0, 1.0, N_BRANCH + 1))
-branch = hexmesh.loft(stations, last_tag="branch")
+branch = hexmesh.loft(stations, first_tag="att_bore", last_tag="branch")
 
-core = hexmesh.merge([collar, mid_pipe, downstream, upstream, branch])
+# six seams, every one named on both sides: the collar against the slot it fills, its two
+# ends against the legs, its bore cap against the branch, and the pipe against each leg.
+core = hexmesh.attach(
+    [collar, mid_pipe, downstream, upstream, branch],
+    [Seam(0, "att_slot", 1, "att_slot"),
+     Seam(0, "att_endA", 2, "att_band"),
+     Seam(0, "att_endB", 3, "att_band"),
+     Seam(0, "att_bore", 4, "att_bore"),
+     Seam(1, "att_pipe_hi", 2, "att_pipe"),
+     Seam(1, "att_pipe_lo", 3, "att_pipe")])
 
 # -- name the core's wall, so the skin knows what to grow from -----------------
 named = core.face_tags.dense(core.quad_mesh.n_quads)
