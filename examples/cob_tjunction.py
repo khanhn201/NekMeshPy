@@ -36,8 +36,6 @@ from collections import defaultdict
 import numpy as np
 
 from nekmeshpy import (
-    ElementTags,
-    HexMesh,
     LineMesh,
     QuadMesh,
     hexmesh,
@@ -46,6 +44,7 @@ from nekmeshpy import (
     writer,
 )
 from nekmeshpy.core.fields import gll_nodes, lagrange_matrix
+from nekmeshpy.hexmesh import Seam
 from nekmeshpy.pointmesh import PointMesh
 from nekmeshpy.quadmesh.query import element_blocks
 
@@ -429,19 +428,17 @@ def outward(cen):
 
 wall = orient_outward(raw_wall, outward)
 skins = [wall] + [quadmesh.offset(wall, (r - R_SKIN[0]) * R_MAIN) for r in R_SKIN[1:]]
-shell = hexmesh.loft(skins)
+# the inner cap is named apart from the outer one so ``attach`` can be told which face
+# group meets the core -- both would otherwise inherit ``wall`` from the skin they were
+# lofted through, and a group twice the size is not the interface
+shell = hexmesh.loft(skins, first_tag="inner")
 
-mesh = hexmesh.merge([core, shell])
-
-# -- retag: the core's old wall is interior now, the skin's outer face is the wall ------
-# Clear first.  The core's wall had to be named for ``boundary_mesh`` to find it, but the
-# skin buries those faces, and a *named interior* face is not inert: the exporter writes
-# one boundary row per hex carrying a named face, so leaving them would emit two bogus
-# BC rows apiece.
-q = mesh.quad_mesh
-mesh = HexMesh(QuadMesh(q.line_mesh, q.quads, q.orient, q.interior,
-                        ElementTags.from_dense(np.full(q.n_quads, "", dtype="<U1"))),
-               mesh.hexes, mesh.orient, mesh.interior, mesh.element_tags)
+# ``attach``, not ``merge``: the interface is the core's whole ``wall`` group and the
+# shell's own ``inner``, so say so rather than have the weld rediscover it from
+# coordinates.  It also clears the buried faces, which is what the hand-rolled rebuild
+# through raw constructors used to be for -- a *named* interior face is not inert, the
+# exporter writes one boundary row per hex carrying one.
+mesh = hexmesh.attach([core, shell], [Seam(0, "wall", 1, "inner")])
 
 free = np.flatnonzero(hexmesh.boundary_face_ids(mesh))
 mid = mesh.points[mesh.quad_mesh.corners[free]].mean(axis=1)
