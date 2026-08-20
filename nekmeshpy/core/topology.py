@@ -12,9 +12,8 @@ from scipy.spatial import cKDTree
 from .._typing import IntArray, PointArray
 from . import conform
 
-# Nek face -> the 4 corner point positions (0-based), cyclic order.
-_FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
-                        [3, 0, 4, 7], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int64)
+# Nek face -> the 4 corner point positions (0-based), cyclic and outward-wound.
+_FACE_POINTS = conform._LOCAL_FACES
 
 
 class TopologyReport(NamedTuple):

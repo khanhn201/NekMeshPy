@@ -24,10 +24,22 @@ _LOCAL_EDGES: dict[int, IntArray] = {
                  [0, 4], [1, 5], [2, 6], [3, 7]], dtype=np.int64),
 }
 
-#: Hex local faces as corner-index quads, matching ``HexMesh.FACE_POINTS``.
+#: Hex local faces as corner-index quads in Nek face order (row ``f`` is face ``f+1``)
+#: -- the **one** definition.  ``HexMesh.FACE_POINTS`` and
+#: ``nekmeshpy.core.topology._FACE_POINTS`` are this same read-only array rather than
+#: copies of it, so the winding below cannot drift between them.
+#:
+#: Every row is wound so its right-hand normal points **out of** a positively-oriented
+#: hex.  That is a property of the table, not something a caller restores afterwards.
+#: Face 5 is therefore ``[0, 3, 2, 1]`` and not the ``[0, 1, 2, 3]`` the Nek corner
+#: order invites: faces 5 and 6 are opposite, so listing both as "the same ring at two
+#: heights" (``0,1,2,3`` / ``4,5,6,7``) necessarily winds one of them inward.  Reading
+#: that ring backwards costs nothing -- the corner *set* is untouched, so face identity,
+#: the D4 frames fitted off this table, and the Nek face numbers all read as before.
 _LOCAL_FACES: IntArray = np.array(
     [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7],
-     [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int64)
+     [0, 3, 2, 1], [4, 5, 6, 7]], dtype=np.int64)
+_LOCAL_FACES.flags.writeable = False
 
 
 # -- reference-lattice helpers ------------------------------------------

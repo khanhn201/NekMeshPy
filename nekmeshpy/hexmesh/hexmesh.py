@@ -46,9 +46,11 @@ def _sweep_at(bottom: PointArray, top: PointArray, g: FloatArray,
 class HexMesh:
     """An all-hexahedral volume mesh in shared-point form."""
 
-    # Nek face -> the 4 corner point positions (0-based); row f is face f+1.
-    FACE_POINTS = np.array([[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6],
-                           [3, 0, 4, 7], [0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int64)
+    #: Nek face -> the 4 corner point positions (0-based); row ``f`` is face ``f+1``,
+    #: wound so the right-hand normal points **out of** the hex.  The array *is*
+    #: ``core.conform._LOCAL_FACES``, where that winding is justified, rather than a
+    #: copy of it -- and it is read-only, so the two cannot be edited apart.
+    FACE_POINTS: IntArray = conform._LOCAL_FACES
 
     def __init__(
         self,
