@@ -738,8 +738,8 @@ def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh,
     return np.stack([pa, pb[loc]], axis=1), float(np.max(dist)) if dist.size else 0.0
 
 
-def _adopt_seam(m: HexMesh, faces: IntArray, pts: IntArray,
-                owner: HexMesh, owner_pts: IntArray) -> HexMesh:
+def _adopt_seam(m: HexMesh, faces: IntArray, pts: IntArray, owner: HexMesh,
+                owner_faces: IntArray, owner_pts: IntArray) -> HexMesh:
     """``m`` with its seam nodes replaced by ``owner``'s own, node for node.
 
     Until this runs the two sides agree only to within the pairing distance. Afterwards
@@ -759,9 +759,16 @@ def _adopt_seam(m: HexMesh, faces: IntArray, pts: IntArray,
     ei: PointArray = np.array(lm.interior, dtype=float, copy=True)
     fi: PointArray = np.array(qm.interior, dtype=float, copy=True)
     if m.order > 1:
+        # Search the owner's *seam* entities, not its whole B-rep.  ``locate_rows`` sorts
+        # whatever haystack it is handed, so passing the entire edge and face tables cost
+        # 31 ms of a 71 ms join on a 7.7k-hex mesh -- to find 44 edges and 20 faces whose
+        # owner-side ids are already known from ``owner_faces``.
+        o_edges: IntArray = np.unique(
+            np.asarray(owner.quad_mesh.quads, dtype=np.int64)[owner_faces])
         seam_edges: IntArray = np.unique(np.asarray(qm.quads, dtype=np.int64)[faces])
         rows: IntArray = pmap[np.asarray(lm.lines, dtype=np.int64)[seam_edges]]
-        oidx = conform.locate_rows(owner.edges, rows, who="attach", what="edge")
+        oidx = o_edges[conform.locate_rows(owner.edges[o_edges], rows,
+                                           who="attach", what="edge")]
         en: PointArray = np.asarray(owner.edge_nodes, dtype=float)[oidx].copy()
         # the owner stores an edge min->max corner; flip the ones we traverse the other
         # way, so they read along this mesh's own direction
@@ -771,7 +778,8 @@ def _adopt_seam(m: HexMesh, faces: IntArray, pts: IntArray,
         ei[seam_edges] = en
 
         frows: IntArray = pmap[np.asarray(qm.corners, dtype=np.int64)[faces]]
-        fidx = conform.locate_rows(owner.faces, frows, who="attach", what="face")
+        fidx = owner_faces[conform.locate_rows(owner.faces[owner_faces], frows,
+                                               who="attach", what="face")]
         # turned out of the owner's stored frame into this mesh's, the same read
         # ``boundary_mesh`` does when it lifts a face out of its parent
         fi[faces] = conform.face_nodes_in_frame(
@@ -832,9 +840,9 @@ def attach(a: HexMesh, b: HexMesh, tag_a: str | IntArray, tag_b: str | IntArray,
                fa.size, pairs.shape[0], worst)
 
     if own == "a":
-        b = _adopt_seam(b, fb, pairs[:, 1], a, pairs[:, 0])
+        b = _adopt_seam(b, fb, pairs[:, 1], a, fa, pairs[:, 0])
     else:
-        a = _adopt_seam(a, fa, pairs[:, 0], b, pairs[:, 1])
+        a = _adopt_seam(a, fa, pairs[:, 0], b, fb, pairs[:, 1])
 
     cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
     points, point_id = conform.weld_pairs([a.points, b.points], cat)

@@ -542,9 +542,9 @@ def attach(a: QuadMesh, b: QuadMesh, tag_a: str | IntArray, tag_b: str | IntArra
             "nearest point on b." % (dup, loc.size))
     pairs = np.stack([pa, pb[loc]], axis=1)
     if own == "a":
-        b = _adopt_seam(b, eb, pairs[:, 1], a, pairs[:, 0])
+        b = _adopt_seam(b, eb, pairs[:, 1], a, ea, pairs[:, 0])
     else:
-        a = _adopt_seam(a, ea, pairs[:, 0], b, pairs[:, 1])
+        a = _adopt_seam(a, ea, pairs[:, 0], b, eb, pairs[:, 1])
     cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
     points, point_id = conform.weld_pairs([a.points, b.points], cat)
     return _stitch([a, b], points, point_id, who="quadmesh.attach",
@@ -552,7 +552,7 @@ def attach(a: QuadMesh, b: QuadMesh, tag_a: str | IntArray, tag_b: str | IntArra
 
 
 def _adopt_seam(m: QuadMesh, edges: IntArray, pts: IntArray, owner: QuadMesh,
-                owner_pts: IntArray) -> QuadMesh:
+                owner_edges: IntArray, owner_pts: IntArray) -> QuadMesh:
     """``m`` with its seam nodes replaced by ``owner``'s own, so the two agree bit for
     bit before the weld rather than merely as close as the pairing found them -- which is what
     the shared-edge re-scatter in :func:`_stitch` demands at order > 1."""
@@ -565,8 +565,10 @@ def _adopt_seam(m: QuadMesh, edges: IntArray, pts: IntArray, owner: QuadMesh,
     ei: PointArray = np.array(lm.interior, dtype=float, copy=True)
     if m.order > 1 and edges.size:
         rows: IntArray = pmap[np.asarray(lm.lines, dtype=np.int64)[edges]]
+        # the owner's seam edges are known, so do not sort its whole table to find them
         owner_rows = np.asarray(owner.line_mesh.lines, dtype=np.int64)
-        oidx = conform.locate_rows(owner_rows, rows, who="attach", what="edge")
+        oidx = owner_edges[conform.locate_rows(owner_rows[owner_edges], rows,
+                                               who="attach", what="edge")]
         en: PointArray = np.asarray(owner.line_mesh.interior, dtype=float)[oidx].copy()
         rev = owner_rows[oidx, 0] != rows[:, 0]
         if en.size:

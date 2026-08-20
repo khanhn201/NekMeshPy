@@ -175,6 +175,61 @@ def test_groups_of_different_size_are_refused():
         hexmesh.attach(a, _stub(a, 1), "wall", "join")
 
 
+def _collapse(block, tag, k):
+    """``block`` with ``k`` of its ``tag`` group's points moved onto a single coordinate.
+
+    Mutates in place -- ``points`` is a derived view over the ladder, so writing through
+    it is how a caller repositions a mesh, and the callers here build a throwaway block."""
+    sp = np.unique(block.quad_mesh.corners[hexmesh.tagged_faces(block, tag)])
+    P = block.points.copy()
+    P[sp[:k]] = P[sp[0]]
+    block.points[:] = P
+    return block
+
+
+def test_coincident_points_within_a_group_are_refused():
+    """Three of ``a``'s seam points sitting on one coordinate cannot pair one-for-one
+    with three distinct points of ``b`` -- there is no bijection to find.  Nearest
+    neighbour sends all three to the same point of ``b``, and the injectivity check is
+    what turns that into an error instead of a silently collapsed seam."""
+    a = _collapse(_block(1), "outlet", 3)
+    b = _stub(_block(1), 1)
+    with pytest.raises(ValueError, match="not one-to-one"):
+        hexmesh.attach(a, b, "outlet", "join")
+
+
+def test_the_message_counts_how_many_points_collapsed():
+    """``k`` coincident points leave ``k-1`` unmatched, and the error says so -- the
+    number is the first thing that tells you how degenerate the seam is."""
+    a = _collapse(_block(1), "outlet", 4)
+    b = _stub(_block(1), 1)
+    with pytest.raises(ValueError, match=r"3 of a's \d+ seam points"):
+        hexmesh.attach(a, b, "outlet", "join")
+
+
+def test_matching_degeneracy_on_both_sides_is_still_refused():
+    """The subtle one: if *both* seams have the same three points collapsed, the two
+    sides genuinely correspond as point *sets* -- but a bijection still does not exist,
+    so this must be refused rather than quietly welding three nodes into one."""
+    a = _collapse(_block(1), "outlet", 3)
+    b = _collapse(_stub(_block(1), 1), "join", 3)
+    with pytest.raises(ValueError, match="not one-to-one"):
+        hexmesh.attach(a, b, "outlet", "join")
+
+
+def test_a_non_corresponding_group_is_refused_at_the_hex_rung():
+    """Equal face counts and equal point counts, but the two groups are not the same
+    surface: ``b``'s seam is collapsed to a point, so every one of ``a``'s maps to it."""
+    a = _block(1)
+    b = _stub(a, 1)
+    sp = np.unique(b.quad_mesh.corners[hexmesh.tagged_faces(b, "join")])
+    P = b.points.copy()
+    P[sp] = P[sp[0]]
+    b.points[:] = P
+    with pytest.raises(ValueError, match="not one-to-one"):
+        hexmesh.attach(a, b, "outlet", "join")
+
+
 def test_a_buried_face_group_is_refused():
     """Joining onto a face that already has a hex on both sides would be non-manifold."""
     a = _block(1)
