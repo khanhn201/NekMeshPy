@@ -668,7 +668,15 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         mine: IntArray = np.full(m.quad_mesh.n_quads, -1, dtype=np.int64)
         mine[np.asarray(m.hexes, dtype=np.int64).ravel()] = np.asarray(
             elem_faces[off:off + m.corners.shape[0]], dtype=np.int64).ravel()
-        ftag_list.append(m.face_tags.renumber(mine))
+        # drop this block's seam names *before* the renumber.  A seam whose two sides
+        # live in the same block -- closing a loop onto itself -- collapses two tagged
+        # faces onto one merged id, and ``renumber`` refuses two names on one entity.
+        # They are dropped either way below; doing it here is what makes a self-join
+        # possible at all.
+        ft = m.face_tags
+        if seam_faces is not None and bi in seam_faces:
+            ft = ft.select(~np.isin(ft.ids, np.asarray(seam_faces[bi], dtype=np.int64)))
+        ftag_list.append(ft.renumber(mine))
         local_to_merged.append(mine)
         if seam_faces is not None and bi in seam_faces:
             # the seam in this block's local numbering, carried onto the merged one
@@ -778,6 +786,8 @@ def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray
     if not seam_merged:
         return welded_element_tags(list(ftag_list), who)
     seam_ids: IntArray = np.unique(np.concatenate(list(seam_merged)))
+    # the seam rows were already dropped per block, before the renumber that a self-join
+    # would otherwise break; this is the belt to that braces, and costs one isin
     kept = [t.select(~np.isin(t.ids, seam_ids)) for t in ftag_list]
     merged = welded_element_tags(kept, who)
     if not named:

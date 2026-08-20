@@ -352,6 +352,16 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
                         else np.zeros((0, 2), dtype=np.int64))
     points, point_id = conform.weld_pairs(pts, stated)
 
+    # The joined points lose their names *before* the renumber, not after: a seam whose
+    # two sides live in the same mesh -- closing a ring is exactly that -- collapses two
+    # tagged points onto one id, and ``renumber`` refuses to put two names on one entity.
+    # Dropping them first is also the right semantics: a seam name that outlives the seam
+    # names something that no longer exists.  ``attach_tag`` puts one back.
+    seam_local: dict[int, list[IntArray]] = {}
+    for (ia, _pa, ib, _pb, _o, _t), pr in zip(resolved, pair_list):
+        seam_local.setdefault(ia, []).append(pr[:, 0])
+        seam_local.setdefault(ib, []).append(pr[:, 1])
+
     line_list: list[IntArray] = []
     ptag_list: list[ElementTags] = []
     etag_list: list[ElementTags] = []
@@ -359,18 +369,13 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
     for i, m in enumerate(meshes):
         line_list.append(point_id[m.lines + offs[i]])
         etag_list.append(m.element_tags.offset(loff))
-        ptag_list.append(m.point_tags.renumber(point_id[offs[i]:offs[i + 1]]))
+        pt = m.point_tags
+        if i in seam_local:
+            pt = pt.select(~np.isin(pt.ids, np.concatenate(seam_local[i])))
+        ptag_list.append(pt.renumber(point_id[offs[i]:offs[i + 1]]))
         loff += m.n_lines
 
-    # the joined points lose their names -- they are one point now, and a seam name that
-    # outlives the seam is a name for something that no longer exists.  ``attach_tag``
-    # puts one back where the caller wants the junction itself named.
-    welded_ids = np.unique(np.concatenate(
-        [point_id[np.concatenate([pr[:, 0] + offs[ia], pr[:, 1] + offs[ib]])]
-         for (ia, _pa, ib, _pb, _o, _t), pr in zip(resolved, pair_list)])) \
-        if resolved else np.zeros(0, dtype=np.int64)
-    kept = [t.select(~np.isin(t.ids, welded_ids)) for t in ptag_list]
-    ptags = welded_element_tags(kept, "linemesh.attach")
+    ptags = welded_element_tags(ptag_list, "linemesh.attach")
     named = [(point_id[pr[:, 0] + offs[ia]], tag)
              for (ia, _pa, _ib, _pb, _o, tag), pr in zip(resolved, pair_list) if tag]
     if named:

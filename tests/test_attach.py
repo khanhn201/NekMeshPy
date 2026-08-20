@@ -513,6 +513,45 @@ def test_line_attach_refuses_groups_of_different_size():
         linemesh.attach([a, b], [PointSeam(0, "j1", 1, np.array([0, 1]))])
 
 
+# -- a block joined to itself ------------------------------------------------
+def test_a_block_can_be_attached_to_itself():
+    """Closing a block onto its own other end -- a torus, a periodic domain, or the
+    line rung's ring.  This is the case that forced the seam names to be dropped
+    *before* the renumber: both sides live in one block, so two tagged entities collapse
+    onto one merged id and ``renumber`` refuses two names on one entity."""
+    a = _block(1)
+    m = hexmesh.attach([a], [Seam(0, "outlet", 0, "inlet")])
+    rep = hexmesh.topology_report(m)
+    assert rep.n_components == 1 and rep.watertight
+    assert m.n_points < a.n_points                    # the two caps fused
+    assert "inlet" not in m.face_tags.group_tags and "outlet" not in m.face_tags.group_tags
+
+
+def test_a_self_attached_seam_can_still_be_named():
+    a = _block(1)
+    m = hexmesh.attach([a], [Seam(0, "outlet", 0, "inlet", attach_tag="periodic")])
+    assert "periodic" in m.face_tags.group_tags
+
+
+def test_quad_and_line_rungs_attach_to_themselves_too():
+    sec = quadmesh.rectangle([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], 3, 2,
+                             side_tags={"left": "L", "right": "R"})
+    q = quadmesh.attach([sec], [EdgeSeam(0, "L", 0, "R")])
+    assert q.n_points < sec.n_points
+
+    th = np.linspace(0.0, 2.0 * np.pi, 9)[:-1]
+    pts = np.stack([np.cos(th), np.sin(th), np.zeros_like(th)], axis=1)
+    chain = linemesh.loft(np.vstack([pts, pts[:1]]), first_tag="r0", last_tag="r1")
+    ring = linemesh.attach([chain], [PointSeam(0, "r0", 0, "r1")])
+    assert len(linemesh.boundary_points(ring)) == 0
+    # the same closure ``merge`` makes when handed the one open chain.  The reference is
+    # built untagged on purpose: ``merge`` is right to refuse a chain whose two
+    # coincident ends carry different names, which is the very thing that makes the ends
+    # addressable here.
+    plain = linemesh.loft(np.vstack([pts, pts[:1]]))
+    assert np.array_equal(ring.points, linemesh.merge([plain]).points)
+
+
 # -- merge is untouched -------------------------------------------------------
 def test_merge_is_still_the_proximity_join():
     """``attach`` is an addition, not a replacement: ``merge`` still infers its seams."""

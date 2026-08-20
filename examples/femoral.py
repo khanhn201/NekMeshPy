@@ -56,6 +56,7 @@ from nekmeshpy import (
 )
 from nekmeshpy.core import conform
 from nekmeshpy.hexmesh import Seam
+from nekmeshpy.linemesh import Seam as PointSeam
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -618,8 +619,11 @@ def wall_loop(ring, order, tag="wall"):
     exactly the bulge that shows up along the wall layer.  Carotid has to refit because a
     surface solve gives it nothing in the interior to be consistent with."""
     R = np.asarray(ring, dtype=float).reshape(-1, 3)
-    return linemesh.merge([linemesh.loft(np.vstack([R, R[:1]]), order=order,
-                                         element_tags=tag)])
+    # one open chain whose last point repeats its first, closed by joining the chain to
+    # *itself* -- the ends are named so the closure is stated rather than found
+    chain = linemesh.loft(np.vstack([R, R[:1]]), order=order, element_tags=tag,
+                          first_tag="ring0", last_tag="ring1")
+    return linemesh.attach([chain], [PointSeam(0, "ring0", 0, "ring1")])
 
 
 def build_surface():
@@ -980,7 +984,10 @@ def seam_pieces(mesh, U, wall_pts, n_half, radial, center_scale, fine):
         # wall against 0.0008 for the corners it sits between.  This arc *is* the rim of
         # the cutting O-grid (``pin_curve`` puts it back verbatim), so that is the seam
         # disc sitting off the wall.  Snap the whole curve, nodes included.
-        arc = linemesh.loft(a, order=ORDER, element_tags="wall")
+        # the two ends are the shared triple points A1 / A2 -- naming them is what lets
+        # ``linemesh.attach`` state where two legs' arcs meet instead of finding it
+        arc = linemesh.loft(a, order=ORDER, element_tags="wall",
+                            first_tag="A1", last_tag="A2")
         if arc.interior.size:
             arc.interior[:] = snap_to_wall(
                 arc.interior.reshape(-1, 3)).reshape(arc.interior.shape)
@@ -1391,7 +1398,8 @@ def ogrid_leg(walker, levels, cap_loop, seam_loop, spine, ifaces, *,
         for a, sp, f in ((seam_loop[0], spine, ifaces[0]),
                          (linemesh.reverse(seam_loop[1]), linemesh.reverse(spine),
                           ifaces[1]))])
-    loop = linemesh.merge([seam_loop[0], linemesh.reverse(seam_loop[1])])
+    loop = linemesh.attach([seam_loop[0], linemesh.reverse(seam_loop[1])],
+                           [PointSeam(0, "A1", 1, "A1"), PointSeam(0, "A2", 1, "A2")])
     slices = [cap_section(cap_loop, loop, radial=radial, center_scale=center_scale)]
     slices += [level_section(walker, float(lv), loop, radial=radial,
                              center_scale=center_scale) for lv in levels]
@@ -1481,7 +1489,9 @@ print("shared spine: %d nodes; arcs %s"
 # each leg's seam ring is the pair of arcs it shares with its neighbours, welded at the
 # triple points -- the same arcs, so adjacent legs meet on identical geometry
 LEG_ARCS = {1: ((1, 2), (1, 3)), 2: ((1, 2), (2, 3)), 3: ((1, 3), (2, 3))}
-seam_loops = {leg: linemesh.merge([arcs[p], linemesh.reverse(arcs[q])])
+seam_loops = {leg: linemesh.attach([arcs[p], linemesh.reverse(arcs[q])],
+                                   [PointSeam(0, "A1", 1, "A1"),
+                                    PointSeam(0, "A2", 1, "A2")])
               for leg, (p, q) in LEG_ARCS.items()}
 
 opening_name = ["inlet", "branch", "outlet"]

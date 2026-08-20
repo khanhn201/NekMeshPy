@@ -437,11 +437,17 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
     # it, so the combine is the weld's own conflict rule rather than a concatenation.
     etag_off = 0
     edge_tag_list: list[ElementTags] = []
-    for m in meshes:
+    for bi2, m in enumerate(meshes):
         mine: IntArray = np.full(m.line_mesh.n_lines, -1, dtype=np.int64)
         mine[np.asarray(m.quads, dtype=np.int64).ravel()] = np.asarray(
             elem_edges[etag_off:etag_off + m.n_quads], dtype=np.int64).ravel()
-        edge_tag_list.append(m.edge_tags.renumber(mine))
+        # drop this block's seam names before the renumber -- see the hex rung: a
+        # self-join collapses two tagged edges onto one id and ``renumber`` refuses it
+        et = m.edge_tags
+        if seam_edges is not None and bi2 in seam_edges:
+            et = et.select(~np.isin(et.ids,
+                                    np.asarray(seam_edges[bi2], dtype=np.int64)))
+        edge_tag_list.append(et.renumber(mine))
         etag_off += m.n_quads
     seam_merged: list[IntArray] = []
     loc2mrg: dict[int, IntArray] = {}

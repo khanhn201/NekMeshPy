@@ -26,6 +26,7 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core import surfaces
+from nekmeshpy.linemesh import Seam as PointSeam
 
 TJunction = namedtuple("TJunction", "core disc_minus disc_plus disc_branch")
 
@@ -296,7 +297,8 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
     # -- native frame here is (main=X, branch=Z), circular_pipe_tjunction's own --
     def arc_main_lower():
         return linemesh.arc(R, n_half, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
-                            start_theta=0.0, end_theta=np.pi, order=order)
+                            start_theta=0.0, end_theta=np.pi,
+                            first_tag="A1", last_tag="A2", order=order)
 
     def arc_collar(xside):
         def f(t):
@@ -304,10 +306,15 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
                 [xside * R * np.sin(t), R * np.cos(t), R * np.sin(t)])
         return linemesh.loft_fn(
             f, linemesh.arclength_fractions(f, n_half, t_range=(0.0, np.pi)),
-            order=order)
+            first_tag="A1", last_tag="A2", order=order)
 
     def join_arcs(p, q):
-        return linemesh.merge([p, linemesh.reverse(q)])
+        # both shared ends are named, so the ring closes by two *stated* joins;
+        # ``reverse`` carries a point's tag with it, so ``A1`` still names ``A1``
+        # whichever way round the arc is stored
+        return linemesh.attach([p, linemesh.reverse(q)],
+                               [PointSeam(0, "A1", 1, "A1"),
+                                PointSeam(0, "A2", 1, "A2")])
 
     def opening_main(x0):
         return linemesh.circle(R, M, center=(x0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
