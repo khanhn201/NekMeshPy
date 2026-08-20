@@ -24,8 +24,9 @@ from collections import namedtuple
 
 import numpy as np
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
+from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import surfaces
+from nekmeshpy.hexmesh import Seam
 from nekmeshpy.linemesh import Seam as PointSeam
 from nekmeshpy.quadmesh import Seam as EdgeSeam
 
@@ -364,11 +365,27 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
     slices_plus = leg_slices(opening_main(Z_NEAR), seam_right, n_layers_main)
     slices_branch = leg_slices(opening_branch(H_BRANCH), seam_branch, n_layers_branch)
 
-    core = hexmesh.merge([
-        hexmesh.loft(slices_minus, element_tags=element_tag or None),
-        hexmesh.loft(slices_plus, element_tags=element_tag or None),
-        hexmesh.loft(slices_branch, element_tags=element_tag or None,
-                     last_tag=branch_tag or None)])
+    def cap_tags(slice_, first, second):
+        """Name a leg's seam cap by half-disc.  ``spined_ogrid`` welds the two halves in
+        order, so the first half of the quads is ``join_arcs``' first arc -- and each
+        half is shared with a *different* leg, so one name for the whole cap will not
+        do.  ``last_tag`` takes an ``ElementTags`` over the slice's own elements."""
+        half = slice_.n_quads // 2
+        return ElementTags.from_dense(
+            np.array([first] * half + [second] * (slice_.n_quads - half)))
+
+    # the three legs meet pairwise on the three arcs: a_lm joins minus to plus, a_lb
+    # joins minus to branch, a_rb joins plus to branch
+    core = hexmesh.attach(
+        [hexmesh.loft(slices_minus, element_tags=element_tag or None,
+                      last_tag=cap_tags(slices_minus[-1], "attach1", "attach2")),
+         hexmesh.loft(slices_plus, element_tags=element_tag or None,
+                      last_tag=cap_tags(slices_plus[-1], "attach1", "attach3")),
+         hexmesh.loft(slices_branch, element_tags=element_tag or None,
+                      last_tag=cap_tags(slices_branch[-1], "attach2", "attach3"))],
+        [Seam(0, "attach1", 1, "attach1"),
+         Seam(0, "attach2", 2, "attach2"),
+         Seam(1, "attach3", 2, "attach3")])
     disc_minus, disc_plus, disc_branch = (slices_minus[0], slices_plus[0],
                                           slices_branch[0])
 
