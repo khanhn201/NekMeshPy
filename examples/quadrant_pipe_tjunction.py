@@ -114,6 +114,7 @@ import sys
 import numpy as np
 
 from nekmeshpy import hexmesh, writer
+from nekmeshpy.hexmesh import Seam
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -153,17 +154,22 @@ GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  "}
 core, disc_minus, disc_plus, disc_branch = build_tjunction(
     R_MAIN, R_BRANCH, H_BRANCH, Z_NEAR=Z_NEAR, N_QUAD=N_QUAD, RADIAL=RADIAL,
     CENTER_SCALE=CENTER_SCALE, QUADRANT_SCALE=QUADRANT_SCALE, order=ORDER,
-    N_TRANS=N_TRANS, N_BRANCH=N_BRANCH, branch_tag="branch")
+    N_TRANS=N_TRANS, N_BRANCH=N_BRANCH, branch_tag="branch",
+    port_tags=("attach1", "attach2"))
 
 # -- the two legs: build_tjunction stops at the plain per-leg disc so a caller can
 # continue however it needs to (extrude, loft, sweep); here that is a straight
 # extrude to each end plane, exactly as the reference decomposes it.
-leg_plus = hexmesh.extrude(disc_plus, L_MAIN - Z_NEAR, N_LEG,
-                           axis=(0.0, 0.0, 1.0), last_tag="outlet")
-leg_minus = hexmesh.extrude(disc_minus, L_MAIN - Z_NEAR, N_LEG,
-                            axis=(0.0, 0.0, -1.0), last_tag="inlet")
+leg_plus = hexmesh.extrude(disc_plus, L_MAIN - Z_NEAR, N_LEG, axis=(0.0, 0.0, 1.0),
+                           first_tag="attach2", last_tag="outlet")
+leg_minus = hexmesh.extrude(disc_minus, L_MAIN - Z_NEAR, N_LEG, axis=(0.0, 0.0, -1.0),
+                            first_tag="attach1", last_tag="inlet")
 
-mesh = hexmesh.merge([core, leg_plus, leg_minus])
+# both interfaces are named on both sides, so state them instead of letting a global
+# tolerance rediscover them -- and in one pass, so the assembly is stitched once
+mesh = hexmesh.attach([core, leg_plus, leg_minus],
+                      [Seam(0, "attach1", 2, "attach1"),
+                       Seam(0, "attach2", 1, "attach2")])
 
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))

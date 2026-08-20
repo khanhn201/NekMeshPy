@@ -19,6 +19,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import QuadMesh, hexmesh, quadmesh, writer
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -55,14 +56,21 @@ def rect(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int,
         nx, ny, side_tags=side_tags, order=ORDER)
 
 
-section = quadmesh.merge([
+# The two shared sides are named on both blocks -- ``attach1`` where the inlet channel
+# meets the downstream one, ``attach2`` where that meets the recirculation region -- so
+# the joins are stated rather than rediscovered from coordinates, and ``attach`` clears
+# the names once the edges are interior.
+_parts = [
     rect(-L_UP, 0.0, 0.0, H, NX_UP, NY_CH,             # inlet channel
-         {"left": "inlet", "bottom": "wall", "top": "wall"}),
+         {"left": "inlet", "bottom": "wall", "top": "wall", "right": "attach1"}),
     rect(0.0, L_DOWN, 0.0, H, NX_DOWN, NY_CH,          # downstream upper channel
-         {"right": "outlet", "top": "wall"}),
+         {"right": "outlet", "top": "wall", "left": "attach1", "bottom": "attach2"}),
     rect(0.0, L_DOWN, -STEP, 0.0, NX_DOWN, NY_STEP,    # recirculation region
-         {"right": "outlet", "bottom": "wall", "left": "wall"}),  # left = step face
-])
+         {"right": "outlet", "bottom": "wall", "left": "wall",  # left = step face
+          "top": "attach2"}),
+]
+section = quadmesh.attach(_parts, [EdgeSeam(0, "attach1", 1, "attach1"),
+                                   EdgeSeam(1, "attach2", 2, "attach2")])
 
 # -- sweep along the span, naming the end caps front/back --------------------
 # extrude translates the xy section along +z; edge names ride onto the side faces

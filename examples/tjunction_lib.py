@@ -93,7 +93,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                      RADIAL=None, CENTER_SCALE=0.7, QUADRANT_SCALE=0.7,
                      order=2, PHI_W=None, CAP_TIP_BIAS=None,
                      N_TRANS=5, N_BRANCH=4, ORIGIN=None, element_tag="",
-                     branch_tag=""):
+                     branch_tag="", port_tags=None):
     RADIAL = _RADIAL_DEFAULT if RADIAL is None else RADIAL
     # each of the three defaults to the ratio-dependent choice; pass one explicitly to
     # override just that one
@@ -226,7 +226,7 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                              center=ORIGIN + CENTER_SCALE* np.sqrt(1.5) * (wc - ORIGIN),
                              element_tag=element_tag)
 
-    def leg(composite, walls, sign):
+    def leg(composite, walls, sign, port_tag):
         z = sign * Z_NEAR
         w_plain = plain_walls(walls, z, sign)
 
@@ -237,7 +237,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
 
         plain = station(1.0)
         transition = hexmesh.loft_fn(station, np.linspace(0.0, 1.0, N_TRANS + 1),
-                                     order=order, element_tags=element_tag or None)
+                                     order=order, element_tags=element_tag or None,
+                                     last_tag=port_tag or None)
         return transition, plain
 
     def branch():
@@ -252,8 +253,14 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
                              last_tag=branch_tag or None),
                 sections[-1])
 
-    trans_plus, disc_plus = leg(COMPOSITE_R, W_R, 1)
-    trans_minus, disc_minus = leg(COMPOSITE_L, W_L, -1)
+    # ``port_tags`` names the two leg openings on the core so a caller can
+    # ``hexmesh.attach`` its own legs to them by name rather than have ``merge``
+    # rediscover the seam from coordinates.  Off by default: a *named* face that a
+    # later ``merge`` buries is not inert -- the exporter writes one boundary row per
+    # hex carrying one -- so only a caller that means to attach should ask for them.
+    _pt_minus, _pt_plus = port_tags if port_tags else ("", "")
+    trans_plus, disc_plus = leg(COMPOSITE_R, W_R, 1, _pt_plus)
+    trans_minus, disc_minus = leg(COMPOSITE_L, W_L, -1, _pt_minus)
     trans_branch, disc_branch = branch()
 
     blocks = [trans_plus, trans_minus, trans_branch,
