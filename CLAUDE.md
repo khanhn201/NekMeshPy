@@ -221,10 +221,11 @@ every block's whole boundary at once. That is why `examples/chimera_full.py:444-
 runs one seam at `tol=0.05` and the assembly at `0.005` — "loosening the tolerance for
 the whole assembly welded an unrelated, closer-together pair by mistake."
 
-`attach(meshes, seams)` is told, by a `Seam` apiece, **which** face group meets which
-(`face_tags` at the hex rung, `edge_tags` at the quad rung; `tagged_faces` /
-`tagged_edges` are the public accessors, and either argument also takes an explicit id
-array), and so takes **no tolerance at all**. Inside those two groups the pairing is
+`attach(meshes, seams)` is told, by a `Seam` apiece, **which** group meets which — one
+rung down at each level: `face_tags` at the hex rung, `edge_tags` at the quad rung,
+`point_tags` at the line rung (`tagged_faces` / `tagged_edges` are the public accessors,
+and either argument also takes an explicit id array). It therefore takes **no tolerance
+at all**. Inside those two groups the pairing is
 nearest-neighbour, and what proves it is **bijectivity** — equal point counts plus an
 injective map is a one-to-one correspondence however far apart the halves sit. A seam
 with a real gap joins; a seam whose halves do not correspond is refused however close
@@ -234,6 +235,18 @@ One case no tolerance could have caught either: a seam with a rotational symmetr
 halves are relatively rotated by a symmetry element pairs injectively, bijectively, and
 at distance **zero**, onto a cyclic shift — welding the block in twisted. The point sets
 are identical, so no geometry distinguishes the two readings.
+
+**Naming the interface is the work, and it happens at the rung below.** A section's
+*edge* tags become the swept block's lateral *face* tags, so a seam down a block's side
+is named by tagging the section that swept it. A cap is named by `first_tag` /
+`last_tag`, and those take an `ElementTags` over the slice, so a cap shared with two
+different neighbours — three legs meeting about a spine, where each seam is *half* a
+disc — is named per element. At the line rung a slice is one point, so `first_tag` /
+`last_tag` name the chain ends. Getting a half wrong cannot pass quietly: `attach` pairs
+a named group against a named group and refuses anything not one-to-one.
+
+`attach` welds **only** what it is told, so a `merge` converts all-or-nothing — stating
+one of two touching seams leaves two components, not a partial weld.
 
 `own=` picks whose nodes the seam keeps, and it is a **byte copy**, not an average: the
 shared-node re-scatter in `_stitch` checks the two sides against `conform.entity_tol`,

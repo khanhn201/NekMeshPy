@@ -1,6 +1,6 @@
 """1-D mesh container (:class:`LineMesh`), its operations, and its shape factories."""
 
-from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
+from .assemble import Seam, attach, components, loft, loft_fn, loft_spline, merge, remove, select
 from .linemesh import LineMesh
 from .morph import blend, mirror, offset, reverse, rotate, scale, transform, translate
 from .query import (
@@ -25,6 +25,8 @@ from .shape import (
 from .tag import retag_element, retag_point
 
 __all__ = [
+    "Seam",
+    "attach",
     "bounds",
     "centroid",
     "components",

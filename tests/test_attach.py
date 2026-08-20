@@ -21,6 +21,7 @@ from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core import conform
 from nekmeshpy.core.fields import uniform_spacing
 from nekmeshpy.hexmesh import Seam
+from nekmeshpy.linemesh import Seam as PointSeam
 from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 ORDERS = [1, 3]
@@ -455,6 +456,61 @@ def test_the_stated_path_still_catches_a_non_conforming_seam():
     pts, pid = conform.weld_pairs([a.points, bad.points], cat)
     with pytest.raises(ValueError, match="non-conforming high-order"):
         asm._stitch([a, bad], pts, pid, who="t", seam_faces={0: fa, 1: fb})
+
+
+# -- linemesh.attach ----------------------------------------------------------
+def _chain3():
+    a = linemesh.loft(np.array([[0.0, 0, 0], [1, 0, 0]]), last_tag="j1")
+    b = linemesh.loft(np.array([[1.0, 0, 0], [2, 0, 0]]), first_tag="j1", last_tag="j2")
+    c = linemesh.loft(np.array([[2.0, 0, 0], [3, 0, 0]]), first_tag="j2")
+    return a, b, c
+
+
+def test_line_attach_matches_merge():
+    """A slice at the line rung is a single point, so ``loft``'s ``first_tag`` /
+    ``last_tag`` name the chain ends and that is what makes a seam addressable here."""
+    a, b, c = _chain3()
+    m = linemesh.merge([a, b, c])
+    n = linemesh.attach([a, b, c], [PointSeam(0, "j1", 1, "j1"),
+                                    PointSeam(1, "j2", 2, "j2")])
+    assert np.array_equal(m.points, n.points)
+    assert np.array_equal(m.lines, n.lines)
+
+
+def test_line_attach_closes_a_loop_when_both_ends_are_stated():
+    """Two shared-endpoint arcs into a ring -- the ``join_arcs`` idiom, which is one
+    ``merge`` welding at both ends and so two stated seams here."""
+    th = np.linspace(0.0, np.pi, 5)
+    up = np.stack([np.cos(th), np.sin(th), np.zeros_like(th)], axis=1)
+    lo = np.stack([np.cos(th + np.pi), np.sin(th + np.pi), np.zeros_like(th)], axis=1)
+    p = linemesh.loft(up, first_tag="A1", last_tag="A2")
+    q = linemesh.loft(lo, first_tag="A2", last_tag="A1")
+    ring = linemesh.attach([p, q], [PointSeam(0, "A1", 1, "A1"),
+                                    PointSeam(0, "A2", 1, "A2")])
+    assert len(linemesh.boundary_points(ring)) == 0          # a cycle has no free end
+    assert np.array_equal(ring.points, linemesh.merge([p, q]).points)
+
+
+def test_line_attach_clears_the_joined_point_names():
+    a, b, c = _chain3()
+    n = linemesh.attach([a, b, c], [PointSeam(0, "j1", 1, "j1"),
+                                    PointSeam(1, "j2", 2, "j2")])
+    assert n.point_tags.group_tags == []
+    named = linemesh.attach([a, b, c], [PointSeam(0, "j1", 1, "j1", attach_tag="j1"),
+                                        PointSeam(1, "j2", 2, "j2")])
+    assert named.point_tags.group_tags == ["j1"]
+
+
+def test_line_attach_refuses_an_unknown_tag_naming_the_seam():
+    a, b, _ = _chain3()
+    with pytest.raises(ValueError, match=r"seams\[0\].tag_a: no point carries"):
+        linemesh.attach([a, b], [PointSeam(0, "nope", 1, "j1")])
+
+
+def test_line_attach_refuses_groups_of_different_size():
+    a, b, _ = _chain3()
+    with pytest.raises(ValueError, match="different point counts"):
+        linemesh.attach([a, b], [PointSeam(0, "j1", 1, np.array([0, 1]))])
 
 
 # -- merge is untouched -------------------------------------------------------

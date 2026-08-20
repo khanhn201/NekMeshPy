@@ -35,6 +35,7 @@ from nekmeshpy import (
     writer,
 )
 from nekmeshpy.hexmesh import Seam
+from nekmeshpy.linemesh import Seam as PointSeam
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -75,7 +76,8 @@ def arc_main_lower():
     ``+y -> -z -> -y``; at ``ORDER > 1`` every GLL node lands on the exact circle
     (an explicit point array would only be straight-subdivided between samples)."""
     return linemesh.arc(R, N_HALF, center=(0.0, 0.0, 0.0), normal=(-1.0, 0.0, 0.0),
-                        start_theta=0.0, end_theta=np.pi, order=ORDER)
+                        start_theta=0.0, end_theta=np.pi,
+                        first_tag="A1", last_tag="A2", order=ORDER)
 
 
 def arc_collar(xside):
@@ -103,15 +105,19 @@ def arc_collar(xside):
 
     return linemesh.loft_fn(
         f, linemesh.arclength_fractions(f, N_HALF, t_range=(0.0, np.pi)),
-        order=ORDER)
+        first_tag="A1", last_tag="A2", order=ORDER)
 
 
 def join_arcs(p, q):
     """Two shared-endpoint ``A1 -> A2`` arcs into a closed ring of ``M`` points
-    (index 0 at ``A1``, index ``N_HALF`` at ``A2``), welded at ``A1``/``A2`` by
-    :meth:`LineMesh.merge`; ``q`` is reversed so the loop traverses without
-    crossing."""
-    return linemesh.merge([p, linemesh.reverse(q)])
+    (index 0 at ``A1``, index ``N_HALF`` at ``A2``); ``q`` is reversed so the loop
+    traverses without crossing.
+
+    Both ends are named, so the ring is closed by two *stated* joins rather than by a
+    coordinate weld -- ``reverse`` carries a point's tag with it, so ``A1`` still names
+    ``A1`` whichever way round the arc is stored."""
+    return linemesh.attach([p, linemesh.reverse(q)],
+                           [PointSeam(0, "A1", 1, "A1"), PointSeam(0, "A2", 1, "A2")])
 
 
 # -- circular openings (M points, matching the seam's point order) ------------

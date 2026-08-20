@@ -32,6 +32,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy.linemesh import Seam as PointSeam
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -73,20 +74,24 @@ GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
 # assert.  (Those figures are the corner metric this note was measured with; the
 # curved reading -- now the only one -- gives 0.181 on the same mesh, since the
 # curved wall genuinely costs quality at the GLL nodes.)
+# ``first_tag`` / ``last_tag`` name the end *points* -- a slice at the line rung is a
+# single point -- so the two joints can be stated rather than found by proximity.
 left_ground = linemesh.line((-W, 0.0, 0.0), (-R, 0.0, 0.0),
                             np.linspace(0.0, 1.0, N_GROUND + 1),
-                            element_tag="wall", order=ORDER)
+                            element_tag="wall", last_tag="attach1", order=ORDER)
 # theta pi -> 0 walks the bump left to right over the top, so the three runs chain
 # in order; at ORDER > 1 the interior GLL nodes sit on the exact circle
 bump = linemesh.arc(R, N_BUMP, center=(0.0, 0.0, 0.0), normal=(0.0, 0.0, 1.0),
-                    start_theta=np.pi, end_theta=0.0,
-                    element_tag="wall", order=ORDER)
+                    start_theta=np.pi, end_theta=0.0, element_tag="wall",
+                    first_tag="attach1", last_tag="attach2", order=ORDER)
 right_ground = linemesh.line((R, 0.0, 0.0), (W, 0.0, 0.0),
                              np.linspace(0.0, 1.0, N_GROUND + 1),
-                             element_tag="wall", order=ORDER)
-# weld the shared ends at x = -R and x = +R into one (-W,0) -> (W,0) chain; the whole
+                             element_tag="wall", first_tag="attach2", order=ORDER)
+# join the shared ends at x = -R and x = +R into one (-W,0) -> (W,0) chain; the whole
 # edge is tagged "wall" at the line level, so structured names the bottom side from it
-bottom = linemesh.merge([left_ground, bump, right_ground])
+bottom = linemesh.attach([left_ground, bump, right_ground],
+                         [PointSeam(0, "attach1", 1, "attach1"),
+                          PointSeam(1, "attach2", 2, "attach2")])
 right = linemesh.line((W, 0.0, 0.0), (W, H, 0.0),
                       np.linspace(0.0, 1.0, NY + 1), element_tag="outlet",
                       order=ORDER)
