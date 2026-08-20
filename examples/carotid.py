@@ -16,6 +16,7 @@ import os
 import numpy as np
 
 from nekmeshpy import (
+    ElementTags,
     TriMesh,
     hexmesh,
     linemesh,
@@ -25,6 +26,7 @@ from nekmeshpy import (
     viz,
     writer,
 )
+from nekmeshpy.hexmesh import Seam
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -197,7 +199,25 @@ GROUPS = {
     "flux_2": {FLUX_UPSTREAM: "f2 ", FLUX_DOWNSTREAM: None},
 }
 
-blocks = []
+def cap_tags(slice_, first, second):
+    """Name a leg's seam cap by half-disc.  ``spined_ogrid`` welds the two halves in
+    order, so the first half of the quads is the first arc's side; each half is shared
+    with a *different* leg, which is why one name for the whole cap will not do.
+    ``last_tag`` takes an ``ElementTags`` over the slice's own elements for this."""
+    half = slice_.n_quads // 2
+    return ElementTags.from_dense(
+        np.array([first] * half + [second] * (slice_.n_quads - half)))
+
+
+#: Which shared arc each leg's two seam half-discs sit on.  ``trimesh.ops.seam_rings``
+#: builds the three rings as ``(ab, ac)``, ``(ab, bc)``, ``(ac, bc)``, so leg 0 meets
+#: leg 1 on ``ab`` and leg 2 on ``ac``, and so on round the trifurcation.
+LEG_CAP = {0: ("attach1", "attach2"), 1: ("attach1", "attach3"),
+           2: ("attach2", "attach3")}
+
+blocks: list = []
+seam_block: dict = {}
+flux_seams: list = []
 for leg in range(3):
     sub, us, _, _, _ = trimesh.ops.leg_field(V, faces, leg, gloops)
     fr, frlev = trimesh.ops.extract_rings(sub, us, levels, MIN_LOOP_PTS)
@@ -207,22 +227,34 @@ for leg in range(3):
                        project_to_stl=PROJECT_TO_STL)
     flux_name = flux_name_for(outlet_name[leg])
     off = FLUX_OFFSET
+    cap = cap_tags(slices[-1], *LEG_CAP[leg])
     # opening cap = leg outlet; seam end is interior.  With a flux plane, split
-    # the leg there (a cap of the downstream segment); merge re-joins them.
+    # the leg there (a cap of the downstream segment); attach re-joins them.
     if flux_name and 0 < off < len(slices) - 1:
         # The flux plane is the seam between the two, so it is an *interior* face with
         # a hex on each side. Flux has a direction, so the two segments are named as
         # regions and the plane is written from the upstream one only -- the other row
         # would be the same measurement counted backwards. Slices run outlet -> seam,
-        # so ``slices[off:]`` is the upstream side.
+        # so ``slices[off:]`` is the upstream side.  Both sides carry the plane's name
+        # so ``attach`` can be told which group meets which; ``attach_tag`` puts it back
+        # on the fused face, which is what makes it the tagged interior plane.
         blocks.append(hexmesh.loft(slices[:off + 1], first_tag=outlet_name[leg],
-                                   element_tags=FLUX_DOWNSTREAM))
-        blocks.append(hexmesh.loft(slices[off:], first_tag=flux_name,
+                                   last_tag=flux_name, element_tags=FLUX_DOWNSTREAM))
+        blocks.append(hexmesh.loft(slices[off:], first_tag=flux_name, last_tag=cap,
                                    element_tags=FLUX_UPSTREAM))
+        flux_seams.append(Seam(len(blocks) - 2, flux_name, len(blocks) - 1, flux_name,
+                               attach_tag=flux_name))
     else:
-        blocks.append(hexmesh.loft(slices, first_tag=outlet_name[leg]))
+        blocks.append(hexmesh.loft(slices, first_tag=outlet_name[leg], last_tag=cap))
+    seam_block[leg] = len(blocks) - 1
 
-mesh = hexmesh.merge(blocks)
+# every seam is named on both sides now -- the two flux planes within their legs, and
+# the three half-discs where the legs meet about the shared spine
+mesh = hexmesh.attach(blocks, flux_seams + [
+    Seam(seam_block[0], "attach1", seam_block[1], "attach1"),
+    Seam(seam_block[0], "attach2", seam_block[2], "attach2"),
+    Seam(seam_block[1], "attach3", seam_block[2], "attach3"),
+])
 
 if SMOOTH_ITERS > 0:
     # takes the result: the smoother builds a new mesh rather than writing through

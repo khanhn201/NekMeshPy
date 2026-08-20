@@ -26,6 +26,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import (
+    ElementTags,
     TriMesh,
     hexmesh,
     linemesh,
@@ -33,6 +34,7 @@ from nekmeshpy import (
     smoothing,
     writer,
 )
+from nekmeshpy.hexmesh import Seam
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -202,16 +204,38 @@ seam_left = join_arcs(a_lm, a_lb)     # main-left  : lower main wall + x<=0 coll
 seam_right = join_arcs(a_lm, a_rb)    # main-right : lower main wall + x>=0 collar
 seam_branch = join_arcs(a_lb, a_rb)   # branch     : the full collar
 
+def cap_tags(slice_, first, second):
+    """Name a leg's seam cap by half-disc: ``spined_ogrid`` welds the two halves in
+    order, so the first half of the quads is the first arc's side and the second half
+    the other's.  Each half is shared with a *different* leg, which is why one name for
+    the whole cap will not do -- ``last_tag`` takes an ``ElementTags`` over the slice's
+    own elements for exactly this.
+
+    Mis-assigning the halves cannot pass silently: ``attach`` pairs a named group
+    against a named group and refuses anything that is not one-to-one."""
+    half = slice_.n_quads // 2
+    return ElementTags.from_dense(
+        np.array([first] * half + [second] * (slice_.n_quads - half)))
+
+
+sl_left = leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN)
+sl_right = leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN)
+sl_branch = leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH)
+
+# the three legs meet pairwise on the three arcs: a_lm joins left to right, a_lb joins
+# left to branch, a_rb joins right to branch.  Each is one half of two legs' seam caps.
 blocks = [
-    hexmesh.loft(leg_slices(opening_main(-L), seam_left, N_SLICES_MAIN),
-                 first_tag="inlet"),
-    hexmesh.loft(leg_slices(opening_main(+L), seam_right, N_SLICES_MAIN),
-                 first_tag="outlet"),
-    hexmesh.loft(leg_slices(opening_branch(H), seam_branch, N_SLICES_BRANCH),
-                 first_tag="branch"),
+    hexmesh.loft(sl_left, first_tag="inlet",
+                 last_tag=cap_tags(sl_left[-1], "attach1", "attach2")),
+    hexmesh.loft(sl_right, first_tag="outlet",
+                 last_tag=cap_tags(sl_right[-1], "attach1", "attach3")),
+    hexmesh.loft(sl_branch, first_tag="branch",
+                 last_tag=cap_tags(sl_branch[-1], "attach2", "attach3")),
 ]
 
-mesh = hexmesh.merge(blocks)
+mesh = hexmesh.attach(blocks, [Seam(0, "attach1", 1, "attach1"),
+                               Seam(0, "attach2", 2, "attach2"),
+                               Seam(1, "attach3", 2, "attach3")])
 
 if SMOOTH_ITERS > 0:
     # takes the result: the smoother builds a new mesh rather than writing through
