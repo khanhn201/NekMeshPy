@@ -347,8 +347,9 @@ def surface_report(points: PointArray, tris: IntArray) -> dict[str, Any]:
     M = T.shape[0]
     edges = np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]], axis=0)
     keys = np.sort(edges, axis=1)
-    uniq, inverse, counts = np.unique(keys, axis=0, return_inverse=True,
-                                      return_counts=True)
+    # id rows, so the packed-key fast path applies -- identical result, and
+    # ``np.unique(axis=0)`` argsorts each row as a void scalar instead
+    uniq, inverse, counts = conform.unique_rows(keys, return_counts=True)
     inverse = inverse.ravel()
 
     n_boundary = int(np.sum(counts == 1))

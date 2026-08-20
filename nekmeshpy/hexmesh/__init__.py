@@ -1,6 +1,15 @@
 """3-D hex mesh container (``HexMesh``), its operations, and constrained smoothing."""
 
-from .assemble import components, loft, loft_fn, loft_spline, merge, remove, select
+from .assemble import (
+    attach,
+    components,
+    loft,
+    loft_fn,
+    loft_spline,
+    merge,
+    remove,
+    select,
+)
 from .hexmesh import HexMesh
 from .lift import (
     adapter,
@@ -31,6 +40,7 @@ from .query import (
     report,
     scaled_jacobian,
     tag_report,
+    tagged_faces,
     topology_report,
     volume,
 )
@@ -52,6 +62,7 @@ __all__ = [
     "volume",
     "HexMesh",
     "adapter",
+    "attach",
     "annulus",
     "assemble",
     "blend",
@@ -86,6 +97,7 @@ __all__ = [
     "sweep_path",
     "tag_faces",
     "tag_report",
+    "tagged_faces",
     "tetra",
     "topology_report",
     "transform",

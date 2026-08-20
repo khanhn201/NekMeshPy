@@ -51,7 +51,10 @@ class DistanceField(Field):
 
     def __call__(self, points: PointArray) -> FloatArray:
         P = np.asarray(points, float).reshape(-1, 3)
-        d = np.sqrt(((P[:, None, :] - self.src[None, :, :]) ** 2).sum(-1)).min(1)
+        # a tree, not a ``(P, S, 3)`` broadcast: the old form materialised the whole
+        # cross product to take a min over it, so memory grew as points x sources
+        from scipy.spatial import cKDTree
+        d: FloatArray = cKDTree(self.src).query(P)[0]
         t = np.clip(d / self.dist_far, 0.0, 1.0)
         return self.size_near + t * (self.size_far - self.size_near)
 

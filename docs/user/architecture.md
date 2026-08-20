@@ -51,7 +51,7 @@ that acts on it. Operations live in sibling modules split by arity and rung delt
 | `trimesh/` | `TriMesh` | surface container; ops in `trimesh/ops.py` |
 
 Each container also exposes derived `points`/`corners` views (see {doc}`concepts`).
-Siblings: `assemble.py` (`loft`/`loft_fn`/`loft_spline`/`merge` and their inverse
+Siblings: `assemble.py` (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach` and their inverse
 `select`/`remove`/`components`), `lift.py` (rung-raising: `extrude`/`sweep`/
 `annulus`/`from_grid`, plus hex-only `adapter`/`bridge`), `lower.py`
 (`boundary_mesh`, Δ −1), `morph.py` (`blend`, `translate`/`rotate`/`scale`/

@@ -445,7 +445,14 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # at a tolerance sized to that specific residual, rather than loosening the
     # tolerance for the whole assembly (which welded an unrelated, closer-together
     # pair by mistake the one time this was tried globally).
-    conn_chi = hexmesh.merge([conn_chi, connector], tol=0.05)
+    #
+    # 0.04, not 0.05: the nearest *real* feature separation here is 0.05 (measured
+    # 0.04999999999999716), so a tolerance of 0.05 says that gap is coincident and
+    # collapses the element across it.  That used to pass only because the weld
+    # bucketed coordinates on a lattice and the pair happened to land in different
+    # cells; now that coincidence is a genuine radius, the tolerance has to sit
+    # strictly between the residual it must bridge and the feature it must not.
+    conn_chi = hexmesh.merge([conn_chi, connector], tol=0.04)
     return core, [conn_chi], riser, dbr, t1_center
 
 
@@ -568,8 +575,9 @@ def place_t2(source_disc, t2_y, mirror=False):
     # quadrant-family, so bridge's own db-facing stub falls back to a *loose* (corner-
     # exact, straight-interior) match rather than db's exact curvature -- weld that one
     # seam to core (which carries db's real curvature) locally, at a tolerance sized to
-    # that residual, same as place_t1's own conn_chi <-> connector weld above.
-    core = hexmesh.merge([core, conn], tol=0.05)
+    # that residual, same as place_t1's own conn_chi <-> connector weld above -- and
+    # 0.04 for the same reason it is 0.04 there: 0.05 is a real feature separation.
+    core = hexmesh.merge([core, conn], tol=0.04)
     return core, da, dbr, t2_center
 
 

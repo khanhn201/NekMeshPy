@@ -43,7 +43,7 @@ operation, not to document it twice. See
 [Architecture](../user/architecture.md#package-layout) for how a new operation is
 placed into one of these.
 
-### `quadmesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`) or runs it backward (`select`/`remove`/`components`)
+### `quadmesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.assemble

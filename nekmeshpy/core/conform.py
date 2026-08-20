@@ -222,14 +222,108 @@ def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
     if bidx.size:
         scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
         t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
-        keys = np.round(P[bidx, :] / t).astype(np.int64)
-        uniq, inverse, _ = unique_rows(keys)
-        first_local = first_occurrence(inverse, uniq.shape[0])
-        remap[bidx] = bidx[first_local][inverse]
+        remap[bidx] = bidx[coincident_clusters(P[bidx, :], t)]
 
-    # a cluster's representative maps to itself and everything else maps to a lower
-    # index, so the survivors *are* the fixed points -- same sorted set ``np.unique``
-    # would return, without sorting the whole point cloud to find it.
+    return _renumber_from_remap(P, remap)
+
+
+def coincident_clusters(X: PointArray, tol: float) -> IntArray:
+    """``(N,)`` local index of each point's cluster representative -- the *lowest* index
+    among the points it is coincident with.
+
+    Two points are coincident when they share a lattice cell of side ``tol`` **or** lie
+    within ``tol`` of each other.  The second half is the fix: binning alone decides
+    coincidence by ``round(x / tol)``, so two points arbitrarily closer than ``tol``
+    miss each other whenever they fall either side of a cell boundary -- a 1.78e-15
+    disagreement was enough to pinch a swept surface open in ``examples/chimera_full.py``,
+    and a missed weld does not raise, it silently leaves a seam open.  A radius query
+    has no boundaries to fall across.
+
+    The lattice half is **kept**, not replaced, so this only ever welds more than the
+    bin rule did.  Dropping it would be the tidier definition -- ``tol`` is documented
+    as a distance, and a shared cell reaches ``tol * sqrt(3)`` -- but tolerances already
+    tuned by hand against the old behaviour were sized to that reach, and narrowing it
+    reopens seams those callers rely on.
+
+    ``tol`` is an **exclusive** bound on the radius half: points exactly ``tol`` apart
+    are not coincident.  That matters because a tolerance is often set to a feature size,
+    and fusing the feature is worse than missing a seam.
+
+    Coincidence is transitive either way: a hub point shared by four blocks arrives as
+    several overlapping pairs, and a chain of near-neighbours becomes one cluster."""
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    n = X.shape[0]
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    # same-cell edges: link every point to the first occupant of its cell
+    keys = np.round(X / tol).astype(np.int64)
+    uniq, inverse, _ = unique_rows(keys)
+    first_local = first_occurrence(inverse, uniq.shape[0])
+    bin_rep: IntArray = np.asarray(first_local[inverse], dtype=np.int64)
+    # within-radius edges: the pairs a lattice cannot see
+    near: IntArray = cKDTree(X).query_pairs(r=tol, output_type="ndarray")
+    if near.size:
+        # strictly *closer* than tol, not "at most": ``query_pairs`` is inclusive, and a
+        # lattice never welds two points exactly ``tol`` apart on an axis (they round to
+        # adjacent cells).  Keeping the inclusive end fused a pair sitting at exactly
+        # 0.05 in ``examples/chimera_full.py`` -- a real spacing, not a seam -- and
+        # collapsed the element between them.
+        near = near[np.linalg.norm(X[near[:, 0]] - X[near[:, 1]], axis=1) < tol]
+
+    rows = np.concatenate([np.arange(n, dtype=np.int64), near[:, 0]]) if near.size \
+        else np.arange(n, dtype=np.int64)
+    cols = np.concatenate([bin_rep, near[:, 1]]) if near.size else bin_rep
+    graph = sp.coo_matrix((np.ones(rows.shape[0], dtype=np.int8), (rows, cols)),
+                          shape=(n, n))
+    ncomp, label = connected_components(graph, directed=False)
+    # lowest member of each cluster, so the survivor is the first occurrence -- the
+    # representative ``_renumber_from_remap`` is written against
+    rep: IntArray = np.full(ncomp, n, dtype=np.int64)
+    np.minimum.at(rep, label, np.arange(n, dtype=np.int64))
+    return np.asarray(rep[label], dtype=np.int64)
+
+
+def weld_pairs(pos: Sequence[PointArray],
+               pairs: IntArray) -> tuple[PointArray, IntArray]:
+    """The **stated-pairs** twin of :func:`weld_points`: concatenate the blocks' points
+    and fuse exactly the index pairs given, reading no coordinate of its own.
+
+    ``pairs`` is ``(K,2)`` in the *concatenated* numbering. Fusing is transitive -- a
+    point named in several pairs joins one cluster, which is what lets joins that share
+    a seam ring compose in a single pass -- and each cluster's survivor is its lowest
+    index, so the first block's own numbering comes through untouched."""
+    P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
+    total = P.shape[0]
+    remap: IntArray = np.arange(total, dtype=np.int64)
+    pr: IntArray = np.asarray(pairs, dtype=np.int64).reshape(-1, 2)
+    if pr.shape[0]:
+        if pr.min() < 0 or pr.max() >= total:
+            raise ValueError(
+                "weld_pairs: a stated pair names point %d, outside the %d concatenated "
+                "points" % (int(pr.max()), total))
+        import scipy.sparse as sp
+        from scipy.sparse.csgraph import connected_components
+        graph = sp.coo_matrix(
+            (np.ones(pr.shape[0], dtype=np.int8), (pr[:, 0], pr[:, 1])),
+            shape=(total, total))
+        ncomp, label = connected_components(graph, directed=False)
+        rep: IntArray = np.full(ncomp, total, dtype=np.int64)
+        np.minimum.at(rep, label, np.arange(total, dtype=np.int64))
+        remap = np.asarray(rep[label], dtype=np.int64)
+    return _renumber_from_remap(P, remap)
+
+
+def _renumber_from_remap(P: PointArray,
+                         remap: IntArray) -> tuple[PointArray, IntArray]:
+    """``(surviving points, new id of every original point)`` for a weld's cluster map.
+
+    A cluster's representative maps to itself and everything else maps to a lower index,
+    so the survivors *are* the fixed points -- the same sorted set ``np.unique`` would
+    return, without sorting the whole point cloud to find it."""
+    total = P.shape[0]
     survivors: IntArray = np.flatnonzero(remap == np.arange(total, dtype=np.int64))
     new_id: IntArray = np.empty(total, dtype=np.int64)
     new_id[survivors] = np.arange(survivors.size)

@@ -53,6 +53,7 @@ from nekmeshpy import (
     trimesh,
     writer,
 )
+from nekmeshpy.core import conform
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -685,8 +686,9 @@ def build_surface():
     F = np.array(tris, dtype=np.int64)
     # weld the patch seams: the rim was injected identically, the band meets the other
     # two on a shared x grid, so this only ever fuses points that are already equal
-    key = np.round(V / (1e-7 * float((V.max(0) - V.min(0)).max()))).astype(np.int64)
-    _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    first, inv = np.unique(
+        conform.coincident_clusters(V, 1e-7 * float((V.max(0) - V.min(0)).max())),
+        return_inverse=True)
     V, F = V[first], inv.ravel()[F]
     F = F[(F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])]
     V = relax_junction(V, F)

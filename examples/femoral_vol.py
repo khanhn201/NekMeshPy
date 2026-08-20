@@ -17,6 +17,7 @@ import scipy.sparse.linalg as spla
 from scipy.spatial import cKDTree
 
 from nekmeshpy import tetmesh
+from nekmeshpy.core import conform
 from nekmeshpy.tetmesh import TetMesh
 
 
@@ -344,8 +345,10 @@ def _weld(pts, tris, rel=1e-9, want_map=False):
         return (pts, tris, np.zeros(0, np.int64)) if want_map else (pts, tris)
     scale = float(np.max(pts.max(axis=0) - pts.min(axis=0)))
     tol = max(rel * scale, 1e-12)
-    key = np.round(pts / tol).astype(np.int64)
-    _, first, inv = np.unique(key, axis=0, return_index=True, return_inverse=True)
+    # by radius, not by a lattice: two cut points arbitrarily closer than ``tol`` used to
+    # miss each other whenever they straddled a cell boundary, and a missed weld here
+    # leaves the soup unconnected rather than raising
+    first, inv = np.unique(conform.coincident_clusters(pts, tol), return_inverse=True)
     t = inv.ravel()[tris]
     keep = (t[:, 0] != t[:, 1]) & (t[:, 1] != t[:, 2]) & (t[:, 0] != t[:, 2])
     return (pts[first], t[keep], first) if want_map else (pts[first], t[keep])
