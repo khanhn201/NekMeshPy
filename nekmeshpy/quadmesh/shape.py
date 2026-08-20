@@ -254,7 +254,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
     ny = left.points.shape[0] - 1
     # the four edges must close into a loop (share corners) in CCW order
     allpts = np.vstack([e.points for e in edge_list])
-    scale = float(np.max(allpts.max(axis=0) - allpts.min(axis=0)))
+    scale = conform.bbox_scale(allpts)
     tol = 1e-6 * scale if scale > 0 else 1e-9
     for lbl, p, q in (("bottom->right", bottom.points[-1], right.points[0]),
                       ("right->top", right.points[-1], top.points[0]),

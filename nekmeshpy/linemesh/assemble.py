@@ -184,11 +184,15 @@ def loft_fn(f: Callable[[FloatArray], PointArray], fractions: float | FloatArray
                 first_tag=first_tag, last_tag=last_tag, order=order)
 
 
-def merge(meshes: Sequence[LineMesh], *,
-          tol: float | None = None) -> LineMesh:
+def merge(meshes: Sequence[LineMesh], *, tol: float = 1e-7) -> LineMesh:
     """Merge line meshes into one, welding coincident **topological end points** (the
     degree-1 chain ends -- the 1-D analogue of the boundary vertices
-    ``QuadMesh.merge``/``HexMesh.merge`` weld)."""
+    ``QuadMesh.merge``/``HexMesh.merge`` weld).
+
+    ``tol`` is a **fraction** of ``conform.bbox_scale`` -- the largest of the x/y/z
+    ranges over every point handed in -- so the coincidence radius is
+    ``tol * bbox_scale``.  Not a distance: if you know one, divide by
+    ``conform.bbox_scale(...)``."""
     meshes = list(meshes)
     pos = [np.asarray(m.points, dtype=float).reshape(-1, 3) for m in meshes]
     counts = [p.shape[0] for p in pos]

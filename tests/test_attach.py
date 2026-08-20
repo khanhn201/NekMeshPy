@@ -51,34 +51,48 @@ def _rect(x0, x1, order, tags):
                               3, 3, side_tags=tags, order=order)
 
 
-# -- the binning fix ----------------------------------------------------------
+# -- coincidence is a radius, and only a radius -------------------------------
 def test_points_either_side_of_a_bin_boundary_still_weld():
-    """The bug: coincidence was decided by ``round(x / tol)``, so two points arbitrarily
-    closer than ``tol`` missed each other whenever they fell in adjacent cells.  A missed
-    weld does not raise -- it leaves a seam open."""
+    """The bug that started this: coincidence was decided by ``round(x / tol)``, so two
+    points arbitrarily closer than ``tol`` missed each other whenever they fell in
+    adjacent cells.  A missed weld does not raise -- it leaves a seam open."""
     X = np.array([[0.5 - 5e-16, 0.0, 0.0], [0.5 + 5e-16, 0.0, 0.0]])
     assert not np.array_equal(np.round(X[0]), np.round(X[1]))     # adjacent cells
     lab = conform.coincident_clusters(X, 1.0)
     assert lab[0] == lab[1]
 
 
-def test_the_lattice_reach_is_kept_as_well_as_the_radius():
-    """Two points can share a cell and still be ``tol * sqrt(3)`` apart.  That reach is
-    preserved deliberately: tolerances tuned by hand against the old behaviour were sized
-    to it, and narrowing it reopens seams those callers rely on."""
+def test_sharing_a_cell_is_not_enough_to_weld():
+    """The inverse of the test this replaces, and the guard against the lattice coming
+    back.  Two points can share a ``round(x / tol)`` cell and still be ``tol * sqrt(3)``
+    apart; the lattice welded them anyway, 1.73x further than the caller asked for."""
     Y = np.array([[-0.49, -0.49, -0.49], [0.49, 0.49, 0.49]])
     assert float(np.linalg.norm(Y[0] - Y[1])) > 1.0               # further apart than tol
     assert np.array_equal(np.round(Y[0]), np.round(Y[1]))         # but one cell
     lab = conform.coincident_clusters(Y, 1.0)
-    assert lab[0] == lab[1]
+    assert lab[0] != lab[1]
+
+
+def test_welding_does_not_depend_on_where_the_model_sits():
+    """Why the lattice had to go, not merely that it did.  Its cell edges are fixed in
+    absolute space, so *which* pairs fused changed when the whole model was translated --
+    and a shift of ``tol/2`` was enough to flip one.  A radius is translation-invariant,
+    so the same two points weld the same way wherever they are put."""
+    Y = np.array([[-0.49, -0.49, -0.49], [0.49, 0.49, 0.49]])       # one cell, d > tol
+    Z = np.array([[0.5 - 5e-16, 0.0, 0.0], [0.5 + 5e-16, 0.0, 0.0]])  # two cells, d ~ 0
+    for shift in (0.0, 0.5, 1.0 / 3.0, 13.7, -101.25):
+        off = np.array([shift, shift, shift])
+        far = conform.coincident_clusters(Y + off, 1.0)
+        near = conform.coincident_clusters(Z + off, 1.0)
+        assert far[0] != far[1], shift
+        assert near[0] == near[1], shift
 
 
 def test_a_pair_exactly_at_the_tolerance_is_not_coincident():
     """``tol`` is an exclusive bound on the radius half. ``cKDTree.query_pairs`` is
     inclusive, and taking it at face value fused a pair sitting at exactly 0.05 in
     ``examples/chimera_full.py`` -- a real spacing, not a seam -- collapsing the element
-    between them. A lattice never welds two points exactly ``tol`` apart on an axis
-    either, so the strict bound is also what keeps the two halves consistent."""
+    between them."""
     at = conform.coincident_clusters(np.array([[0.0, 0, 0], [0.05, 0, 0]]), 0.05)
     assert at[0] != at[1]
     under = conform.coincident_clusters(np.array([[0.0, 0, 0], [0.0499, 0, 0]]), 0.05)

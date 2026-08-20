@@ -507,11 +507,13 @@ def loft_fn(
 def merge(
     meshes: Sequence[HexMesh],
     *,
-    tol: float | None = None,
+    tol: float = 1e-7,
 ) -> HexMesh:
     """Stitch several hex blocks into one, coordinate-welding coincident seam points in
-    a single pass. ``tol`` is the absolute coincidence distance (default ``1e-7`` x the
-    merged bounding-box extent).
+    a single pass. ``tol`` is a **fraction** of ``conform.bbox_scale`` -- the largest of
+    the x/y/z ranges over every point handed in -- so the coincidence radius is
+    ``tol * bbox_scale``.  Not a distance: if you know one, divide by
+    ``conform.bbox_scale(...)``.
 
     This is the **proximity** join: it is told nothing about what meets what and infers
     every seam in the assembly from coordinates, at one tolerance, over every block's

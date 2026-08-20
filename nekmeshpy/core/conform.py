@@ -203,12 +203,45 @@ def unique_rows(rows: IntArray, *, return_counts: bool = False
     return uniq, inv, counts
 
 
+def bbox_scale(points: PointArray) -> float:
+    """The model's length scale: the **largest of the x, y and z ranges** of the point
+    cloud, or ``0.0`` for an empty one.
+
+    One definition, because every scale-relative tolerance in the toolkit is a
+    coefficient times this and they must not drift apart.  Deliberately the largest
+    *side* and not the bounding-box diagonal: the diagonal is up to ``sqrt(3)`` larger,
+    so the two readings of the same coefficient differ by 73%, and a tolerance is only
+    meaningful if the scale under it is stated exactly.
+
+    Deliberately not the *smallest* side either, which is ``0.0`` for the planar
+    sections the quad and line rungs are usually built from."""
+    return (float(np.max(points.max(axis=0) - points.min(axis=0)))
+            if points.size else 0.0)
+
+
+#: Above this, a ``weld_points`` tolerance is far likelier to be a distance someone
+#: meant absolutely than a fraction they meant relatively -- 10% of the model is not a
+#: coincidence tolerance by any reading.
+MAX_WELD_FRACTION = 0.1
+
+
 def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
-          tol: float | None) -> tuple[PointArray, IntArray]:
+                tol: float = 1e-7) -> tuple[PointArray, IntArray]:
     """The corner half of every ``merge``: concatenate the blocks' points, fuse the
     coincident *weldable* ones, and renumber.  Coordinate identity -- unlike the entity
     identity the rest of this module resolves by corner ids, which is why a weld is the
-    one place a mesh is decided by geometry."""
+    one place a mesh is decided by geometry.
+
+    ``tol`` is a **fraction** of :func:`bbox_scale` over every point handed in, not a
+    distance: the coincidence radius is ``tol * bbox_scale(P)``.  One parameter, one
+    unit -- it used to be a distance when supplied and a fraction when defaulted, which
+    is two meanings for one name.  A caller who knows an absolute distance divides:
+    ``tol=d / conform.bbox_scale(np.vstack(pos))``."""
+    if not 0.0 <= tol < MAX_WELD_FRACTION:
+        raise ValueError(
+            "weld_points: tol is a *fraction* of the model's largest x/y/z range, not "
+            "a distance -- %g would be %g%% of the model. If you know the distance d, "
+            "pass tol=d/conform.bbox_scale(points)." % (tol, 100.0 * tol))
     P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
     total = P.shape[0]
 
@@ -220,9 +253,8 @@ def weld_points(pos: Sequence[PointArray], seams: Sequence[IntArray],
         noff += p.shape[0]
     bidx = np.flatnonzero(is_bnd)
     if bidx.size:
-        scl = float(np.max(P.max(axis=0) - P.min(axis=0)))
-        t = tol if tol is not None else (1e-7 * scl if scl > 0 else 1.0)
-        remap[bidx] = bidx[coincident_clusters(P[bidx, :], t)]
+        # a zero scale means every point is the same point, and any radius fuses them
+        remap[bidx] = bidx[coincident_clusters(P[bidx, :], tol * bbox_scale(P))]
 
     return _renumber_from_remap(P, remap)
 
@@ -231,26 +263,32 @@ def coincident_clusters(X: PointArray, tol: float) -> IntArray:
     """``(N,)`` local index of each point's cluster representative -- the *lowest* index
     among the points it is coincident with.
 
-    Two points are coincident when they share a lattice cell of side ``tol`` **or** lie
-    within ``tol`` of each other.  The second half is the fix: binning alone decides
-    coincidence by ``round(x / tol)``, so two points arbitrarily closer than ``tol``
-    miss each other whenever they fall either side of a cell boundary -- a 1.78e-15
-    disagreement was enough to pinch a swept surface open in ``examples/chimera_full.py``,
-    and a missed weld does not raise, it silently leaves a seam open.  A radius query
-    has no boundaries to fall across.
+    Two points are coincident when they lie **strictly closer than ``tol``**.  That is
+    the whole rule: one radius, nothing else.
 
-    The lattice half is **kept**, not replaced, so this only ever welds more than the
-    bin rule did.  Dropping it would be the tidier definition -- ``tol`` is documented
-    as a distance, and a shared cell reaches ``tol * sqrt(3)`` -- but tolerances already
-    tuned by hand against the old behaviour were sized to that reach, and narrowing it
-    reopens seams those callers rely on.
+    This was a lattice, ``round(x / tol)``, fusing equal keys.  A lattice has cell
+    boundaries, so two points arbitrarily closer than ``tol`` missed each other whenever
+    they straddled one -- a 1.78e-15 disagreement was enough to pinch a swept surface
+    open in ``examples/chimera_full.py``, and a missed weld does not raise, it silently
+    leaves a seam open.  A radius has no boundaries to fall across.
 
-    ``tol`` is an **exclusive** bound on the radius half: points exactly ``tol`` apart
-    are not coincident.  That matters because a tolerance is often set to a feature size,
-    and fusing the feature is worse than missing a seam.
+    The lattice was kept alongside the radius for one release, under a "weld more, never
+    less" rule, so the fix could not reopen a seam some hand-tuned tolerance relied on.
+    It is gone now, and the reason is that the two rules are **not** redundant in the
+    direction that matters: a shared cell reaches ``tol * sqrt(3)``, so the lattice
+    welded pairs up to 1.73x further apart than the caller asked for -- and *which*
+    pairs depended on where the model sat in absolute space, since translating
+    everything by ``tol/2`` moves the cell edges.  A geometric predicate must not depend
+    on the origin.  It also made ``tol`` a lie at the one place it was load-bearing:
+    ``chimera_full`` picks ``0.04`` to stay under a real 0.05 feature, and
+    ``0.04 * sqrt(3)`` is 0.069.
 
-    Coincidence is transitive either way: a hub point shared by four blocks arrives as
-    several overlapping pairs, and a chain of near-neighbours becomes one cluster."""
+    ``tol`` is an **exclusive** bound: points exactly ``tol`` apart are not coincident.
+    A tolerance is often set just under a feature size, and fusing the feature is worse
+    than missing a seam.
+
+    Coincidence is transitive: a hub point shared by four blocks arrives as several
+    overlapping pairs, and a chain of near-neighbours becomes one cluster."""
     import scipy.sparse as sp
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
@@ -258,24 +296,18 @@ def coincident_clusters(X: PointArray, tol: float) -> IntArray:
     n = X.shape[0]
     if n == 0:
         return np.zeros(0, dtype=np.int64)
-    # same-cell edges: link every point to the first occupant of its cell
-    keys = np.round(X / tol).astype(np.int64)
-    uniq, inverse, _ = unique_rows(keys)
-    first_local = first_occurrence(inverse, uniq.shape[0])
-    bin_rep: IntArray = np.asarray(first_local[inverse], dtype=np.int64)
-    # within-radius edges: the pairs a lattice cannot see
+    self_loop: IntArray = np.arange(n, dtype=np.int64)
     near: IntArray = cKDTree(X).query_pairs(r=tol, output_type="ndarray")
     if near.size:
-        # strictly *closer* than tol, not "at most": ``query_pairs`` is inclusive, and a
-        # lattice never welds two points exactly ``tol`` apart on an axis (they round to
-        # adjacent cells).  Keeping the inclusive end fused a pair sitting at exactly
-        # 0.05 in ``examples/chimera_full.py`` -- a real spacing, not a seam -- and
-        # collapsed the element between them.
+        # strictly *closer* than tol, not "at most": ``query_pairs`` is inclusive, and
+        # taking that at face value fused a pair sitting at exactly 0.05 in
+        # ``examples/chimera_full.py`` -- a real spacing, not a seam -- and collapsed the
+        # element between them.
         near = near[np.linalg.norm(X[near[:, 0]] - X[near[:, 1]], axis=1) < tol]
 
-    rows = np.concatenate([np.arange(n, dtype=np.int64), near[:, 0]]) if near.size \
-        else np.arange(n, dtype=np.int64)
-    cols = np.concatenate([bin_rep, near[:, 1]]) if near.size else bin_rep
+    # the self-loops are what leave an unmatched point its own cluster
+    rows = np.concatenate([self_loop, near[:, 0]]) if near.size else self_loop
+    cols = np.concatenate([self_loop, near[:, 1]]) if near.size else self_loop
     graph = sp.coo_matrix((np.ones(rows.shape[0], dtype=np.int8), (rows, cols)),
                           shape=(n, n))
     ncomp, label = connected_components(graph, directed=False)
@@ -723,9 +755,9 @@ def locate_rows(haystack: IntArray, needles: IntArray, *,
 
 # -- array engine: tolerance / scatter / gather / conformal walk ---------
 def entity_tol(points: PointArray) -> float:
-    """Scale-relative coincidence tolerance for entity sharing: ``1e-8`` of the point
-    cloud's bounding-box diagonal extent, falling back to ``1e-12`` for a degenerate
-    (single-point or empty) cloud.
+    """Scale-relative coincidence tolerance for entity sharing: ``1e-8`` of
+    :func:`bbox_scale` -- the **largest of the x/y/z ranges** -- falling back to
+    ``1e-12`` for a degenerate (single-point or empty) cloud.
 
     Every rung's sharing check funnels through here, so this coefficient is the one
     place the whole toolkit's idea of "the same point" is set.  It was ``1e-9``, which
@@ -734,8 +766,7 @@ def entity_tol(points: PointArray) -> float:
     seam it structurally shares.  Coincidence here is a question about construction,
     not about measurement: entities are meant to be the same object, so the number only
     has to stay far below any real feature, and ``1e-8`` of the model extent is."""
-    scale = (float(np.max(points.max(axis=0) - points.min(axis=0)))
-             if points.size else 0.0)
+    scale = bbox_scale(points)
     return 1e-8 * scale if scale > 0 else 1e-12
 
 

@@ -459,7 +459,7 @@ def _chain_segments(segs: FloatArray) -> LineMesh | None:
     # a lattice missed any two endpoints that straddled a bin boundary however close
     # they were, and a single missed weld here does not raise -- it breaks the chain, so
     # the walk below returns a shorter loop, or ``None``.
-    scl = float(np.max(pts_raw.max(axis=0) - pts_raw.min(axis=0)))
+    scl = conform.bbox_scale(pts_raw)
     tol = 1e-6 * scl if scl > 0 else 1.0
     _, ic = np.unique(conform.coincident_clusters(pts_raw, tol), return_inverse=True)
     ic = ic.ravel()

@@ -367,9 +367,13 @@ def loft_fn(
                            first_tag=first_tag, last_tag=last_tag)
 
 
-def merge(meshes: Sequence[QuadMesh], *, tol: float | None = None) -> QuadMesh:
-    """Merge quad sections into one, welding coincident boundary points. ``tol`` is the
-    absolute coincidence distance (default ``1e-7`` x the extent).
+def merge(meshes: Sequence[QuadMesh], *, tol: float = 1e-7) -> QuadMesh:
+    """Merge quad sections into one, welding coincident boundary points.
+
+    ``tol`` is a **fraction** of ``conform.bbox_scale`` -- the largest of the x/y/z
+    ranges over every point handed in -- so the coincidence radius is
+    ``tol * bbox_scale``.  Not a distance: if you know one, divide by
+    ``conform.bbox_scale(...)``.
 
     The **proximity** join: told nothing about what meets what, it infers every seam
     from coordinates at one tolerance. :func:`attach` is told which edge group meets

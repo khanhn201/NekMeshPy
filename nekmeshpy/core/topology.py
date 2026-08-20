@@ -84,7 +84,7 @@ def _count_hanging_points(points: PointArray, edges: IntArray,
     if E.shape[0] == 0 or cand.size == 0 or X.shape[0] == 0:
         return 0
     from scipy.spatial import cKDTree
-    scale = float(np.max(X.max(axis=0) - X.min(axis=0)))
+    scale = conform.bbox_scale(X)
     tol = rtol * (scale if scale > 0 else 1.0)
     Xc = X[cand]
     tree = cKDTree(Xc)
@@ -241,7 +241,7 @@ def _count_overlapping_pairs(X: PointArray, HC: IntArray) -> int:
         return 0
     centroid, radius, vertex, normal = _hex_geometry(X, HC)
     samples = _hex_sample_points(X, HC)
-    scale = float(np.max(X.max(axis=0) - X.min(axis=0))) if X.size else 0.0
+    scale = conform.bbox_scale(X)
     tol = 1e-6 * (scale if scale > 0.0 else 1.0)
 
     tree = cKDTree(centroid)
