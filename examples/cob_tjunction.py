@@ -46,6 +46,7 @@ from nekmeshpy import (
 from nekmeshpy.core.fields import gll_nodes, lagrange_matrix
 from nekmeshpy.hexmesh import Seam
 from nekmeshpy.pointmesh import PointMesh
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 from nekmeshpy.quadmesh.query import element_blocks
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -357,13 +358,16 @@ wrap = 2.0 * np.pi if t_bore[-1] > t_bore[0] else -2.0 * np.pi
 bore_loop = linemesh.loft_fn(foot_param, np.append(t_bore, t_bore[0] + wrap),
                              loop=True, order=ORDER)
 
+# the bore disc's wall *is* the collar's inner loop -- the one seam between them, so
+# name it on both sides and state the join
 bore_p = quadmesh.spined_ogrid(bore_loop, RADIAL_BRANCH,
-                               center_scale=CENTER_SCALE_BRANCH)
+                               center_scale=CENTER_SCALE_BRANCH,
+                               wall_tag="attach1")
 # ``annulus`` winds the opposite way round from ``spined_ogrid`` on the same loop, so
-# reverse both of its loops to make the merged section consistently wound.
+# reverse both of its loops to make the joined section consistently wound.
 collar_p = quadmesh.annulus(linemesh.reverse(bore_loop), linemesh.reverse(square),
-                            RADIAL_BRANCH)
-top_p = quadmesh.merge([bore_p, collar_p])
+                            RADIAL_BRANCH, inner_tag="attach1")
+top_p = quadmesh.attach([bore_p, collar_p], [EdgeSeam(0, "attach1", 1, "attach1")])
 TOP = map_section(top_p, to_cyl)
 
 
@@ -395,7 +399,11 @@ upstream = hexmesh.extrude(section, length=leg, layers=N_Z_LEG, axis=(0.0, 0.0, 
 # -- the branch: the bore disc off the wall, straight out to the tip -----------
 # the disc's own (x, z) are already the bore circle, so holding them and carrying y up to
 # H_BRANCH sweeps an exact cylinder with a curved root and a flat cap.
-bore_wall = map_section(bore_p, to_cyl)
+# ``bore_p``'s wall was named for the section join above; the branch sweeps that same
+# rim into its *outer* faces, which must stay untagged so the free-face sweep below
+# names them ``wall`` and the skin grows over them.  A seam name that outlives its seam
+# is a name for something that no longer exists.
+bore_wall = map_section(quadmesh.retag_edge(bore_p, {"attach1": ""}), to_cyl)
 flat = map_section(bore_wall, lambda p: np.stack(
     [p[:, 0], np.full(p.shape[0], H_BRANCH), p[:, 2]], axis=1))
 stations = quadmesh.blend(bore_wall, flat, np.linspace(0.0, 1.0, N_BRANCH + 1))

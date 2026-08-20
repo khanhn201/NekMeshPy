@@ -27,6 +27,7 @@ import numpy as np
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core import surfaces
 from nekmeshpy.linemesh import Seam as PointSeam
+from nekmeshpy.quadmesh import Seam as EdgeSeam
 
 TJunction = namedtuple("TJunction", "core disc_minus disc_plus disc_branch")
 
@@ -150,13 +151,35 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
     def seam(target, fr, center=ORIGIN):
         return linemesh.line(center, target, fr, order=order)
 
-    def quadrant(arc, seam1, seam2, wall_tag=""):
+    def quadrant(arc, seam1, seam2, wall_tag="", side_tags=None):
         return quadmesh.quadrant_ogrid(arc, seam1, seam2, RADIAL,
-                                       center_scale=CENTER_SCALE, wall_tag=wall_tag)
+                                       center_scale=CENTER_SCALE, wall_tag=wall_tag,
+                                       side_tags=side_tags)
+
+    def ring_sides(q, n):
+        """Quadrant ``q`` of a ring of ``n``: its two seams named so the next quadrant
+        round can be told which one it meets.  ``quadrant_ogrid`` takes them keyed
+        ``seam1`` / ``seam2``, and ``seam2`` of one *is* ``seam1`` of the next."""
+        return {"seam1": "s%d" % q, "seam2": "s%d" % ((q + 1) % n)}
+
+    def ring(quads):
+        """``n`` quadrants closed into a disc about their shared hub.  Every seam is
+        stated, the hub included -- each seam line runs through it, so welding them all
+        welds the hub with them."""
+        n = len(quads)
+        # lower block index first, always.  ``own="a"`` writes the a-side's coordinates
+        # onto the b-side, while the surviving point id is the *lowest* of the welded
+        # pair -- so stating the wrap-around seam as (n-1, 0) would keep block 0's id
+        # carrying block n-1's coordinates, and the two differ in the last ulp.
+        return quadmesh.attach(quads, [
+            EdgeSeam(min(q, (q + 1) % n), "s%d" % ((q + 1) % n),
+                     max(q, (q + 1) % n), "s%d" % ((q + 1) % n))
+            for q in range(n)])
 
     def disc(pieces):
-        return quadmesh.merge([quadrant(arc, s1, s2, wall_tag="wall")
-                               for arc, s1, s2 in pieces])
+        n = len(pieces)
+        return ring([quadrant(arc, s1, s2, wall_tag="wall", side_tags=ring_sides(q, n))
+                     for q, (arc, s1, s2) in enumerate(pieces)])
 
     def disc_at(arcs, center):
         # quadrant_disc's own recipe, inlined: quadmesh.ogrid/spined_ogrid now cover the
@@ -166,8 +189,8 @@ def build_tjunction(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=1.2, N_QUAD=2,
         fr = quadmesh.quadrant_seam_fractions(N_QUAD, RADIAL, QUADRANT_SCALE)
         seams = [seam(a.points[0], fr, center) for a in arcs]
         seams.append(seams[0])
-        return quadmesh.merge([quadrant(arcs[q], seams[q], seams[q + 1], wall_tag="wall")
-                               for q in range(4)])
+        return ring([quadrant(arcs[q], seams[q], seams[q + 1], wall_tag="wall",
+                              side_tags=ring_sides(q, 4)) for q in range(4)])
 
     def plain_walls(composite, z, sign):
         ang = sign * np.deg2rad(-45.0 + 90.0 * np.arange(5))

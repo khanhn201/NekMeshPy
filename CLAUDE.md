@@ -248,6 +248,13 @@ a named group against a named group and refuses anything not one-to-one.
 `attach` welds **only** what it is told, so a `merge` converts all-or-nothing — stating
 one of two touching seams leaves two components, not a partial weld.
 
+**State a seam with the lower block index first** when you care about reproducing a
+`merge` byte for byte. The surviving point id is the lowest of a welded pair, but
+`own="a"` writes the *a*-side's coordinates -- so a seam given as `(3, 0)` keeps block
+0's id carrying block 3's numbers, and two values meant to be equal can differ in the
+last ulp. Closing a ring of blocks is where this bites: the wrap-around seam is the one
+that comes out backwards.
+
 `own=` picks whose nodes the seam keeps, and it is a **byte copy**, not an average: the
 shared-node re-scatter in `_stitch` checks the two sides against `conform.entity_tol`,
 orders tighter than any pairing distance, and a merely-close seam fails it. The welded-shut
