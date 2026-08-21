@@ -42,7 +42,8 @@ Welded small-branch T-junction, built from quadrant blocks.
 ## cob_tjunction
 
 Unequal-radius T-junction with the branch cut straight through the main pipe, so
-there is no hub to degenerate at a small radius ratio.
+there is no hub to degenerate at a small radius ratio, and a boundary layer grown
+outward over the wall.
 
 ```{mesh-viewer} cob_tjunction
 ```
@@ -61,7 +62,9 @@ One O-grid disc swept along a path.
 
 ## chimera
 
-Several two-manifold units chained along one axis, alternating connector pipe.
+Several two-manifold units chained along one axis, alternating connector pipe;
+cob T-junctions throughout, a boundary layer over the whole fluid wall, and a
+solid jacket attached to the finished tube.
 
 ```{mesh-viewer} chimera
 :height: 560px
