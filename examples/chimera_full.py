@@ -29,6 +29,40 @@ elements, a couple of minutes -- for two short capped stubs carrying its exact
 inlet/outlet disc pattern, so the manifold's own geometry can be checked in
 seconds.  Set it ``False`` for the whole thing.
 
+Meeting chimera: the boundary layer
+-----------------------------------
+
+``chimera.py`` grows a boundary layer over its whole fluid wall, so a chimera *port* is
+no longer the plain pipe cross-section -- it is that section plus the ring the skin
+leaves round an opening it deliberately does not skin: **80 quads over 89 points where
+the bare section is 48 over 57**.  Nothing can be morphed across that difference.
+``adapter``, ``bridge`` and ``loft_between`` all need the two patterns to pair
+one-for-one, and 48 quads do not pair with 80 however gently they are blended.
+
+So the manifold grows the *same* layer.  Every block here is meshed at the **core**
+radii (``RC_MAIN`` / ``RC_BR``, inset by ``T_BL``), assembled exactly as before, and
+skinned once at the end by ``tjunction_lib.skin_wall`` -- one surface, so the layer
+crosses every seam this file welds rather than meeting itself at a different angle on
+each side of one.  Its chimera-facing ends are *named* and therefore left unskinned, so
+each comes out ringed by the shell exactly as chimera's own openings are, by the same
+construction rather than by imitation.
+
+That leaves only the pattern to match, and ``chimera.py`` picks its three main-pipe
+parameters to make it exact: at ``N_THETA_MAIN=16`` over a 4-per-side core with T1's own
+``CENTER_SCALE_MAIN=0.75`` and ``RADIAL_MAIN``, ``quadmesh.ogrid``'s section and
+``build_eqtee``'s ``spined_ogrid`` disc come out with byte-identical
+``quads``/``orient``/``lines`` -- both bottom out in ``quadrant_ogrid`` quarters -- and
+node-for-node identical geometry.  Measured across the finished seam: **5.6e-15**.  (At
+``N_THETA_MAIN=24`` the port is 84 quads and nothing here can pair with it at all; 16 is
+what T2's own resolution pins it to, since T2 is left alone.)
+
+What is still not shared is *numbering* and *phase*.  Each port was numbered by its own
+``boundary_mesh`` extraction, and the manifold's arrives at whatever roll its sweep
+frame carried it to.  ``template=`` settles the first -- the manifold's port is handed
+chimera's own B-rep and filled with the manifold's real coordinates, so point ``i`` is
+the same node on both sides -- and ``loft_between``'s twist settles the second, which is
+why the last ``ADAPT`` is still a lofted block and not a plain weld.
+
 Fluid and solid
 ---------------
 
@@ -53,10 +87,10 @@ coordinate weld:
   coordinate rotation is only approximate.
 * ``hexmesh.adapter`` -- blend across a *small* pattern difference (the ~0.03
   between T1's own leg and chimera's), first slice and last slice both exact.
-* ``hexmesh.bridge`` -- span a *large* one (the ~0.94 median between T1's
-  arc-length-stationed branch disc and T2's uniform-angle main leg) as a
-  single ``HexMesh.loft``: rigid stubs off each side, a blend across the gap
-  between them, no internal merge to fail.
+* ``hexmesh.bridge`` -- span a *large* one as a single ``HexMesh.loft``: rigid stubs
+  off each side, a blend across the gap between them, no internal merge to fail.  What
+  is left for it is the coil's own far end against T2_out's bend, two genuinely
+  different patterns landing ``GAP_Z`` apart.
 
 All three were written here first and now live in the toolkit; this file keeps
 only the choice of which to use at each seam, which is the part that is about
@@ -78,7 +112,7 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import hexmesh, quadmesh, writer
+from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import conform, paths
 from nekmeshpy.quadmesh._helpers import _elevate as _quad_elevate
 from nekmeshpy.quadmesh.quadmesh import QuadMesh
@@ -89,7 +123,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # so importing it for these two names alone costs nothing beyond them.
 from serpentine_pipe import MOVES as COIL_MOVES_LIB  # noqa: E402  (needs the path above)
 from serpentine_pipe import TARGET_LEN as COIL_TARGET_LEN_LIB  # noqa: E402
-from tjunction_lib import build_eqtee, build_tjunction  # noqa: E402
+from tjunction_lib import build_cob, build_eqtee, skin_wall  # noqa: E402
 
 
 def merge_at(blocks, distance):
@@ -155,15 +189,42 @@ def _twist_slices(a, b, fracs):
     return slices
 
 
+def _align(a, b):
+    """``b`` relabelled through ``a``'s own index labels, paired by nearest node once
+    both are centred -- a pure relabelling, so ``b``'s geometry rides into the result
+    untouched and whatever already carries it still welds.
+
+    :func:`loft_between` twists point ``i`` of ``a`` onto point ``i`` of ``b``, which is
+    only meaningful if the two indices name the *same node of the pattern*.  Two discs
+    can share connectivity exactly and still not agree on that: the cob's
+    ``quadmesh.ogrid`` section and ``build_eqtee``'s ``spined_ogrid`` disc have identical
+    ``quads``/``orient``/``lines`` but number them from different starts, so index
+    pairing them asks the twist for a roll of most of a turn -- and the nodes near the
+    hub then sweep through the axis and the block folds (measured: both windings came
+    back inverted).  Matching by position first leaves the twist only the residual phase.
+
+    Returns ``b`` unchanged if the match is not a permutation, so a caller whose two
+    sections genuinely are index-paired but geometrically far apart is no worse off."""
+    if not (np.array_equal(a.quads, b.quads) and np.array_equal(a.orient, b.orient)
+            and np.array_equal(a.line_mesh.lines, b.line_mesh.lines)):
+        return b
+    _, sigma = cKDTree(b.points - b.points.mean(axis=0)).query(
+        a.points - a.points.mean(axis=0))
+    if len(set(sigma.tolist())) != sigma.size:
+        return b
+    return quadmesh.reindex(a, b, sigma)
+
+
 def loft_between(a, b, n_layers, element_tags=None):
     """Twist-loft two discs that share ``quads``/``orient`` connectivity even though
-    they come from different mesher families (eqtee's spined_ogrid discs and the
-    quadrant construction's both bottom out in quadrant_ogrid quarters, so they turn
-    out identical -- verified, not assumed). Point ``i`` of ``a`` and point ``i`` of
-    ``b`` are already the same node, so no reindexing is needed at all, unlike
-    ``hexmesh.adapter``/``bridge`` (built for sections that only differ in *pattern*,
-    not connectivity, and can only approximate curvature they cannot exactly
-    reconcile) -- but the two families' own phase does not line up, so
+    they come from different mesher families -- eqtee's ``spined_ogrid`` disc, the cob's
+    ``quadmesh.ogrid`` section and the quadrant construction's disc all bottom out in
+    ``quadrant_ogrid`` quarters, so at matching resolution they turn out identical
+    (verified, not assumed).  That is a weaker guarantee than it sounds: identical
+    connectivity does not mean identical *numbering*, so :func:`_align` pairs the two by
+    position first, unlike ``hexmesh.adapter``/``bridge`` (built for sections that only
+    differ in *pattern*, not connectivity, and can only approximate curvature they
+    cannot exactly reconcile).  What is left after that is phase, so
     :func:`_twist_slices` carries each point there by rotating about the connector's
     own axis instead of ``quadmesh.blend``'s straight chord, which would cut across
     the disc and pinch the block at the middle station (measured: a straight blend
@@ -177,6 +238,7 @@ def loft_between(a, b, n_layers, element_tags=None):
     ever touched: ``b``'s own points/interior ride into the result verbatim (the
     ``t=1`` end), which is what lets the caller weld the result to whatever else
     already carries ``b``'s own true geometry."""
+    b = _align(a, b)
     fracs = np.linspace(0.0, 1.0, n_layers + 1)
 
     def _try(aa):
@@ -208,8 +270,21 @@ RADIAL = np.array([0.0, 0.4, 0.8, 1.0])
 CENTER_SCALE = 0.5
 n_slices = 3
 
-R_MAIN = 1.2     # == chimera's R_MAIN
-R_BR = 0.5       # == chimera's R_BRANCH
+R_MAIN = 1.2     # == chimera's R_MAIN, *finished*
+R_BR = 0.5       # == chimera's R_BRANCH, finished
+
+#: chimera's own boundary layer, restated here because this manifold has to grow the
+#: **same** one.  A chimera port is not the plain pipe section any more: it is that
+#: section plus the ring the skin leaves round an opening it deliberately does not skin,
+#: 80 quads over 89 points where the bare section is 48 over 57.  Nothing can be morphed
+#: across that difference -- ``adapter`` / ``bridge`` / ``loft_between`` all need the two
+#: patterns to pair one-for-one -- so the manifold is meshed at the **core** radii and
+#: skinned back out at the very end, exactly as chimera is, and its port comes out the
+#: same 80 quads by the same construction rather than by imitation.
+T_BL = 0.035 * R_MAIN
+BL = T_BL * np.array([0.0, 0.6, 1.0])
+RC_MAIN = R_MAIN - T_BL
+RC_BR = R_BR - T_BL
 
 # == chimera's own names.  The regions are element_tags (every element carries one,
 # manifold included); SOLID_FACE_TAG is a face_tags / GROUPS name, deliberately not
@@ -230,16 +305,41 @@ kw_t1 = dict(n_half=N_HALF, order=ORDER, radial=RADIAL, center_scale=CENTER_SCAL
 kw_t2 = kw_t1
 
 
-# chimera's own port cross-section: the same quadrant_ogrid recipe its
-# junctions are built from, so it reproduces a port's pattern exactly.
-_chi_kw = dict(order=ORDER, N_QUAD=2, RADIAL=np.array([0.0, 0.6, 1.0]),
-               CENTER_SCALE=0.75, QUADRANT_SCALE=0.55, N_TRANS=2, N_BRANCH=2)
+#: chimera's own pipe cross-section, reproduced from its recipe rather than imitated:
+#: ``build_cob`` meshes the main pipe as ``quadmesh.ogrid`` of a 16-cell circle over a
+#: 4-per-side core, and chimera picks ``CENTER_SCALE_MAIN`` / ``RADIAL_MAIN`` to be T1's
+#: own -- so this and ``build_eqtee``'s ``spined_ogrid`` disc at ``n_half=8`` come out
+#: with byte-identical ``quads`` / ``orient`` / ``lines`` (both bottom out in
+#: ``quadrant_ogrid`` quarters) *and* node-for-node identical geometry, measured 7.6e-16.
+#: That equality is the whole reason this file can meet chimera at all.
+_CHI_SECTION = quadmesh.ogrid(linemesh.circle(RC_MAIN, 2 * N_HALF, order=ORDER),
+                              N_HALF // 2, np.array([0.0, 0.6, 1.0]),
+                              center_scale=0.75, wall_tag="wall")
+
+
+def _skinned_port():
+    """The chimera **port** pattern: :data:`_CHI_SECTION` with the ring the boundary
+    layer leaves round an unskinned opening, built by running a stub of pipe through the
+    very same :func:`tjunction_lib.skin_wall` chimera uses. Derived, not described -- the
+    ring's radial stations and its numbering both fall out of the skin rather than being
+    restated here, so this cannot drift from what chimera actually builds."""
+    stub = hexmesh.extrude(_CHI_SECTION, 1.0, 1, axis=(0.0, 0.0, 1.0),
+                           element_tags=FLUID_TAG, last_tag="port")
+    return hexmesh.boundary_mesh(skin_wall(stub, BL, element_tag=FLUID_TAG), "port")
+
+
+#: Built once: every use is the same pattern at a different place.  Stripped of the
+#: ``"port"`` name the extraction stamped on it -- this is a *pattern*, and every disc
+#: templated from it inherits its ``element_tags``, which would then ride onto the morph
+#: block's own cap and collide with the manifold's own port name at the weld.
+_CHI_PORT = quadmesh.retag_element(_skinned_port(), {"port": ""})
 
 
 def fake_chi_disc(center):
-    tj = build_tjunction(1.2, 0.5, 3.0, **_chi_kw)
-    d = tj.disc_plus  # normal +z, matches chimera's actual inlet/outlet convention
-    return quadmesh.translate(d, np.asarray(center) - np.array([0.0, 0.0, 1.2]))
+    """The port pattern centred on ``center``, normal ``+z`` -- chimera's own
+    inlet/outlet convention."""
+    return quadmesh.translate(_CHI_PORT,
+                              np.asarray(center) - _CHI_PORT.points.mean(axis=0))
 
 
 # chimera's REAL inlet/outlet disc centres (probed: both at z = -17.5,
@@ -281,16 +381,17 @@ else:
                                          template=fake_chi_disc(CHI_OUT))
 
 # -----------------------------------------------------------------------------
-# T1: main and branch are genuinely equal radius here (R_MAIN both), which the
-# quadrant construction cannot mesh at all -- its footprint curve degenerates as
-# R_BRANCH -> R_MAIN, which used to force a 99.9%-of-R_MAIN fudge. eqtee's collar
-# construction is built for exactly this ratio, so T1 uses it while T2 (genuinely
-# unequal: main = R_MAIN, branch = R_BR) stays on the quadrant construction below.
-# That puts the T1-branch <-> T2-main weld across families (eqtee's spined_ogrid
-# disc into the quadrant one's), but both are built from quadrant_ogrid quarters
-# underneath and turn out to share identical quad/orient connectivity (verified),
-# so loft_between's index-paired blend spans that seam with both sides' true
-# curvature intact -- see place_t2's own comment.
+# T1: main and branch are genuinely equal radius here (R_MAIN both), which neither of
+# the unequal-radius constructions can mesh -- the quadrant one's footprint curve
+# degenerates as R_BRANCH -> R_MAIN (which used to force a 99.9%-of-R_MAIN fudge), and
+# the cob's bore has to fit inside the cob, which it cannot at ratio 1. eqtee's collar
+# construction is built for exactly this ratio, so T1 uses it, while T2 (genuinely
+# unequal: main = R_MAIN, branch = R_BR, ratio 0.42) uses build_cob below.
+# That puts the T1-branch <-> T2-main weld across families -- eqtee's spined_ogrid disc
+# into the cob's quadmesh.ogrid section -- but at this resolution the two share
+# identical quad/orient/line connectivity (verified; both bottom out in quadrant_ogrid
+# quarters), so loft_between's blend spans that seam with both sides' true curvature
+# intact.  They do not share a *numbering*, which is what _align is for.
 # main axis -> x, branch -> -y.
 # -----------------------------------------------------------------------------
 ROT_T1 = -np.deg2rad(120.0)
@@ -298,7 +399,7 @@ AXIS_T1 = (1.0, -1.0, 1.0)
 
 
 def build_t1(mirror=False):
-    tj = build_eqtee(R_MAIN, L1, H1, order=ORDER, n_half=N_HALF,
+    tj = build_eqtee(RC_MAIN, L1, H1, order=ORDER, n_half=N_HALF,
                      radial=np.array([0.0, 0.6, 1.0]), n_layers_main=n_slices,
                      n_layers_branch=n_slices, center_scale=0.75,
                      quadrant_scale=0.7, element_tag=FLUID_TAG)
@@ -372,10 +473,18 @@ VERTICAL_RISE = 14.0
 #: chimera-run length is solved from that, instead of the other way round.
 D_YPIPES = 52.0
 
+#: The two manifold-side chimera ports, named per side so each can be paired against its
+#: own chimera opening. They are openings, so the skin leaves them alone and instead
+#: rings each with its own lateral layer -- which is exactly what makes them chimera's
+#: pattern rather than the bare pipe section's.
+PORT_TAG_IN = "chi_port_in"
+PORT_TAG_OUT = "chi_port_out"
+
 pieces = []
 
 
-def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
+def place_t1(side_center, chi_target, chi_disc, tag, t1_x, port_tag,
+             mirror=False):
     t1 = build_t1(mirror=mirror)
     # disc_b faces +x normally, -x when mirrored; disc_a always the opposite.
     b_sign = -1 if mirror else +1
@@ -391,13 +500,9 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # onto it (-1, as before the real-chimera flip) would put two -z-facing
     # faces back to back, which cannot weld.
     # the swept tube stops ADAPT short of the chimera plane; the last ADAPT is a
-    # loft_between morphing T1's own disc pattern into chimera's own. T1 used to be
-    # quadrant-family like chimera and this used to be a hexmesh.adapter -- a *pattern*
-    # roll, since both sides differed only slightly. Now that T1 is eqtee (spined_ogrid-
-    # family) they look built differently, but both bottom out in quadrant_ogrid
-    # quarters and turn out to share identical quad/orient connectivity (verified) --
-    # so a straight index-paired blend carries both discs' true curvature across with
-    # no reindexing at all, once loft_between finds the winding that isn't inverted.
+    # loft_between spanning that gap, built after the skin (see join_chimera) because
+    # only then does this end carry chimera's own 80-quad port pattern rather than the
+    # 48-quad bare section.
     # NOTE: elbow_backward always lands exactly *at* the target point it is
     # given (that is what "backward" means -- it solves the start position to
     # make that true), so the connector must be solved to a point ADAPT short
@@ -431,14 +536,19 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
         end = quadmesh.place_on_path(disc, path, [0.0, 1.0], origin=db_c)[-1]
         return quadmesh.port(end, outward=path.tangent(np.array([1.0]))[0])
 
-    conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8)
+    # The tube stops ADAPT short of chimera and is *named* there.  It is not morphed
+    # into chimera's pattern here and could not be: this connector is core-radius pipe,
+    # and chimera's port is a skinned one.  The skin is grown over the whole manifold at
+    # the end, which turns this named cap into the same 80-quad port chimera has -- and
+    # only then is the last ADAPT lofted across (see ``join_chimera``).
+    conn_chi = build_bend_mesh(db, db_c, moves, heading, db_c[1], n_slices*8,
+                               last_tag=port_tag)
     end_port = _end_section(db)
-    # chimera's own openings face -z and this connector rises +z into them, so the
-    # two face each other; bridge checks that from each port's own stated normal.
+    # chimera's own openings face -z and this connector rises +z into them, so the two
+    # face each other; the twist loft below reads that from each port's own normal.
     chi_port = quadmesh.port(chi_disc, outward=(0.0, 0.0, -1.0))
     print("  [%s] end %s" % (tag, end_port))
     print("  [%s] tgt %s" % (tag, chi_port))
-    connector = loft_between(end_port.section, chi_disc, 6, element_tags=FLUID_TAG)
     # disc_a -> bends the opposite way, then climbs straight to the riser.
     # The inlet/outlet risers themselves bend to z- (away from chimera, which
     # conn_chi above reaches via +z) -- opposite sign from a naive a_sign-only
@@ -452,21 +562,6 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
     # above (da is no more exactly centred on t1_center than db is).
     riser = build_bend_mesh(da, da_c, moves_r, 0.0 if a_sign > 0 else np.pi,
                             da_c[1], n_slices*8, last_tag=tag)
-    # conn_chi's own end and the connector's own start are the *same* physical
-    # points (both derived from db via the same sweep_placements machinery), but
-    # T1's own disc is only *near*-exactly symmetric (a ~0.03-unit residual, six times
-    # the 0.005 this file welds the assembly at) -- so weld *this one seam* locally,
-    # at a tolerance sized to that specific residual, rather than loosening the
-    # tolerance for the whole assembly (which welded an unrelated, closer-together
-    # pair by mistake the one time this was tried globally).
-    #
-    # 0.04, not 0.05: the nearest *real* feature separation here is 0.05 (measured
-    # 0.04999999999999716), so a tolerance of 0.05 says that gap is coincident and
-    # collapses the element across it.  The tolerance has to sit strictly between the
-    # residual it must bridge and the feature it must not -- and it really is that
-    # window now: coincidence is a plain radius, where it was once a radius *or* a
-    # shared lattice cell, and a cell reached 0.04*sqrt(3) = 0.069, past the feature.
-    conn_chi = merge_at([conn_chi, connector], 0.04)
     return core, [conn_chi], riser, dbr, t1_center
 
 
@@ -477,11 +572,11 @@ def place_t1(side_center, chi_target, chi_disc, tag, t1_x, mirror=False):
 X_MID = 0.5 * (CHI_IN[0] + CHI_OUT[0])
 core_in, conn_chi_in, riser_in, br_in, t1c_in = place_t1(
     (0, CHI_OUT[1], 0), CHI_OUT, chi_out_disc, "inlet",
-    t1_x=X_MID - D_YPIPES / 2.0)
+    t1_x=X_MID - D_YPIPES / 2.0, port_tag=PORT_TAG_IN)
 print("t1c_in", t1c_in)
 core_out, conn_chi_out, riser_out, br_out, t1c_out = place_t1(
     (0, CHI_IN[1], 0), CHI_IN, chi_in_disc, "outlet",
-    t1_x=X_MID + D_YPIPES / 2.0, mirror=True)
+    t1_x=X_MID + D_YPIPES / 2.0, port_tag=PORT_TAG_OUT, mirror=True)
 print("t1c_out", t1c_out, "| y-pipe separation:", t1c_out[0] - t1c_in[0])
 
 for _nm, _m in [("core_in", core_in), ("conn_chi_in", conn_chi_in[0]), ("riser_in", riser_in),
@@ -499,9 +594,15 @@ print("stage1:", mesh1.n_hexes, "hexes, watertight",
       "conforming", _rep1.conformal, "min sj", hexmesh.scaled_jacobian(mesh1).min())
 
 # -----------------------------------------------------------------------------
-# T2: branches off T1's -y branch.  Unequal radius (main = R_MAIN, matching
-# T1's branch; branch = R_BR, matching the serpentine) -- the quadrant
-# construction, not the equal-radius eqtee. Local main axis z, branch axis x
+# T2: branches off T1's -y branch.  Unequal radius (main = R_MAIN, matching T1's
+# branch; branch = R_BR, matching the serpentine) -- the **cob** construction, not the
+# equal-radius eqtee and no longer the quadrant one either.  At this ratio (0.42) the
+# quadrant junction's crotch cap is its weakest point, and the boundary layer grown over
+# it was the worst element in the whole assembly: measured min scaled Jacobian 0.18
+# against the cob's 0.47, which is the junction's own figure with the skin costing it
+# nothing.  The cob also hands back its main legs as the *plain pipe section*, which is
+# byte-identical to T1's own disc here -- so the chain's welds get simpler, not harder.
+# Local main axis z, branch axis x
 # (tjunction_lib's own convention); rotate -90 about world x so main -> y
 # (one leg +y facing back to T1, the other -y a dead end) and branch stays x,
 # then bends down (z-) to the serpentine.
@@ -516,8 +617,10 @@ AXIS_T2 = (1.0, 0.0, 0.0)
 #: so growing this shortens that automatically and the overall shape does not
 #: move.
 #:
-#: Lengthening costs no shape fidelity: build_tjunction's branch() blends the
-#: footprint (the saddle where branch meets main) into the round opening, and
+#: Lengthening costs no shape fidelity: build_cob's branch is an exact cylinder off the
+#: bore -- it holds the disc's own (x, z) and carries only the axial coordinate out, so
+#: the far end merely relaxes from saddle-shaped to flat more gradually.  The same was
+#: true of build_tjunction's branch(), which blended the footprint into the opening, and
 #: those two differ *only* in the axial coordinate -- both carry the identical
 #: R_BRANCH*(sin, cos) cross-section -- so the blend straightens the section's
 #: axial position and never touches its radius.  Measured over the whole run:
@@ -528,10 +631,12 @@ N2_BRANCH = max(2, int(round(H2_BRANCH / 2.0)))   # ~2.0-long layers, as the coi
 
 
 def build_t2(mirror=False):
-    tj = build_tjunction(R_MAIN, R_BR, H2_BRANCH, order=ORDER, N_QUAD=2,
-                         RADIAL=np.array([0.0, 0.6, 1.0]), CENTER_SCALE=0.75,
-                         QUADRANT_SCALE=0.55, N_TRANS=n_slices, N_BRANCH=N2_BRANCH,
-                         element_tag=FLUID_TAG)
+    tj = build_cob(RC_MAIN, RC_BR, H2_BRANCH, order=ORDER, Z_NEAR=L2,
+                   N_THETA_MAIN=2 * N_HALF, RADIAL_MAIN=np.array([0.0, 0.6, 1.0]),
+                   CENTER_SCALE_MAIN=0.75, N_THETA_BRANCH=2 * N_HALF,
+                   RADIAL_BRANCH=np.array([0.0, 0.6, 1.0]),
+                   CENTER_SCALE_BRANCH=0.75, N_BRANCH=N2_BRANCH,
+                   element_tag=FLUID_TAG)
     ang, axis = ROT_T2, AXIS_T2
     core, dm, dp, dbr = (hexmesh.rotate(tj.core, ang, axis=axis), quadmesh.rotate(tj.disc_minus, ang, axis=axis),
                         quadmesh.rotate(tj.disc_plus, ang, axis=axis), quadmesh.rotate(tj.disc_branch, ang, axis=axis))
@@ -580,17 +685,17 @@ def place_t2(source_disc, t2_y, mirror=False):
     da = quadmesh.translate(t2.disc_minus, t2_center)   # -y, on to the next T2 (or capped)
     db = quadmesh.translate(t2.disc_plus, t2_center)    # +y, faces back upstream
     dbr = quadmesh.translate(t2.disc_branch, t2_center)  # +/-x (mirror), out to a serpentine
-    # source_disc is T1's own branch (eqtee-family) for the first T2 in a chain, or a
-    # previous T2's own disc_minus (quadrant-family, same recipe as db) for every one
-    # after -- both share db's quad/orient connectivity either way (verified for the
-    # eqtee case too), so loft_between's index-paired blend applies uniformly.
+    # source_disc is T1's own branch (eqtee's spined_ogrid) for the first T2 in a chain,
+    # or the previous T2's own disc_minus (the cob's ogrid section, same recipe as db)
+    # for every one after -- both share db's quad/orient/line connectivity either way, so
+    # loft_between's blend applies uniformly.  Neither shares db's *numbering*, which is
+    # what its own _align pass settles before the twist.
     conn = loft_between(source_disc, db, 6, element_tags=FLUID_TAG)
-    # for the first T2 off each T1 branch, source_disc is eqtee-family and db is
-    # quadrant-family, so bridge's own db-facing stub falls back to a *loose* (corner-
-    # exact, straight-interior) match rather than db's exact curvature -- weld that one
-    # seam to core (which carries db's real curvature) locally, at a tolerance sized to
-    # that residual, same as place_t1's own conn_chi <-> connector weld above -- and
-    # 0.04 for the same reason it is 0.04 there: 0.05 is a real feature separation.
+    # conn's db-facing end is db verbatim (loft_between's t=1), so this weld is exact --
+    # but it is still worth stating locally rather than leaving to the assembly's own
+    # 0.005: 0.04 is the window between the residual any of these seams has to bridge and
+    # the nearest *real* feature separation here, which is 0.05 (measured
+    # 0.04999999999999716) and must not be collapsed.
     core = merge_at([core, conn], 0.04)
     return core, da, dbr, t2_center
 
@@ -780,19 +885,58 @@ _rep3 = hexmesh.topology_report(mesh3)
 print("stage3:", mesh3.n_hexes, "watertight",
       _rep3.watertight and _rep3.n_components == 1,
       "conforming", _rep3.conformal, "min sj", hexmesh.scaled_jacobian(mesh3).min())
-# -- registration check: does the connector's rising end actually land point-
-# for-point on chimera's own disc pattern (mod the quadrant disc's 90-degree
-# symmetry)?  The fake stand-in discs use the identical pattern/params as the
-# real chimera, so this check is valid in FAST mode too. conn_chi_in
-# targets CHI_OUT and conn_chi_out targets CHI_IN (the swap above), so the
-# discs paired here follow the same swap, not the "in"/"out" name.
-for nm, conn, disc in (("in", conn_chi_in[-1], chi_out_disc),
-                       ("out", conn_chi_out[-1], chi_in_disc)):
-    d, _ = cKDTree(conn.points).query(disc.points)
-    print("chimera %s registration: max dist %.3e" % (nm, d.max()))
-    print("chimera %s adapter min sj: %.4e" % (nm, hexmesh.scaled_jacobian(conn).min()))
+# -- the boundary layer, over the whole manifold at once ----------------------
+# Every no-slip face has to be named before this runs, and a few are not: the blend
+# blocks (``loft_between``, ``bridge``, ``adapter``) build their intermediate sections
+# through ``QuadMesh.from_corners``, which carries no edge tags, so their lateral faces
+# come out unnamed.  Naming whatever free face is still unnamed closes that gap without
+# having to teach each blend about tags -- and it is safe precisely because everything
+# that is *not* wall here is already named: the two riser caps, and the two chimera
+# ports named in ``place_t1``.
+_named = mesh3.face_tags.dense(mesh3.quad_mesh.n_quads)
+_free = np.flatnonzero(hexmesh.boundary_face_ids(mesh3))
+mesh3 = hexmesh.tag_faces(mesh3, _free[_named[_free] == ""], "wall")
 
-manifold = pieces3
+# Skinned as one surface, not block by block: the layer has to cross every seam this
+# file just welded -- T1 into its connectors, T1 into T2, T2 into the coils -- and an
+# offset computed per block would meet itself at a different angle on each side of one.
+manifold = skin_wall(mesh3, BL, element_tag=FLUID_TAG)
+print("skinned manifold:", manifold.n_hexes, "hexes")
+
+
+def join_chimera(port_tag, chi_disc, name):
+    """The last ``ADAPT`` into one chimera opening.
+
+    Both sides are now the *same* pattern -- 80 quads over 89 points, chimera's port and
+    this one built by the same ``skin_wall`` over the same cross-section -- but neither
+    their numbering nor their phase agrees: each was numbered by its own
+    ``boundary_mesh`` extraction, and the manifold's arrives at whatever roll the sweep's
+    own frame carried it to.
+
+    ``template=`` settles the numbering: the extracted port is handed
+    :data:`_CHI_PORT`'s own B-rep and fills it with the manifold's real coordinates, so
+    point ``i`` here and point ``i`` of ``chi_disc`` are the same node of one pattern.
+    :func:`loft_between` then settles the phase, carrying each point round the connector
+    axis on the *short* way rather than straight across the disc -- a chord between two
+    out-of-phase discs passes near the axis and waists the block."""
+    port = hexmesh.boundary_mesh(manifold, port_tag,
+                                 template=fake_chi_disc(chi_disc.points.mean(axis=0)
+                                                        - np.array([0.0, 0.0, ADAPT])))
+    # in-plane only: the two are ADAPT apart along z by construction, and what is worth
+    # reporting is how far the *patterns* sit from each other once that is removed
+    a = port.points - port.points.mean(axis=0)
+    b = chi_disc.points - chi_disc.points.mean(axis=0)
+    print("chimera %s: port %d quads, index-paired residual %.3e (phase)"
+          % (name, port.n_quads, np.linalg.norm(a[:, :2] - b[:, :2], axis=1).max()))
+    block = loft_between(port, chi_disc, 6, element_tags=FLUID_TAG)
+    print("chimera %s: morph min sj %.4e" % (name, hexmesh.scaled_jacobian(block).min()))
+    return block
+
+
+# conn_chi_in targets CHI_OUT and conn_chi_out targets CHI_IN (the swap at placement),
+# so the discs paired here follow the same swap, not the "in"/"out" name.
+morphs = [join_chimera(PORT_TAG_IN, chi_out_disc, "in"),
+          join_chimera(PORT_TAG_OUT, chi_in_disc, "out")]
 
 if chi_mesh is not None:
     # chimera's own inlet/outlet faces are welded away into interior planes here,
@@ -802,13 +946,19 @@ if chi_mesh is not None:
     # exterior, which nothing here touches and which a keep-only-"wall" filter would
     # have stripped, dropping 39k boundary faces to no BC at all.
     chi_mesh = hexmesh.retag_face(chi_mesh, {"inlet": "", "outlet": ""})
-    mesh_out = merge_at([*manifold, chi_mesh], 0.005)
+    mesh_out = merge_at([manifold, *morphs, chi_mesh], 0.005)
 else:
-    chi_in_cap = hexmesh.extrude(chi_in_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
-                                 element_tags=FLUID_TAG)
-    chi_out_cap = hexmesh.extrude(chi_out_disc, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
-                                  element_tags=FLUID_TAG)
-    mesh_out = merge_at([*manifold, chi_in_cap, chi_out_cap], 0.005)
+    caps = [hexmesh.extrude(d, 0.3, 1, axis=(0, 0, 1), last_tag="wall",
+                            element_tags=FLUID_TAG)
+            for d in (chi_in_disc, chi_out_disc)]
+    mesh_out = merge_at([manifold, *morphs, *caps], 0.005)
+
+# the morph blocks' own lateral faces are unnamed for the same reason the blends' were
+# -- and the two manifold-side port names have just been welded shut, so they go too
+mesh_out = hexmesh.retag_face(mesh_out, {PORT_TAG_IN: "", PORT_TAG_OUT: ""})
+_named = mesh_out.face_tags.dense(mesh_out.quad_mesh.n_quads)
+_free = np.flatnonzero(hexmesh.boundary_face_ids(mesh_out))
+mesh_out = hexmesh.tag_faces(mesh_out, _free[_named[_free] == ""], "wall")
 
 _rep_out = hexmesh.topology_report(mesh_out)
 print("mesh_out:", mesh_out.n_hexes, "hexes, watertight",
