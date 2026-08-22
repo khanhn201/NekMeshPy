@@ -330,15 +330,21 @@ def coincident_clusters(X: PointArray, tol: float) -> IntArray:
     return np.asarray(rep[label], dtype=np.int64)
 
 
-def weld_pairs(pos: Sequence[PointArray],
-               pairs: IntArray) -> tuple[PointArray, IntArray]:
+def weld_pairs(pos: Sequence[PointArray], pairs: IntArray,
+               keep: IntArray | None = None) -> tuple[PointArray, IntArray]:
     """The **stated-pairs** twin of :func:`weld_points`: concatenate the blocks' points
     and fuse exactly the index pairs given, reading no coordinate of its own.
 
     ``pairs`` is ``(K,2)`` in the *concatenated* numbering. Fusing is transitive -- a
     point named in several pairs joins one cluster, which is what lets joins that share
     a seam ring compose in a single pass -- and each cluster's survivor is its lowest
-    index, so the first block's own numbering comes through untouched."""
+    index, so the first block's own numbering comes through untouched.
+
+    ``keep`` is the ``own=`` rule: ``(K,)`` concatenated point ids, one per pair, naming
+    whose **coordinate** the fused cluster takes.  Only the coordinate moves -- the
+    surviving *id* is still the lowest, so numbering is unaffected either way.  A point
+    named by several pairs takes the last one, so seams apply in the order given.
+    Without it the survivor keeps its own coordinate, which is the earlier block's."""
     P: PointArray = np.concatenate(list(pos), axis=0) if pos else np.zeros((0, 3))
     total = P.shape[0]
     remap: IntArray = np.arange(total, dtype=np.int64)
@@ -357,6 +363,15 @@ def weld_pairs(pos: Sequence[PointArray],
         rep: IntArray = np.full(ncomp, total, dtype=np.int64)
         np.minimum.at(rep, label, np.arange(total, dtype=np.int64))
         remap = np.asarray(rep[label], dtype=np.int64)
+        if keep is not None:
+            kp: IntArray = np.asarray(keep, dtype=np.int64).reshape(-1)
+            if kp.shape[0] != pr.shape[0]:
+                raise ValueError(
+                    "weld_pairs: keep has %d entries for %d pairs" % (kp.shape[0],
+                                                                      pr.shape[0]))
+            # read the originals, write only survivors: a keeper may itself be welded
+            P = np.array(P, dtype=float, copy=True)
+            P[remap[pr[:, 0]]] = np.concatenate(list(pos), axis=0)[kp]
     return _renumber_from_remap(P, remap)
 
 

@@ -422,45 +422,57 @@ def test_quad_attach_refuses_a_group_that_is_not_the_same_curve():
         quadmesh.attach([a, b], [EdgeSeam(0, "b", 1, "seam")])
 
 
-# -- the stated-join fast path ------------------------------------------------
+# -- one node path, shared by both welds --------------------------------------
 @pytest.mark.parametrize("order", [2, 3, 4])
-def test_the_stated_node_path_equals_the_general_one(order):
-    """``attach`` knows which entities fuse, so it renumbers the shared high-order node
-    tables instead of gathering every element's nodes and scattering them back.  That
-    shortcut must produce *the same mesh* as the general path ``merge`` uses -- it is an
-    optimisation, not a different answer.
+def test_attach_and_merge_agree_on_a_flush_seam(order):
+    """``merge`` and ``attach`` differ in how the seam is *found* and how it is *named*
+    -- nothing else.  Handed the same flush seam they must return the same mesh, node
+    for node.
 
-    The reference is built with the seam tags cleared, because the general path is
-    ``merge``'s and rightly refuses two different names on one welded face."""
-    from nekmeshpy.core import conform
-    from nekmeshpy.hexmesh import assemble as asm
+    There is one reconciliation now: a weld can only fuse entities whose corners all
+    welded, and every other entity keeps its single stored row, so the copies a full
+    scatter would compare came from that row and agree by construction.  This is what
+    keeps the two welds from drifting apart again.
 
+    The reference clears the seam tags, because ``merge`` rightly refuses two different
+    names on one welded face."""
     sec = quadmesh.rectangle([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], 3, 2,
                              order=order)
     a = hexmesh.extrude(sec, 1.0, 4, first_tag="lo", last_tag="hi")
     b = hexmesh.translate(
         hexmesh.extrude(sec, 1.0, 3, first_tag="lo", last_tag="hi"), (0.0, 0.0, 1.0))
-    fa, fb = hexmesh.tagged_faces(a, "hi"), hexmesh.tagged_faces(b, "lo")
-    pairs, _ = asm._pair_seam(a, fa, b, fb)
-    b2 = asm._adopt_seam(b, fb, pairs[:, 1], a, fa, pairs[:, 0])
-    cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
-    pts, pid = conform.weld_pairs([a.points, b2.points], cat)
 
-    fast = asm._stitch([a, b2], pts, pid, who="t", seam_faces={0: fa, 1: fb})
-    slow = asm._stitch([hexmesh.retag_face(a, {"hi": ""}),
-                        hexmesh.retag_face(b2, {"lo": ""})], pts, pid, who="t")
+    att = hexmesh.attach([a, b], [Seam(0, "hi", 1, "lo")])
+    mrg = hexmesh.merge([hexmesh.retag_face(a, {"hi": ""}),
+                         hexmesh.retag_face(b, {"lo": ""})], tol=1e-9)
 
-    qf, qs = fast.quad_mesh, slow.quad_mesh
-    for name, x, y in (("points", fast.points, slow.points),
-                       ("hexes", fast.hexes, slow.hexes),
-                       ("hex orient", fast.orient, slow.orient),
-                       ("hex interior", fast.interior, slow.interior),
-                       ("quads", qf.quads, qs.quads),
-                       ("quad orient", qf.orient, qs.orient),
-                       ("face interior", qf.interior, qs.interior),
-                       ("edges", qf.line_mesh.lines, qs.line_mesh.lines),
-                       ("edge interior", qf.line_mesh.interior, qs.line_mesh.interior)):
+    qa, qm = att.quad_mesh, mrg.quad_mesh
+    for name, x, y in (("points", att.points, mrg.points),
+                       ("hexes", att.hexes, mrg.hexes),
+                       ("hex orient", att.orient, mrg.orient),
+                       ("hex interior", att.interior, mrg.interior),
+                       ("quads", qa.quads, qm.quads),
+                       ("quad orient", qa.orient, qm.orient),
+                       ("face interior", qa.interior, qm.interior),
+                       ("edges", qa.line_mesh.lines, qm.line_mesh.lines),
+                       ("edge interior", qa.line_mesh.interior, qm.line_mesh.interior)):
         assert np.array_equal(np.asarray(x), np.asarray(y)), name
+
+
+@pytest.mark.parametrize("own", ["a", "b"])
+def test_own_picks_whose_coordinates_the_seam_keeps(own):
+    """``own=`` is a choice of *coordinate*, not a copy: the weld keeps one point per
+    fused pair regardless, so all ``own=`` decides is which one's position survives."""
+    sec = quadmesh.rectangle([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], 2, 2, order=2)
+    a = hexmesh.extrude(sec, 1.0, 2, first_tag="lo", last_tag="hi")
+    b = hexmesh.translate(hexmesh.extrude(sec, 1.0, 2, first_tag="lo", last_tag="hi"),
+                          (0.0, 0.0, 1.3))                      # a real 0.3 gap
+    m = hexmesh.attach([a, b], [Seam(0, "hi", 1, "lo", own=own)])
+    z = np.unique(np.round(m.points[:, 2], 9))
+    assert (1.0 in z) == (own == "a")
+    assert (1.3 in z) == (own == "b")
+    seam_pts = np.unique(a.quad_mesh.corners[hexmesh.tagged_faces(a, "hi")]).size
+    assert m.n_points == a.n_points + b.n_points - seam_pts
 
 
 def test_the_stated_path_still_catches_a_non_conforming_seam():
