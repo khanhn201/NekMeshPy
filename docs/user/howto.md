@@ -90,7 +90,8 @@ end caps.
   tagged far-field box (the box's per-line tags split the outer ring into sides).
 - `examples/flow_past_half_cylinder.py` — a single `structured` section whose
   bottom edge is a composite curve (ground → semicircular bump → ground).
-- `examples/backward_facing_step.py` — merged structured rectangles.
+- `examples/backward_facing_step.py` — three `quadmesh.rectangle` grids joined
+  with `quadmesh.attach`, then swept by `hexmesh.extrude`.
 
 ## External flow past a sphere (3-D shell)
 
@@ -120,7 +121,14 @@ side) so merge stays a plain concatenate with no stale interior tag.
 mesh = hexmesh.merge([block_a, block_b])   # welds coincident boundary points only
 ```
 
-→ used throughout the `flow_past_*` examples and the carotid pipeline.
+`tol` is a **fraction** of `conform.bbox_scale` -- the largest of the x/y/z ranges over
+every point handed in -- not a distance, so the default means the same thing at any
+model size. Divide if you know a real distance. Prefer `attach` (below) whenever you
+can name the two groups: it needs no tolerance at all.
+
+→ `merge` now survives mainly in `examples/chimera.py` / `chimera_full.py`; the
+`flow_past_*` examples build their shells with `annulus` / `extrude`, and the carotid
+pipeline has moved to `attach`.
 
 ## Join two blocks along an interface you can name
 
@@ -162,7 +170,8 @@ are the same pair one rung down, joining two sections along an edge group.
 ## The carotid vessel pipeline
 
 A `TriMesh` surface (`data/car.{vtx,tri}`) is cut into legs via seam fields, each
-leg filled with `half_ogrid`, extruded/merged, and smoothed. →
+leg filled with `spined_ogrid`, lofted and `attach`ed (its smoother is off:
+`SMOOTH_ITERS = 0`). →
 `examples/carotid.py` — the golden-regression case: its `.re2` / `.vtu`
 output is frozen in `tests/golden/` (coordinates to `1e-12`, connectivity and
 boundary tags byte-for-byte), so any change that moves it is a bug unless
@@ -174,7 +183,7 @@ deliberately re-based.
 than loads — a main vessel and a branch teeing off at an angle, joined on a flat
 elliptical seam and ringed by a trough. Everything downstream is the carotid's:
 conduction seam fields, a sign-based cut into three legs, conformal seam rings
-from Fourier-refit arcs, an O-grid per station, `loft`, `weld`.
+from Fourier-refit arcs, an O-grid per station, `loft`, `attach`.
 
 Two things make it worth reading on its own.
 

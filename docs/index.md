@@ -2,10 +2,13 @@
 
 An object-oriented, all-hex meshing **toolkit** with Nek5000/NekRS export.
 
-The library is a set of composable primitives: a shared-point mesh model, named
-physical groups, `HexMesh` factories, smoothing / surface operations, sizing
-fields, quality + topology checks, and meshio I/O. Concrete meshers (carotid
-vessel, straight pipes, external-flow domains) are built on the toolkit and live
+The library is a set of composable primitives built on a B-rep ladder --
+`PointMesh` / `LineMesh` / `QuadMesh` / `HexMesh`, each storing the rung below --
+with `TriMesh` and `TetMesh` off to the side as things you solve a field on rather
+than export. On top of that: named physical groups, shape factories and sweeps at
+every rung, the two welds (`merge` and `attach`), smoothing / surface operations,
+sizing fields, quality + topology checks, and Nek5000 / meshio I/O. Concrete meshers
+(carotid vessel, straight pipes, wire-wrapped bundles, external-flow domains) live
 in [`examples/`](https://github.com/khanhn201/NekMeshPy/tree/main/examples), not
 in the library.
 
@@ -29,7 +32,8 @@ writer.to_re2(mesh, "pipe.re2", groups={"wall": "W  ", "inlet": "v  ", "outlet":
 - **{doc}`user/howto`** — recipes distilled from `examples/`.
 - **{doc}`user/architecture`** — how the toolkit is laid out and why.
 - **{doc}`user/conventions`** — typing, naming, and the invariants the code holds to.
-- **{doc}`user/gallery`** — live, in-browser views of every example's mesh.
+- **{doc}`user/gallery`** — live, in-browser views of most examples' meshes (the three that need gmsh or
+  build no mesh of their own are skipped).
 - **{doc}`reference/index`** — auto-generated API reference.
 
 ```{toctree}

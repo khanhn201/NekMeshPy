@@ -20,7 +20,7 @@ operation, not to document it twice. See
 [Architecture](../user/architecture.md#package-layout) for how a new operation is
 placed into one of these.
 
-### `linemesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`) or runs it backward (`select`/`remove`/`components`)
+### `linemesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.assemble
@@ -34,7 +34,7 @@ placed into one of these.
    :members:
 ```
 
-### `linemesh.morph` — Δ0: geometry at the same rung — `blend`, `reverse`, and the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`
+### `linemesh.morph` — Δ0: geometry at the same rung — `blend`, `reverse`, `offset`, and the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.morph
