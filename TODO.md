@@ -1,4 +1,4 @@
-Local, immediate simple tasks that can be done right away, not to be commited.
+Local, immediate simple tasks that can be done right away
 - [ ] 4) Plottings utils or simply vtk export the full scene
 - [ ] 7) Mapping of grid on parametric curves
     - [ ] Similarly for cob tjunction
@@ -13,7 +13,3 @@ Local, immediate simple tasks that can be done right away, not to be commited.
     - [ ] Inputs: Dirichlets faces, Dirichlets values
 - [ ] 16) Check element overlap
 - [ ] 18) p-refine/h-refine
-- [ ] 19) Make sure that the output from boundary extraction is alway oriented
-            outward
-    - [ ] Flip/orient should be CCW outward of element
-- [ ] 20) Chimera tjuntion to cob tjunction with skinning
