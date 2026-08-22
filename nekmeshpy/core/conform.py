@@ -849,15 +849,32 @@ def _k_from_face_width(k2: int) -> int:
 
 
 def scatter_edge_nodes(local: PointArray, elem_edges: IntArray, edge_flip: BoolArray,
-                       n_edges: int, tol: float, who: str) -> PointArray:
-    """Scatter element-local edge-interior nodes into the shared canonical table."""
+                       n_edges: int, tol: float, who: str,
+                       prefer: BoolArray | None = None,
+                       check: bool = True) -> PointArray:
+    """Scatter element-local edge-interior nodes into the shared canonical table.
+
+    ``prefer`` marks element slots whose nodes win their edge -- the ``own=`` rule, for
+    a caller that has *stated* which side of a seam the shared nodes come from.  Among
+    preferred slots the first still wins, as it does among the rest.
+
+    ``check`` is the conformal guard.  It is meaningful only where two blocks now share
+    an edge they did not before: everywhere else the slots were gathered from one stored
+    row and agree by construction.  A stated seam turns it off, since taking the owner's
+    nodes there is the instruction rather than an error."""
     k = local.shape[2]
     canon = np.where(edge_flip[:, :, None, None], local[:, :, ::-1, :], local)
     flat_eid = elem_edges.ravel()
     canon_flat = canon.reshape(flat_eid.shape[0], k, 3)
     _, first = np.unique(flat_eid, return_index=True)          # owner per edge id
     edge_nodes: PointArray = canon_flat[first]                 # (Ne,order-1,3)
-    if not np.allclose(canon_flat, edge_nodes[flat_eid], rtol=0.0, atol=tol):
+    if prefer is not None:
+        p: IntArray = np.flatnonzero(np.asarray(prefer, dtype=bool).ravel())
+        if p.size:
+            # assigning in reverse leaves the first preferred slot last, matching the
+            # ``np.unique`` owner rule the unpreferred slots already follow
+            edge_nodes[flat_eid[p][::-1]] = canon_flat[p][::-1]
+    if check and not np.allclose(canon_flat, edge_nodes[flat_eid], rtol=0.0, atol=tol):
         raise ValueError(
             "%s: non-conforming high-order edge -- incident elements disagree on a "
             "shared edge's interior nodes beyond tolerance (%.3e). The inputs are not "
