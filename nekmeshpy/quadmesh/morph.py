@@ -177,14 +177,22 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     """``target``'s own geometry, reached through ``structure``'s own index labels:
     point ``i`` takes ``target``'s point ``sigma[i]``, and every shared-edge and
     per-quad interior node follows its relabelled corners."""
-    if not (np.array_equal(structure.quads, target.quads)
-            and np.array_equal(structure.orient, target.orient)):
+    # No table comparison here: the work below matches ``target``'s edges by corner
+    # *pair* and its quads by corner *set*, so it never needed the two numberings to
+    # coincide -- only that ``sigma`` carry structure's labels onto target's.  Guarding
+    # on identical tables would have refused two meshes of the same pattern that merely
+    # numbered it differently, which is the ordinary case once a weld numbers entities
+    # in the order its blocks were handed in.  A pattern that genuinely does not
+    # correspond still fails, in ``locate_rows`` below, naming the entity that did not.
+    if structure.n_quads != target.n_quads:
         raise ValueError(
-            "reindex: structure and target must share identical quad/flip incidence; "
-            "they are two samplings of one recipe, not two different meshes")
-    if not np.array_equal(structure.line_mesh.lines, target.line_mesh.lines):
+            "reindex: structure and target must have the same quad count (%d, %d); "
+            "they are two samplings of one recipe, not two different meshes"
+            % (structure.n_quads, target.n_quads))
+    if structure.line_mesh.n_lines != target.line_mesh.n_lines:
         raise ValueError(
-            "reindex: structure and target must share identical edge connectivity")
+            "reindex: structure and target must have the same edge count (%d, %d)"
+            % (structure.line_mesh.n_lines, target.line_mesh.n_lines))
     s: IntArray = np.asarray(sigma, dtype=np.int64).ravel()
     n = structure.points.shape[0]
     if s.shape != (n,):
