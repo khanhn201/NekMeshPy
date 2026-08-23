@@ -65,7 +65,14 @@ def test_ogrid_round_trip(order):
     loop = linemesh.circle(2.0, 16, order=order)
     qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
     assert qm.order == order
-    rebuilt = quad_from_entities(qm.points, qm.corners, edge_nodes=qm.edge_nodes,
+    # ``quad_from_entities`` re-derives the edge table from the corners, and that is
+    # its own numbering -- a merged mesh's is the order its blocks were handed in.  So
+    # the nodes have to be carried across by identity, not by index.
+    want, _, _ = conform.unique_edges(np.asarray(qm.corners, dtype=np.int64), 2)
+    perm = conform.locate_rows(np.asarray(qm.edges, dtype=np.int64), want,
+                               who="test_ogrid_round_trip", what="edge")
+    rebuilt = quad_from_entities(qm.points, qm.corners,
+                                 edge_nodes=np.asarray(qm.edge_nodes)[perm],
                                  interior=qm.interior, order=order)
     assert np.allclose(curved(rebuilt), curved(qm), atol=1e-12)
     # the walk reconstructs the curved wall exactly across the shared O-ring edges

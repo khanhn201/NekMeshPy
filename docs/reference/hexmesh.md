@@ -79,14 +79,14 @@ placed into one of these.
    :members:
 ```
 
-### `hexmesh.query` — read-only: `bounds`/`centroid`/`volume`, `quality_summary`/`scaled_jacobian` (mesh-level; see the note under `hexmesh.quality` above), topology (`report`/`tag_report`/`is_watertight`/`is_conforming`/`weld`), boundary queries
+### `hexmesh.query` — read-only: `bounds`/`centroid`/`volume`, `quality_summary`/`scaled_jacobian` (mesh-level; see the note under `hexmesh.quality` above), topology (`report`/`tag_report`/`is_watertight`/`is_conforming`/`is_overlap_free`), `classify_points`, `tagged_faces`, boundary queries
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.hexmesh.query
    :members:
 ```
 
-### `hexmesh.tag` — vocabulary only: renames the tag tables, geometry untouched (`retag_face` to `NO_TAG` drops the row, retiring a name welded into an interior plane)
+### `hexmesh.tag` — `tag_faces` names shared faces by id; `retag_*` renames a vocabulary, geometry untouched (`retag_face` to `NO_TAG` drops the row, retiring a name welded into an interior plane)
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.hexmesh.tag

@@ -25,6 +25,12 @@ _SIDE = {(1, 0, 0): "xp", (-1, 0, 0): "xm", (0, 1, 0): "yp",
          (0, -1, 0): "ym", (0, 0, 1): "zp", (0, 0, -1): "zm"}
 
 
+def _retag(m, name):
+    """``m`` with every quad tagged ``name``, its B-rep untouched."""
+    return QuadMesh(m.line_mesh, m.quads, m.orient, m.interior,
+                    ElementTags.uniform(m.n_quads, name))
+
+
 def _cube_surface(half, nf, *, tag_faces=True):
     """A closed axis-aligned cube surface (Chebyshev radius ``half``) as a merged
     quad mesh; each face optionally element-tagged with its side name."""
@@ -77,8 +83,10 @@ def test_quad_from_grid_edge_tags_land_on_correct_sides():
 
 def test_annulus_shell_watertight_and_tagged_from_element_tags():
     outer = _cube_surface(2.0, 2)                           # faces tagged xp/xm/...
-    inner = QuadMesh.from_corners(0.5 * outer.points, outer.corners,       # inner cube, half=1.0
-                     element_tags=ElementTags.uniform(outer.n_quads, "body"))
+    # scale, not from_corners: a morph moves the coordinates and leaves the B-rep --
+    # and so the index pairing annulus needs -- exactly as it was.  from_corners
+    # re-derives the edge table from the corners alone, which renumbers it.
+    inner = _retag(quadmesh.scale(outer, 0.5), "body")      # inner cube, half=1.0
     mesh = hexmesh.annulus(inner, outer, uniform_spacing(3))
 
     assert hexmesh.is_watertight(mesh) and hexmesh.is_conforming(mesh)
@@ -95,7 +103,7 @@ def test_annulus_shell_watertight_and_tagged_from_element_tags():
 
 def test_annulus_scalar_wall_tags_fallback():
     outer = _cube_surface(2.0, 1, tag_faces=False)          # untagged surfaces
-    inner = QuadMesh.from_corners(0.5 * outer.points, outer.corners)
+    inner = quadmesh.scale(outer, 0.5)
     mesh = hexmesh.annulus(inner, outer, uniform_spacing(2),
                            inner_tag="body", outer_tag="far")
     assert set(mesh.face_group_tags) == {"body", "far"}
@@ -105,8 +113,7 @@ def test_annulus_scalar_tag_overrides_surface_element_tags():
     # a non-empty scalar inner_tag / outer_tag OVERRIDES the surface's per-quad
     # element_tags for the whole wall (upper overrides lower)
     outer = _cube_surface(2.0, 2)                           # faces tagged xp/xm/...
-    inner = QuadMesh.from_corners(0.5 * outer.points, outer.corners,
-                     element_tags=ElementTags.uniform(outer.n_quads, "body"))
+    inner = _retag(quadmesh.scale(outer, 0.5), "body")
     mesh = hexmesh.annulus(inner, outer, uniform_spacing(3),
                            inner_tag="cylinder", outer_tag="far")
     # the per-quad surface tags are gone; each wall is a single overridden group

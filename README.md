@@ -21,7 +21,7 @@ Conformal high order all-hex meshing.
 
 ```bash
 pip install -e .              # core (numpy, scipy)
-pip install -e ".[all]"       # + matplotlib, meshio, pytest
+pip install -e ".[all]"       # + matplotlib, meshio, pytest, gmsh
 ```
 
 ## Quick start
@@ -74,11 +74,14 @@ pip install -e ".[all,dev]"          # + ruff, mypy, pytest
 ruff check nekmeshpy tests examples
 mypy                                 # type-checks the whole nekmeshpy package
 python -m pytest                     # golden-regression + algorithm tests
+python -m pytest -m slow             # femoral: 316 s, and the only example needing gmsh
 ```
 
-CI runs all three on Python 3.9–3.12. `tests/golden/` freezes the output of
-`examples/carotid.py` — coordinates to `1e-12`, connectivity/cell types/boundary
-tags byte-for-byte — so a golden diff from a refactor is a bug.
+CI runs lint and mypy once on 3.12, the default test run on 3.9–3.12, and the
+slow examples in a job of their own; `docs.yml` builds the docs site separately.
+`tests/golden/` freezes the output of `examples/carotid.py` — coordinates to
+`1e-12`, connectivity/cell types/boundary tags byte-for-byte — so a golden diff
+from a refactor is a bug.
 
 ## Roadmap
 

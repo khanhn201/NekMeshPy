@@ -114,7 +114,8 @@ from scipy.spatial import cKDTree
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import conform, paths
-from nekmeshpy.quadmesh._helpers import _elevate as _quad_elevate
+from nekmeshpy.linemesh import LineMesh
+from nekmeshpy.pointmesh import PointMesh
 from nekmeshpy.quadmesh.quadmesh import QuadMesh
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -165,27 +166,48 @@ def _twist_slices(a, b, fracs):
         rel = pts - c
         return rel @ axis, np.hypot(rel @ e1, rel @ e2), np.arctan2(rel @ e2, rel @ e1)
 
-    ax_a, r_a, th_a = polar(a.points, ca)
-    ax_b, r_b, th_b = polar(b.points, cb)
-    dth = np.mod(th_b - th_a + np.pi, 2.0 * np.pi) - np.pi   # shortest turn, signed
+    def carry(Pa, Pb, t):
+        """Node ``k`` of ``a`` carried onto node ``k`` of ``b``, along the helix."""
+        ax_a, r_a, th_a = polar(Pa, ca)
+        ax_b, r_b, th_b = polar(Pb, cb)
+        dth = np.mod(th_b - th_a + np.pi, 2.0 * np.pi) - np.pi   # shortest turn, signed
+        c_t = (1.0 - t) * ca + t * cb
+        ax_t = (1.0 - t) * ax_a + t * ax_b
+        r_t = (1.0 - t) * r_a + t * r_b
+        th_t = th_a + t * dth
+        return (c_t + ax_t[:, None] * axis
+                + (r_t * np.cos(th_t))[:, None] * e1
+                + (r_t * np.sin(th_t))[:, None] * e2)
+
+    def placed(t):
+        """``a``'s own B-rep with every stored node carried to fraction ``t``.
+
+        Not ``QuadMesh.from_corners``: that re-derives the edge table from the corners,
+        which is its own numbering and not ``a``'s, so ``loft`` would see a different
+        table on every slice.  ``_align`` has already put ``b`` in ``a``'s index space
+        at *every* node level, so corners, shared-edge interiors and per-quad interiors
+        each pair one-for-one and carry by the same helix -- which also means the
+        intermediate slices keep ``a``'s curvature instead of being re-elevated from
+        straight corners."""
+        lm, lb = a.line_mesh, b.line_mesh
+        pm = PointMesh(carry(lm.points, lb.points, t), lm.point_mesh.element_tags)
+        li, lbi = lm.interior, lb.interior
+        ei = (carry(li.reshape(-1, 3), lbi.reshape(-1, 3), t).reshape(li.shape)
+              if li.size else li)
+        qi, qbi = a.interior, b.interior
+        fi = (carry(qi.reshape(-1, 3), qbi.reshape(-1, 3), t).reshape(qi.shape)
+              if qi.size else qi)
+        return QuadMesh(LineMesh(pm, lm.lines, ei, lm.element_tags),
+                        a.quads, a.orient, fi, a.element_tags)
 
     slices = []
     for t in fracs:
         if t <= 0.0:
             slices.append(a)
-            continue
-        if t >= 1.0:
+        elif t >= 1.0:
             slices.append(b)
-            continue
-        c_t = (1.0 - t) * ca + t * cb
-        ax_t = (1.0 - t) * ax_a + t * ax_b
-        r_t = (1.0 - t) * r_a + t * r_b
-        th_t = th_a + t * dth
-        pts = (c_t + ax_t[:, None] * axis
-               + (r_t * np.cos(th_t))[:, None] * e1
-               + (r_t * np.sin(th_t))[:, None] * e2)
-        linear = QuadMesh.from_corners(pts, a.corners)
-        slices.append(_quad_elevate(linear, a.order))
+        else:
+            slices.append(placed(float(t)))
     return slices
 
 
@@ -205,8 +227,8 @@ def _align(a, b):
 
     Returns ``b`` unchanged if the match is not a permutation, so a caller whose two
     sections genuinely are index-paired but geometrically far apart is no worse off."""
-    if not (np.array_equal(a.quads, b.quads) and np.array_equal(a.orient, b.orient)
-            and np.array_equal(a.line_mesh.lines, b.line_mesh.lines)):
+    if (a.n_quads != b.n_quads or a.n_points != b.n_points
+            or a.line_mesh.n_lines != b.line_mesh.n_lines):
         return b
     _, sigma = cKDTree(b.points - b.points.mean(axis=0)).query(
         a.points - a.points.mean(axis=0))
@@ -888,7 +910,7 @@ print("stage3:", mesh3.n_hexes, "watertight",
 # -- the boundary layer, over the whole manifold at once ----------------------
 # Every no-slip face has to be named before this runs, and a few are not: the blend
 # blocks (``loft_between``, ``bridge``, ``adapter``) build their intermediate sections
-# through ``QuadMesh.from_corners``, which carries no edge tags, so their lateral faces
+# through a blend, which carries no edge tags, so their lateral faces
 # come out unnamed.  Naming whatever free face is still unnamed closes that gap without
 # having to teach each blend about tags -- and it is safe precisely because everything
 # that is *not* wall here is already named: the two riser caps, and the two chimera

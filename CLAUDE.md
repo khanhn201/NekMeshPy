@@ -5,7 +5,7 @@
 ```bash
 pip install -e ".[all,dev]"
 
-ruff check nekmeshpy tests examples docs
+ruff check nekmeshpy tests examples   # CI's own target; docs/ lints clean too
 mypy                          # config pins files=["nekmeshpy"]; do NOT pass paths
 python -m pytest              # addopts deselect `slow`
 python -m pytest -m slow      # femoral, the one gmsh example
@@ -57,7 +57,8 @@ quadmesh.ogrid(boundary, n_side, radial)    # not QuadMesh.ogrid(...)
 hexmesh.is_watertight(mesh)                 # not mesh.is_watertight()
 ```
 
-No `TYPE_CHECKING` guards; the three containers have no deferred imports. Siblings do
+No `TYPE_CHECKING` guards in the three ladder containers, and no deferred imports
+there either (`tetmesh/tetmesh.py`, off the ladder, does use one for `TriMesh`). Siblings do
 use function-body imports in a few places (`query` → `quality`, `shape` → `linemesh`),
 so a deferred import in a *sibling* is not by itself a bug; one in a container is.
 
@@ -170,8 +171,8 @@ extra order is enough — the fold can sit between any two lattices, and that sa
 yours, and it is read live so assigning it works), prints a `sampling` line, and raises
 a `** WARNING **` plus a `logging.warning` when it inverts. Deliberately one order, not
 a sweep: intermediate orders cost real time and certify nothing, since the reading is
-**not monotone** — a real element reads clean at 2, folded at 3, clean at 4, clean at 7
-and folded at 8. At order 7 the work is 512 points a hex (0.8 s for 8k), so
+**not monotone** — a real element reads clean at 2, folded at 3 and 4, clean again at 5,
+and folded at 8 and 11 (`hexmesh/quality.py`'s own record of it). At order 7 the work is 512 points a hex (0.8 s for 8k), so
 `SCAN_BUDGET` admits ~29k elements and *declines* anything larger, naming it in
 `OrderScan.skipped` and reporting `not checked`. Declined is **unchecked, not clean**.
 The sampling is chunked, so peak memory is flat in mesh size and order (unchunked, 500k
@@ -206,10 +207,11 @@ mesher no longer depends on the draw the entry comes out.
 What makes the mesher independent of that draw is **layer thickness**, not tolerance.
 `snap_to_wall` moves a node a fixed distance, so the distortion is that distance
 *relative to its layer* — which makes the uniform run's length the stability knob, per
-leg (`NEAR_LEN` 1.5 for the main pipe, `NEAR_LEN_BRANCH` 4.5, through `LEG_NEAR_LEN`).
+leg (`NEAR_LEN` 2.0 for the main pipe, `NEAR_LEN_BRANCH` 3.0, through `LEG_NEAR_LEN`).
 Tripling it globally is much worse: the junction stops being resolved. Widening
-`SNAP_MAX` buys wall accuracy by *trading away* that independence — at 0.20 alone the
-mesh was flawless locally and corner-inverted on CI.
+`SNAP_MAX` buys wall accuracy by *trading away* that independence — 0.20 on its own,
+without the longer uniform run, was flawless locally and corner-inverted on CI. It
+ships at 0.20 now because `3043cc5` lengthened the run to pay for it.
 
 ## Joining: `merge` infers, `attach` is told
 
@@ -217,9 +219,10 @@ Two welds, and the difference is *what the caller states*.
 
 `merge(meshes, tol=)` is the **proximity** join: it is told nothing about what meets
 what and infers every seam in the assembly from coordinates, at one tolerance, over
-every block's whole boundary at once. That is why `examples/chimera_full.py:444-448`
-runs one seam at `tol=0.05` and the assembly at `0.005` — "loosening the tolerance for
-the whole assembly welded an unrelated, closer-together pair by mistake."
+every block's whole boundary at once. That is why `examples/chimera_full.py:699`
+runs one seam at `0.04` and the assembly at `0.005` — "loosening the tolerance for
+the whole assembly welded an unrelated, closer-together pair by mistake." The 0.04 is
+picked to stay under a real 0.05 feature; see `merge_at` at `chimera_full.py:129`.
 
 `attach(meshes, seams)` is told, by a `Seam` apiece, **which** group meets which — one
 rung down at each level: `face_tags` at the hex rung, `edge_tags` at the quad rung,
@@ -313,7 +316,7 @@ hex carrying a named face, and `GROUPS` can key the code by that hex's own regio
 
 **`boundary` is reserved for the topological domain boundary** — what `boundary_faces`
 / `_edges` / `_points` compute from connectivity. A side-tag table is a *named subset*
-of that, and the two differ. Row order is meaningful: `ordered()` is the only sort,
+of that, and the two differ. Row order is meaningful,
 because `.re2` writes rows in stored order and `.vtu` gives a node touched by several
 rows the last one's tag.
 
@@ -389,5 +392,6 @@ number of conversation compacting and a clear transcript.
 - When attempting to web search, do it from local machine since Claude API server do not have access
 to internet
 - Use ./scratch/sessionname as a scratch workspace to do debugging, runs, tests
-or iterations
+or iterations. Always update a *vtu file in scratch so user can
+inspect the mesh.
 

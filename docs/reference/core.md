@@ -41,6 +41,16 @@ behind the B-rep) — is internal; see
    :members:
 ```
 
+## `core.stations`
+
+The sweep-station machinery every `loft` / `sweep` / `extrude` reads: `split_evaluated`,
+`refined_lattice`, `spline_levels`, `sweep_lattice`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.stations
+   :members:
+```
+
 ## `core.affine`
 
 ```{eval-rst}

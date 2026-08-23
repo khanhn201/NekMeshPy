@@ -57,11 +57,12 @@ nekmeshpy = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# the three chimera examples take 19 s / 57 s / 138 s, so a default run deselects them;
-# CI runs `pytest -m slow` once, on one interpreter, to keep them honest.
+# ``femoral`` tet-meshes with gmsh and costs 316 s cold, which CI always is, so a
+# default run deselects it; CI runs `pytest -m slow` once, on one interpreter, to keep
+# it honest.  The chimera pair used to be here too and is now back in the default run.
 addopts = "-q -m 'not slow'"
 markers = [
-    "slow: takes more than ~10 s (the large chimera examples)",
+    "slow: needs gmsh or costs minutes (femoral)",
 ]
 
 [tool.ruff]

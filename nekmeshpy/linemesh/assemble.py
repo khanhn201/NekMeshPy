@@ -331,7 +331,11 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
         resolved.append((ia, pa, ib, pb, sm.own, sm.attach_tag))
 
     pair_list: list[IntArray] = []
-    pts = [np.array(m.points, dtype=float, copy=True) for m in meshes]
+    pts = [m.points for m in meshes]
+    offs: IntArray = np.concatenate(
+        [[0], np.cumsum([p.shape[0] for p in pts])]).astype(np.int64)
+    cat: list[IntArray] = []
+    keep: list[IntArray] = []
     for k, (ia, pa, ib, pb, own, _tag) in enumerate(resolved):
         _d, loc = cKDTree(pts[ib][pb]).query(pts[ia][pa])
         dup = loc.size - np.unique(loc).size
@@ -340,21 +344,18 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
                 "attach: seams[%d]: the pairing is not one-to-one -- %d of a's %d seam "
                 "points share a nearest point on b." % (k, dup, loc.size))
         pair = np.stack([pa, pb[loc]], axis=1)
-        # the owner's coordinates win outright, so the two sides agree exactly rather
-        # than merely closely
-        if own == "a":
-            pts[ib][pair[:, 1]] = pts[ia][pair[:, 0]]
-        else:
-            pts[ia][pair[:, 0]] = pts[ib][pair[:, 1]]
         pair_list.append(pair)
+        cat.append(np.stack([pair[:, 0] + offs[ia], pair[:, 1] + offs[ib]], axis=1))
+        # ``own=`` is a choice of *which* coordinate the fused point keeps, and the weld
+        # is where that choice is made.  Nothing is copied here: the weld keeps exactly
+        # one point per fused pair anyway, so a copy would only be deciding this twice.
+        side, blk = (0, ia) if own == "a" else (1, ib)
+        keep.append(pair[:, side] + offs[blk])
 
-    offs: IntArray = np.concatenate(
-        [[0], np.cumsum([p.shape[0] for p in pts])]).astype(np.int64)
-    cat = [np.stack([pr[:, 0] + offs[ia], pr[:, 1] + offs[ib]], axis=1)
-           for (ia, _pa, ib, _pb, _o, _t), pr in zip(resolved, pair_list)]
     stated: IntArray = (np.concatenate(cat, axis=0) if cat
                         else np.zeros((0, 2), dtype=np.int64))
-    points, point_id = conform.weld_pairs(pts, stated)
+    kept: IntArray = (np.concatenate(keep) if keep else np.zeros(0, dtype=np.int64))
+    points, point_id = conform.weld_pairs(pts, stated, kept)
 
     # The joined points lose their names *before* the renumber, not after: a seam whose
     # two sides live in the same mesh -- closing a ring is exactly that -- collapses two

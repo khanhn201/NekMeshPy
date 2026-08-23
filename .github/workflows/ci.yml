@@ -43,9 +43,9 @@ jobs:
         run: pytest
 
   slow-examples:
-    # The large chimera meshers (19 s / 57 s / 138 s) and femoral (316 s, cold) are
-    # deselected from the default run by `addopts`, so they get one job of their own
-    # rather than 4x in the matrix.
+    # femoral (316 s cold, and the one example that needs gmsh) is deselected from the
+    # default run by `addopts`, so it gets one job of its own rather than 4x in the
+    # matrix.  The chimera pair is no longer slow enough to deselect.
     # They are not optional: every example is a mesher, and four of them once shipped
     # broken for want of any test at all.
     name: Slow examples

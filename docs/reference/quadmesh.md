@@ -78,7 +78,7 @@ placed into one of these.
    :members:
 ```
 
-### `quadmesh.morph` — Δ0: geometry at the same rung — `blend`, `reindex`, `place_on_path`, and the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`
+### `quadmesh.morph` — Δ0: geometry at the same rung — `blend`, `reindex`, `place_on_path`, `offset`, and the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.morph

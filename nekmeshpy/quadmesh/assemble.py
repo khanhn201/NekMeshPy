@@ -393,6 +393,7 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float = 1e-7) -> QuadMesh:
 
 def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, *,
             who: str, seam_edges: Mapping[int, IntArray] | None = None,
+            own_edges: Mapping[int, IntArray] | None = None, check: bool = True,
             named_seams: Sequence[tuple[int, IntArray, str]] = ()) -> QuadMesh:
     """Everything a weld does *after* the point remap is decided, shared by
     :func:`merge` and :func:`attach` -- the quad rung's counterpart of
@@ -405,65 +406,88 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
     meshes = list(meshes)
     counts = [m.points.shape[0] for m in meshes]
 
-    quad_list: list[IntArray] = []
+    # Each block's own B-rep is already correct and already unique, so the tables are
+    # concatenated and only the entities whose corners *all* welded are fused.  Nothing
+    # is re-derived from the corners -- the same climb the hex rung makes, and it keeps
+    # the merged numbering a function of the order the blocks were handed in.
+    erow_list: list[IntArray] = []
+    ee_list: list[IntArray] = []
+    eflip_list: list[BoolArray] = []
     etag_list: list[ElementTags] = []
-    noff = qoff = 0
+    edge_offs: list[int] = []
+    noff = eoff = qoff = 0
     for m, c in zip(meshes, counts):
-        quad_list.append(point_id[m.corners + noff])   # local -> welded id
+        erow_list.append(point_id[np.asarray(m.line_mesh.lines, dtype=np.int64) + noff])
+        ee_list.append(np.asarray(m.quads, dtype=np.int64) + eoff)
+        eflip_list.append(np.asarray(m.orient, dtype=bool))
         etag_list.append(m.element_tags.offset(qoff))
+        edge_offs.append(eoff)
         noff += c
+        eoff += m.line_mesh.n_lines
         qoff += m.n_quads
-    quads = np.concatenate(quad_list, axis=0) if quad_list else np.zeros((0, 4), np.int64)
     etags = ElementTags.concat(etag_list)
 
-    # order-N: the private per-quad interiors just concatenate, but the shared edge
-    # tables must be rebuilt against the *merged* topology -- gather each block's
-    # nodes into its own element traversal order, concatenate in merged element
-    # order, then re-scatter.  That scatter is the conformal-weld guard: two blocks
-    # that disagree on a welded shared edge raise instead of silently welding.
     order = meshes[0].order if meshes else 1
     if any(m.order != order for m in meshes):
         raise ValueError("merge: all sections must share the same order")
-    edges, elem_edges, flip = conform.unique_edges(quads, 2)
+
+    e_rows = (np.concatenate(erow_list, axis=0) if erow_list
+              else np.zeros((0, 2), np.int64))
+    elem_edges = (np.concatenate(ee_list, axis=0) if ee_list
+                  else np.zeros((0, 4), np.int64))
+    flip = (np.concatenate(eflip_list, axis=0) if eflip_list
+            else np.zeros((0, 4), bool))
+
+    # welding renumbers points, so a stored edge row can come out the wrong way round;
+    # put it back min-first and toggle the traversals that referenced it, *before*
+    # fusing, so a fused pair is then two identical rows and no direction survives it.
+    swap: BoolArray = e_rows[:, 0] > e_rows[:, 1]
+    e_rows = np.where(swap[:, None], e_rows[:, ::-1], e_rows)
+    flip = flip ^ swap[elem_edges]
+
+    welded: BoolArray = (np.bincount(point_id, minlength=points.shape[0]) > 1
+                         if point_id.size else np.zeros(points.shape[0], bool))
+    e_new, e_keep = conform.fuse_entities(e_rows, welded)
+    edges = e_rows[e_keep]
+    elem_edges = e_new[elem_edges]
+
     edge_nodes: PointArray | None = None
     interior: PointArray | None = None
     if order > 1:
-        local: PointArray = np.concatenate(
-            [conform.gather_edge_nodes(m.line_mesh.interior, m.quads, m.orient)
-             for m in meshes], axis=0)                     # (Q,4,order-1,3)
-        edge_nodes = conform.scatter_edge_nodes(
-            local, elem_edges, flip, edges.shape[0],
-            conform.entity_tol(points), who)
+        # A weld can only fuse edges whose two corners both welded; every other edge
+        # keeps its one stored row, so this is a renumbering plus a guard on the fused
+        # subset alone -- the only edges that can disagree.
+        prefer_e = None
+        if own_edges:
+            prefer_e = np.zeros(e_rows.shape[0], dtype=bool)
+            for bi3, off3 in enumerate(edge_offs):
+                loc = own_edges.get(bi3)
+                if loc is not None and len(loc):
+                    prefer_e[off3 + np.asarray(loc, dtype=np.int64)] = True
+        edge_nodes = _shared_edge_nodes(meshes, e_new, swap, edges.shape[0],
+                                        conform.entity_tol(points), who,
+                                        prefer_e, check)
         interior = np.concatenate([m.interior for m in meshes], axis=0)
     # An edge tag rides the edge, so it has to wait for the merged edge table: block
     # ``m``'s local edge ``m.quads[q, s]`` is merged edge ``elem_edges[qoff + q, s]``,
     # which is the whole map.  Two blocks welding onto one shared edge can each name
     # it, so the combine is the weld's own conflict rule rather than a concatenation.
-    etag_off = 0
     edge_tag_list: list[ElementTags] = []
-    for bi2, m in enumerate(meshes):
-        mine: IntArray = np.full(m.line_mesh.n_lines, -1, dtype=np.int64)
-        mine[np.asarray(m.quads, dtype=np.int64).ravel()] = np.asarray(
-            elem_edges[etag_off:etag_off + m.n_quads], dtype=np.int64).ravel()
+    seam_merged: list[IntArray] = []
+    loc2mrg: dict[int, IntArray] = {}
+    for bi2, (m, off3) in enumerate(zip(meshes, edge_offs)):
+        # a block's local edge j *is* concatenated row off3 + j, so the map onto the
+        # merged table is a slice of ``e_new`` -- no detour through the elements
+        mine: IntArray = e_new[off3:off3 + m.line_mesh.n_lines]
+        loc2mrg[bi2] = mine
         # drop this block's seam names before the renumber -- see the hex rung: a
         # self-join collapses two tagged edges onto one id and ``renumber`` refuses it
         et = m.edge_tags
         if seam_edges is not None and bi2 in seam_edges:
             et = et.select(~np.isin(et.ids,
                                     np.asarray(seam_edges[bi2], dtype=np.int64)))
+            seam_merged.append(mine[np.asarray(seam_edges[bi2], dtype=np.int64)])
         edge_tag_list.append(et.renumber(mine))
-        etag_off += m.n_quads
-    seam_merged: list[IntArray] = []
-    loc2mrg: dict[int, IntArray] = {}
-    off2 = 0
-    for bi, m in enumerate(meshes):
-        mine2: IntArray = np.full(m.line_mesh.n_lines, -1, dtype=np.int64)
-        mine2[np.asarray(m.quads, dtype=np.int64).ravel()] = np.asarray(
-            elem_edges[off2:off2 + m.n_quads], dtype=np.int64).ravel()
-        loc2mrg[bi] = mine2
-        if seam_edges is not None and bi in seam_edges:
-            seam_merged.append(mine2[np.asarray(seam_edges[bi], dtype=np.int64)])
-        off2 += m.n_quads
     named = [(loc2mrg[bi][np.asarray(e, dtype=np.int64)], tag)
              for bi, e, tag in named_seams]
     lm = LineMesh(points, edges, interior=edge_nodes,
@@ -471,6 +495,49 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
                                            edges.shape[0], who))
     return QuadMesh(lm, elem_edges, flip, interior, etags)
 
+
+
+def _first_wins(dst: PointArray, idx: IntArray, src: PointArray,
+                prefer: BoolArray | None = None) -> None:
+    """``dst[idx] = src`` with the **lowest** source index winning each collision.
+
+    The quad rung's copy of :func:`hexmesh._first_wins
+    <nekmeshpy.hexmesh.assemble._first_wins>`, and the same ``own=`` rule: a marked row
+    beats every unmarked one, and among marked rows the lowest still wins."""
+    dst[idx[::-1]] = src[::-1]
+    if prefer is not None and prefer.any():
+        p: IntArray = np.flatnonzero(prefer)
+        dst[idx[p][::-1]] = src[p][::-1]
+
+
+def _shared_edge_nodes(meshes: Sequence[QuadMesh], e_new: IntArray, swap: BoolArray,
+                       n_edges: int, ent_tol: float, who: str,
+                       prefer: BoolArray | None = None,
+                       check: bool = True) -> PointArray:
+    """The shared edge-interior table after a weld -- the quad rung's counterpart of
+    :func:`hexmesh._shared_nodes <nekmeshpy.hexmesh.assemble._shared_nodes>`.
+
+    Every block's own table is already conformal, so a weld cannot change any node that
+    is not on the seam; it only renumbers the edge that holds it.  This is therefore a
+    concatenate plus two fixups: an edge whose row came out reversed reads its nodes
+    backwards, and a *fused* edge keeps the survivor's block with the loser's copy
+    checked against it rather than the whole mesh being re-verified."""
+    src: PointArray = np.concatenate(
+        [np.asarray(m.line_mesh.interior, dtype=float) for m in meshes], axis=0)
+    if src.size:
+        src = np.where(swap[:, None, None], src[:, ::-1, :], src)
+    out: PointArray = np.empty((n_edges,) + src.shape[1:], dtype=float)
+    _first_wins(out, e_new, src, prefer)
+    if check and src.size:
+        dup: BoolArray = np.bincount(e_new, minlength=n_edges)[e_new] > 1
+        if dup.any() and not np.allclose(src[dup], out[e_new[dup]],
+                                         rtol=0.0, atol=ent_tol):
+            raise ValueError(
+                "%s: non-conforming high-order edge -- the two sides disagree on a "
+                "welded shared edge's interior nodes beyond tolerance (%.3e). If they "
+                "really are the same interface, state it with attach()."
+                % (who, ent_tol))
+    return out
 
 
 def _seam_named(etag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray],
@@ -604,24 +671,26 @@ def attach(meshes: Sequence[QuadMesh], seams: Sequence[Seam]) -> QuadMesh:
                              % who)
         resolved.append((ia, ea, ib, eb, sm.own, sm.attach_tag))
 
-    pair_list: list[IntArray] = []
-    for k, (ia, ea, ib, eb, own, _tag) in enumerate(resolved):
-        pairs = _pair_edge_seam(meshes[ia], ea, meshes[ib], eb, "seams[%d]" % k)
-        if own == "a":
-            meshes[ib] = _adopt_seam(meshes[ib], eb, pairs[:, 1], meshes[ia], ea,
-                                     pairs[:, 0])
-        else:
-            meshes[ia] = _adopt_seam(meshes[ia], ea, pairs[:, 0], meshes[ib], eb,
-                                     pairs[:, 1])
-        pair_list.append(pairs)
-
+    # Nothing is copied: the weld keeps exactly one point per fused pair anyway, so
+    # making the two sides agree beforehand only decided *whose* coordinate that was --
+    # which ``own=`` now says directly, as ``keep`` for the points and ``own_edges``
+    # for the shared high-order nodes.
     offs: IntArray = np.concatenate(
         [[0], np.cumsum([m.n_points for m in meshes])]).astype(np.int64)
-    cat = [np.stack([pr[:, 0] + offs[ia], pr[:, 1] + offs[ib]], axis=1)
-           for (ia, _ea, ib, _eb, _o, _t), pr in zip(resolved, pair_list)]
+    cat: list[IntArray] = []
+    keep: list[IntArray] = []
+    own_edges: dict[int, list[IntArray]] = {}
+    for k, (ia, ea, ib, eb, own, _tag) in enumerate(resolved):
+        pairs = _pair_edge_seam(meshes[ia], ea, meshes[ib], eb, "seams[%d]" % k)
+        cat.append(np.stack([pairs[:, 0] + offs[ia], pairs[:, 1] + offs[ib]], axis=1))
+        side, blk, loc = ((0, ia, ea) if own == "a" else (1, ib, eb))
+        keep.append(pairs[:, side] + offs[blk])
+        own_edges.setdefault(blk, []).append(loc)
+
     stated: IntArray = (np.concatenate(cat, axis=0) if cat
                         else np.zeros((0, 2), dtype=np.int64))
-    points, point_id = conform.weld_pairs([m.points for m in meshes], stated)
+    kept: IntArray = (np.concatenate(keep) if keep else np.zeros(0, dtype=np.int64))
+    points, point_id = conform.weld_pairs([m.points for m in meshes], stated, kept)
 
     seam_edges: dict[int, list[IntArray]] = {}
     for ia, ea, ib, eb, _o, _t in resolved:
@@ -631,34 +700,10 @@ def attach(meshes: Sequence[QuadMesh], seams: Sequence[Seam]) -> QuadMesh:
     return _stitch(meshes, points, point_id, who="quadmesh.attach",
                    seam_edges={b: np.unique(np.concatenate(v))
                                for b, v in seam_edges.items()},
-                   named_seams=named)
-
-
-def _adopt_seam(m: QuadMesh, edges: IntArray, pts: IntArray, owner: QuadMesh,
-                owner_edges: IntArray, owner_pts: IntArray) -> QuadMesh:
-    """``m`` with its seam nodes replaced by ``owner``'s own, so the two agree bit for
-    bit before the weld rather than merely as close as the pairing found them -- which is what
-    the shared-edge re-scatter in :func:`_stitch` demands at order > 1."""
-    pmap: IntArray = np.arange(m.n_points, dtype=np.int64)
-    pmap[pts] = owner_pts
-    P: PointArray = np.array(m.points, dtype=float, copy=True)
-    P[pts] = owner.points[owner_pts]
-
-    lm = m.line_mesh
-    ei: PointArray = np.array(lm.interior, dtype=float, copy=True)
-    if m.order > 1 and edges.size:
-        rows: IntArray = pmap[np.asarray(lm.lines, dtype=np.int64)[edges]]
-        # the owner's seam edges are known, so do not sort its whole table to find them
-        owner_rows = np.asarray(owner.line_mesh.lines, dtype=np.int64)
-        oidx = owner_edges[conform.locate_rows(owner_rows[owner_edges], rows,
-                                               who="attach", what="edge")]
-        en: PointArray = np.asarray(owner.line_mesh.interior, dtype=float)[oidx].copy()
-        rev = owner_rows[oidx, 0] != rows[:, 0]
-        if en.size:
-            en[rev] = en[rev][:, ::-1]
-        ei[edges] = en
-    lines = LineMesh(PointMesh(P, lm.point_tags), lm.lines, ei, lm.element_tags)
-    return QuadMesh(lines, m.quads, m.orient, m.interior, m.element_tags)
+                   named_seams=named,
+                   own_edges={b: np.unique(np.concatenate(v))
+                              for b, v in own_edges.items()},
+                   check=False)
 
 
 def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:

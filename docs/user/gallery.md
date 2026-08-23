@@ -1,11 +1,11 @@
 # Gallery
 
 Rendered on client-side with [vtk.js](https://kitware.github.io/vtk-js/).
-This live viewer only render elements linearly.
+This live viewer only renders elements linearly.
 
 ## carotid
 
-Vessel surface pipeline: seams cut into legs, O-grid legs, lofted and merged.
+Vessel surface pipeline: seams cut into legs, O-grid legs, lofted and attached.
 
 ```{mesh-viewer} carotid
 ```
