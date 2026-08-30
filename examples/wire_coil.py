@@ -50,26 +50,26 @@ CLEAR   = 0.004                # fluid film left between wire and tube wall
 RW      = RW_NOM - CLEAR       # meshed wire radius -> outer reach 0.496
 
 PITCH     = (1.0 / 6.0) / 0.375      # axial rise per turn
-SHEET_GAP = 0.15                     # radial clearance wire surface -> inner sheet
+SHEET_GAP = 0.16                     # radial clearance wire surface -> inner sheet
 
 LAYERS_WIRE, TURNS_WIRE = 30, 2      # blend layers over the coil's turns
 NU = LAYERS_WIRE // TURNS_WIRE       # horizontal blend elements per turn (may be ODD:
                                     # the two strips need not have equal counts)
 NV = 2                              # vertical elements / diamond resolution
 SHEET_TURNS = 2                     # pitches of coil to build
-INNER_ARC_DEG = 125.0             # tube o-grid: angular span of the inward-facing
+INNER_ARC_DEG = 162.0             # tube o-grid: angular span of the inward-facing
                                    # quadrant (90 = square core; -> 180 max)
 INNER_SKEW_DEG = 0.0               # inner-sheet shear: every vertical edge of the
                                    # structured sheet tilts this many deg off the
                                    # z-axis in the unrolled (arc-len, z) view
 INNER_DZ =  0.0             # extra z shift of the inner sheet off centre
-INNER_PHASE_DEG = 20.0             # extra rotation of the inner sheet about z
-SPIRAL_DZ_FRAC = 0.25              # spiral z lift above the staircase, in pitches
+INNER_PHASE_DEG = 30.0             # extra rotation of the inner sheet about z
+SPIRAL_DZ_FRAC = 0.18              # spiral z lift above the staircase, in pitches
                                    # (the spiral is the staircase's own shape,
                                    # scaled out to the inward-wall radius)
 SPIRAL_ROT_FRAC = 0.75            # extra CW rotation of the spiral, in units of one
                                    # element's angular pitch (2pi / elems-per-turn)
-GRADE = 0.85                       # strip column grading: >1 stretches the columns
+GRADE = 0.87                       # strip column grading: >1 stretches the columns
                                    # nearest the diamond wide and compresses them
                                    # toward the outer sides (the template's top and
                                    # bottom edges then go non-uniform -- fine)
@@ -478,7 +478,8 @@ inner_sheet = map_nodes(inner_sheet, _cyl)
 # directly (n_side = NSHEET/4, CORE_RADIAL ring layers).  Extruded CORE_LAYERS up.
 CORE_LAYERS = 2
 CORE_RADIAL = 1
-_core_zs = [(-0.5 + i) * PITCH + INNER_ZC for i in range(CORE_LAYERS + 1)]  # v=1,2,3
+_core_zs = [(-0.5 + i) * PITCH + INNER_ZC + INNER_DZ    # v = 1, 2, 3 -- ``_cyl``'s
+            for i in range(CORE_LAYERS + 1)]           # own z law, INNER_DZ included
 
 
 def _sheet_ring(zt):
