@@ -139,3 +139,15 @@ rather than a body of its own, and the shared cell walls slide out of its way.
 ```
 
 [`examples/rod_bundle.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/rod_bundle.py)
+
+## wire_coil
+
+A helical wire coiled inside a round pipe as a conjugate fluid/solid domain: the
+wire is an o-grid tube swept one turn per pitch, the pipe wall an annular solid
+shell, and the film, inter-turn wedge and axial core are fluid. Every face is
+tagged, with a conjugate `interface` between the two regions.
+
+```{mesh-viewer} wire_coil
+```
+
+[`examples/wire_coil.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/wire_coil.py)

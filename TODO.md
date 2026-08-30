@@ -13,3 +13,4 @@ Local, immediate simple tasks that can be done right away
     - [ ] Inputs: Dirichlets faces, Dirichlets values
 - [ ] 16) Check element overlap
 - [ ] 18) p-refine/h-refine
+- [ ] 19) Self-attach (like wirecoil)
