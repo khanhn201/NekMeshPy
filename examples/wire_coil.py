@@ -1,8 +1,9 @@
 """A helically coiled wire inside a round pipe, meshed for conjugate heat transfer.
 
 The domain has three regions.  The **wire** is a continuous helix: its round
-cross-section is an o-grid ``_disc`` (an inward-facing quadrant given a wide arc,
-``INNER_ARC_DEG``), swept one turn per pitch by ``cross_map`` so consecutive turns
+cross-section is an o-grid ``_disc`` (its inward- and outward-facing quadrants
+spanning ``INNER_ARC_DEG`` and ``OUTER_ARC_DEG``, the two side quadrants taking up
+what is left), swept one turn per pitch by ``cross_map`` so consecutive turns
 abut and weld (``build_turn``).  The **solid pipe wall** is an annular shell,
 ``R_TUBE .. R_TUBE + WALL_THICK``.  Everything else -- the film between the wire
 and the wall, the wedge between consecutive turns, and the core down the axis --
@@ -60,6 +61,8 @@ NV = 2                              # vertical elements / diamond resolution
 SHEET_TURNS = 2                     # pitches of coil to build
 INNER_ARC_DEG = 120.0             # tube o-grid: angular span of the inward-facing
                                    # quadrant (90 = square core; -> 180 max)
+OUTER_ARC_DEG = 60.0             # ... and of the outward-facing one, set free of
+                                   # it: the two side quadrants take up the slack
 INNER_DZ =  0.0             # extra z shift of the inner sheet off centre
 INNER_PHASE_DEG = 10.0             # extra rotation of the inner sheet about z
 SPIRAL_DZ_FRAC = 0.18              # spiral z lift above the staircase, in pitches
@@ -245,13 +248,14 @@ V_LO, V_HI = float(flat_t.points[:, 1].min()), float(flat_t.points[:, 1].max())
 OG_NSIDE  = 2                          # o-grid core cells per side (even)
 OG_RADIAL = 1                          # o-grid ring layers
 
-def _og_boundary(radius, inner_deg):
-    """closed 8-pt loop on a circle whose o-grid quarter split points sit at +x,
-    +y, -x, -y, but with the -x-facing pair of edges (and the +x pair) widened to
-    span ``inner_deg`` each, the two side pairs sharing the rest."""
-    he = inner_deg / 2.0
-    side = 90.0 - he
-    ang = np.deg2rad(np.cumsum([0.0, he, side, side, he, he, side, side]))
+def _og_boundary(radius, inner_deg, outer_deg):
+    """closed 8-pt loop on a circle: the -x-facing pair of edges spans
+    ``inner_deg``, the +x pair ``outer_deg``, and the two side pairs share what is
+    left equally.  The four split points are the o-grid's own quarter corners, so
+    they are where the tube's crossings -- and every seam onto them -- end."""
+    hi, ho = inner_deg / 2.0, outer_deg / 2.0
+    side = 0.5 * (180.0 - hi - ho)
+    ang = np.deg2rad(np.cumsum([0.0, ho, side, side, hi, hi, side, side]))
     pts = np.column_stack([radius * np.cos(ang), radius * np.sin(ang),
                            np.zeros(ang.size)])
     ac = np.r_[ang, ang[0] + 2.0 * np.pi]
@@ -261,7 +265,8 @@ def _og_boundary(radius, inner_deg):
     return linemesh.loft(pts, loop=True, interior=mid[:, None, :], order=ORDER)
 
 
-_disc = quadmesh.ogrid(_og_boundary(RW, INNER_ARC_DEG), OG_NSIDE, OG_RADIAL)
+_disc = quadmesh.ogrid(_og_boundary(RW, INNER_ARC_DEG, OUTER_ARC_DEG),
+                       OG_NSIDE, OG_RADIAL)
 _dq = np.asarray(_disc.quads).reshape(-1, 4)
 _dl = np.asarray(_disc.line_mesh.lines).reshape(-1, 2)
 _dp = _disc.points
@@ -311,6 +316,27 @@ for _r, (_els, _eds) in enumerate(_cols):
         strip[:, _c * ORDER:(_c + 1) * ORDER + 1] = blk
     _LAT[_r * ORDER:(_r + 1) * ORDER + 1] = strip
 _NX = _LAT.shape[1]                                      # number of vertical crossings
+
+# the two o-grid wall corners bounding the top row, and the bottom's -- columns 0
+# and -1 of _LAT ARE wall points (each side's radial ring runs out to one).
+_WALL_T = (_LAT[-1, 0], _LAT[-1, -1])
+_WALL_B = (_LAT[0, 0], _LAT[0, -1])
+
+
+def _wall_row(lat_row, w0, w1):
+    """the tube-wall arc facing ``lat_row``: RW-radius points evenly spaced in
+    ANGLE between the o-grid's own wall corners ``w0`` / ``w1``.
+
+    Not a per-node radial projection of ``lat_row``.  The projection agrees with
+    this only while the o-grid is symmetric: the butterfly core is a transfinite
+    blend of all four boundary arcs, so narrowing the outward arc warps the core's
+    top / bottom edge and its projection drifts off the split point -- which is
+    where the tube's crossings end, and so where every seam onto them ends.
+    Anchoring on the corners keeps that seam shut at any arc pair."""
+    a0, a1 = (float(np.arctan2(w[1], w[0])) for w in (w0, w1))
+    ang = np.linspace(a0, a1, lat_row.shape[0])
+    return np.column_stack([RW * np.cos(ang), RW * np.sin(ang),
+                            np.zeros(ang.size)])
 
 
 RISE = PITCH / (2.0 * np.pi)                             # axial rise per radian
@@ -369,12 +395,10 @@ def _place(uk, turn):
     return fn
 
 
-def _quadrant_sec(lat_row):
+def _quadrant_sec(lat_row, corners):
     """one quad layer: ``lat_row`` (the butterfly core's top/bottom edge, kept
-    exactly) lofted straight out along its own radius to the disc surface."""
-    rad = RW / np.linalg.norm(lat_row[:, :2], axis=1)
-    wall = np.column_stack([lat_row[:, 0] * rad, lat_row[:, 1] * rad,
-                            np.zeros(lat_row.shape[0])])
+    exactly) lofted out to the disc surface arc between ``corners``."""
+    wall = _wall_row(lat_row, *corners)
     inner = linemesh.loft(lat_row[::ORDER], order=ORDER,
                           interior=lat_row[1::ORDER][:, None, :])
     outer = linemesh.loft(wall[::ORDER], order=ORDER,
@@ -384,11 +408,11 @@ def _quadrant_sec(lat_row):
     return quadmesh.loft([inner, outer], last_tag=IFACE)
 
 
-def _sweep_quadrant(lat_row, turn, shift=0):
+def _sweep_quadrant(lat_row, corners, turn, shift=0):
     """sweep the quadrant section round one helix ``turn``.  ``shift`` slides the
     station window that many elements EARLIER (>0) or LATER (<0) at both ends, so
     the band leads / trails the tube by one element."""
-    sec = _quadrant_sec(lat_row)
+    sec = _quadrant_sec(lat_row, corners)
     u = _QSTA_U
     n = len(u)
     uu = np.r_[u - 1.0, u, u + 1.0]
@@ -427,8 +451,8 @@ def build_turn(turn):
     tube = hexmesh.loft([_cx(c) for c in range(0, _NX, ORDER)], element_tags="solid",
                         first_tag=IFACE, last_tag=SKIN,
                         sweep_nodes=[[_cx(c)] for c in range(1, _NX, ORDER)])
-    topq = _sweep_quadrant(_LAT[-1, _CORE], turn=turn)
-    botq = _sweep_quadrant(_LAT[0, _CORE][::-1], turn=turn, shift=-1)
+    topq = _sweep_quadrant(_LAT[-1, _CORE], _WALL_T, turn=turn)
+    botq = _sweep_quadrant(_LAT[0, _CORE][::-1], _WALL_B[::-1], turn=turn, shift=-1)
     return hexmesh.merge([tube, topq, botq], tol=1e-9)
 
 
@@ -627,7 +651,7 @@ R_SPIRAL = float(np.hypot(spiral_pts[:, 0], spiral_pts[:, 1]).mean())
 # (R_SPIRAL .. 2*R_HELIX-R_SPIRAL for the symmetric OG_NSIDE=2 case), not just the
 # narrower core edge.  ``_place`` maps x -> R - R_HELIX.
 _lr = _LAT[-1, _CORE][::ORDER]
-_wall_r = _lr * (RW / np.hypot(_lr[:, 0], _lr[:, 1]))[:, None]
+_wall_r = _wall_row(_LAT[-1, _CORE], *_WALL_T)[::ORDER]
 _sec_r = np.sort(R_HELIX + np.r_[_lr[:, 0], _wall_r[:, 0]])
 _BTW_R = [R_SPIRAL, R_HELIX, float(_sec_r.max())][:OG_NSIDE + 1]
 
@@ -747,13 +771,11 @@ gap_lo = _gap_hex2(_iw_row(V_LO, dt=0, col=0), _iw_row(dt=0, col=0), between_lo)
 # layer 0.  The coil-side face is the quadrant section's WALL edge (``_LAT`` row
 # projected to radius RW), swept by ``_place`` over the same stations the quadrant
 # band itself uses -- so it coincides with topq / botq node-for-node.
-def _wall_face(lat_row, dt=0, shift=0, nturns=SHEET_TURNS):
-    # ``lat_row`` projected to the tube wall (radius RW), swept by ``_place`` over
-    # the quadrant band's own stations, built the SAME way as _btw_outer_slice
-    # (one sweep line per radial corner, then quadmesh.loft) so the two pair up.
-    lat_row = np.asarray(lat_row, float)
-    wall = lat_row * (RW / np.hypot(lat_row[:, 0], lat_row[:, 1]))[:, None]
-    wc = wall[::ORDER]
+def _wall_face(lat_row, corners, dt=0, shift=0, nturns=SHEET_TURNS):
+    # ``lat_row``'s wall arc (the same one ``_quadrant_sec`` lofts out to), swept
+    # by ``_place`` over the quadrant band's own stations, built the SAME way as
+    # _btw_outer_slice (one sweep line per radial corner, then loft) so they pair up.
+    wc = _wall_row(np.asarray(lat_row, float), *corners)[::ORDER]
     u = _QSTA_U
     n = len(u)
     uu = np.r_[u - 1.0, u, u + 1.0]
@@ -812,8 +834,8 @@ def _quad_hex(face, target):
     return None
 
 
-_tq_face = _wall_face(_LAT[-1, _CORE], dt=0, shift=0)
-_bq_face = _wall_face(_LAT[0, _CORE], dt=0, shift=-1)
+_tq_face = _wall_face(_LAT[-1, _CORE], _WALL_T, dt=0, shift=0)
+_bq_face = _wall_face(_LAT[0, _CORE], _WALL_B, dt=0, shift=-1)
 _tq_tgt = _btw_outer_slice(_NPT, None)                 # turns 0..1, like gap_hi
 _bq_tgt = _btw_outer_slice(0, 2 * _NPT + 1)            # turns -1..0, like gap_lo
 topq_gap = _quad_hex(_tq_face, _tq_tgt)
