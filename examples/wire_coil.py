@@ -1,8 +1,9 @@
 """A helically coiled wire inside a round pipe, meshed for conjugate heat transfer.
 
 The domain has three regions.  The **wire** is a continuous helix: its round
-cross-section is an o-grid ``_disc`` (an inward-facing quadrant given a wide arc,
-``INNER_ARC_DEG``), swept one turn per pitch by ``cross_map`` so consecutive turns
+cross-section is an o-grid ``_disc`` (its inward- and outward-facing quadrants
+spanning ``INNER_ARC_DEG`` and ``OUTER_ARC_DEG``, the two side quadrants taking up
+what is left), swept one turn per pitch by ``cross_map`` so consecutive turns
 abut and weld (``build_turn``).  The **solid pipe wall** is an annular shell,
 ``R_TUBE .. R_TUBE + WALL_THICK``.  Everything else -- the film between the wire
 and the wall, the wedge between consecutive turns, and the core down the axis --
@@ -35,6 +36,7 @@ import numpy as np
 from scipy.spatial import cKDTree as _KD
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy.core.tags import ElementTags
 from nekmeshpy.hexmesh.assemble import boundary_face_ids as _bfid
 from nekmeshpy.linemesh import LineMesh
 from nekmeshpy.pointmesh import PointMesh
@@ -50,30 +52,39 @@ CLEAR   = 0.004                # fluid film left between wire and tube wall
 RW      = RW_NOM - CLEAR       # meshed wire radius -> outer reach 0.496
 
 PITCH     = (1.0 / 6.0) / 0.375      # axial rise per turn
-SHEET_GAP = 0.15                     # radial clearance wire surface -> inner sheet
+SHEET_GAP = 0.10                     # radial clearance wire surface -> inner sheet
 
 LAYERS_WIRE, TURNS_WIRE = 30, 2      # blend layers over the coil's turns
 NU = LAYERS_WIRE // TURNS_WIRE       # horizontal blend elements per turn (may be ODD:
                                     # the two strips need not have equal counts)
 NV = 2                              # vertical elements / diamond resolution
 SHEET_TURNS = 2                     # pitches of coil to build
-INNER_ARC_DEG = 125.0             # tube o-grid: angular span of the inward-facing
+INNER_ARC_DEG = 120.0             # tube o-grid: angular span of the inward-facing
                                    # quadrant (90 = square core; -> 180 max)
-INNER_SKEW_DEG = 0.0               # inner-sheet shear: every vertical edge of the
-                                   # structured sheet tilts this many deg off the
-                                   # z-axis in the unrolled (arc-len, z) view
+OUTER_ARC_DEG = 90.0             # ... and of the outward-facing one, set free of
+                                   # it: the two side quadrants take up the slack
 INNER_DZ =  0.0             # extra z shift of the inner sheet off centre
-INNER_PHASE_DEG = 20.0             # extra rotation of the inner sheet about z
-SPIRAL_DZ_FRAC = 0.25              # spiral z lift above the staircase, in pitches
+INNER_PHASE_DEG = 10.0             # extra rotation of the inner sheet about z
+SPIRAL_DZ_FRAC = 0.18              # spiral z lift above the staircase, in pitches
                                    # (the spiral is the staircase's own shape,
                                    # scaled out to the inward-wall radius)
 SPIRAL_ROT_FRAC = 0.75            # extra CW rotation of the spiral, in units of one
                                    # element's angular pitch (2pi / elems-per-turn)
-GRADE = 0.85                       # strip column grading: >1 stretches the columns
+GRADE = 0.87                       # strip column grading: >1 stretches the columns
                                    # nearest the diamond wide and compresses them
                                    # toward the outer sides (the template's top and
                                    # bottom edges then go non-uniform -- fine)
 ORDER = 2
+IFACE = "interface"                # the conjugate fluid/solid surface
+CUT = "cut"                        # the saw cuts at the two ends of the helix
+OUTER = "outer"                    # the pipe's outer skin
+_RIM_LO, _RIM_HI = "_rim_lo", "_rim_hi"     # wall_wrap's two boundary loops
+_END_LO, _END_HI = "_end_lo", "_end_hi"   # the template's two vertical sides, kept
+                                   # apart only so a turn can drop the one that is
+                                   # an interior seam rather than a domain end
+SKIN = "skin"                      # the OUTWARD half of it -- a separate name only
+                                   # long enough to pick the wall film off it, then
+                                   # renamed to IFACE like the rest of the coil wall
 assert NV % 2 == 0, (NU, NV)
 
 nd = NV // 2
@@ -169,7 +180,7 @@ left = quadmesh.structured({
     "right":  chain(seg(L1, Lg, nd)),               # ghost only
     "top":    chain(seg(Lg, TL, nhL)),
     "left":   chain(seg(TL, ML, nd)),
-})
+}, side_tags={"left": _END_HI})                     # u = -hw -> the turn's HIGH-z end
 
 # --- right strip: HALF height; blends onto D1's upper-right edge only.
 right = quadmesh.structured({
@@ -177,7 +188,7 @@ right = quadmesh.structured({
     "right":  chain(seg(MR, TR, nd)),
     "top":    chain(seg(TR, T1, nhR)),
     "left":   chain(seg(T1, R1, nd)),               # D1.T1->R1
-})
+}, side_tags={"right": _END_LO})                    # u = 1 -> the turn's LOW-z end
 
 flat = quadmesh.merge([left, D1, right], tol=1e-9)
 
@@ -208,10 +219,11 @@ def _uniform(v, ref):
 
 
 _tc, _bc = _chain(2.0 * hh, L1), _chain(hh, B1)
+_ENDS = {"x_min": _END_HI, "x_max": _END_LO}        # the same two sides, one row on
 collar_t = quadmesh.from_grid(np.stack([_tc, _uniform(COLLAR_TOP, _tc)], axis=1),
-                              order=ORDER)
+                              order=ORDER, side_tags=_ENDS)
 collar_b = quadmesh.from_grid(np.stack([_uniform(COLLAR_BOT, _bc), _bc], axis=1),
-                              order=ORDER)
+                              order=ORDER, side_tags=_ENDS)
 flat_t = quadmesh.merge([flat, collar_t, collar_b], tol=1e-9)
 
 
@@ -236,13 +248,14 @@ V_LO, V_HI = float(flat_t.points[:, 1].min()), float(flat_t.points[:, 1].max())
 OG_NSIDE  = 2                          # o-grid core cells per side (even)
 OG_RADIAL = 1                          # o-grid ring layers
 
-def _og_boundary(radius, inner_deg):
-    """closed 8-pt loop on a circle whose o-grid quarter split points sit at +x,
-    +y, -x, -y, but with the -x-facing pair of edges (and the +x pair) widened to
-    span ``inner_deg`` each, the two side pairs sharing the rest."""
-    he = inner_deg / 2.0
-    side = 90.0 - he
-    ang = np.deg2rad(np.cumsum([0.0, he, side, side, he, he, side, side]))
+def _og_boundary(radius, inner_deg, outer_deg):
+    """closed 8-pt loop on a circle: the -x-facing pair of edges spans
+    ``inner_deg``, the +x pair ``outer_deg``, and the two side pairs share what is
+    left equally.  The four split points are the o-grid's own quarter corners, so
+    they are where the tube's crossings -- and every seam onto them -- end."""
+    hi, ho = inner_deg / 2.0, outer_deg / 2.0
+    side = 0.5 * (180.0 - hi - ho)
+    ang = np.deg2rad(np.cumsum([0.0, ho, side, side, hi, hi, side, side]))
     pts = np.column_stack([radius * np.cos(ang), radius * np.sin(ang),
                            np.zeros(ang.size)])
     ac = np.r_[ang, ang[0] + 2.0 * np.pi]
@@ -252,7 +265,8 @@ def _og_boundary(radius, inner_deg):
     return linemesh.loft(pts, loop=True, interior=mid[:, None, :], order=ORDER)
 
 
-_disc = quadmesh.ogrid(_og_boundary(RW, INNER_ARC_DEG), OG_NSIDE, OG_RADIAL)
+_disc = quadmesh.ogrid(_og_boundary(RW, INNER_ARC_DEG, OUTER_ARC_DEG),
+                       OG_NSIDE, OG_RADIAL)
 _dq = np.asarray(_disc.quads).reshape(-1, 4)
 _dl = np.asarray(_disc.line_mesh.lines).reshape(-1, 2)
 _dp = _disc.points
@@ -302,6 +316,27 @@ for _r, (_els, _eds) in enumerate(_cols):
         strip[:, _c * ORDER:(_c + 1) * ORDER + 1] = blk
     _LAT[_r * ORDER:(_r + 1) * ORDER + 1] = strip
 _NX = _LAT.shape[1]                                      # number of vertical crossings
+
+# the two o-grid wall corners bounding the top row, and the bottom's -- columns 0
+# and -1 of _LAT ARE wall points (each side's radial ring runs out to one).
+_WALL_T = (_LAT[-1, 0], _LAT[-1, -1])
+_WALL_B = (_LAT[0, 0], _LAT[0, -1])
+
+
+def _wall_row(lat_row, w0, w1):
+    """the tube-wall arc facing ``lat_row``: RW-radius points evenly spaced in
+    ANGLE between the o-grid's own wall corners ``w0`` / ``w1``.
+
+    Not a per-node radial projection of ``lat_row``.  The projection agrees with
+    this only while the o-grid is symmetric: the butterfly core is a transfinite
+    blend of all four boundary arcs, so narrowing the outward arc warps the core's
+    top / bottom edge and its projection drifts off the split point -- which is
+    where the tube's crossings end, and so where every seam onto them ends.
+    Anchoring on the corners keeps that seam shut at any arc pair."""
+    a0, a1 = (float(np.arctan2(w[1], w[0])) for w in (w0, w1))
+    ang = np.linspace(a0, a1, lat_row.shape[0])
+    return np.column_stack([RW * np.cos(ang), RW * np.sin(ang),
+                            np.zeros(ang.size)])
 
 
 RISE = PITCH / (2.0 * np.pi)                             # axial rise per radian
@@ -360,24 +395,24 @@ def _place(uk, turn):
     return fn
 
 
-def _quadrant_sec(lat_row):
+def _quadrant_sec(lat_row, corners):
     """one quad layer: ``lat_row`` (the butterfly core's top/bottom edge, kept
-    exactly) lofted straight out along its own radius to the disc surface."""
-    rad = RW / np.linalg.norm(lat_row[:, :2], axis=1)
-    wall = np.column_stack([lat_row[:, 0] * rad, lat_row[:, 1] * rad,
-                            np.zeros(lat_row.shape[0])])
+    exactly) lofted out to the disc surface arc between ``corners``."""
+    wall = _wall_row(lat_row, *corners)
     inner = linemesh.loft(lat_row[::ORDER], order=ORDER,
                           interior=lat_row[1::ORDER][:, None, :])
     outer = linemesh.loft(wall[::ORDER], order=ORDER,
                           interior=wall[1::ORDER][:, None, :])
-    return quadmesh.loft([inner, outer])
+    # the sweep runs core-edge -> disc wall, so its last cap IS the coil's wall
+    # over the top / bottom of the tube.  Swept, that cap becomes lateral faces.
+    return quadmesh.loft([inner, outer], last_tag=IFACE)
 
 
-def _sweep_quadrant(lat_row, turn, shift=0):
+def _sweep_quadrant(lat_row, corners, turn, shift=0):
     """sweep the quadrant section round one helix ``turn``.  ``shift`` slides the
     station window that many elements EARLIER (>0) or LATER (<0) at both ends, so
     the band leads / trails the tube by one element."""
-    sec = _quadrant_sec(lat_row)
+    sec = _quadrant_sec(lat_row, corners)
     u = _QSTA_U
     n = len(u)
     uu = np.r_[u - 1.0, u, u + 1.0]
@@ -385,6 +420,8 @@ def _sweep_quadrant(lat_row, turn, shift=0):
     umid = 0.5 * (uo[:-1] + uo[1:])
     return hexmesh.loft([map_nodes(sec, _place(uk, turn=turn)) for uk in uo],
                         element_tags="solid",
+                        first_tag=CUT if turn == SHEET_TURNS - 1 else None,
+                        last_tag=CUT if turn == 0 else None,
                         sweep_nodes=[[map_nodes(sec, _place(um, turn=turn))]
                                     for um in umid])
 
@@ -396,12 +433,26 @@ def build_turn(turn):
     """one turn of the CONTINUOUS helix: the diamond-template o-grid tube (flat_t
     across the crossings) + top/bottom quadrants, at global u = local u + turn,
     z = RISE * global-theta.  Turns abut and weld at integer u."""
+    # the tube sweeps radially, so its two helix ends are lateral faces and come
+    # from the section's own vertical sides -- named ``cut`` only on the outermost
+    # turns, since on any other turn that side is the seam the next turn welds to.
+    sec = quadmesh.retag_edge(flat_tm, {
+        _END_LO: CUT if turn == 0 else "",
+        _END_HI: CUT if turn == SHEET_TURNS - 1 else ""})
+
     def _cx(c):
-        return quadmesh.merge([map_nodes(flat_tm, cross_map(c, turn=turn))], tol=1e-9)
+        return quadmesh.merge([map_nodes(sec, cross_map(c, turn=turn))], tol=1e-9)
+    # the crossings loft in order of increasing radius, so the sweep's FIRST slice
+    # is the o-grid's inward arc -- the wall the inner sheet, the layers and the
+    # inter-turn gap are all built onto -- and its LAST is the outward arc the
+    # wall film is built onto.  Both are the conjugate surface; they differ only
+    # in which block meets them, which is why the outward one keeps its own name
+    # until ``wall_wrap`` has been picked off it.
     tube = hexmesh.loft([_cx(c) for c in range(0, _NX, ORDER)], element_tags="solid",
+                        first_tag=IFACE, last_tag=SKIN,
                         sweep_nodes=[[_cx(c)] for c in range(1, _NX, ORDER)])
-    topq = _sweep_quadrant(_LAT[-1, _CORE], turn=turn)
-    botq = _sweep_quadrant(_LAT[0, _CORE][::-1], turn=turn, shift=-1)
+    topq = _sweep_quadrant(_LAT[-1, _CORE], _WALL_T, turn=turn)
+    botq = _sweep_quadrant(_LAT[0, _CORE][::-1], _WALL_B[::-1], turn=turn, shift=-1)
     return hexmesh.merge([tube, topq, botq], tol=1e-9)
 
 
@@ -433,17 +484,12 @@ b = hexmesh.bounds(wire_coil)
 INNER_ZC = 0.5 * (float(b.min[2]) + float(b.max[2]))
 
 
-# du per unit v: the structured sheet's vertical edges tilt INNER_SKEW_DEG off
-# the z-axis in the unrolled (arc-len, z) view; rows stay horizontal.
-_SKEW = np.tan(np.deg2rad(INNER_SKEW_DEG)) * PITCH / (2.0 * np.pi * R_INNER)
-
-
 def _cyl(P):
     # same theta(u) law as the coil's turn 0 (cross_map: th = (1 - u) * 2pi),
     # so the sheet's bottom row overlays the coil's D1 + right-strip band.
     P = np.asarray(P, float).reshape(-1, 3)
     vc = P[:, 1] - 0.5 * INNER_LAYERS
-    th = (1.0 - P[:, 0] - _SKEW * vc) * 2.0 * np.pi + np.deg2rad(INNER_PHASE_DEG)
+    th = (1.0 - P[:, 0]) * 2.0 * np.pi + np.deg2rad(INNER_PHASE_DEG)
     z = vc * PITCH + INNER_ZC + INNER_DZ
     return np.column_stack([R_INNER * np.cos(th), R_INNER * np.sin(th), z])
 
@@ -478,7 +524,8 @@ inner_sheet = map_nodes(inner_sheet, _cyl)
 # directly (n_side = NSHEET/4, CORE_RADIAL ring layers).  Extruded CORE_LAYERS up.
 CORE_LAYERS = 2
 CORE_RADIAL = 1
-_core_zs = [(-0.5 + i) * PITCH + INNER_ZC for i in range(CORE_LAYERS + 1)]  # v=1,2,3
+_core_zs = [(-0.5 + i) * PITCH + INNER_ZC + INNER_DZ    # v = 1, 2, 3 -- ``_cyl``'s
+            for i in range(CORE_LAYERS + 1)]           # own z law, INNER_DZ included
 
 
 def _sheet_ring(zt):
@@ -498,7 +545,7 @@ assert _NR % 4 == 0, "core o-grid needs NSHEET divisible by 4 (got %d)" % _NR
 _CORE_R = float(np.hypot(_ring0[:, 0], _ring0[:, 1]).mean())
 
 
-def _core_disc(z):
+def _core_disc(z, wall=""):
     ang = np.arctan2(_ring0[:, 1], _ring0[:, 0])
     mid_ang = ang + 0.5 * np.diff(np.r_[ang, ang[0] + 2.0 * np.pi])
     corn = np.column_stack([_CORE_R * np.cos(ang), _CORE_R * np.sin(ang),
@@ -506,10 +553,18 @@ def _core_disc(z):
     mids = np.column_stack([_CORE_R * np.cos(mid_ang), _CORE_R * np.sin(mid_ang),
                             np.full(_NR, z)])
     loop = linemesh.loft(corn, loop=True, interior=mids[:, None, :], order=ORDER)
-    return quadmesh.ogrid(loop, _NR // 4, CORE_RADIAL)
+    return quadmesh.ogrid(loop, _NR // 4, CORE_RADIAL, wall_tag=wall)
 
 
-core_hex = hexmesh.loft([_core_disc(z) for z in _core_zs], element_tags="fluid")
+# two lofts: the lower CORE_LAYERS-1 layers weld to the inner sheet, the top layer
+# does not (the sheet's top row is only K2 columns wide), so its ring is exposed to
+# the outlet.  ``wall_tag`` on the top layer's FIRST slice rides onto that lateral
+# hex-face family; a single 3-slice loft would tag the whole column instead.
+_core_lo = hexmesh.loft([_core_disc(z) for z in _core_zs[:-1]],
+                        element_tags="fluid", first_tag=_END_LO)
+core_hex = hexmesh.merge([_core_lo, hexmesh.loft(
+    [_core_disc(_core_zs[-2], wall=_END_HI), _core_disc(_core_zs[-1])],
+    element_tags="fluid", last_tag=_END_HI)], tol=1e-9)
 _cq = hexmesh.quality_summary(core_hex)
 
 # the two transition-layer template grids (also used by the hex layers below):
@@ -596,7 +651,7 @@ R_SPIRAL = float(np.hypot(spiral_pts[:, 0], spiral_pts[:, 1]).mean())
 # (R_SPIRAL .. 2*R_HELIX-R_SPIRAL for the symmetric OG_NSIDE=2 case), not just the
 # narrower core edge.  ``_place`` maps x -> R - R_HELIX.
 _lr = _LAT[-1, _CORE][::ORDER]
-_wall_r = _lr * (RW / np.hypot(_lr[:, 0], _lr[:, 1]))[:, None]
+_wall_r = _wall_row(_LAT[-1, _CORE], *_WALL_T)[::ORDER]
 _sec_r = np.sort(R_HELIX + np.r_[_lr[:, 0], _wall_r[:, 0]])
 _BTW_R = [R_SPIRAL, R_HELIX, float(_sec_r.max())][:OG_NSIDE + 1]
 
@@ -610,10 +665,38 @@ def _spiral_at(R):
 _btw_lines = [staircase] + [linemesh.loft(_spiral_at(R), order=ORDER) for R in _BTW_R]
 between = quadmesh.loft(_btw_lines)
 _NPT = NSHEET + 1                                     # corner steps per pitch (riser + loop)
-between_lo = quadmesh.loft([linemesh.loft(_stair_pts[:2 * _NPT + 1], order=ORDER),
-                            linemesh.loft(spiral_pts[:2 * _NPT + 1], order=ORDER)])
-between_hi = quadmesh.loft([linemesh.loft(_stair_pts[_NPT:], order=ORDER),
-                            linemesh.loft(spiral_pts[_NPT:], order=ORDER)])
+
+
+def _turn_tags(qm, end_tag, at_start):
+    """``qm`` (a one-row staircase->spiral strip) with the one full turn at its
+    helix end -- the first ``_NPT`` quads if ``at_start`` else the last -- given
+    ``element_tags``.  A ``loft`` carries a section's element_tags onto the hex
+    face family it becomes, so the gap block's whole end cross-section (not just
+    its outermost edge) comes out named."""
+    _d = np.full(qm.n_quads, "", dtype="<U16")
+    if at_start:
+        _d[:_NPT] = end_tag
+    else:
+        _d[-_NPT:] = end_tag
+    return QuadMesh(qm.line_mesh, qm.quads, qm.orient, qm.interior,
+                    ElementTags.from_dense(_d))
+
+
+# _stair_pts / spiral_pts chain low z -> high z, so their first turn is the
+# domain's LO opening and their last turn its HI one.
+# ``tag_edges`` on the strip's helix-end cap edge (quad 0 side 4 at the LO end,
+# last quad side 2 at the HI end) -- ``hexmesh.loft`` sweeps it onto the gap
+# block's first / last element's exposed lateral side.
+_bl = quadmesh.loft([linemesh.loft(_stair_pts[:2 * _NPT + 1], order=ORDER),
+                     linemesh.loft(spiral_pts[:2 * _NPT + 1], order=ORDER)])
+between_lo = _turn_tags(
+    quadmesh.tag_edges(_bl, [(0, 4), (_bl.n_quads - 1, 2)], [_END_LO, _END_HI]),
+    _END_LO, True)
+_bh = quadmesh.loft([linemesh.loft(_stair_pts[_NPT:], order=ORDER),
+                     linemesh.loft(spiral_pts[_NPT:], order=ORDER)])
+between_hi = _turn_tags(
+    quadmesh.tag_edges(_bh, [(0, 4), (_bh.n_quads - 1, 2)], [_END_LO, _END_HI]),
+    _END_HI, False)
 
 
 # --- fill the inter-turn wedge.  ``between`` sits SPIRAL_DZ_FRAC of a pitch above
@@ -664,7 +747,8 @@ def _gap_hex2(bot_line, top_line, target):
     for a, b in [(bot_line, top_line), (top_line, bot_line),
                  (_rvl(bot_line), _rvl(top_line)), (_rvl(top_line), _rvl(bot_line))]:
         face = quadmesh.loft([a, b])
-        for order in ([face, target], [target, face]):
+        # ``target`` first, so its helix-end edge tag rides onto the hex face
+        for order in ([target, face], [face, target]):
             try:
                 h = hexmesh.loft(order, element_tags="fluid")
             except ValueError:
@@ -687,13 +771,11 @@ gap_lo = _gap_hex2(_iw_row(V_LO, dt=0, col=0), _iw_row(dt=0, col=0), between_lo)
 # layer 0.  The coil-side face is the quadrant section's WALL edge (``_LAT`` row
 # projected to radius RW), swept by ``_place`` over the same stations the quadrant
 # band itself uses -- so it coincides with topq / botq node-for-node.
-def _wall_face(lat_row, dt=0, shift=0, nturns=SHEET_TURNS):
-    # ``lat_row`` projected to the tube wall (radius RW), swept by ``_place`` over
-    # the quadrant band's own stations, built the SAME way as _btw_outer_slice
-    # (one sweep line per radial corner, then quadmesh.loft) so the two pair up.
-    lat_row = np.asarray(lat_row, float)
-    wall = lat_row * (RW / np.hypot(lat_row[:, 0], lat_row[:, 1]))[:, None]
-    wc = wall[::ORDER]
+def _wall_face(lat_row, corners, dt=0, shift=0, nturns=SHEET_TURNS):
+    # ``lat_row``'s wall arc (the same one ``_quadrant_sec`` lofts out to), swept
+    # by ``_place`` over the quadrant band's own stations, built the SAME way as
+    # _btw_outer_slice (one sweep line per radial corner, then loft) so they pair up.
+    wc = _wall_row(np.asarray(lat_row, float), *corners)[::ORDER]
     u = _QSTA_U
     n = len(u)
     uu = np.r_[u - 1.0, u, u + 1.0]
@@ -708,17 +790,41 @@ def _wall_face(lat_row, dt=0, shift=0, nturns=SHEET_TURNS):
             mm += [_place(x, turn=k)(wc[r:r + 1])[0] for x in um]
         lines.append(linemesh.loft(np.array(cc), order=ORDER,
                                    interior=np.array(mm)[:, None, :]))
-    return quadmesh.loft(lines)
+    return quadmesh.loft(lines, last_tag=SKIN)      # outermost radial corner
 
 
 def _btw_outer_slice(a, b):
-    return quadmesh.loft([linemesh.loft(_spiral_at(R)[a:b], order=ORDER)
-                          for R in _BTW_R])
+    # a == 0 -> reaches the helix bottom (-> botq_gap); b is None -> the top
+    # (-> topq_gap).  Tag ONE full turn at that end -- the ``_NPT`` quads at the
+    # helix end of EACH radial layer -- so the gap block's whole end cross-section
+    # comes out named.  ``quadmesh.loft`` of N lines is radial-major: layer i is
+    # quads [i*S : (i+1)*S] with S the per-layer sweep count.
+    _lo = a == 0
+    _q = quadmesh.loft([linemesh.loft(_spiral_at(R)[a:b], order=ORDER)
+                        for R in _BTW_R], last_tag=SKIN)
+    _S = _q.n_quads // OG_NSIDE
+    _d = np.full(_q.n_quads, "", dtype="<U16")
+    # ``_spiral_at`` runs low z -> high z, so the a-end of every radial layer is a
+    # LO helix cut and the b-end a HI one; ``tag_edges`` sweeps each onto the gap
+    # block's first / last element's exposed lateral side.  The element_tags name
+    # the one full turn at whichever end reaches a domain opening.
+    _re, _rt = [], []
+    for _i in range(OG_NSIDE):
+        if _lo:
+            _d[_i * _S:_i * _S + _NPT] = _END_LO
+        else:
+            _d[(_i + 1) * _S - _NPT:(_i + 1) * _S] = _END_HI
+        _re += [(_i * _S, 4), ((_i + 1) * _S - 1, 2)]
+        _rt += [_END_LO, _END_HI]
+    _q = quadmesh.tag_edges(_q, _re, _rt)
+    return QuadMesh(_q.line_mesh, _q.quads, _q.orient, _q.interior,
+                    ElementTags.from_dense(_d))
 
 
 def _quad_hex(face, target):
-    """loft the coil quadrant face -> a ``between`` outer slice, no fold."""
-    for order in ([face, target], [target, face]):
+    """loft the coil quadrant face -> a ``between`` outer slice, no fold.
+    ``target`` first so its helix-end edge tag becomes a hex face tag."""
+    for order in ([target, face], [face, target]):
         try:
             h = hexmesh.loft(order, element_tags="fluid")
         except ValueError:
@@ -728,8 +834,8 @@ def _quad_hex(face, target):
     return None
 
 
-_tq_face = _wall_face(_LAT[-1, _CORE], dt=0, shift=0)
-_bq_face = _wall_face(_LAT[0, _CORE], dt=0, shift=-1)
+_tq_face = _wall_face(_LAT[-1, _CORE], _WALL_T, dt=0, shift=0)
+_bq_face = _wall_face(_LAT[0, _CORE], _WALL_B, dt=0, shift=-1)
 _tq_tgt = _btw_outer_slice(_NPT, None)                 # turns 0..1, like gap_hi
 _bq_tgt = _btw_outer_slice(0, 2 * _NPT + 1)            # turns -1..0, like gap_lo
 topq_gap = _quad_hex(_tq_face, _tq_tgt)
@@ -739,27 +845,50 @@ assert len(_gaps) == 4, "an inter-turn fill lost its non-folding ordering"
 gap = hexmesh.merge(_gaps, tol=1e-9)
 
 
-# === wall_wrap: the quad surface bounding the OUTER fluid region (wire <-> the
-# solid cylinder) on the coil side -- the wire's outward-facing wall faces plus
-# the outermost outward faces of topq_gap / botq_gap.  Extruded to the cylinder
-# wall next; here just assembled and dumped for inspection.
-def _outward_bfaces(m, dot_thr=0.35):
-    bm = hexmesh.boundary_mesh(m)
-    P, Q = bm.points, bm.corners
-    cen = P[Q].mean(axis=1)
-    nrm = np.cross(P[Q[:, 2]] - P[Q[:, 0]], P[Q[:, 3]] - P[Q[:, 1]])
-    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
-    rad = cen.copy()
-    rad[:, 2] = 0.0
-    rad /= np.linalg.norm(rad, axis=1, keepdims=True)
-    dot = np.einsum("ij,ij->i", nrm, rad)
-    return quadmesh.select(bm, np.flatnonzero(dot > dot_thr))
+# === wall_wrap: the surface bounding the OUTER fluid region (coil <-> the solid
+# cylinder) on the coil side.  It is not searched for -- every block named its own
+# outward face where it was built (``last_tag=SKIN`` on the tube's radial sweep and
+# on the two gap blocks' outward radial corner), so this just collects them.  A
+# geometric test here would not survive INNER_ARC_DEG: the o-grid's outward arc
+# spans that angle, so a fixed normal cone silently drops a strip of it -- at 162
+# deg it lost 30 of the coil's 100 outward faces, and the fluid film and pipe wall
+# around them (120 elements) went with it.
+def _skin_of(block):
+    # off the BOUNDARY surface, not the shared-face table: the latter stores each
+    # face in whatever orientation its owner gave it, and a mixed-winding section
+    # folds the loft below.  boundary_mesh winds them all outward and carries the
+    # face tags through as its own element_tags.
+    bm = hexmesh.boundary_mesh(block)
+    return quadmesh.select(bm, np.flatnonzero(
+        np.asarray(bm.element_tags.dense(bm.n_quads)) == SKIN))
 
 
-_ww_wire = _outward_bfaces(wire_coil, dot_thr=0.5)
-_ww_tq = _outward_bfaces(topq_gap, dot_thr=0.5)
-_ww_bq = _outward_bfaces(botq_gap, dot_thr=0.5)
+_ww_wire, _ww_tq, _ww_bq = (_skin_of(b) for b in (wire_coil, topq_gap, botq_gap))
 wall_wrap = quadmesh.merge([_ww_wire, _ww_tq, _ww_bq], tol=1e-9)
+# from here it is a section to sweep, not a name: left in place it would ride up
+# as the film's and the shell's cap names (``loft`` defaults first_tag/last_tag to
+# the bounding slice's own element_tags).
+wall_wrap = quadmesh.retag_element(wall_wrap, {SKIN: ""})
+# the ribbon's rim rides up as a lateral face wherever it is swept.  It bounds the
+# FLUID film first (an open end) and the SOLID shell after that (a saw cut).  The
+# rim is TWO separable loops -- the wrap spirals a turn, so its boundary never
+# closes on itself -- one wholly below the other in z; name them apart here so the
+# film's LO loop is the inlet and its HI loop the outlet, no flood fill needed.
+_be = quadmesh.boundary_edges(wall_wrap)
+_zc = wall_wrap.points[np.asarray(wall_wrap.corners)][:, :, 2]        # per-quad, 4
+_z_edge = 0.5 * (_zc[_be[:, 0], (_be[:, 1] - 1)]
+                 + _zc[_be[:, 0], _be[:, 1] % 4])                     # each edge's z
+_lo = _z_edge < _z_edge.mean()
+wall_wrap = quadmesh.tag_edges(wall_wrap, _be[_lo], _RIM_LO)
+wall_wrap = quadmesh.tag_edges(wall_wrap, _be[~_lo], _RIM_HI)
+
+# the film has been picked off, so the coil's outward wall is just conjugate
+# surface like the rest of it.  The two gap blocks are fluid on both sides of
+# theirs -- it meets the film, not the coil -- so that name goes away entirely.
+wire_coil = hexmesh.retag_face(wire_coil, {SKIN: IFACE})
+topq_gap = hexmesh.retag_face(topq_gap, {SKIN: ""})
+botq_gap = hexmesh.retag_face(botq_gap, {SKIN: ""})
+gap = hexmesh.retag_face(gap, {SKIN: ""})
 
 
 # --- OUTER fluid: loft wall_wrap straight out to the cylinder inner wall
@@ -772,6 +901,7 @@ def _to_R(P, R):
 
 wall_wrap_out = map_nodes(wall_wrap, lambda P: _to_R(P, R_TUBE))
 wall_hex = hexmesh.loft([wall_wrap, wall_wrap_out], element_tags="fluid")
+wall_hex = hexmesh.retag_face(wall_hex, {_RIM_LO: "inlet", _RIM_HI: "outlet"})
 _wq = hexmesh.quality_summary(wall_hex)
 
 # --- SOLID outer wall: keep projecting wall_wrap_out radially outward, N_WALL
@@ -779,7 +909,8 @@ _wq = hexmesh.quality_summary(wall_hex)
 wall_solid = hexmesh.loft(
     [map_nodes(wall_wrap_out, lambda P, R=r: _to_R(P, R))
      for r in np.linspace(R_TUBE, R_TUBE + WALL_THICK, N_WALL + 1)],
-    element_tags="solid")
+    element_tags="solid", last_tag=OUTER)      # the sweep ends ON the pipe skin
+wall_solid = hexmesh.retag_face(wall_solid, {_RIM_LO: CUT, _RIM_HI: CUT})
 _sq = hexmesh.quality_summary(wall_solid)
 
 
@@ -792,7 +923,11 @@ _G_sheet = np.stack(
      np.column_stack([_u_sheet, np.ones(K1 + 1), np.zeros(K1 + 1)])], axis=1)
 
 _qc = map_nodes(map_nodes(quadmesh.from_grid(_G_coil, order=ORDER), _mu_pts), cross_map(0, turn=0))
-_qs = map_nodes(map_nodes(quadmesh.from_grid(_G_sheet, order=ORDER), _mus_pts), _cyl)
+# the sheet's first (bottom) row -- a bottom opening; ``element_tag`` rides onto
+# layer1's sheet-side face family and comes out ``inlet``.
+_qs = map_nodes(map_nodes(quadmesh.from_grid(
+    _G_sheet, order=ORDER, element_tag=_END_LO,
+    side_tags={"x_min": _END_LO, "x_max": _END_LO}), _mus_pts), _cyl)
 layer1 = hexmesh.loft([_qs, _qc], element_tags="fluid")
 lq = hexmesh.quality_summary(layer1)
 
@@ -835,7 +970,9 @@ _G_sheet4 = np.stack(
      np.column_stack([_u2, np.full(nhL + 1, 3.0), np.zeros(nhL + 1)])], axis=1)
 
 _qc4 = map_nodes(map_nodes(quadmesh.from_grid(_G_coil2, order=ORDER), _mu_pts), cross_map(0, turn=1))
-_qs4 = map_nodes(map_nodes(quadmesh.from_grid(_G_sheet4, order=ORDER), _mus_pts), _cyl)
+_qs4 = map_nodes(map_nodes(quadmesh.from_grid(
+    _G_sheet4, order=ORDER,
+    side_tags={"x_min": _END_HI, "x_max": _END_HI}), _mus_pts), _cyl)
 layer4 = hexmesh.loft([_qs4, _qc4], element_tags="fluid")
 l4q = hexmesh.quality_summary(layer4)
 
@@ -850,17 +987,49 @@ def _bqids(m):
     return ids, cen
 
 
+def _face_region(mesh):
+    """the region of the hex behind each face -- a boundary face has exactly one."""
+    reg = mesh.element_tags.dense(mesh.n_hexes)
+    out = np.full(mesh.quad_mesh.n_quads, "", dtype=object)
+    for e, row in enumerate(np.asarray(mesh.hexes)):
+        for q in row:
+            if not out[q]:
+                out[q] = reg[e]
+    return out
+
+
 def _weld(base, block, own):
     """attach ``block`` onto ``base`` along every boundary face they share (the
-    blocks were built so those faces coincide to ~1e-16)."""
+    blocks were built so those faces coincide to ~1e-16).
+
+    A seam is stated in TWO halves, because ``attach_tag`` is one name for a whole
+    seam and burying a face clears its name otherwise: the pairs whose two sides
+    sit in different regions keep ``interface``, the rest are named nothing.  That
+    is the conjugate surface carried across the weld rather than re-derived after
+    it."""
     bi, bc = _bqids(base)
     ki, kc = _bqids(block)
     dist, near = _KD(bc).query(kc)
     sel = dist < 1e-6
     b_ids, k_ids = bi[near[sel]], ki[sel]
     assert len(np.unique(b_ids)) == len(b_ids), "weld seam is not one-to-one"
-    return hexmesh.attach([base, block],
-                          [hexmesh.Seam(0, b_ids, 1, k_ids, own=own)])
+    conj = _face_region(base)[b_ids] != _face_region(block)[k_ids]
+    seams = [hexmesh.Seam(0, b_ids[m], 1, k_ids[m], own=own, attach_tag=t)
+             for m, t in ((conj, IFACE), (~conj, None)) if m.any()]
+    out = hexmesh.attach([base, block], seams)
+    # attach clears a buried face's name; the blocks' own boundary names (the
+    # ends the core and film carry) must ride through untouched.  Concatenation
+    # is base-then-block, so re-stamp them by matching the block's tagged
+    # boundary faces onto the result.
+    keep = np.asarray(block.face_tags.dense(block.quad_mesh.n_quads))
+    kb = np.flatnonzero(_bfid(block) & (keep != ""))
+    if kb.size:
+        oi, oc = _bqids(out)
+        kc = block.points[np.asarray(block.quad_mesh.corners)[kb]].mean(axis=1)
+        d, near = _KD(oc).query(kc)
+        hit = d < 1e-6
+        out = hexmesh.tag_faces(out, oi[near[hit]], list(keep[kb[hit]]))
+    return out
 
 
 assembly = hexmesh.merge([wire_coil, layer1, layer2, layer3, layer4], tol=1e-9)
@@ -872,54 +1041,61 @@ assembly = _weld(assembly, core_hex, own="b")       # axial core (own="b": keep
 #                                would fold the thin axis elements)
 
 
-# === tag every face.  ``interface`` is every face with a fluid hex on one side
-# and a solid hex on the other -- conjugate, so it is a wall for the fluid and
-# nothing for the solid.  The remaining faces are the domain skin: ``outer`` on
-# the pipe, ``inlet`` / ``outlet`` at the fluid ends, and ``wall`` / ``cut`` on
-# whatever fluid / solid surface is left exposed.
+# === finish naming.  Every tag on the finished mesh is set by construction; the
+# only work here is to turn the two placeholders into their solver names and to
+# assert that what construction claims matches the assembled topology.
+#
+#   interface  the conjugate fluid/solid wall -- the coil named its own wall (the
+#              tube's inward radial cap ``first_tag=IFACE``, the quadrant section's
+#              outer cap ``last_tag=IFACE``) and ``_weld`` carried it across every
+#              seam instead of burying it.
+#   outer      the pipe skin -- ``last_tag=OUTER`` on ``wall_solid``'s radial sweep.
+#   cut        the solid saw cut -- the coil's two helix ends (``retag_edge`` on
+#              the template's two vertical sides, outermost turns only) and
+#              ``wall_wrap``'s two rim loops swept into the shell (``_RIM_*``).
+#   inlet / outlet  the fluid openings -- ``core_hex``'s two z caps
+#              (``first/last_tag=_END_*``), the four inter-turn fills' helix ends
+#              (the ``between`` slices' edge tags riding onto the loft) and
+#              ``wall_wrap``'s two rim loops swept into the film (``_RIM_*``).
+#
+# Whatever fluid boundary is left bare is a real gap in the model -- the film and
+# the inter-turn fills are helical ribbons, not closed annuli, so their lateral
+# sides are exposed -- and it is left bare rather than guessed at.
 GROUPS = {
     "interface": {"fluid": "W  ", "solid": None},
     "inlet":  "v  ",
     "outlet": "O  ",
-    "wall":   "W  ",
     "outer":  "I  ",
     "cut":    "I  ",
 }
 
-_reg = assembly.element_tags.dense(assembly.n_hexes)          # per-hex region
-_inc = np.asarray(assembly.hexes)                             # (E, 6) shared-face ids
-_nqf = assembly.quad_mesh.n_quads
+mesh = hexmesh.retag_face(assembly, {_END_LO: "inlet", _END_HI: "outlet"})
+
+_reg = mesh.element_tags.dense(mesh.n_hexes)
+_inc = np.asarray(mesh.hexes)
+_nqf = mesh.quad_mesh.n_quads
 _owner = np.full((_nqf, 2), -1, np.int64)
 _slot = np.zeros(_nqf, np.int64)
-for _e in range(assembly.n_hexes):
+for _e in range(mesh.n_hexes):
     for _q in _inc[_e]:
         _owner[_q, _slot[_q]] = _e
         _slot[_q] += 1
+_bnd = _bfid(mesh)
+_built = np.asarray(mesh.face_tags.dense(_nqf))
+_solid_face = _reg[_owner[:, 0]] == "solid"
 
-_qcen = assembly.points[np.asarray(assembly.quad_mesh.corners)].mean(axis=1)
-_qR, _qZ = np.hypot(_qcen[:, 0], _qcen[:, 1]), _qcen[:, 2]
-_zlo, _zhi, _zeps = _qZ.min(), _qZ.max(), 0.15 * PITCH
-_bnd = _bfid(assembly)
-_fluid_face = _reg[_owner[:, 0]] == "fluid"
+_conjugate = ((~_bnd) & (_owner[:, 1] >= 0)
+              & (_reg[_owner[:, 0]] != _reg[_owner[:, 1]]))
+assert set(np.flatnonzero(_conjugate)) == set(hexmesh.tagged_faces(mesh, IFACE)), (
+    "the conjugate surface named at construction is not the assembled topology's")
+assert not (_bnd & _solid_face & (_built == "")).any(), (
+    "a solid boundary face is unnamed -- every one is the pipe skin or a saw cut, "
+    "both set by construction")
 
-_face_ids, _face_tags = [], []
-for _q in np.flatnonzero((~_bnd) & (_owner[:, 1] >= 0)
-                         & (_reg[_owner[:, 0]] != _reg[_owner[:, 1]])):
-    _face_ids.append(_q)
-    _face_tags.append("interface")
-for _q in np.flatnonzero(_bnd):
-    if _qR[_q] > R_TUBE + WALL_THICK - 0.02:
-        _t = "outer"
-    elif _qZ[_q] < _zlo + _zeps:
-        _t = "inlet" if _fluid_face[_q] else "cut"
-    elif _qZ[_q] > _zhi - _zeps:
-        _t = "outlet" if _fluid_face[_q] else "cut"
-    else:
-        _t = "wall" if _fluid_face[_q] else "cut"
-    _face_ids.append(_q)
-    _face_tags.append(_t)
-
-mesh = hexmesh.tag_faces(assembly, np.array(_face_ids, np.int64), _face_tags)
+_bare = int((_bnd & (_built == "")).sum())
+if _bare:
+    print("note: %d fluid boundary faces left bare (helical ribbons are not closed "
+          "laterally)" % _bare)
 
 # === report + export -----------------------------------------------------------
 _q = hexmesh.quality_summary(mesh)
