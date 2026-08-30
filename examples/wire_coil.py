@@ -897,11 +897,16 @@ for _e in range(assembly.n_hexes):
         _owner[_q, _slot[_q]] = _e
         _slot[_q] += 1
 
-_qcen = assembly.points[np.asarray(assembly.quad_mesh.corners)].mean(axis=1)
-_qR, _qZ = np.hypot(_qcen[:, 0], _qcen[:, 1]), _qcen[:, 2]
+_qpts = assembly.points[np.asarray(assembly.quad_mesh.corners)]      # (F, 4, 3)
+_qZ = _qpts[:, :, 2].mean(axis=1)
 _zlo, _zhi, _zeps = _qZ.min(), _qZ.max(), 0.15 * PITCH
 _bnd = _bfid(assembly)
 _fluid_face = _reg[_owner[:, 0]] == "fluid"
+# on the pipe skin iff all FOUR corners sit on it -- a centroid radius is the
+# chord's, which reads low on a face spanning a wide angle and high on a lateral
+# face only half on the skin, so it mixes `outer` and `cut` either way.
+_on_skin = np.all(np.abs(np.hypot(_qpts[:, :, 0], _qpts[:, :, 1])
+                         - (R_TUBE + WALL_THICK)) < 1e-9, axis=1)
 
 _face_ids, _face_tags = [], []
 for _q in np.flatnonzero((~_bnd) & (_owner[:, 1] >= 0)
@@ -909,7 +914,7 @@ for _q in np.flatnonzero((~_bnd) & (_owner[:, 1] >= 0)
     _face_ids.append(_q)
     _face_tags.append("interface")
 for _q in np.flatnonzero(_bnd):
-    if _qR[_q] > R_TUBE + WALL_THICK - 0.02:
+    if _on_skin[_q]:
         _t = "outer"
     elif _qZ[_q] < _zlo + _zeps:
         _t = "inlet" if _fluid_face[_q] else "cut"
