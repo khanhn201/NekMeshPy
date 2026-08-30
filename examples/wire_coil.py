@@ -61,7 +61,7 @@ NV = 2                              # vertical elements / diamond resolution
 SHEET_TURNS = 2                     # pitches of coil to build
 INNER_ARC_DEG = 120.0             # tube o-grid: angular span of the inward-facing
                                    # quadrant (90 = square core; -> 180 max)
-OUTER_ARC_DEG = 60.0             # ... and of the outward-facing one, set free of
+OUTER_ARC_DEG = 90.0             # ... and of the outward-facing one, set free of
                                    # it: the two side quadrants take up the slack
 INNER_DZ =  0.0             # extra z shift of the inner sheet off centre
 INNER_PHASE_DEG = 10.0             # extra rotation of the inner sheet about z
