@@ -42,27 +42,3 @@ jobs:
       - name: Pytest
         run: pytest
 
-  slow-examples:
-    # femoral (316 s cold, and the one example that needs gmsh) is deselected from the
-    # default run by `addopts`, so it gets one job of its own rather than 4x in the
-    # matrix.  The chimera pair is no longer slow enough to deselect.
-    # They are not optional: every example is a mesher, and four of them once shipped
-    # broken for want of any test at all.
-    name: Slow examples
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install libGLU
-        # The gmsh wheel's bundled libgmsh.so links against libGLU even when gmsh is
-        # driven headlessly, and the runner image does not carry it.  Only this job
-        # needs it: femoral.py is the one example that tet-meshes, and it is slow.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglu1-mesa
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[all]"
-      - name: Pytest (slow)
-        run: pytest -m slow

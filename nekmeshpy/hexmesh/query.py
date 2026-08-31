@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import NamedTuple
 
 import numpy as np
@@ -17,7 +18,7 @@ from .._typing import (
 )
 from ..core import conform, measure
 from ..core.interp import corner_indices
-from ..core.quality import QualitySummary
+from ..core.quality import OrderScan, QualitySummary
 from ..core.tags import _empty_str
 from ..core.topology import TopologyReport
 from .hexmesh import HexMesh
@@ -69,25 +70,26 @@ def boundary_points(mesh: HexMesh) -> IntArray:
     """Sorted unique point ids lying on the domain boundary."""
     return _boundary_points(mesh.corners)
 
-def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
-    """``((K,2) [element, local face 1-6] rows, their tags)`` for every named face,
-    lexsorted by ``(element, face)``.
+def face_rows(mesh: HexMesh, faces: IntArray) -> tuple[IntArray, IntArray]:
+    """``((K,2) [element, local face 1-6] rows, (len(faces),) occurrence counts)`` --
+    the inverse of ``hexes``, for the given shared-face ids.
 
-    The inverse of how the tags are stored. A tag names a shared face; a boundary face
-    is carried by one hex and yields one row, an **interior** one by two and yields
-    two -- which is the honest reading of "this face is named", and what lets an
-    exporter give the two sides different codes from the regions on either side.
+    A face id is a row of ``quad_mesh``; this says which hexes reference it and as
+    which of their six local faces. A **boundary** face is carried by one hex and
+    yields one row, an **interior** one by two and yields two, so ``counts`` is how a
+    caller expands a per-face value onto the rows it produced. Rows come out grouped by
+    input face, ascending within a group; :func:`face_tag_rows` lexsorts them.
 
-    Built from the sparse side: the flat ``hex`` face ids are argsorted once and the
-    named ids located in them, so nothing the size of ``(E,6)`` in strings is ever
-    materialised (at chimera's 438k elements that array alone would be ~170 MB)."""
-    named = mesh.quad_mesh.element_tags
-    if not len(named):
-        return np.zeros((0, 2), dtype=np.int64), _empty_str()
+    Built from the sparse side: the flat ``hexes`` face ids are argsorted once and the
+    wanted ids located in them, so nothing the size of ``(E,6)`` is ever materialised
+    per face (at chimera's 438k elements a string array that shape alone is ~170 MB)."""
+    ids: IntArray = np.asarray(faces, dtype=np.int64).reshape(-1)
+    if not ids.shape[0]:
+        return np.zeros((0, 2), dtype=np.int64), np.zeros(0, dtype=np.int64)
     flat: IntArray = np.asarray(mesh.hexes, dtype=np.int64).ravel()
     order = np.argsort(flat, kind="stable")
-    lo = np.searchsorted(flat[order], named.ids, side="left")
-    hi = np.searchsorted(flat[order], named.ids, side="right")
+    lo = np.searchsorted(flat[order], ids, side="left")
+    hi = np.searchsorted(flat[order], ids, side="right")
     counts: IntArray = (hi - lo).astype(np.int64)
     bounds: list[tuple[int, int]] = list(
         zip(np.asarray(lo, dtype=np.int64).tolist(),
@@ -95,7 +97,22 @@ def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     picks: list[IntArray] = [np.arange(a, b, dtype=np.int64) for a, b in bounds]
     slots: IntArray = order[np.concatenate(picks) if picks
                             else np.zeros(0, dtype=np.int64)]
-    rows: IntArray = np.column_stack([slots // 6, slots % 6 + 1])
+    return np.column_stack([slots // 6, slots % 6 + 1]).astype(np.int64), counts
+
+
+def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
+    """``((K,2) [element, local face 1-6] rows, their tags)`` for every named face,
+    lexsorted by ``(element, face)``.
+
+    The inverse of how the tags are stored -- :func:`face_rows` run over
+    ``face_tags.ids``. A tag names a shared face; a boundary face is carried by one hex
+    and yields one row, an **interior** one by two and yields two -- which is the honest
+    reading of "this face is named", and what lets an exporter give the two sides
+    different codes from the regions on either side."""
+    named = mesh.quad_mesh.element_tags
+    if not len(named):
+        return np.zeros((0, 2), dtype=np.int64), _empty_str()
+    rows, counts = face_rows(mesh, named.ids)
     tags: StrArray = np.repeat(named.tags, counts)
     p = np.lexsort((rows[:, 1], rows[:, 0]))
     return rows[p], tags[p]
@@ -117,11 +134,73 @@ def scaled_jacobian(mesh: HexMesh, *, order: int | None = None) -> FloatArray:
     from . import quality
     return quality.scaled_jacobian(mesh, mesh.order if order is None else order)
 
+def corner_scaled_jacobian(mesh: HexMesh) -> FloatArray:
+    """Per-hex minimum scaled Jacobian ``(n_hexes,)`` of the **linear** hex through the
+    8 corners alone -- the geometry ``.re2`` actually exports, at any stored order.
+
+    Not a substitute for :func:`scaled_jacobian`: a corner reading cannot see where a
+    curved mesh's interior nodes went, so it cannot certify a curved element the way
+    the curved block can. This answers a narrower, different question -- what happens
+    when that curvature is discarded, which ``.re2`` always does -- and an element can
+    disagree in *either* direction: curved-clean/corner-inverted (only valid because of
+    its own curvature) is the case worth watching for before export."""
+    from . import quality
+    return quality.corner_scaled_jacobian(mesh.points, mesh.corners)
+
+
+def corner_summary(mesh: HexMesh) -> QualitySummary:
+    """Aggregate statistics over :func:`corner_scaled_jacobian` -- see there."""
+    from . import quality
+    return quality.corner_summary(mesh.points, mesh.corners)
+
+
+def linear_scaled_jacobian(mesh: HexMesh, *, order: int | None = None) -> FloatArray:
+    """Per-hex minimum scaled Jacobian of the **trilinear** hex through the 8 corners
+    alone -- ``.re2``'s own geometry -- resampled at ``order``.
+
+    Unlike :func:`corner_scaled_jacobian` (the special case ``order=1``: the 8
+    vertices only), this catches a fold that sits *between* the corners, which a
+    real solver's own geometry generation would find building its working nodes
+    from the same corners at its own polynomial order -- ``order`` should be that
+    order (:data:`SCAN_ORDER <nekmeshpy.core.quality.SCAN_ORDER>` by default, the
+    same solver-order default :func:`order_scan` uses)."""
+    from ..core.quality import SCAN_ORDER
+    from . import quality
+    return quality.linear_scaled_jacobian(mesh, SCAN_ORDER if order is None else order)
+
+
+def linear_order_scan(mesh: HexMesh, orders: Sequence[int] | None = None, *,
+                      budget: int | None = None) -> OrderScan:
+    """:func:`order_scan`'s report shape, for the **trilinear** (``.re2``) map
+    instead of the curved one -- see :func:`linear_scaled_jacobian`."""
+    from . import quality
+    return quality.linear_order_scan(mesh, orders, budget=budget)
+
+
 def quality_summary(mesh: HexMesh, *, order: int | None = None) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics over the **curved** elements -- see
-    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`."""
+    :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`.
+
+    Above order 1, this also checks the **linear** reading -- :func:`corner_summary
+    <nekmeshpy.hexmesh.query.corner_summary>`, the straight-sided hex through the 8
+    corners alone -- because that, not the curved geometry just summarised, is what
+    ``.re2`` actually exports: it has no curved format at any stored order. An element
+    can be clean here and still invert once flattened for export, if it depends on its
+    own curvature to stay valid; that is logged as a warning rather than folded into
+    the returned value, the same way :func:`report <nekmeshpy.hexmesh.query.report>`
+    warns on an ``order_scan`` disagreement without changing what ``quality_summary``
+    itself returns."""
     from . import quality
-    return quality.summary(mesh, mesh.order if order is None else order)
+    stats = quality.summary(mesh, mesh.order if order is None else order)
+    if mesh.order > 1:
+        linear = corner_summary(mesh)
+        if linear.n_inverted and not stats.n_inverted:
+            _log.warning(
+                "mesh is clean at order %d but has %d element(s) inverted once "
+                "flattened to .re2's linear corners (min corner scaled Jacobian "
+                "%.4f) -- .re2 has no curved format, so this is the geometry the "
+                "solver actually reads", mesh.order, linear.n_inverted, linear.min)
+    return stats
 
 
 def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
@@ -209,6 +288,12 @@ def report(mesh: HexMesh) -> str:
     from . import quality
     lines = ["%d hex elements, %d points" % (mesh.n_hexes, mesh.n_points)]
     lines.append(quality.format_report(quality_summary(mesh)))
+    # ``.re2`` has no curved format at any order, so the curved summary above is not
+    # what the solver actually reads -- a different map, not a coarser sampling of the
+    # same one, and an element can be clean in it only because of curvature that never
+    # reaches the file.
+    if mesh.order > 1:
+        lines.append(quality.format_linear(corner_summary(mesh), mesh.order))
     # The mesh's own order is exact at its nodes and silent between them, so the
     # summary above cannot certify the element -- read it on finer lattices too, and
     # say so loudly when one of them disagrees.
@@ -219,6 +304,23 @@ def report(mesh: HexMesh) -> str:
         _log.warning("mesh is clean at order %d but has %d inverted element(s) at "
                      "sampling order %d (min scaled Jacobian %.4f)",
                      mesh.order, scan.n_inverted[scan.orders.index(n)], n, m)
+    # And that "curved, sampled finer" scan is still not what .re2 exports: at
+    # order > 1, run the same sweep on the trilinear (corners-only) map, which can
+    # fold *between* the corners even when every corner and the curved map both
+    # read clean -- confirmed against a real Nek5000 run's own geometry-generation
+    # check, which is exactly this computation.
+    if mesh.order > 1:
+        lscan = quality.linear_order_scan(mesh)
+        lines.append(quality.format_linear_scan(lscan))
+        if lscan.orders and not lscan.clean:
+            n, m = lscan.worst
+            _log.warning(
+                "mesh is clean at order %d (curved) and at the corners alone, but "
+                "%d element(s) fold once the .re2 trilinear geometry is resampled "
+                "at order %d (min scaled Jacobian %.4f) -- this is what a real "
+                "solver's own geometry generation builds and checks at its "
+                "working order", mesh.order,
+                lscan.n_inverted[lscan.orders.index(n)], n, m)
     for name in mesh.face_group_tags:
         n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))
@@ -331,6 +433,7 @@ def tagged_faces(mesh: HexMesh, tag: str) -> IntArray:
 
 __all__ = [
     "TagReport",
+    "face_rows",
     "face_tag_rows",
     "bounds",
     "boundary_elements",
@@ -339,11 +442,15 @@ __all__ = [
     "boundary_points",
     "centroid",
     "classify_points",
+    "corner_scaled_jacobian",
+    "corner_summary",
     "element_blocks",
     "element_volumes",
     "is_conforming",
     "is_overlap_free",
     "is_watertight",
+    "linear_order_scan",
+    "linear_scaled_jacobian",
     "quality_summary",
     "report",
     "scaled_jacobian",

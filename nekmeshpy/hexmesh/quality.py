@@ -17,6 +17,76 @@ _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
                dtype=np.int64)
 
 
+def _linear_block(mesh: HexMesh) -> PointArray:
+    """The mesh's 8 corners alone, in the **tensor-lattice** order
+    :func:`core.interp.sampled_scaled_jacobian <nekmeshpy.core.interp.sampled_scaled_jacobian>`
+    expects -- not ``mesh.corners``' own Nek-hex order, which is a different
+    permutation. This is the geometry ``.re2`` actually exports at any stored order:
+    the trilinear hex through the 8 corners, nothing else."""
+    from ..core.interp import corner_indices
+    ci = corner_indices(1, 3)
+    block: PointArray = np.empty((mesh.n_hexes, 8, 3))
+    block[:, ci, :] = mesh.points[mesh.corners]
+    return block
+
+
+def linear_scaled_jacobian(mesh: HexMesh, order: int) -> FloatArray:
+    """Per-hex minimum scaled Jacobian of the **trilinear** hex through the 8 corners
+    alone, resampled at ``order`` -- what ``.re2`` exports, read the way a solver
+    actually builds and checks its own working geometry: from the corners, at its
+    own polynomial order, not at nekmeshpy's stored (possibly curved) one.
+
+    ``order=1`` is exactly :func:`corner_scaled_jacobian` -- the 8 vertices alone.
+    That is *not* sufficient in general: a trilinear hex's Jacobian is a polynomial
+    in each direction, so it can fold **between** the 8 corners while every corner
+    itself reads positive, the same lesson :func:`scaled_jacobian`'s own sampling
+    split teaches about the curved map -- except here there is no curvature to
+    blame, because ``.re2`` never carried any. Confirmed against a real Nek5000 run:
+    a mesh clean at every corner still failed the solver's own Neg-Jacobian check at
+    its working order, and reads exactly the same negative minimum here once
+    resampled at that order."""
+    from ..core.interp import sampled_scaled_jacobian
+    return sampled_scaled_jacobian(_linear_block(mesh), 1, order, 3)
+
+
+def linear_order_scan(mesh: HexMesh, orders: Sequence[int] | None = None, *,
+                      budget: int | None = None) -> OrderScan:
+    """:func:`linear_scaled_jacobian` read at several orders, :func:`order_scan`'s
+    report shape and budget -- but of the **trilinear** (corners-only) map, not the
+    curved one. Unlike ``order_scan`` there is no "mesh's own order" floor: the
+    trilinear map is not stored at any particular order, so any ``order >= 1`` is a
+    legitimate reading of it, ``order=1`` included.
+
+    ``orders`` defaults to :data:`SCAN_ORDER <nekmeshpy.core.quality.SCAN_ORDER>`
+    alone, the same solver-order reasoning as ``order_scan``: it is the one reading
+    that predicts what a real run's own geometry generation will find, because it is
+    built from the same corners the solver reads out of ``.re2``."""
+    from ..core.interp import sampled_scaled_jacobian
+    cap = _core.SCAN_BUDGET if budget is None else budget
+    want = sorted({int(n) for n in
+                   (orders if orders is not None else (_core.SCAN_ORDER,))})
+    below = [n for n in want if n < 1]
+    if below:
+        raise ValueError("linear_order_scan: order must be >= 1, got " + repr(below))
+    keep: list[int] = []
+    spent = 0
+    for n in want:
+        cost = mesh.n_hexes * (n + 1) ** 3
+        if spent + cost > cap:
+            break
+        keep.append(n)
+        spent += cost
+    block = _linear_block(mesh)
+    mins: list[float] = []
+    invs: list[int] = []
+    for n in keep:
+        sj = sampled_scaled_jacobian(block, 1, n, 3)
+        mins.append(float(np.min(sj)))
+        invs.append(int(np.sum(sj <= 0)))
+    return OrderScan(tuple(keep), tuple(mins), tuple(invs),
+                     tuple(n for n in want if n not in keep))
+
+
 def corner_scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
     """Per-hex minimum corner scaled Jacobian, shape ``(N,)``."""
     X = np.asarray(points, dtype=float)
@@ -120,6 +190,35 @@ def order_scan(mesh: HexMesh, orders: Sequence[int] | None = None, *,
                      tuple(n for n in want if n not in keep))
 
 
+def format_linear_scan(scan: OrderScan) -> str:
+    """The :func:`linear_order_scan` block of a report, warning line included.
+
+    Unlike :func:`format_scan`, there is no "mesh's own order" to compare against --
+    the trilinear map is not stored at any order, so a disagreement here is not
+    "clean at N, folded at M" but simply "folds once resampled at all", which is
+    exactly what a real solver's own geometry generation would find building its
+    working GLL nodes from the same corners."""
+    if not scan.orders:
+        why = ("order %s declined -- scan budget; call linear_order_scan with a "
+               "larger one" % ", ".join(str(n) for n in scan.skipped)) \
+              if scan.skipped else "nothing asked for"
+        return "linear sampling: not checked (%s)" % why
+    cells = "  ".join("N=%d %+.4f%s" % (n, m, "" if i == 0 else "(%d inv)" % i)
+                      for n, m, i in zip(scan.orders, scan.min_sj, scan.n_inverted))
+    lines = ["linear sampling: " + cells]
+    if scan.skipped:
+        lines.append("               (order %s not checked -- scan budget)"
+                     % ", ".join(str(n) for n in scan.skipped))
+    if not scan.clean:
+        n, m = scan.worst
+        lines.append("  ** WARNING ** %d element(s) fold once the .re2 trilinear "
+                     "geometry is resampled at order %d (min %.4f) -- this is what "
+                     "a real solver's own geometry generation builds and checks at "
+                     "its working order." % (scan.n_inverted[scan.orders.index(n)],
+                                             n, m))
+    return "\n".join(lines)
+
+
 def format_scan(scan: OrderScan, mesh_order: int) -> str:
     """The :func:`order_scan` block of a report, warning line included.
 
@@ -162,6 +261,26 @@ def _summary(sj: FloatArray) -> QualitySummary:
 def corner_summary(points: PointArray, hexes: IntArray) -> QualitySummary:
     """Aggregate quality statistics for a hex mesh."""
     return _summary(corner_scaled_jacobian(points, hexes))
+
+
+def format_linear(stats: QualitySummary, mesh_order: int) -> str:
+    """The linear (``.re2``) reading of a report, warning line included.
+
+    ``.re2`` has no curved format -- every mesh, at any stored order, exports as the
+    straight-sided hex through its 8 corners alone (``corner_scaled_jacobian``), which
+    is a genuinely *different* map from the curved one the mesh stores above order 1,
+    not a coarser sampling of the same one.  An element can be clean at its own order
+    only *because* of the curvature its interior nodes carry -- valid as a mesh,
+    inverted as the file the solver actually reads."""
+    lines = ["linear (.re2): min=%+.4f  (%d inverted of %d)"
+            % (stats.min, stats.n_inverted, stats.n_elements)]
+    if stats.n_inverted and mesh_order > 1:
+        lines.append("  ** WARNING ** %d element(s) invert once flattened to .re2's "
+                     "linear corners, though clean at order %d."
+                     % (stats.n_inverted, mesh_order))
+        lines.append("               .re2 has no curved format -- this is the "
+                     "geometry the solver actually reads.")
+    return "\n".join(lines)
 
 
 def summary(mesh: HexMesh, order: int) -> QualitySummary:

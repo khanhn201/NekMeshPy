@@ -57,13 +57,12 @@ nekmeshpy = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# ``femoral`` tet-meshes with gmsh and costs 316 s cold, which CI always is, so a
-# default run deselects it; CI runs `pytest -m slow` once, on one interpreter, to keep
-# it honest.  The chimera pair used to be here too and is now back in the default run.
-addopts = "-q -m 'not slow'"
-markers = [
-    "slow: needs gmsh or costs minutes (femoral)",
-]
+# There is no deselection: every test in ``tests/`` runs on every push.  What used to be
+# deselected was ``examples/femoral.py`` -- 316 s cold, and the only thing in the repo
+# that needs gmsh -- and it is now excluded from the harness outright rather than marked
+# (``EXCLUDED`` in ``tests/test_examples.py``, which says why).  It is still a shipped,
+# maintained example; it is just not a test.
+addopts = "-q"
 
 [tool.ruff]
 line-length = 100

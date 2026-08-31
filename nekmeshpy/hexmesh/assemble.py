@@ -826,29 +826,36 @@ def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray
     return ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
 
 
-def _face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
-                side: str) -> IntArray:
-    """The seam's face ids on one side, from a tag name or given outright."""
+def face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
+               side: str, who: str = "attach") -> IntArray:
+    """One stated group's face ids, from a tag name or given outright, checked to be
+    on the block's **boundary**.
+
+    The resolution step every operation that is *told* which faces it acts on shares --
+    :func:`attach` and :func:`periodic_pairs
+    <nekmeshpy.hexmesh.periodic.periodic_pairs>` both start here.  ``side`` names the
+    argument that supplied the group and ``who`` the operation asking, so a message
+    from an n-ary call says which of several groups was wrong."""
     if isinstance(which, str):
         try:
             ids = tagged_faces(mesh, which)
         except ValueError as exc:
             # with several seams in one call, "no face carries the tag" is unactionable
             # unless it says which seam asked for it
-            raise ValueError("attach: %s: %s" % (side, exc)) from None
+            raise ValueError("%s: %s: %s" % (who, side, exc)) from None
     else:
         ids = np.asarray(which, dtype=np.int64).reshape(-1)
         if ids.size and (ids.min() < 0 or ids.max() >= mesh.quad_mesh.n_quads):
             raise ValueError(
-                "attach: %s names face %d, outside this mesh's %d shared faces"
-                % (side, int(ids.max()), mesh.quad_mesh.n_quads))
+                "%s: %s names face %d, outside this mesh's %d shared faces"
+                % (who, side, int(ids.max()), mesh.quad_mesh.n_quads))
     buried = ids[~boundary_face_ids(mesh)[ids]]
     if buried.size:
         raise ValueError(
-            "attach: %s names %d face(s) that already carry a hex on both sides (first "
-            "is face %d). Joining onto a buried face would make the seam non-manifold; "
+            "%s: %s names %d face(s) that already carry a hex on both sides (first "
+            "is face %d). A buried face is interior, not part of the domain boundary; "
             "name a group that is still on its block's boundary."
-            % (side, buried.size, int(buried[0])))
+            % (who, side, buried.size, int(buried[0])))
     return ids
 
 
@@ -969,8 +976,8 @@ def attach(meshes: Sequence[HexMesh], seams: Sequence[Seam]) -> HexMesh:
         ib = _block_index(sm.b, meshes, who + ".b")
         if sm.own not in ("a", "b"):
             raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
-        fa = _face_group(meshes[ia], sm.tag_a, who + ".tag_a")
-        fb = _face_group(meshes[ib], sm.tag_b, who + ".tag_b")
+        fa = face_group(meshes[ia], sm.tag_a, who + ".tag_a")
+        fb = face_group(meshes[ib], sm.tag_b, who + ".tag_b")
         if fa.size != fb.size:
             raise ValueError(
                 "attach: %s joins groups of different face counts (%d and %d), so they "
@@ -1082,6 +1089,7 @@ __all__ = [
     "Seam",
     "attach",
     "components",
+    "face_group",
     "loft",
     "loft_fn",
     "loft_spline",

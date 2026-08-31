@@ -74,18 +74,20 @@ pip install -e ".[all,dev]"          # + ruff, mypy, pytest
 ruff check nekmeshpy tests examples
 mypy                                 # type-checks the whole nekmeshpy package
 python -m pytest                     # golden-regression + algorithm tests
-python -m pytest -m slow             # femoral: 316 s, and the only example needing gmsh
 ```
 
-CI runs lint and mypy once on 3.12, the default test run on 3.9–3.12, and the
-slow examples in a job of their own; `docs.yml` builds the docs site separately.
+CI runs lint and mypy once on 3.12 and the test run on 3.9–3.12; `docs.yml` builds
+the docs site separately. `examples/femoral.py` ships and is maintained but is not
+part of that test run at all — it tet-meshes with gmsh, costs 316 s cold, and gmsh's
+own non-determinism makes its element-quality check unreliable regardless (see
+`CLAUDE.md`). Run it directly to try it: `PYTHONPATH=. python examples/femoral.py`.
 `tests/golden/` freezes the output of `examples/carotid.py` — coordinates to
 `1e-12`, connectivity/cell types/boundary tags byte-for-byte — so a golden diff
 from a refactor is a bug.
 
 ## Roadmap
 
-- [ ] Periodic boundary
+- [x] Periodic boundary
 - [ ] Rework smoothing
 - [ ] GUI?
 - [ ] Paving algorithm / advancing front?

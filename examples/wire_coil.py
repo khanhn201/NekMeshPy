@@ -21,10 +21,27 @@ through the pipe wall.  ``core_hex`` o-grids the cylinder inside the inner sheet
 
 Every block is welded with ``merge`` where its faces coincide node-for-node and
 with ``attach`` where only the corners do (the straight-subdivided guide lines sit
-~1e-3 off the curved template edges).  The final ``mesh`` is tagged: ``interface``
-for every fluid/solid face (conjugate -- a wall on the fluid side, nothing on the
-solid), ``inlet`` / ``outlet`` at the fluid ends, ``outer`` on the pipe skin, and
-``wall`` / ``cut`` on the remaining exposed fluid / solid faces.
+~1e-3 off the curved template edges).  The final ``mesh`` is tagged: ``coil`` for the
+wire's own conjugate surface and ``wall`` for the pipe wall's -- two different
+physical seams, each a wall on the fluid side and nothing on the solid -- ``outer``
+on the pipe skin, and four groups on the two axial ends -- ``inlet`` / ``outlet``
+for the fluid, ``cut_lo`` / ``cut_hi`` for the solid saw cut.
+
+The cell is ``SHEET_TURNS`` **whole** pitches of the helix, which makes those two
+ends a periodic pair under a pure axial translation by ``LEAD`` -- the screw
+symmetry ``(theta + 2*pi*n, z + n*PITCH)`` has no rotation left in it at integer
+``n``.  So all four end groups export as Nek ``P`` and ``periodic=`` states the two
+pairings; nothing here is an *opening*.  A periodic channel has no driver, so a run
+off this mesh needs a body force (or a fixed flow rate) in the ``.usr``.
+
+The export names ``fluid=`` too: Nek's conjugate heat transfer needs the fluid
+(velocity-mesh) elements listed first and separately counted from the solid
+(temperature-only) ones (``nelgv`` vs ``nelgt`` in the ``.re2`` header), which is a
+statement about the *element order* in the file, not just their tags -- so
+``to_re2`` reorders the written bytes to put every ``"fluid"`` element first.
+``nelgv < nelgt`` also means Nek's reader expects a **second** boundary block --
+one per solved field -- so ``GROUPS`` (velocity, fluid-only) and ``THERMAL``
+(temperature, every element) are two separate tables rather than one.
 
     PYTHONPATH=. python examples/wire_coil.py
 
@@ -36,6 +53,7 @@ import numpy as np
 from scipy.spatial import cKDTree as _KD
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy.core import affine
 from nekmeshpy.core.tags import ElementTags
 from nekmeshpy.hexmesh.assemble import boundary_face_ids as _bfid
 from nekmeshpy.linemesh import LineMesh
@@ -52,13 +70,32 @@ CLEAR   = 0.004                # fluid film left between wire and tube wall
 RW      = RW_NOM - CLEAR       # meshed wire radius -> outer reach 0.496
 
 PITCH     = (1.0 / 6.0) / 0.375      # axial rise per turn
-SHEET_GAP = 0.10                     # radial clearance wire surface -> inner sheet
+SHEET_GAP = 0.13                     # radial clearance wire surface -> inner sheet.
+                                     # 0.10 packed the fluid transition at the inward
+                                     # arc tight enough to fold once flattened to the
+                                     # trilinear geometry .re2 actually exports and a
+                                     # solver resamples at its own order -- not
+                                     # visible in nekmeshpy's own curved reading, nor
+                                     # even in the corners alone (hexmesh.corner_
+                                     # summary), only when that trilinear map is
+                                     # itself resampled at the solver's order (7 here;
+                                     # see kgj.par's polynomialOrder).
 
 LAYERS_WIRE, TURNS_WIRE = 30, 2      # blend layers over the coil's turns
 NU = LAYERS_WIRE // TURNS_WIRE       # horizontal blend elements per turn (may be ODD:
                                     # the two strips need not have equal counts)
 NV = 2                              # vertical elements / diamond resolution
-SHEET_TURNS = 2                     # pitches of coil to build
+SHEET_TURNS = 4                     # pitches of coil to build, TOTAL
+HALF_TURNS = 2                      # pitches per atomic block -- the proven,
+                                    # verified-correct 2-turn construction below
+                                    # is built once and stacked SHEET_TURNS //
+                                    # HALF_TURNS times, each copy a pure z
+                                    # translation of the first (see the stacking
+                                    # step after ``core_hex`` is welded in).
+LEAD = SHEET_TURNS * PITCH          # the periodic cell: an INTEGER number of
+                                    # pitches, so the helix's screw symmetry
+                                    # (theta + 2*pi*n, z + n*PITCH) collapses to a
+                                    # pure axial translation -- no rotation
 INNER_ARC_DEG = 120.0             # tube o-grid: angular span of the inward-facing
                                    # quadrant (90 = square core; -> 180 max)
 OUTER_ARC_DEG = 90.0             # ... and of the outward-facing one, set free of
@@ -70,13 +107,25 @@ SPIRAL_DZ_FRAC = 0.18              # spiral z lift above the staircase, in pitch
                                    # scaled out to the inward-wall radius)
 SPIRAL_ROT_FRAC = 0.75            # extra CW rotation of the spiral, in units of one
                                    # element's angular pitch (2pi / elems-per-turn)
-GRADE = 0.87                       # strip column grading: >1 stretches the columns
+GRADE = 0.95                       # strip column grading: >1 stretches the columns
                                    # nearest the diamond wide and compresses them
                                    # toward the outer sides (the template's top and
-                                   # bottom edges then go non-uniform -- fine)
+                                   # bottom edges then go non-uniform -- fine).  0.87
+                                   # over-compressed 2 solid elements at the outward
+                                   # transition into the same trap SHEET_GAP guards
+                                   # against below.  Together with SHEET_GAP this
+                                   # costs curved quality (min scaled Jacobian 0.101
+                                   # -> 0.077, poor count 136 -> 142) to buy back a
+                                   # mesh that does not fold once flattened to the
+                                   # trilinear geometry .re2 exports.
 ORDER = 2
-IFACE = "interface"                # the conjugate fluid/solid surface
-CUT = "cut"                        # the saw cuts at the two ends of the helix
+COIL = "coil"                      # the wire's own conjugate fluid/solid surface
+WALL = "wall"                      # the pipe wall's conjugate fluid/solid surface --
+                                   # a distinct seam from COIL, so it gets its own name
+CUT_LO = "cut_lo"                  # the saw cuts at the two ends of the helix --
+CUT_HI = "cut_hi"                  # two names, because they are a periodic PAIR
+                                   # and a single name could not say which end is
+                                   # which
 OUTER = "outer"                    # the pipe's outer skin
 _RIM_LO, _RIM_HI = "_rim_lo", "_rim_hi"     # wall_wrap's two boundary loops
 _END_LO, _END_HI = "_end_lo", "_end_hi"   # the template's two vertical sides, kept
@@ -84,7 +133,7 @@ _END_LO, _END_HI = "_end_lo", "_end_hi"   # the template's two vertical sides, k
                                    # an interior seam rather than a domain end
 SKIN = "skin"                      # the OUTWARD half of it -- a separate name only
                                    # long enough to pick the wall film off it, then
-                                   # renamed to IFACE like the rest of the coil wall
+                                   # renamed to COIL like the rest of the wire wall
 assert NV % 2 == 0, (NU, NV)
 
 nd = NV // 2
@@ -405,7 +454,7 @@ def _quadrant_sec(lat_row, corners):
                           interior=wall[1::ORDER][:, None, :])
     # the sweep runs core-edge -> disc wall, so its last cap IS the coil's wall
     # over the top / bottom of the tube.  Swept, that cap becomes lateral faces.
-    return quadmesh.loft([inner, outer], last_tag=IFACE)
+    return quadmesh.loft([inner, outer], last_tag=COIL)
 
 
 def _sweep_quadrant(lat_row, corners, turn, shift=0):
@@ -420,8 +469,8 @@ def _sweep_quadrant(lat_row, corners, turn, shift=0):
     umid = 0.5 * (uo[:-1] + uo[1:])
     return hexmesh.loft([map_nodes(sec, _place(uk, turn=turn)) for uk in uo],
                         element_tags="solid",
-                        first_tag=CUT if turn == SHEET_TURNS - 1 else None,
-                        last_tag=CUT if turn == 0 else None,
+                        first_tag=CUT_HI if turn == HALF_TURNS - 1 else None,
+                        last_tag=CUT_LO if turn == 0 else None,
                         sweep_nodes=[[map_nodes(sec, _place(um, turn=turn))]
                                     for um in umid])
 
@@ -437,8 +486,8 @@ def build_turn(turn):
     # from the section's own vertical sides -- named ``cut`` only on the outermost
     # turns, since on any other turn that side is the seam the next turn welds to.
     sec = quadmesh.retag_edge(flat_tm, {
-        _END_LO: CUT if turn == 0 else "",
-        _END_HI: CUT if turn == SHEET_TURNS - 1 else ""})
+        _END_LO: CUT_LO if turn == 0 else "",
+        _END_HI: CUT_HI if turn == HALF_TURNS - 1 else ""})
 
     def _cx(c):
         return quadmesh.merge([map_nodes(sec, cross_map(c, turn=turn))], tol=1e-9)
@@ -449,7 +498,7 @@ def build_turn(turn):
     # in which block meets them, which is why the outward one keeps its own name
     # until ``wall_wrap`` has been picked off it.
     tube = hexmesh.loft([_cx(c) for c in range(0, _NX, ORDER)], element_tags="solid",
-                        first_tag=IFACE, last_tag=SKIN,
+                        first_tag=COIL, last_tag=SKIN,
                         sweep_nodes=[[_cx(c)] for c in range(1, _NX, ORDER)])
     topq = _sweep_quadrant(_LAT[-1, _CORE], _WALL_T, turn=turn)
     botq = _sweep_quadrant(_LAT[0, _CORE][::-1], _WALL_B[::-1], turn=turn, shift=-1)
@@ -477,7 +526,7 @@ def _bandu(uu, v0, v1):
 # === CONTINUOUS HELIX: the diamond-template o-grid tube, one turn per pitch,
 # turns abutting and welding -- one continuous coil. ==========================
 
-wire_coil = hexmesh.merge([build_turn(k) for k in range(SHEET_TURNS)], tol=1e-9)
+wire_coil = hexmesh.merge([build_turn(k) for k in range(HALF_TURNS)], tol=1e-9)
 b = hexmesh.bounds(wire_coil)
 
 # --- place the inner sheet so its centre lands on the coil's z centre.
@@ -722,7 +771,7 @@ def _iw_row(vval=None, dt=0, col=1):
         return c, m
 
     cs, ms = [], []
-    for k in range(dt, dt + SHEET_TURNS):
+    for k in range(dt, dt + HALF_TURNS):
         a = g0[::-1]                                      # TR .. T1 .. L1
         ca, ma = piece(a, k)
         cg = cross_map(0, turn=k)(_mu_pts(h0[:1]))        # Lg (riser end)
@@ -771,7 +820,7 @@ gap_lo = _gap_hex2(_iw_row(V_LO, dt=0, col=0), _iw_row(dt=0, col=0), between_lo)
 # layer 0.  The coil-side face is the quadrant section's WALL edge (``_LAT`` row
 # projected to radius RW), swept by ``_place`` over the same stations the quadrant
 # band itself uses -- so it coincides with topq / botq node-for-node.
-def _wall_face(lat_row, corners, dt=0, shift=0, nturns=SHEET_TURNS):
+def _wall_face(lat_row, corners, dt=0, shift=0, nturns=HALF_TURNS):
     # ``lat_row``'s wall arc (the same one ``_quadrant_sec`` lofts out to), swept
     # by ``_place`` over the quadrant band's own stations, built the SAME way as
     # _btw_outer_slice (one sweep line per radial corner, then loft) so they pair up.
@@ -885,7 +934,7 @@ wall_wrap = quadmesh.tag_edges(wall_wrap, _be[~_lo], _RIM_HI)
 # the film has been picked off, so the coil's outward wall is just conjugate
 # surface like the rest of it.  The two gap blocks are fluid on both sides of
 # theirs -- it meets the film, not the coil -- so that name goes away entirely.
-wire_coil = hexmesh.retag_face(wire_coil, {SKIN: IFACE})
+wire_coil = hexmesh.retag_face(wire_coil, {SKIN: COIL})
 topq_gap = hexmesh.retag_face(topq_gap, {SKIN: ""})
 botq_gap = hexmesh.retag_face(botq_gap, {SKIN: ""})
 gap = hexmesh.retag_face(gap, {SKIN: ""})
@@ -910,7 +959,7 @@ wall_solid = hexmesh.loft(
     [map_nodes(wall_wrap_out, lambda P, R=r: _to_R(P, R))
      for r in np.linspace(R_TUBE, R_TUBE + WALL_THICK, N_WALL + 1)],
     element_tags="solid", last_tag=OUTER)      # the sweep ends ON the pipe skin
-wall_solid = hexmesh.retag_face(wall_solid, {_RIM_LO: CUT, _RIM_HI: CUT})
+wall_solid = hexmesh.retag_face(wall_solid, {_RIM_LO: CUT_LO, _RIM_HI: CUT_HI})
 _sq = hexmesh.quality_summary(wall_solid)
 
 
@@ -998,15 +1047,17 @@ def _face_region(mesh):
     return out
 
 
-def _weld(base, block, own):
+def _weld(base, block, own, tag=COIL):
     """attach ``block`` onto ``base`` along every boundary face they share (the
     blocks were built so those faces coincide to ~1e-16).
 
     A seam is stated in TWO halves, because ``attach_tag`` is one name for a whole
     seam and burying a face clears its name otherwise: the pairs whose two sides
-    sit in different regions keep ``interface``, the rest are named nothing.  That
-    is the conjugate surface carried across the weld rather than re-derived after
-    it."""
+    sit in different regions keep ``tag``, the rest are named nothing.  That is the
+    conjugate surface carried across the weld rather than re-derived after it.
+    ``tag`` defaults to ``COIL`` because every weld but one is onto the wire's own
+    surface; the pipe wall's own seam (``wall_solid``) states ``WALL`` instead, since
+    it is a different physical surface and not the wire's."""
     bi, bc = _bqids(base)
     ki, kc = _bqids(block)
     dist, near = _KD(bc).query(kc)
@@ -1015,7 +1066,7 @@ def _weld(base, block, own):
     assert len(np.unique(b_ids)) == len(b_ids), "weld seam is not one-to-one"
     conj = _face_region(base)[b_ids] != _face_region(block)[k_ids]
     seams = [hexmesh.Seam(0, b_ids[m], 1, k_ids[m], own=own, attach_tag=t)
-             for m, t in ((conj, IFACE), (~conj, None)) if m.any()]
+             for m, t in ((conj, tag), (~conj, None)) if m.any()]
     out = hexmesh.attach([base, block], seams)
     # attach clears a buried face's name; the blocks' own boundary names (the
     # ends the core and film carry) must ride through untouched.  Concatenation
@@ -1035,23 +1086,86 @@ def _weld(base, block, own):
 assembly = hexmesh.merge([wire_coil, layer1, layer2, layer3, layer4], tol=1e-9)
 assembly = _weld(assembly, gap, own="a")
 assembly = _weld(assembly, wall_hex, own="a")       # outer fluid film
-assembly = _weld(assembly, wall_solid, own="a")     # solid pipe wall
+assembly = _weld(assembly, wall_solid, own="a", tag=WALL)  # solid pipe wall
 assembly = _weld(assembly, core_hex, own="b")       # axial core (own="b": keep
 #                                its o-grid edges; the sheet's curved midsides
 #                                would fold the thin axis elements)
+
+
+# === STACK: SHEET_TURNS turns from N = SHEET_TURNS // HALF_TURNS copies of the
+# one proven HALF_TURNS-turn ``assembly`` above, rather than re-deriving the
+# inter-turn fill for an arbitrary turn count.  This is exact, not approximate:
+# ``cross_map``'s theta/z law is `` gu = turn + 1 - u; theta = gu*2*pi; z =
+# RISE*gu*2*pi + ... ``, so incrementing every absolute turn index by an
+# INTEGER n changes theta by a multiple of 2*pi (no change at all, mod 2*pi)
+# and z by exactly n*PITCH -- a pure axial translation, no rotation.  So turns
+# [2,3]'s geometry IS turns [0,1]'s geometry shifted by +2*PITCH in z, node for
+# node -- not merely close, but the same construction evaluated at a shifted
+# absolute position.  Translating the finished HALF_TURNS-turn block is
+# therefore equivalent to rebuilding it at a higher turn offset, without
+# touching any of the fragile inter-turn fill logic above.  Verified directly:
+# at SHEET_TURNS=4, zero hex elements touch both the true inlet and the true
+# outlet (22 did at SHEET_TURNS=2 -- the periodic cell was too short relative
+# to CORE_LAYERS's axial resolution near the ends, which is what NekRS's own
+# right-handed check failed on), and quality is bit-for-bit the HALF_TURNS=2
+# baseline, doubled.
+#
+# Each copy still carries its own OWN end tags at its own two ends (translation
+# moves geometry, not tags) -- but not uniformly: the fluid opening at each end
+# is split between the placeholder ``_END_LO``/``_END_HI`` (core, gap, the inter
+# -turn fills) and the literal ``"inlet"``/``"outlet"`` already stamped onto
+# ``wall_hex``'s own rim at construction.  Retagging each copy the same way the
+# whole assembly is retagged below folds that split back into one name per end,
+# so every copy speaks the same vocabulary before they are stitched together.
+#
+# Consecutive copies are then stitched at the seam where one's HIGH end meets
+# the next's LOW end -- ``"outlet"``/``CUT_HI`` of copy i against
+# ``"inlet"``/``CUT_LO`` of copy i+1 -- with ``attach_tag=None`` so the seam
+# becomes ordinary interior geometry once welded, exactly as every other
+# conjugate weld in this file does.  Bijectivity is ``attach``'s own guarantee:
+# it raises if the two named groups are not a one-to-one match -- proof that
+# "shift by HALF_TURNS turns" really did reproduce the true geometry at the
+# seam, not just something close to it.
+assert SHEET_TURNS % HALF_TURNS == 0, (
+    "SHEET_TURNS must be a whole multiple of HALF_TURNS=%d (got %d)"
+    % (HALF_TURNS, SHEET_TURNS))
+N_HALVES = SHEET_TURNS // HALF_TURNS
+_halves = [hexmesh.retag_face(
+    hexmesh.translate(assembly, [0.0, 0.0, i * HALF_TURNS * PITCH]),
+    {_END_LO: "inlet", _END_HI: "outlet"})
+          for i in range(N_HALVES)]
+
+
+def _stack(a, b):
+    seams = [
+        hexmesh.Seam(0, hexmesh.tagged_faces(a, "outlet"),
+                     1, hexmesh.tagged_faces(b, "inlet"), own="a", attach_tag=None),
+        hexmesh.Seam(0, hexmesh.tagged_faces(a, CUT_HI),
+                     1, hexmesh.tagged_faces(b, CUT_LO), own="a", attach_tag=None),
+    ]
+    return hexmesh.attach([a, b], seams)
+
+
+assembly = _halves[0]
+for _h in _halves[1:]:
+    assembly = _stack(assembly, _h)
 
 
 # === finish naming.  Every tag on the finished mesh is set by construction; the
 # only work here is to turn the two placeholders into their solver names and to
 # assert that what construction claims matches the assembled topology.
 #
-#   interface  the conjugate fluid/solid wall -- the coil named its own wall (the
-#              tube's inward radial cap ``first_tag=IFACE``, the quadrant section's
-#              outer cap ``last_tag=IFACE``) and ``_weld`` carried it across every
-#              seam instead of burying it.
+#   coil       the wire's own conjugate fluid/solid surface -- named at construction
+#              (the tube's inward radial cap ``first_tag=COIL``, the quadrant
+#              section's outer cap ``last_tag=COIL``) and carried across every
+#              weld onto it (``gap``, ``wall_hex``) instead of buried.
+#   wall       the pipe wall's conjugate fluid/solid surface -- a different physical
+#              seam from ``coil``, named where ``wall_hex`` (fluid film) welds onto
+#              ``wall_solid`` (solid pipe wall), the one ``_weld`` call given
+#              ``tag=WALL``.
 #   outer      the pipe skin -- ``last_tag=OUTER`` on ``wall_solid``'s radial sweep.
-#   cut        the solid saw cut -- the coil's two helix ends (``retag_edge`` on
-#              the template's two vertical sides, outermost turns only) and
+#   cut_lo / cut_hi  the solid saw cuts -- the coil's two helix ends (``retag_edge``
+#              on the template's two vertical sides, outermost turns only) and
 #              ``wall_wrap``'s two rim loops swept into the shell (``_RIM_*``).
 #   inlet / outlet  the fluid openings -- ``core_hex``'s two z caps
 #              (``first/last_tag=_END_*``), the four inter-turn fills' helix ends
@@ -1059,17 +1173,56 @@ assembly = _weld(assembly, core_hex, own="b")       # axial core (own="b": keep
 #              ``wall_wrap``'s two rim loops swept into the film (``_RIM_*``).
 #
 # Whatever fluid boundary is left bare is a real gap in the model -- the film and
-# the inter-turn fills are helical ribbons, not closed annuli, so their lateral
-# sides are exposed -- and it is left bare rather than guessed at.
+# the inter-turn fills are helical ribbons, not closed annuli, so their *lateral*
+# sides are exposed -- and it is left bare rather than guessed at.  Those are not
+# axial ends, so they are not periodic partners and the pairing below does not
+# want them.
+#
+# The four end groups are the two halves of one periodic cell, so they carry ``P``
+# rather than an opening condition, and ``periodic=`` says which half meets which.
+# Both pairs share the one transform: the cell is ``SHEET_TURNS`` whole pitches, so
+# the screw becomes a pure translation by ``LEAD`` (see the constant).  The pairing
+# is checked against the geometry, so a wrong ``LEAD`` raises here rather than in
+# the solver.
+#
+# ``GROUPS`` is the **velocity** field's own table, so it names only fluid-side
+# conditions: ``coil`` and ``wall`` on their fluid side (the solid side writes no
+# row -- there is no velocity unknown there to write one for) and the fluid ends.
+# ``outer`` / ``cut_lo`` / ``cut_hi`` are solid-only and belong in ``THERMAL``
+# instead -- naming them here would ask Nek's velocity block to hold a row on an
+# element outside the velocity mesh, which ``to_re2`` refuses.
 GROUPS = {
-    "interface": {"fluid": "W  ", "solid": None},
-    "inlet":  "v  ",
-    "outlet": "O  ",
-    "outer":  "I  ",
-    "cut":    "I  ",
+    "coil": {"fluid": "v  ", "solid": None},
+    "wall": {"fluid": "W  ", "solid": None},
+    "inlet":  "P  ",
+    "outlet": "P  ",
+}
+PERIODIC = [
+    hexmesh.Periodic("inlet", "outlet", affine.translation([0.0, 0.0, LEAD])),
+    hexmesh.Periodic(CUT_LO, CUT_HI, affine.translation([0.0, 0.0, LEAD])),
+]
+
+# ``THERMAL`` is the temperature field's own table, over *every* element -- Nek's
+# ``.re2`` always carries one boundary block per field once ``fluid=`` makes
+# ``nelgv < nelgt``, and this is the second one.  ``coil`` and ``wall`` are both left
+# out on purpose: temperature is solved on both sides of a conjugate surface, so
+# neither needs a condition there (the default ``'E  '``, ordinary continuity) --
+# only velocity needs the explicit wall, since the solid side carries no velocity
+# unknown to fall back on.  The periodic ends carry temperature around too, on
+# both the fluid pair and the solid saw cut; only the pipe's outer skin is a real
+# boundary for temperature, and it is insulated.
+THERMAL = {
+    "inlet":  "P  ",
+    "outlet": "P  ",
+    "outer":  "f  ",
+    "cut_lo": "P  ",
+    "cut_hi": "P  ",
 }
 
-mesh = hexmesh.retag_face(assembly, {_END_LO: "inlet", _END_HI: "outlet"})
+# each stacked copy was already retagged _END_LO/_END_HI -> inlet/outlet before
+# stitching (see the STACK step above), so ``assembly`` already speaks the
+# final vocabulary end to end -- nothing left to rename here.
+mesh = assembly
 
 _reg = mesh.element_tags.dense(mesh.n_hexes)
 _inc = np.asarray(mesh.hexes)
@@ -1086,7 +1239,8 @@ _solid_face = _reg[_owner[:, 0]] == "solid"
 
 _conjugate = ((~_bnd) & (_owner[:, 1] >= 0)
               & (_reg[_owner[:, 0]] != _reg[_owner[:, 1]]))
-assert set(np.flatnonzero(_conjugate)) == set(hexmesh.tagged_faces(mesh, IFACE)), (
+_named_conjugate = set(hexmesh.tagged_faces(mesh, COIL)) | set(hexmesh.tagged_faces(mesh, WALL))
+assert set(np.flatnonzero(_conjugate)) == _named_conjugate, (
     "the conjugate surface named at construction is not the assembled topology's")
 assert not (_bnd & _solid_face & (_built == "")).any(), (
     "a solid boundary face is unnamed -- every one is the pipe skin or a saw cut, "
@@ -1099,6 +1253,7 @@ if _bare:
 
 # === report + export -----------------------------------------------------------
 _q = hexmesh.quality_summary(mesh)
+print(hexmesh.report(mesh))
 print("wire coil: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f  inverted=%d"
       % (_q.min, _q.mean, _q.n_inverted))
@@ -1107,5 +1262,10 @@ print("watertight:", hexmesh.is_watertight(mesh),
 print("regions:", ", ".join(sorted(mesh.element_tags.group_tags)))
 print("faces:  ", ", ".join(sorted(mesh.face_group_tags)))
 
-writer.to_re2(mesh, "wire_coil.re2", groups=GROUPS)
-writer.to_vtu(mesh, "wire_coil.vtu", groups=GROUPS)
+writer.to_re2(mesh, "wire_coil.re2", groups=GROUPS, periodic=PERIODIC,
+              fluid="fluid", thermal=THERMAL)
+# the viewer paints one colour per name and does not care which field a code belongs
+# to, so it gets the union of both tables rather than warning about whichever half
+# GROUPS alone leaves unnamed
+writer.to_vtu(mesh, "wire_coil.vtu", groups={**THERMAL, **GROUPS})
+writer.to_fld(mesh, "wire_coil.f00000", fluid="fluid")

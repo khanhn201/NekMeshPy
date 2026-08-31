@@ -32,7 +32,7 @@ sys.path.insert(0, _REPO)
 #: Scripts that build no ``mesh`` of their own (imported as a library by another
 #: example) or need an extra the ``docs`` install group doesn't pull in (``gmsh``, for
 #: the tet-meshed femoral pair) -- mirrors ``tests/test_examples.py``'s
-#: ``LIBRARY_ONLY`` / ``SLOW`` sets, kept separate rather than imported from there since
+#: ``LIBRARY_ONLY`` / ``EXCLUDED`` sets, kept separate rather than imported from there since
 #: ``tests/`` isn't packaged either and this script has its own, narrower reason to skip
 #: each one.
 SKIP = {"tjunction_lib.py", "femoral_vol.py", "femoral.py"}

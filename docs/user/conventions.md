@@ -56,6 +56,79 @@ what the caller states.
 
 `select`/`remove`/`components` are the inverse at every rung.
 
+## Periodic boundaries: the weld `attach` does not make
+
+{func}`hexmesh.periodic_pairs <nekmeshpy.hexmesh.periodic.periodic_pairs>` resolves the
+same *stated* correspondence `attach` does, proved the same way, and then leaves the two
+sides alone: they stay two distinct boundary faces with their own names, which is what a
+periodic boundary is. It returns a `(2K,4)` table of `[element, face, partner element,
+partner face]` — both directions, so the two rows cannot disagree — and
+{func}`writer.to_re2 <nekmeshpy.io.writer.to_re2>`'s `periodic=` writes it into the
+boundary record's `bc(1)` / `bc(2)`, the fields a Nek `'P  '` row is meaningless without.
+
+```python
+from nekmeshpy.core import affine
+
+GROUPS = {"wall": "W  ", "inlet": "P  ", "outlet": "P  "}
+PERIODIC = [hexmesh.Periodic("inlet", "outlet",
+                             affine.translation([0.0, 0.0, LENGTH]))]
+writer.to_re2(mesh, "case.re2", groups=GROUPS, periodic=PERIODIC)
+```
+
+Unlike a `Seam`, a {class}`Periodic <nekmeshpy.hexmesh.periodic.Periodic>` is **told its
+transform**. `attach` needs none because its halves are meant to end up in the same
+place; a periodic pair's halves sit a lattice vector apart, where the nearest face across
+the gap is not the periodic image. Stating the map is also what makes it checkable: the
+worst residual after mapping is compared against `conform.entity_tol`, so a mis-typed
+pitch raises quoting the number.
+
+Two things it cannot check. A group with a rotational symmetry of its own pairs
+bijectively at residual **zero** onto a cyclic shift — `attach`'s own trap. And Nek
+identifies the two sides in the **global Cartesian frame**: it does not rotate a vector
+across a periodic face, so a rotational pair is a periodicity for a scalar, and for a
+velocity field only where that field is invariant in that frame.
+
+The two halves must be named distinctly — one tag over both ends cannot say which end is
+which. `to_re2` then enforces that a name coded `'P  '` and a name in `periodic=` are the
+same set: a `'P  '` with no pairing writes partner element 0, face 0, and a pairing with
+no `'P  '` exports as something else, neither visible until the solver reads the mesh.
+
+## Conjugate meshes: `to_re2(..., fluid=, thermal=)`
+
+A Nek conjugate heat transfer run needs its `.re2` header's two element counts to
+disagree — `nelgt` (total) and `nelgv` (velocity mesh) — with the velocity-mesh elements
+listed **first, contiguously**. A region tag alone does not say this: the solver reads
+element order, not `element_tags`. `fluid=` names the velocity-mesh region (anything
+{func}`core.tags.element_mask <nekmeshpy.core.tags.element_mask>` accepts — a tag string,
+a boolean mask, or an id array) and `to_re2` reorders the **written bytes** — corners,
+every boundary row, and a periodic row's partner — through the fluid-first permutation.
+The `HexMesh` object returned is untouched; only the file's numbering changes.
+
+`fluid=None` (the default) writes every element as velocity-mesh — `nelgv == nelgt` — the
+right reading for a single-domain mesh, and the same bytes this writer produced before
+`fluid=` existed.
+
+The moment `nelgv < nelgt`, Nek's own reader (`core/reader_re2.f`) always reads **one
+boundary block per field**, regardless of what the header declares — a file with only
+the velocity block reads it fine, then dies reading the (missing) next one. `thermal=`
+is that second field's table, over **every** element rather than the velocity-only
+`groups`, and is required exactly when `fluid=` makes the two counts differ:
+
+```python
+GROUPS = {"interface": {"fluid": "W  ", "solid": None}, "inlet": "P  ", "outlet": "P  "}
+THERMAL = {"inlet": "P  ", "outlet": "P  ", "outer": "I  ", "cut_lo": "P  ", "cut_hi": "P  "}
+writer.to_re2(mesh, "case.re2", groups=GROUPS, periodic=PERIODIC,
+              fluid="fluid", thermal=THERMAL)
+```
+
+A name left out of `thermal=` stays conformal (`'E  '`) — right for a genuine conjugate
+interface, since temperature is solved on both sides of it and only velocity needs the
+explicit wall (the solid side has no velocity unknown to fall back on). A name that *is*
+coded but lands outside a field's own region raises rather than corrupting Nek's
+`nel=nelv` invariant for the velocity block. A periodic pair may sit entirely inside
+either region, and each field checks its own `'P  '` names against `periodic=`
+independently, restricted to that field's elements.
+
 ## Tags
 
 There is one table type, `ElementTags` (`core/tags.py`): a sparse `ids` + `tags`
