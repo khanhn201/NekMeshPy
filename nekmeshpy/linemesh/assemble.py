@@ -17,10 +17,11 @@ from .._typing import (
 from ..core import conform, stations
 from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
+from ..core.interp import resample_block_at
 from ..core.tags import ElementTags, element_mask, welded_element_tags
 from ..pointmesh import PointMesh
 from .linemesh import LineMesh
-from .query import boundary_points
+from .query import boundary_points, element_blocks
 
 
 def _one_tag(tag: str | None, who: str) -> str:
@@ -445,6 +446,50 @@ def components(mesh: LineMesh) -> list[LineMesh]:
     return [_subset(mesh, labels == c)[0] for c in range(n)]
 
 
+def refine(mesh: LineMesh) -> LineMesh:
+    """Uniform H-refinement: split every line into 2 at its own true midpoint.
+
+    Exact at any order -- the midpoint, and every child's own curved interior, are
+    read off the *stored* polynomial map via the internal ``core.interp`` order-N
+    kernel, not a straight-line average of the corners.  Line ``i``'s new midpoint is
+    point id ``mesh.n_points + i``; child
+    ``2*i + q`` (``q`` = 0 nearer the first corner, 1 the second) is the half of line
+    ``i`` on that side.  One call is one level -- call ``refine`` again for the next.
+
+    No conformality check is needed here: unlike the quad/hex rungs, a line's two
+    children only touch its own corners, which are already-shared points -- there is
+    no seam between two *different* parent lines to verify."""
+    order = mesh.order
+    blocks = element_blocks(mesh)                          # (L, order+1, 3)
+    l_count = blocks.shape[0]
+    n0 = mesh.n_points
+    mids = resample_block_at(blocks, order, [np.array([0.5])], 1)[:, 0, :]
+    points = np.concatenate([mesh.points, mids])
+
+    lines: IntArray = np.empty((2 * l_count, 2), dtype=np.int64)
+    mid_ids = np.arange(n0, n0 + l_count, dtype=np.int64)
+    lines[0::2, 0] = mesh.lines[:, 0]
+    lines[0::2, 1] = mid_ids
+    lines[1::2, 0] = mid_ids
+    lines[1::2, 1] = mesh.lines[:, 1]
+
+    if order > 1:
+        g = gll_nodes(order)
+        interior: PointArray = np.empty((2 * l_count, order - 1, 3), dtype=float)
+        for q in (0, 1):
+            sub = resample_block_at(blocks, order, [0.5 * g + 0.5 * q], 1)
+            interior[q::2] = sub[:, 1:order, :]
+    else:
+        interior = np.zeros((2 * l_count, 0, 3), dtype=float)
+
+    # each parent's tag propagates to BOTH its children, consecutively (child 2*i
+    # and 2*i+1 both copy source i) -- ``gather`` with a repeated index, not
+    # ``repeat_blocks`` (which tiles a whole block pattern across many copies, the
+    # sweep-layer shape of problem, not this one).
+    element_tags = mesh.element_tags.gather(np.repeat(np.arange(l_count), 2))
+    return LineMesh(PointMesh(points, mesh.point_tags), lines, interior, element_tags)
+
+
 __all__ = [
     "Seam",
     "attach",
@@ -453,6 +498,7 @@ __all__ = [
     "loft_fn",
     "loft_spline",
     "merge",
+    "refine",
     "remove",
     "select",
 ]

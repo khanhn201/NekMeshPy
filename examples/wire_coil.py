@@ -53,7 +53,7 @@ import numpy as np
 from scipy.spatial import cKDTree as _KD
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
-from nekmeshpy.core import affine
+from nekmeshpy.core import affine, conform
 from nekmeshpy.core.tags import ElementTags
 from nekmeshpy.hexmesh.assemble import boundary_face_ids as _bfid
 from nekmeshpy.linemesh import LineMesh
@@ -85,20 +85,14 @@ LAYERS_WIRE, TURNS_WIRE = 30, 2      # blend layers over the coil's turns
 NU = LAYERS_WIRE // TURNS_WIRE       # horizontal blend elements per turn (may be ODD:
                                     # the two strips need not have equal counts)
 NV = 2                              # vertical elements / diamond resolution
-SHEET_TURNS = 4                     # pitches of coil to build, TOTAL
-HALF_TURNS = 2                      # pitches per atomic block -- the proven,
-                                    # verified-correct 2-turn construction below
-                                    # is built once and stacked SHEET_TURNS //
-                                    # HALF_TURNS times, each copy a pure z
-                                    # translation of the first (see the stacking
-                                    # step after ``core_hex`` is welded in).
+SHEET_TURNS = 2                     # pitches of coil to build
 LEAD = SHEET_TURNS * PITCH          # the periodic cell: an INTEGER number of
                                     # pitches, so the helix's screw symmetry
                                     # (theta + 2*pi*n, z + n*PITCH) collapses to a
                                     # pure axial translation -- no rotation
-INNER_ARC_DEG = 120.0             # tube o-grid: angular span of the inward-facing
+INNER_ARC_DEG = 130.0             # tube o-grid: angular span of the inward-facing
                                    # quadrant (90 = square core; -> 180 max)
-OUTER_ARC_DEG = 90.0             # ... and of the outward-facing one, set free of
+OUTER_ARC_DEG = 110.0             # ... and of the outward-facing one, set free of
                                    # it: the two side quadrants take up the slack
 INNER_DZ =  0.0             # extra z shift of the inner sheet off centre
 INNER_PHASE_DEG = 10.0             # extra rotation of the inner sheet about z
@@ -469,7 +463,7 @@ def _sweep_quadrant(lat_row, corners, turn, shift=0):
     umid = 0.5 * (uo[:-1] + uo[1:])
     return hexmesh.loft([map_nodes(sec, _place(uk, turn=turn)) for uk in uo],
                         element_tags="solid",
-                        first_tag=CUT_HI if turn == HALF_TURNS - 1 else None,
+                        first_tag=CUT_HI if turn == SHEET_TURNS - 1 else None,
                         last_tag=CUT_LO if turn == 0 else None,
                         sweep_nodes=[[map_nodes(sec, _place(um, turn=turn))]
                                     for um in umid])
@@ -487,7 +481,7 @@ def build_turn(turn):
     # turns, since on any other turn that side is the seam the next turn welds to.
     sec = quadmesh.retag_edge(flat_tm, {
         _END_LO: CUT_LO if turn == 0 else "",
-        _END_HI: CUT_HI if turn == HALF_TURNS - 1 else ""})
+        _END_HI: CUT_HI if turn == SHEET_TURNS - 1 else ""})
 
     def _cx(c):
         return quadmesh.merge([map_nodes(sec, cross_map(c, turn=turn))], tol=1e-9)
@@ -526,7 +520,7 @@ def _bandu(uu, v0, v1):
 # === CONTINUOUS HELIX: the diamond-template o-grid tube, one turn per pitch,
 # turns abutting and welding -- one continuous coil. ==========================
 
-wire_coil = hexmesh.merge([build_turn(k) for k in range(HALF_TURNS)], tol=1e-9)
+wire_coil = hexmesh.merge([build_turn(k) for k in range(SHEET_TURNS)], tol=1e-9)
 b = hexmesh.bounds(wire_coil)
 
 # --- place the inner sheet so its centre lands on the coil's z centre.
@@ -771,7 +765,7 @@ def _iw_row(vval=None, dt=0, col=1):
         return c, m
 
     cs, ms = [], []
-    for k in range(dt, dt + HALF_TURNS):
+    for k in range(dt, dt + SHEET_TURNS):
         a = g0[::-1]                                      # TR .. T1 .. L1
         ca, ma = piece(a, k)
         cg = cross_map(0, turn=k)(_mu_pts(h0[:1]))        # Lg (riser end)
@@ -820,7 +814,7 @@ gap_lo = _gap_hex2(_iw_row(V_LO, dt=0, col=0), _iw_row(dt=0, col=0), between_lo)
 # layer 0.  The coil-side face is the quadrant section's WALL edge (``_LAT`` row
 # projected to radius RW), swept by ``_place`` over the same stations the quadrant
 # band itself uses -- so it coincides with topq / botq node-for-node.
-def _wall_face(lat_row, corners, dt=0, shift=0, nturns=HALF_TURNS):
+def _wall_face(lat_row, corners, dt=0, shift=0, nturns=SHEET_TURNS):
     # ``lat_row``'s wall arc (the same one ``_quadrant_sec`` lofts out to), swept
     # by ``_place`` over the quadrant band's own stations, built the SAME way as
     # _btw_outer_slice (one sweep line per radial corner, then loft) so they pair up.
@@ -1092,65 +1086,6 @@ assembly = _weld(assembly, core_hex, own="b")       # axial core (own="b": keep
 #                                would fold the thin axis elements)
 
 
-# === STACK: SHEET_TURNS turns from N = SHEET_TURNS // HALF_TURNS copies of the
-# one proven HALF_TURNS-turn ``assembly`` above, rather than re-deriving the
-# inter-turn fill for an arbitrary turn count.  This is exact, not approximate:
-# ``cross_map``'s theta/z law is `` gu = turn + 1 - u; theta = gu*2*pi; z =
-# RISE*gu*2*pi + ... ``, so incrementing every absolute turn index by an
-# INTEGER n changes theta by a multiple of 2*pi (no change at all, mod 2*pi)
-# and z by exactly n*PITCH -- a pure axial translation, no rotation.  So turns
-# [2,3]'s geometry IS turns [0,1]'s geometry shifted by +2*PITCH in z, node for
-# node -- not merely close, but the same construction evaluated at a shifted
-# absolute position.  Translating the finished HALF_TURNS-turn block is
-# therefore equivalent to rebuilding it at a higher turn offset, without
-# touching any of the fragile inter-turn fill logic above.  Verified directly:
-# at SHEET_TURNS=4, zero hex elements touch both the true inlet and the true
-# outlet (22 did at SHEET_TURNS=2 -- the periodic cell was too short relative
-# to CORE_LAYERS's axial resolution near the ends, which is what NekRS's own
-# right-handed check failed on), and quality is bit-for-bit the HALF_TURNS=2
-# baseline, doubled.
-#
-# Each copy still carries its own OWN end tags at its own two ends (translation
-# moves geometry, not tags) -- but not uniformly: the fluid opening at each end
-# is split between the placeholder ``_END_LO``/``_END_HI`` (core, gap, the inter
-# -turn fills) and the literal ``"inlet"``/``"outlet"`` already stamped onto
-# ``wall_hex``'s own rim at construction.  Retagging each copy the same way the
-# whole assembly is retagged below folds that split back into one name per end,
-# so every copy speaks the same vocabulary before they are stitched together.
-#
-# Consecutive copies are then stitched at the seam where one's HIGH end meets
-# the next's LOW end -- ``"outlet"``/``CUT_HI`` of copy i against
-# ``"inlet"``/``CUT_LO`` of copy i+1 -- with ``attach_tag=None`` so the seam
-# becomes ordinary interior geometry once welded, exactly as every other
-# conjugate weld in this file does.  Bijectivity is ``attach``'s own guarantee:
-# it raises if the two named groups are not a one-to-one match -- proof that
-# "shift by HALF_TURNS turns" really did reproduce the true geometry at the
-# seam, not just something close to it.
-assert SHEET_TURNS % HALF_TURNS == 0, (
-    "SHEET_TURNS must be a whole multiple of HALF_TURNS=%d (got %d)"
-    % (HALF_TURNS, SHEET_TURNS))
-N_HALVES = SHEET_TURNS // HALF_TURNS
-_halves = [hexmesh.retag_face(
-    hexmesh.translate(assembly, [0.0, 0.0, i * HALF_TURNS * PITCH]),
-    {_END_LO: "inlet", _END_HI: "outlet"})
-          for i in range(N_HALVES)]
-
-
-def _stack(a, b):
-    seams = [
-        hexmesh.Seam(0, hexmesh.tagged_faces(a, "outlet"),
-                     1, hexmesh.tagged_faces(b, "inlet"), own="a", attach_tag=None),
-        hexmesh.Seam(0, hexmesh.tagged_faces(a, CUT_HI),
-                     1, hexmesh.tagged_faces(b, CUT_LO), own="a", attach_tag=None),
-    ]
-    return hexmesh.attach([a, b], seams)
-
-
-assembly = _halves[0]
-for _h in _halves[1:]:
-    assembly = _stack(assembly, _h)
-
-
 # === finish naming.  Every tag on the finished mesh is set by construction; the
 # only work here is to turn the two placeholders into their solver names and to
 # assert that what construction claims matches the assembled topology.
@@ -1219,10 +1154,48 @@ THERMAL = {
     "cut_hi": "P  ",
 }
 
-# each stacked copy was already retagged _END_LO/_END_HI -> inlet/outlet before
-# stitching (see the STACK step above), so ``assembly`` already speaks the
-# final vocabulary end to end -- nothing left to rename here.
-mesh = assembly
+mesh = hexmesh.retag_face(assembly, {_END_LO: "inlet", _END_HI: "outlet"})
+
+# --- H-refine: split every hex into 8. The 2-turn coil alone is too short a
+# periodic cell for its own axial resolution -- 22 elements straddled both the
+# inlet and outlet at once, confirmed against a real NekRS run and traced to
+# CORE_LAYERS's coarseness near the ends, not a periodic-matcher bug. Doubling
+# the turn count (build 4, weld two 2-turn copies) fixed it by lengthening the
+# cell; refining fixes the same root cause more directly, by halving every
+# element -- including the axial ones the aliasing was actually about -- while
+# leaving the 2-turn geometry and its already-verified corner/curved quality
+# fix (GRADE/SHEET_GAP above) untouched. Exact at any order: hexmesh.refine
+# reads every new node off the mesh's own stored curved map, so this does not
+# facet the coil's own curvature.
+mesh = hexmesh.refine(mesh)
+
+# --- snap the refined periodic boundary's new nodes onto their exact partner.
+# Every ORIGINAL corner is periodic to machine precision (checked before refine);
+# a handful of newly-promoted curved-interior nodes near the coil's own R_INNER
+# weld are not, because ``gap``'s staircase side is anchored through the
+# empirically tuned ``INNER_ZC`` rather than derived purely from ``cross_map``'s
+# exactly-periodic helix law (the spiral side already is exact -- see the design
+# notes on why pairing was corner-only in the first place). H-refine turns that
+# interior curvature into real, exported corners for the first time, which is
+# the only reason this has ever mattered. Snapped, not reworked: the residual is
+# tiny (~1e-3 against a ~1-unit mesh) and confined to a few dozen nodes, so
+# moving them onto the position periodic_pairs already trusts is cheaper and
+# safer here than re-deriving the staircase construction to be exactly periodic
+# throughout.
+for _spec in PERIODIC:
+    _fa = hexmesh.face_group(mesh, _spec.tag_a, "a")
+    _fb = hexmesh.face_group(mesh, _spec.tag_b, "b")
+    _ida = np.unique(mesh.quad_mesh.corners[_fa])
+    _idb = np.unique(mesh.quad_mesh.corners[_fb])
+    _matrix, _offset = _spec.transform
+    _mapped = affine.apply(mesh.points[_ida], _matrix, _offset)
+    _d, _idx = _KD(mesh.points[_idb]).query(_mapped)
+    _tol = conform.entity_tol(mesh.points)
+    _bad = _d > _tol
+    if _bad.any():
+        print("snapped %d/%d periodic node(s) for %r <-> %r (worst was %.3e)"
+              % (_bad.sum(), _bad.size, _spec.tag_a, _spec.tag_b, _d.max()))
+        mesh.points[_idb[_idx[_bad]]] = _mapped[_bad]
 
 _reg = mesh.element_tags.dense(mesh.n_hexes)
 _inc = np.asarray(mesh.hexes)

@@ -9,6 +9,7 @@ from .assemble import (
     loft_fn,
     loft_spline,
     merge,
+    refine,
     remove,
     select,
 )
@@ -107,6 +108,7 @@ __all__ = [
     "periodic_pairs",
     "quality_summary",
     "query",
+    "refine",
     "report",
     "rotate",
     "scale",

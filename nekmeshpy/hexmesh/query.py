@@ -163,7 +163,7 @@ def linear_scaled_jacobian(mesh: HexMesh, *, order: int | None = None) -> FloatA
     real solver's own geometry generation would find building its working nodes
     from the same corners at its own polynomial order -- ``order`` should be that
     order (:data:`SCAN_ORDER <nekmeshpy.core.quality.SCAN_ORDER>` by default, the
-    same solver-order default :func:`order_scan` uses)."""
+    same solver-order default :func:`order_scan <nekmeshpy.hexmesh.quality.order_scan>` uses)."""
     from ..core.quality import SCAN_ORDER
     from . import quality
     return quality.linear_scaled_jacobian(mesh, SCAN_ORDER if order is None else order)
@@ -171,7 +171,7 @@ def linear_scaled_jacobian(mesh: HexMesh, *, order: int | None = None) -> FloatA
 
 def linear_order_scan(mesh: HexMesh, orders: Sequence[int] | None = None, *,
                       budget: int | None = None) -> OrderScan:
-    """:func:`order_scan`'s report shape, for the **trilinear** (``.re2``) map
+    """:func:`order_scan <nekmeshpy.hexmesh.quality.order_scan>`'s report shape, for the **trilinear** (``.re2``) map
     instead of the curved one -- see :func:`linear_scaled_jacobian`."""
     from . import quality
     return quality.linear_order_scan(mesh, orders, budget=budget)

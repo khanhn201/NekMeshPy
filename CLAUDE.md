@@ -70,7 +70,7 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 
 | module | Δ | contents |
 |---|---|---|
-| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge`, `attach` — n-ary; `select` / `remove` / `components` — the inverse |
+| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge`, `attach`, `refine` — n-ary; `select` / `remove` / `components` — the inverse |
 | `lift.py` | +1 | `extrude` / `sweep` / `annulus` / `from_grid`; `adapter` / `bridge` hex-only |
 | `lower.py` | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
 | `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
@@ -79,12 +79,34 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
 | `tag.py` | 0 | `retag_element`; `retag_point` / `retag_edge` / `retag_face` — rename the tag vocabulary, geometry untouched. Plus the authoring bridges: `quadmesh.tag_edges` takes `(quad, side)` rows, since factories think element-locally; `hexmesh.tag_faces` takes face ids, the natural handle after a weld |
 
-**`loft`, `merge`, `attach`, `select`/`remove`/`components` and `boundary_mesh` are the
-only operations that manufacture a global index space** — `select` and its kin are `merge`
-run backwards, and sit beside it for that reason. To place a new operation: *invents a
-numbering?* → `assemble` (unless it is boundary extraction → `lower`); *changes rung?* →
-`lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`. `morph` is for the
-*geometry* at delta 0, which is why a retag is not in it.
+**`loft`, `merge`, `attach`, `refine`, `select`/`remove`/`components` and `boundary_mesh`
+are the only operations that manufacture a global index space** — `select` and its kin
+are `merge` run backwards, and sit beside it for that reason. To place a new operation:
+*invents a numbering?* → `assemble` (unless it is boundary extraction → `lower`);
+*changes rung?* → `lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`.
+`morph` is for the *geometry* at delta 0, which is why a retag is not in it.
+
+**`refine` is uniform H-refinement, built bottom-up like the ladder itself.**
+`hexmesh.refine` calls `quadmesh.refine` on its shared faces, which calls
+`linemesh.refine` on its shared edges — so a face or edge shared between two elements
+is refined exactly once and its two neighbours automatically agree, the same reason the
+B-rep ladder makes conformality structural everywhere else. Each rung's split is exact
+at any polynomial order: the new midpoint/center/cell-center points and every child's
+own curved interior are read off the *stored* polynomial via `core.interp.
+resample_block_at` (a change of parametric evaluation point, not a resampling onto a
+coarser or straight-sided approximation) — refining a curved mesh does not facet it.
+One call is one level; refine `N` times for `N` levels.
+
+At the hex rung, every quad this rung needs — the 4 sub-quads of each of a hex's 6
+faces, *and* the 12 new quads cutting through its own interior — goes through **one**
+combined B-rep pass (`quadmesh._helpers.entities_from_blocks`), not two separate ones.
+A new interior quad's own edge from an edge-midpoint to a face-center *is* one of that
+face's own `quadmesh.refine` spokes (the face is itself a quad, and the hex edge
+bounding it is one of its own sides) — deduplicating the interior quads against the
+boundary ones after the fact, rather than in the same pass, mistakes that shared spoke
+for two different edges and tears the mesh at a valence-1 seam a single level of refine
+never exposes; it only shows up once the result is itself refined again, when the wrong
+edge count changes which faces the new octants can find.
 
 A reflection has determinant −1, so `mirror` is the coordinate map **plus** a re-winding
 of the connectivity — never `transform` with a reflection matrix, which inverts every
