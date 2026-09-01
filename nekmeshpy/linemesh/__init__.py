@@ -13,7 +13,17 @@ from .assemble import (
     select,
 )
 from .linemesh import LineMesh
-from .morph import blend, mirror, offset, reverse, rotate, scale, transform, translate
+from .morph import (
+    blend,
+    mirror,
+    offset,
+    reverse,
+    rotate,
+    scale,
+    transform,
+    transform_fn,
+    translate,
+)
 from .query import (
     boundary_elements,
     boundary_points,
@@ -76,5 +86,6 @@ __all__ = [
     "sweep_fractions",
     "tag",
     "transform",
+    "transform_fn",
     "translate",
 ]

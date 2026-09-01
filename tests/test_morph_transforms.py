@@ -14,7 +14,15 @@ import numpy as np
 import pytest
 from conftest import assert_same_side_tags
 
-from nekmeshpy import ElementTags, LineMesh, QuadMesh, hexmesh, linemesh, quadmesh
+from nekmeshpy import (
+    ElementTags,
+    LineMesh,
+    QuadMesh,
+    hexmesh,
+    linemesh,
+    pointmesh,
+    quadmesh,
+)
 
 RADIAL = np.linspace(0.4, 1.0, 3)
 
@@ -149,6 +157,91 @@ def test_transform_is_the_general_case():
     ref = quadmesh.rotate(section, 0.6, axis=(0.0, 1.0, 1.0), center=(1.0, 0, 0))
     assert np.array_equal(out.points, ref.points)
     assert np.array_equal(out.interior, ref.interior)
+
+
+# -- transform_fn: the general non-affine warp ------------------------------
+def _quad_map(P):
+    """A curved, orientation-preserving warp: shear z by x**2.  Smooth, so a curved
+    mesh stays curved, and det > 0 everywhere, so nothing folds."""
+    P = np.asarray(P, dtype=float).reshape(-1, 3)
+    return np.column_stack([P[:, 0], P[:, 1], P[:, 2] + 0.05 * P[:, 0] ** 2])
+
+
+def test_transform_fn_with_an_affine_fn_matches_transform(order):
+    """Handed a fn that *is* affine, ``transform_fn`` reproduces ``transform`` node
+    for node -- same map, reached by calling instead of by matmul."""
+    from nekmeshpy.core import affine
+
+    matrix, offset = affine.rotation(0.6, axis=(0.0, 1.0, 1.0), center=(1.0, 0, 0))
+    for mesh, ns in _rungs(order):
+        ref = ns.morph.transform(mesh, matrix, offset)
+        out = ns.morph.transform_fn(mesh, lambda P: np.asarray(P) @ matrix.T + offset)
+        for before, after in zip(_tables(ref), _tables(out)):
+            assert np.allclose(after, before, atol=1e-12)
+
+
+def test_transform_fn_reaches_every_table(order):
+    """The warp is applied to the private high-order ``interior`` tables as well as
+    the corners -- a table it skipped would keep its pre-warp z."""
+    for mesh, ns in _rungs(order):
+        out = ns.morph.transform_fn(mesh, _quad_map)
+        for before, after in zip(_tables(mesh), _tables(out)):
+            if before.size == 0:
+                assert after.size == 0
+                continue
+            assert np.allclose(after[..., :2], before[..., :2], atol=1e-14)
+            assert np.allclose(after[..., 2],
+                               before[..., 2] + 0.05 * before[..., 0] ** 2, atol=1e-14)
+
+
+def test_transform_fn_keeps_topology_and_tags(order):
+    """Only coordinates move: incidence and tags ride through verbatim, and a smooth
+    warp of a conformal mesh stays conformal."""
+    rungs = _rungs(order)
+    for (mesh, ns), attr in zip(rungs, ("point_tags", "edge_tags", "face_tags")):
+        out = ns.morph.transform_fn(mesh, _quad_map)
+        assert np.array_equal(out.element_tags.ids, mesh.element_tags.ids)
+        assert np.array_equal(out.element_tags.tags, mesh.element_tags.tags)
+        assert_same_side_tags(getattr(out, attr), getattr(mesh, attr))
+        assert out.order == mesh.order
+    assert np.array_equal(quadmesh.transform_fn(rungs[1][0], _quad_map).corners,
+                          rungs[1][0].corners)
+    assert hexmesh.is_conforming(hexmesh.transform_fn(rungs[2][0], _quad_map))
+
+
+def test_transform_fn_rejects_a_fn_that_changes_the_node_count():
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, RADIAL)
+    with pytest.raises(ValueError, match=r"map \(N, 3\) -> \(N, 3\)"):
+        quadmesh.transform_fn(section, lambda P: np.asarray(P)[:, :2])
+
+
+def _half_fold(P):
+    """Reflect only the ``x > 0`` half about ``y`` -- elements straddling ``x = 0`` wind
+    the opposite way from their neighbours, a genuine *local* fold (unlike a global
+    reflection, which ``quality_summary`` cannot see and ``mirror`` is for)."""
+    A = np.asarray(P, dtype=float).reshape(-1, 3)
+    return np.column_stack([A[:, 0], np.where(A[:, 0] > 0, -A[:, 1], A[:, 1]), A[:, 2]])
+
+
+def test_transform_fn_warns_when_the_warp_folds(order, caplog):
+    """A fold makes some elements invert.  At the quad and hex rungs -- where there is
+    a signed Jacobian -- ``transform_fn`` emits a ``logging.warning`` (it does not
+    re-wind; that is ``mirror``).  The line and point rungs have no signed measure, so
+    they never warn -- the same exception ``mirror`` documents there."""
+    ring, section, block = _meshes(order)
+    point_mesh = section.line_mesh.point_mesh
+
+    for mesh, ns in ((point_mesh, pointmesh), (ring, linemesh)):
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            ns.morph.transform_fn(mesh, _half_fold)
+        assert not [r for r in caplog.records if "invert" in r.message]
+
+    for mesh, ns in ((section, quadmesh), (block, hexmesh)):
+        caplog.clear()
+        with caplog.at_level("WARNING"):
+            ns.morph.transform_fn(mesh, _half_fold)
+        assert any("invert" in r.message for r in caplog.records)
 
 
 # -- composition down the ladder ----------------------------------------------

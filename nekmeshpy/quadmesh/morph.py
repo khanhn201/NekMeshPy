@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import numpy as np
@@ -20,9 +21,13 @@ from ..linemesh import LineMesh
 from ..linemesh.morph import _affine as line_affine
 from ..linemesh.morph import blend as line_blend
 from ..linemesh.morph import offset_shift
+from ..linemesh.morph import transform_fn as line_transform_fn
 from ..pointmesh import PointMesh
+from ..pointmesh.morph import NodeMap, _mapped
 from .quadmesh import QuadMesh
 from .query import element_blocks
+
+_log = logging.getLogger(__name__)
 
 
 def blend(a: QuadMesh, b: QuadMesh,
@@ -77,6 +82,49 @@ def transform(mesh: QuadMesh, matrix: FloatArray,
     offset``."""
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
+
+
+def _warn_if_folded(mesh: QuadMesh) -> None:
+    """``logging.warning`` if ``mesh`` has any inverted element.  Sampled on the
+    stored map at ``mesh.order`` -- a heuristic, not a certificate (the Jacobian is a
+    higher-degree polynomial than the map), enough to flag an ``fn`` that folds
+    space."""
+    from .query import quality_summary
+
+    n = quality_summary(mesh).n_inverted
+    if n:
+        _log.warning(
+            "quadmesh.transform_fn: fn produced %d inverted element(s) "
+            "(scaled Jacobian sampled at order %d); the warp folds the mesh there",
+            n, mesh.order)
+
+
+def _transform_fn(mesh: QuadMesh, fn: NodeMap) -> QuadMesh:
+    """The bare node remap -- no fold check.  :func:`hexmesh.morph.transform_fn
+    <nekmeshpy.hexmesh.morph.transform_fn>` reuses this for the shared-face part so the
+    warning fires once, at the hex rung, not again here on just the boundary faces."""
+    return QuadMesh(line_transform_fn(mesh.line_mesh, fn), mesh.quads, mesh.orient,
+                    _mapped(mesh.interior, fn), mesh.element_tags)
+
+
+def transform_fn(mesh: QuadMesh, fn: NodeMap) -> QuadMesh:
+    """A new section with every node -- shared corners, shared edge interiors and
+    private face interiors alike -- mapped through an arbitrary ``fn``;
+    :func:`transform` for a warp that is not affine.  ``fn`` is called once per node
+    block with an ``(N, 3)`` array and must return ``(N, 3)``.  Connectivity and tags
+    ride through verbatim.
+
+    Unlike the affine :func:`transform`, ``fn`` can fold space; this checks the result
+    and emits a ``logging.warning`` (not an error) when any element comes out inverted.
+    The check signs each element against its *own* corners' mean normal, so it catches a
+    **local** fold -- a strip winding the opposite way from its neighbours -- but not a
+    global reflection, which flips every element together and reads clean; that one
+    :func:`mirror` is for, and ``transform_fn`` never re-winds.  A curved ``fn`` keeps a
+    curved section curved; it moves the stored nodes, it does not add any, so a
+    straight-subdivided section stays faceted between its corners."""
+    out = _transform_fn(mesh, fn)
+    _warn_if_folded(out)
+    return out
 
 
 def translate(mesh: QuadMesh, vector: Vec3 | Sequence[float]) -> QuadMesh:
@@ -264,5 +312,6 @@ __all__ = [
     "rotate",
     "scale",
     "transform",
+    "transform_fn",
     "translate",
 ]

@@ -143,10 +143,15 @@ rather than a body of its own, and the shared cell walls slide out of its way.
 ## wire_coil
 
 A helical wire coiled inside a round pipe as a conjugate fluid/solid domain: the
-wire is an o-grid tube swept one turn per pitch, the pipe wall an annular solid
-shell, and the film, inter-turn wedge and axial core are fluid. Every face is
-tagged, with two conjugate surfaces between the two regions -- `coil` around the wire
-and `wall` at the pipe wall.
+wire's cross-section is a skewed rectangular template blended through the disc by a
+non-affine {func}`quadmesh.transform_fn
+<nekmeshpy.quadmesh.morph.transform_fn>` warp (an o-grid butterfly without an o-grid)
+and lofted turn by turn, the pipe wall is an annular solid shell, and the film,
+inter-turn wedge and axial core are fluid. Every face is tagged at construction, with
+two conjugate surfaces between the regions -- `coil` around the wire and `wall` at the
+pipe wall. `core`'s whole outer cylinder is named `inlet` and the last branch turn
+`outlet`; `merge(clear_seam_tags=...)` then drops those names off every face the
+helical band welds shut, leaving exactly the wedge it does not cover.
 
 The cell is two **whole** pitches, so its two axial ends are a periodic pair under a
 pure translation — the helix's screw symmetry has no rotation left in it at an integer

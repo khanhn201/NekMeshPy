@@ -72,7 +72,7 @@ placed into one of these.
    :members:
 ```
 
-### `hexmesh.morph` — Δ0: geometry at the same rung — `blend` and the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`
+### `hexmesh.morph` — Δ0: geometry at the same rung — `blend`, the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`, and `transform_fn` (a non-affine warp)
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.hexmesh.morph

@@ -309,10 +309,10 @@ def test_the_solver_order_constant_is_read_at_call_time():
 # curved order and still invert once flattened for export, when it is valid only
 # *because of* the curvature that map throws away.
 #
-# ``CURVED_VALID_LINEAR_INVERTED`` is a real element out of ``examples/wire_coil.py``
-# (one of the four ``examples/wire_coil.py`` writes with a negative corner reading),
-# frozen here rather than rebuilt from the example so this test does not depend on
-# wire_coil's own geometry staying bit-for-bit the same release to release. Order 2,
+# ``CURVED_VALID_LINEAR_INVERTED`` is a real element out of an earlier
+# ``examples/wire_coil.py`` (one of four it then wrote with a negative corner reading;
+# the current mesher no longer does), frozen here rather than rebuilt from the example
+# so this test does not depend on wire_coil's geometry at all. Order 2,
 # 27 nodes in the usual tensor lattice order (:func:`corner_indices` picks out the 8
 # corners). It sits on the wire's own ``coil`` surface, where a tight O-grid transition
 # is valid only because its curved interior bows around a fold the straight corners
@@ -451,8 +451,9 @@ def test_report_includes_the_linear_line_above_order_1():
 # nekmeshpy's own corner check called clean.
 #
 # ``CORNER_CLEAN_TRILINEAR_FOLDED`` is that element, frozen the same way as
-# ``CURVED_VALID_LINEAR_INVERTED`` above (a real ``examples/wire_coil.py`` element,
-# order 2, 27-node lattice) -- but this one is a *different* fold: clean at every
+# ``CURVED_VALID_LINEAR_INVERTED`` above (a real element from an earlier
+# ``examples/wire_coil.py``, order 2, 27-node lattice) -- but this one is a
+# *different* fold: clean at every
 # one of its 8 corners (+0.0053), and still negative once the trilinear map through
 # those same 8 corners is resampled at order 7 (-0.0151), the polynomial order
 # ``kgj.par`` (the real case this was found against) actually runs at.
