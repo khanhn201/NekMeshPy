@@ -202,7 +202,7 @@ def test_conjugate_interfaces_export_from_the_fluid_side_only(bundle):
     one -- so the rod walls export ``61 * N_CIRC * N_SPAN`` rows, not twice that."""
     mesh = bundle["mesh"]
     rows = _export_rows(mesh, _as_groups(mesh, bundle["GROUPS"]))
-    n = collections.Counter(name for _, _, name, _ in rows)
+    n = collections.Counter(name for _, _, name, _, _, _ in rows)
     span, circ = bundle["N_SPAN"], bundle["N_CIRC"]
 
     assert n["rod_surface"] == 61 * circ * span

@@ -228,6 +228,45 @@ def resample_block(curved: PointArray, order: int, new_order: int,
     return out
 
 
+def resample_block_at(curved: PointArray, order: int, eval_pts: list[FloatArray],
+                      dim: int) -> PointArray:
+    """``(E, prod(len(p) for p in eval_pts), 3)`` -- an order-``order`` block read at
+    arbitrary per-axis parametric points on ``[0,1]``, not necessarily
+    ``gll_nodes(new_order)``.
+
+    Generalizes :func:`resample_block`, whose restriction to a shared GLL lattice is
+    what stops it answering "what does this element's own stored map read at THIS
+    point" -- exactly what placing a new node on existing curved geometry needs (an
+    edge midpoint, a face or cell center, or a refined child's own GLL lattice
+    affinely mapped into its parent's ``[0,1]^dim`` frame, one ``eval_pts`` entry
+    per axis: ``0.5*gll_nodes(order) + 0.5*bit``). Unlike ``resample_block``, there is
+    no upward-only restriction -- this is a genuine evaluation of the stored
+    polynomial, not a solver-order query, so any point in ``[0,1]`` is fair game
+    either direction, and the per-axis point counts need not match each other or
+    ``order+1``.
+
+    ``eval_pts[k]`` is axis ``k`` in :data:`_CORNER_IJK`'s sense -- ``k=0`` is the
+    *fastest*-varying lexicographic axis (``i``/``u``). A flat block reshaped
+    ``(order+1,)*dim`` puts that fastest axis **last** (C order varies the last index
+    fastest), so ``eval_pts[k]`` is applied to numpy axis ``dim - k``, not ``k + 1`` --
+    getting this backwards silently swaps which physical corner a bit pattern like
+    ``_CORNER_IJK[dim][m]`` lands you on, rather than raising anywhere."""
+    if len(eval_pts) != dim:
+        raise ValueError("resample_block_at needs one eval_pts array per axis "
+                         "(dim=%d), got %d" % (dim, len(eval_pts)))
+    e = curved.shape[0]
+    b = curved.reshape((e,) + (order + 1,) * dim + (3,))
+    sizes = [0] * dim
+    for k in range(dim):
+        pts = np.asarray(eval_pts[k], dtype=float)
+        a = lagrange_matrix(gll_nodes(order), pts)          # (len(pts), order+1)
+        axis = dim - k
+        b = np.moveaxis(np.tensordot(a, b, axes=([1], [axis])), 0, axis)
+        sizes[k] = pts.shape[0]
+    out: PointArray = np.ascontiguousarray(b).reshape(e, int(np.prod(sizes)), 3)
+    return out
+
+
 def _element_tangents(curved: PointArray, order: int,
                       dim: int) -> tuple[FloatArray, ...]:
     """The ``dim`` parametric tangent vectors of each element's mapping, evaluated at

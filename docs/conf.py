@@ -90,6 +90,8 @@ nitpick_ignore_regex = [
     (r"py:.*", r"meshio.*"),
     (r"py:.*", r"'?(" + "|".join(_TYPE_ALIASES) + r")'?"),
     (r"py:.*", r"GroupsArg"),
+    (r"py:.*", r"FaceGroup"),
+    (r"py:.*", r"'?(affine\.)?Affine'?"),
     (r"py:.*", r"nekmeshpy\..*\.[A-Z]$"),  # single-letter TypeVars (F, ...)
 ]
 

@@ -15,7 +15,7 @@ from conftest import run_example
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "docs", "_ext"))
 
 import gen_viewer_assets  # noqa: E402
-from test_examples import LIBRARY_ONLY, SLOW  # noqa: E402
+from test_examples import EXCLUDED, LIBRARY_ONLY  # noqa: E402
 
 from nekmeshpy.io import writer  # noqa: E402
 
@@ -41,5 +41,7 @@ def test_skip_list_is_a_superset_of_library_only():
     assert LIBRARY_ONLY <= gen_viewer_assets.SKIP
 
 
-def test_gen_viewer_assets_skips_the_slow_gmsh_example():
-    assert SLOW <= gen_viewer_assets.SKIP
+def test_gen_viewer_assets_skips_the_gmsh_example():
+    """``femoral`` is out of the test harness for cost; it is out of asset generation
+    for the same reason, and the two lists must not drift apart."""
+    assert EXCLUDED <= gen_viewer_assets.SKIP

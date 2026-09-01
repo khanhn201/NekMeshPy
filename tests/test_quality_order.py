@@ -20,10 +20,12 @@ from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core.interp import (
     corner_indices,
     resample_block,
+    sampled_scaled_jacobian,
     scaled_jacobian,
     tensor_nodes,
 )
 from nekmeshpy.core.quality import SCAN_ORDER
+from nekmeshpy.hexmesh.quality import corner_scaled_jacobian
 from nekmeshpy.quadmesh import QuadMesh
 from nekmeshpy.quadmesh._helpers import entities_from_blocks
 
@@ -296,3 +298,265 @@ def test_the_solver_order_constant_is_read_at_call_time():
     finally:
         core_quality.SCAN_ORDER = was
     assert quadmesh.order_scan(mesh).orders == (SCAN_ORDER,)
+
+
+# -- the linear (.re2) reading: a different map, not a coarser sampling ---------
+#
+# ``.re2`` has no curved format at any stored order -- every element it writes is the
+# straight-sided hex through its 8 corners alone.  That is not "the mesh's own order
+# sampled coarser": it is a genuinely different map, one that discards the interior
+# nodes rather than reading fewer of them.  So an element can be clean at its own
+# curved order and still invert once flattened for export, when it is valid only
+# *because of* the curvature that map throws away.
+#
+# ``CURVED_VALID_LINEAR_INVERTED`` is a real element out of ``examples/wire_coil.py``
+# (one of the four ``examples/wire_coil.py`` writes with a negative corner reading),
+# frozen here rather than rebuilt from the example so this test does not depend on
+# wire_coil's own geometry staying bit-for-bit the same release to release. Order 2,
+# 27 nodes in the usual tensor lattice order (:func:`corner_indices` picks out the 8
+# corners). It sits on the wire's own ``coil`` surface, where a tight O-grid transition
+# is valid only because its curved interior bows around a fold the straight corners
+# alone cannot avoid.
+CURVED_VALID_LINEAR_INVERTED = np.array([
+    [-0.36187459, -0.28843946, 0.26982383],
+    [-0.29109897, -0.35172468, 0.29940227],
+    [-0.21346698, -0.39655513, 0.32834877],
+    [-0.41631322, -0.20207384, 0.25418694],
+    [-0.35702470, -0.28457376, 0.28479682],
+    [-0.28714464, -0.34694680, 0.31437525],
+    [-0.45488458, -0.08503267, 0.23529412],
+    [-0.41073375, -0.19936563, 0.26915993],
+    [-0.35217482, -0.28070807, 0.29976981],
+    [-0.37486961, -0.29879740, 0.26982383],
+    [-0.30288164, -0.36596127, 0.30393254],
+    [-0.22210060, -0.41259372, 0.33652813],
+    [-0.43126315, -0.20933037, 0.25418694],
+    [-0.37147582, -0.29609232, 0.28932709],
+    [-0.29875814, -0.36097899, 0.32255462],
+    [-0.47121962, -0.08808621, 0.23529412],
+    [-0.42735882, -0.20743525, 0.27369020],
+    [-0.36641846, -0.29206124, 0.30794917],
+    [-0.38786463, -0.30915535, 0.26982383],
+    [-0.31466431, -0.38019786, 0.30846281],
+    [-0.23073423, -0.42863231, 0.34470750],
+    [-0.44621308, -0.21658690, 0.25418694],
+    [-0.38592693, -0.30761087, 0.29385737],
+    [-0.31037165, -0.37501118, 0.33073398],
+    [-0.48755466, -0.09113976, 0.23529412],
+    [-0.44398388, -0.21550488, 0.27822048],
+    [-0.38066209, -0.30341442, 0.31612853],
+])[None, :, :]
+
+
+def _corner_hex():
+    """``CURVED_VALID_LINEAR_INVERTED``'s 8 corners and their flat ``(1,8)`` hex
+    connectivity into its own 27-point block -- everything :func:`corner_scaled_jacobian`
+    needs, with no HexMesh container built at all (a factory would only ever
+    straight-subdivide between given points, so there is no way to hand one this
+    element's genuine curvature without the same low-level block this test already
+    has)."""
+    pts = CURVED_VALID_LINEAR_INVERTED[0]
+    hexes = corner_indices(2, 3)[None, :]
+    return pts, hexes
+
+
+def test_curved_clean_element_reads_inverted_at_its_corners_alone():
+    """The defect ``quality_summary`` now watches for: an element the curved order
+    reads as sound, whose 8 corners alone -- the geometry ``.re2`` actually exports --
+    do not agree."""
+    pts, hexes = _corner_hex()
+    corner_sj = corner_scaled_jacobian(pts, hexes)
+    assert corner_sj[0] == pytest.approx(-0.03535304, abs=1e-6)
+
+    curved_sj = sampled_scaled_jacobian(CURVED_VALID_LINEAR_INVERTED, 2, 2, 3)
+    assert curved_sj[0] == pytest.approx(0.10566487, abs=1e-6)
+
+    assert corner_sj[0] < 0.0 < curved_sj[0]
+
+
+def test_a_sound_curved_mesh_has_no_corner_linear_disagreement():
+    """The ordinary case: a mesh that is not depending on its own curvature to stay
+    valid reads clean both ways, and ``quality_summary`` says nothing about it."""
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    linear = corner_scaled_jacobian(mesh.points, mesh.corners)
+    assert np.all(linear > 0.0)
+
+
+def test_quality_summary_only_checks_corners_above_order_1():
+    """At order 1 the curved and linear readings are the same map -- there is nothing
+    a second check could catch that the first did not already, so it is skipped."""
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=1), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    assert mesh.order == 1
+    own = hexmesh.quality_summary(mesh)
+    assert np.array_equal(corner_scaled_jacobian(mesh.points, mesh.corners),
+                          hexmesh.scaled_jacobian(mesh))
+    assert own.n_inverted == 0
+
+
+def test_quality_summary_warns_only_when_linear_disagrees(caplog):
+    """A clean curved mesh with a clean linear reading too must stay quiet -- the
+    warning is for the disagreement, not for the check having run at all."""
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    with caplog.at_level("WARNING"):
+        hexmesh.quality_summary(mesh)
+    assert "linear corners" not in caplog.text
+
+
+def test_corner_summary_matches_corner_scaled_jacobian():
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    stats = hexmesh.corner_summary(mesh)
+    sj = hexmesh.corner_scaled_jacobian(mesh)
+    assert stats.min == pytest.approx(float(np.min(sj)))
+    assert stats.n_elements == mesh.n_hexes
+    assert stats.n_inverted == int(np.sum(sj <= 0))
+
+
+def test_format_linear_reports_the_warning_line():
+    stats = hexmesh.quality.corner_summary(*_corner_hex())
+    text = hexmesh.quality.format_linear(stats, mesh_order=2)
+    assert "WARNING" in text
+    assert "invert once flattened" in text
+    assert "1 inverted" in text
+
+
+def test_format_linear_is_quiet_when_clean():
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    stats = hexmesh.corner_summary(mesh)
+    text = hexmesh.quality.format_linear(stats, mesh_order=mesh.order)
+    assert "WARNING" not in text
+
+
+def test_report_includes_the_linear_line_above_order_1():
+    section2 = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh2 = hexmesh.extrude(section2, 1.0, 2)
+    assert "linear (.re2)" in hexmesh.report(mesh2)
+
+    section1 = quadmesh.ogrid(linemesh.circle(1.0, 8, order=1), 2, 2)
+    mesh1 = hexmesh.extrude(section1, 1.0, 2)
+    assert "linear (.re2)" not in hexmesh.report(mesh1)
+
+
+# -- the deeper trap: valid corners, folded trilinear interior -----------------
+#
+# ``corner_scaled_jacobian`` reads only the 8 vertices, but a trilinear hex's
+# Jacobian is a polynomial in each direction -- it can still fold *between* the
+# corners while every corner reads positive.  That gap is not hypothetical: a real
+# solver's own geometry generation (built from exactly the corners ``.re2``
+# exports, resampled at its own working polynomial order) failed on an element
+# nekmeshpy's own corner check called clean.
+#
+# ``CORNER_CLEAN_TRILINEAR_FOLDED`` is that element, frozen the same way as
+# ``CURVED_VALID_LINEAR_INVERTED`` above (a real ``examples/wire_coil.py`` element,
+# order 2, 27-node lattice) -- but this one is a *different* fold: clean at every
+# one of its 8 corners (+0.0053), and still negative once the trilinear map through
+# those same 8 corners is resampled at order 7 (-0.0151), the polynomial order
+# ``kgj.par`` (the real case this was found against) actually runs at.
+CORNER_CLEAN_TRILINEAR_FOLDED = np.array([
+    [-0.11098995, 0.10675781, -0.20915033],
+    [-0.11098995, 0.10675781, 0.01307190],
+    [-0.11098995, 0.10675781, 0.23529412],
+    [-0.08737652, 0.12681224, -0.20915033],
+    [-0.08737652, 0.12681224, 0.01307190],
+    [-0.08770648, 0.12658426, 0.23529412],
+    [-0.06096442, 0.14141902, -0.20915033],
+    [-0.06096442, 0.14141902, 0.01307190],
+    [-0.06096442, 0.14141902, 0.23529412],
+    [-0.11482056, 0.16567083, -0.03182936],
+    [-0.13601594, 0.15454366, 0.10200601],
+    [-0.15818433, 0.14117630, 0.23398978],
+    [-0.08168454, 0.18458897, -0.03827359],
+    [-0.10408723, 0.17772977, 0.09541993],
+    [-0.12782595, 0.16911485, 0.22722894],
+    [-0.04631531, 0.19671869, -0.04459880],
+    [-0.06916597, 0.19408496, 0.08897571],
+    [-0.09359410, 0.19016819, 0.22064286],
+    [-0.11865116, 0.22458384, 0.14549160],
+    [-0.16104194, 0.20232950, 0.19094013],
+    [-0.20537871, 0.17559479, 0.23268543],
+    [-0.07599256, 0.24236570, 0.13260316],
+    [-0.12079795, 0.22864730, 0.17776797],
+    [-0.16827539, 0.21141745, 0.21916376],
+    [-0.03166619, 0.25201836, 0.11995272],
+    [-0.07736751, 0.24675089, 0.16487952],
+    [-0.12622378, 0.23891735, 0.20599160],
+])[None, :, :]
+
+
+def test_linear_at_order_1_is_exactly_the_corner_reading():
+    """``linear_scaled_jacobian(mesh, order=1)`` must be ``corner_scaled_jacobian``,
+    bit for bit: it is the same map (the trilinear hex through the 8 corners), read
+    at the same 8 points."""
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    assert np.array_equal(hexmesh.linear_scaled_jacobian(mesh, order=1),
+                          hexmesh.corner_scaled_jacobian(mesh))
+
+
+def test_clean_corners_can_still_fold_between_them():
+    """The gap ``corner_scaled_jacobian`` cannot see: an element every one of whose
+    8 vertices reads positive, whose trilinear interior still folds once resampled
+    at the order a real solver actually runs."""
+    pts, hexes = CORNER_CLEAN_TRILINEAR_FOLDED[0], corner_indices(2, 3)[None, :]
+    assert corner_scaled_jacobian(pts, hexes)[0] > 0.0
+
+    corners_nek_order = pts[corner_indices(2, 3)]      # (8,3), the 8 actual corners
+    tensor_block = np.empty((1, 8, 3))
+    tensor_block[0, corner_indices(1, 3), :] = corners_nek_order
+    sj7 = sampled_scaled_jacobian(tensor_block, 1, 7, 3)
+    assert sj7[0] == pytest.approx(-0.01509415, abs=1e-6)
+
+
+def test_linear_order_scan_needs_no_mesh_order_floor():
+    """Unlike ``order_scan``, the trilinear map is not stored at any order, so
+    ``order=1`` is always a legitimate reading of it -- even on a curved mesh."""
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    scan = hexmesh.linear_order_scan(mesh, orders=[1, 3], budget=10 ** 12)
+    assert scan.orders == (1, 3)
+
+
+def test_linear_order_scan_refuses_order_below_one():
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=1), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    with pytest.raises(ValueError, match="order must be >= 1"):
+        hexmesh.linear_order_scan(mesh, orders=[0])
+
+
+def test_linear_order_scan_defaults_to_the_solver_order():
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    assert hexmesh.linear_order_scan(mesh, budget=10 ** 12).orders == (SCAN_ORDER,)
+
+
+def test_linear_order_scan_respects_the_budget():
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 8)
+    scan = hexmesh.linear_order_scan(mesh, budget=1)
+    assert scan.orders == ()
+    assert scan.skipped == (SCAN_ORDER,)
+    assert not scan.clean
+
+
+def test_report_includes_linear_sampling_above_order_1():
+    section2 = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh2 = hexmesh.extrude(section2, 1.0, 2)
+    assert "linear sampling" in hexmesh.report(mesh2)
+
+    section1 = quadmesh.ogrid(linemesh.circle(1.0, 8, order=1), 2, 2)
+    mesh1 = hexmesh.extrude(section1, 1.0, 2)
+    assert "linear sampling" not in hexmesh.report(mesh1)
+
+
+def test_report_warns_on_a_linear_sampling_fold(caplog):
+    """A sound mesh must stay quiet -- this only pins that the *sound* case does not
+    spuriously warn; the real fold is covered directly above."""
+    section = quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 2)
+    mesh = hexmesh.extrude(section, 1.0, 2)
+    with caplog.at_level("WARNING"):
+        hexmesh.report(mesh)
+    assert "trilinear geometry is resampled" not in caplog.text

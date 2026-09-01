@@ -17,7 +17,9 @@ from .._typing import (
     StrArray,
 )
 from ..core import conform, stations
+from ..core.conform import _LOCAL_FACES
 from ..core.fields import gll_nodes
+from ..core.interp import _CORNER_IJK, resample_block_at
 from ..core.tags import (
     ElementTags,
     element_mask,
@@ -28,10 +30,18 @@ from ..core.tags import (
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
+from ..quadmesh._helpers import entities_from_blocks
+from ..quadmesh.assemble import _refine_parts as quad_refine_parts
 from ..quadmesh.assemble import _subset as quad_subset
 from ..quadmesh.query import element_blocks as quad_blocks
+from ._helpers import (
+    _HEX_OCTANT_OUTER,
+    face_lex_perm,
+    hex_face_full_slots,
+    octant_corner_ids,
+)
 from .hexmesh import HexMesh, _sweep_at
-from .query import _boundary_points, boundary_face_ids, tagged_faces
+from .query import _boundary_points, boundary_face_ids, element_blocks, tagged_faces
 
 _log = logging.getLogger(__name__)
 
@@ -826,29 +836,36 @@ def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray
     return ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
 
 
-def _face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
-                side: str) -> IntArray:
-    """The seam's face ids on one side, from a tag name or given outright."""
+def face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
+               side: str, who: str = "attach") -> IntArray:
+    """One stated group's face ids, from a tag name or given outright, checked to be
+    on the block's **boundary**.
+
+    The resolution step every operation that is *told* which faces it acts on shares --
+    :func:`attach` and :func:`periodic_pairs
+    <nekmeshpy.hexmesh.periodic.periodic_pairs>` both start here.  ``side`` names the
+    argument that supplied the group and ``who`` the operation asking, so a message
+    from an n-ary call says which of several groups was wrong."""
     if isinstance(which, str):
         try:
             ids = tagged_faces(mesh, which)
         except ValueError as exc:
             # with several seams in one call, "no face carries the tag" is unactionable
             # unless it says which seam asked for it
-            raise ValueError("attach: %s: %s" % (side, exc)) from None
+            raise ValueError("%s: %s: %s" % (who, side, exc)) from None
     else:
         ids = np.asarray(which, dtype=np.int64).reshape(-1)
         if ids.size and (ids.min() < 0 or ids.max() >= mesh.quad_mesh.n_quads):
             raise ValueError(
-                "attach: %s names face %d, outside this mesh's %d shared faces"
-                % (side, int(ids.max()), mesh.quad_mesh.n_quads))
+                "%s: %s names face %d, outside this mesh's %d shared faces"
+                % (who, side, int(ids.max()), mesh.quad_mesh.n_quads))
     buried = ids[~boundary_face_ids(mesh)[ids]]
     if buried.size:
         raise ValueError(
-            "attach: %s names %d face(s) that already carry a hex on both sides (first "
-            "is face %d). Joining onto a buried face would make the seam non-manifold; "
+            "%s: %s names %d face(s) that already carry a hex on both sides (first "
+            "is face %d). A buried face is interior, not part of the domain boundary; "
             "name a group that is still on its block's boundary."
-            % (side, buried.size, int(buried[0])))
+            % (who, side, buried.size, int(buried[0])))
     return ids
 
 
@@ -969,8 +986,8 @@ def attach(meshes: Sequence[HexMesh], seams: Sequence[Seam]) -> HexMesh:
         ib = _block_index(sm.b, meshes, who + ".b")
         if sm.own not in ("a", "b"):
             raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
-        fa = _face_group(meshes[ia], sm.tag_a, who + ".tag_a")
-        fb = _face_group(meshes[ib], sm.tag_b, who + ".tag_b")
+        fa = face_group(meshes[ia], sm.tag_a, who + ".tag_a")
+        fb = face_group(meshes[ib], sm.tag_b, who + ".tag_b")
         if fa.size != fb.size:
             raise ValueError(
                 "attach: %s joins groups of different face counts (%d and %d), so they "
@@ -1078,14 +1095,173 @@ def components(mesh: HexMesh) -> list[HexMesh]:
     return [_subset(mesh, labels == c)[0] for c in range(n)]
 
 
+def refine(mesh: HexMesh) -> HexMesh:
+    """Uniform H-refinement: split every hex into 8 -- its own true cell-center point
+    plus the face-centers/edge-midpoints :func:`quadmesh.refine
+    <nekmeshpy.quadmesh.assemble.refine>` already puts on a quad's shared
+    ``line_mesh``.
+
+    Exact at any order, the same way ``linemesh.refine``/``quadmesh.refine`` are: the
+    new cell-center, and every child's own curved interior, are read off the parent's
+    *stored* polynomial map via the internal ``core.interp`` order-N kernel. A face
+    shared between two hexes is refined through the one shared ``quad_mesh`` exactly
+    once, so both neighbours land on the identical sub-faces automatically.
+
+    Every quad this rung ever needs -- the 4 sub-quads of each of the hex's own 6
+    faces, *and* the 12 new quads cutting through its interior -- goes through a
+    single, combined ``quadmesh._helpers.entities_from_blocks`` call, not two separate
+    ones. A new interior quad's own edge from an edge-midpoint to a face-center *is* one of
+    that face's own quadmesh.refine spokes (the face IS a quad, and the hex edge
+    bounding it IS one of its own sides) -- so deduplicating the interior quads
+    against the boundary ones after the fact, rather than in the same pass, mistook
+    that shared spoke for two different edges and left the mesh with a torn seam
+    there (a valence-1 edge where a real one has valence 2, easy to miss until the
+    result is refined again and the wrong edge count changes which faces new octants
+    can find).
+
+    Hex ``e``'s new cell-center is point id ``quadmesh.refine(mesh.quad_mesh).n_points
+    + e``. Child ``8*e + k`` (``k`` = 0..7, the ``_CORNER_IJK[3][k]`` corner) is the
+    octant nearer corner ``k``. One call is one level."""
+    order = mesh.order
+    refined_line, points_outer, outer_corners, outer_blocks = quad_refine_parts(
+        mesh.quad_mesh)
+    n_outer = outer_corners.shape[0]                        # 4 * mesh.quad_mesh.n_quads
+    n0_line = mesh.quad_mesh.line_mesh.n_points
+    n0_face_center = n0_line + mesh.quad_mesh.line_mesh.n_lines
+    blocks = element_blocks(mesh)                           # (E,(order+1)**3,3)
+    e_count = blocks.shape[0]
+
+    cell_center = resample_block_at(
+        blocks, order, [np.array([0.5])] * 3, 3)[:, 0, :]
+    points = np.concatenate([points_outer, cell_center])
+    cell_center_id = np.arange(points_outer.shape[0], points_outer.shape[0] + e_count,
+                               dtype=np.int64)
+
+    corners = mesh.corners
+    elem_edges = mesh._elem_edges
+    hexes_faces = mesh.hexes
+    g = gll_nodes(order)
+    npel = (order + 1) ** 3
+
+    octant_corners = np.empty((8, e_count, 8), dtype=np.int64)
+    octant_blocks = np.empty((8, e_count, npel, 3), dtype=float)
+    for k, (bu, bv, bw) in enumerate(_CORNER_IJK[3]):
+        octant_corners[k] = octant_corner_ids(
+            k, corners, elem_edges, hexes_faces, n0_line, n0_face_center, cell_center_id)
+        octant_blocks[k] = resample_block_at(
+            blocks, order, [0.5 * g + 0.5 * bu, 0.5 * g + 0.5 * bv, 0.5 * g + 0.5 * bw], 3)
+
+    # -- the 12 new interior quads per hex, 3 per octant, deduplicated by corner
+    # point-id SET (each is shared by exactly 2 octants of the SAME parent hex, never
+    # across hexes -- a hex's own cell-center id is private to it), collapsing 24E raw
+    # rows to 12E genuine ones.
+    full_slots = hex_face_full_slots(order)
+    inner_slots: list[tuple[int, int]] = []
+    inner_corners_parts: list[IntArray] = []
+    inner_blocks_parts: list[PointArray] = []
+    for k in range(8):
+        for f in range(6):
+            if _HEX_OCTANT_OUTER[k, f]:
+                continue
+            inner_slots.append((k, f))
+            inner_corners_parts.append(octant_corners[k][:, _LOCAL_FACES[f]])
+            perm = face_lex_perm(f, order)
+            raw = octant_blocks[k][:, full_slots[f], :]
+            inner_blocks_parts.append(raw[:, perm, :])
+
+    inner_corners_all = np.concatenate(inner_corners_parts, axis=0)      # (24E,4)
+    inner_blocks_all = np.concatenate(inner_blocks_parts, axis=0)        # (24E,nface,3)
+    key = np.sort(inner_corners_all, axis=1)
+    _, inv = np.unique(key, axis=0, return_inverse=True)
+    inv = inv.ravel()
+    _, first = np.unique(inv, return_index=True)          # first[group] -> raw row id
+    unique_corners = inner_corners_all[first]              # (12E,4) -- the canonical row
+    unique_blocks = inner_blocks_all[first]                # (12E,nface,3)
+
+    # -- one combined B-rep for every quad this rung has: the 4*n_quads boundary
+    # sub-quads first (rows [0, n_outer)), the 12E interior ones after (rows
+    # [n_outer, n_outer+12E)) -- so a shared spoke edge is deduplicated once, between
+    # whichever of the two actually border it, regardless of family.
+    combined_corners = np.concatenate([outer_corners, unique_corners])
+    combined_blocks = np.concatenate([outer_blocks, unique_blocks])
+    combined_lm, combined_quads, combined_orient, combined_interior = entities_from_blocks(
+        combined_blocks, combined_corners, points, order, "hexmesh.refine")
+
+    if len(refined_line.element_tags):
+        match = conform.locate_rows(combined_lm.lines, refined_line.lines,
+                                   who="hexmesh.refine", what="refined edge")
+        combined_lm = LineMesh(combined_lm.points, combined_lm.lines,
+                               combined_lm.interior,
+                               refined_line.element_tags.renumber(match))
+
+    # face (BC) tags: the boundary sub-quads inherit their parent quad's tag,
+    # consecutively (child 4*q+k copies quad q) -- see linemesh.refine's own note on
+    # why this is ``gather``, not ``repeat_blocks``. The 12E new interior quads are
+    # untagged (an interior split, not a boundary), so nothing is added for them.
+    face_tags = mesh.quad_mesh.element_tags.gather(
+        np.repeat(np.arange(mesh.quad_mesh.n_quads), 4))
+    combined_qm = QuadMesh(combined_lm, combined_quads, combined_orient,
+                           combined_interior, face_tags)
+
+    inner_face_id = n_outer + inv                          # (24E,) -- per raw occurrence
+    inner_canonical = unique_corners[inv]                  # (24E,4) -- its group's row
+
+    # -- both families' D4 codes: face_frame_code reads its face index positionally off
+    # axis 1 (it takes all 6 faces of a hex at once, (E,6,4)) and interprets the code
+    # through _CANON_QIDX[f] -- the SAME table hex_corners_from_faces reads it back
+    # through -- so outer and inner faces alike must go through it at the CORRECT face
+    # slot, never sliced to one face at a time (which silently reads the wrong row of
+    # its own lookup table) and never through quad_frame_code's bare-CCW table (which
+    # does not agree with _CANON_QIDX wherever a face's own frame is not the identity,
+    # e.g. face 2/3/4 -- see _FACE_TRANSFORM).
+    hex_faces: IntArray = np.empty((8, e_count, 6), dtype=np.int64)
+    hex_orient: IntArray = np.empty((8, e_count, 6), dtype=np.int64)
+    for k in range(8):
+        local_all = octant_corners[k][:, _LOCAL_FACES]              # (E,6,4)
+        canonical_all = local_all.copy()
+        match_all = np.zeros((e_count, 6), dtype=np.int64)
+        for f in range(6):
+            if _HEX_OCTANT_OUTER[k, f]:
+                match = conform.locate_rows(outer_corners, local_all[:, f, :],
+                                           who="hexmesh.refine", what="outer face")
+                match_all[:, f] = match
+                canonical_all[:, f, :] = outer_corners[match]
+            else:
+                row = inner_slots.index((k, f))
+                sl = slice(row * e_count, (row + 1) * e_count)
+                match_all[:, f] = inner_face_id[sl]
+                canonical_all[:, f, :] = inner_canonical[sl]
+        codes = conform.face_frame_code(local_all, canonical_all)
+        hex_faces[k] = match_all
+        hex_orient[k] = codes
+
+    # -- assemble the 8 children: hexes/orient per octant, private interior sliced from
+    # each octant's own resampled block, region tags repeated onto all 8 children.
+    hexes = np.empty((8 * e_count, 6), dtype=np.int64)
+    orient = np.empty((8 * e_count, 6), dtype=np.int64)
+    interior = np.empty((8 * e_count, (order - 1) ** 3, 3), dtype=float)
+    islots = conform._interior_slots(3, order)
+    for k in range(8):
+        hexes[k::8] = hex_faces[k]
+        orient[k::8] = hex_orient[k]
+        interior[k::8] = octant_blocks[k][:, islots, :]
+
+    # each parent's region tag propagates to all 8 children, consecutively -- see
+    # linemesh.refine's own note on why this is ``gather``, not ``repeat_blocks``.
+    element_tags = mesh.element_tags.gather(np.repeat(np.arange(e_count), 8))
+    return HexMesh(combined_qm, hexes, orient, interior, element_tags)
+
+
 __all__ = [
     "Seam",
     "attach",
     "components",
+    "face_group",
     "loft",
     "loft_fn",
     "loft_spline",
     "merge",
+    "refine",
     "remove",
     "select",
 ]

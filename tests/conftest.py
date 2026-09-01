@@ -152,6 +152,25 @@ def read_re2_boundary(path):
         for r in rows)
 
 
+def read_re2_periodic(path):
+    """``{(element, face): (partner element, partner face)}`` over the ``.re2``'s ``P``
+    rows -- all 1-based, as the file stores them.
+
+    :func:`read_re2_boundary` deliberately drops ``bc(1..5)``; a periodic row is the one
+    kind whose meaning lives there, so it gets its own reader rather than widening that
+    one's tuple (the golden test compares its Counter)."""
+    with open(path, "rb") as f:
+        hdr = f.read(80)
+        f.read(4)
+        num_elem = int(hdr.split()[1])
+        np.fromfile(f, dtype="<f8", count=num_elem * 25)
+        rest = f.read()
+    n_bnd = int(np.frombuffer(rest[:16], dtype="<f8")[1])
+    rows = np.frombuffer(rest[16:16 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
+    return {(int(r[0]), int(r[1])): (int(r[2]), int(r[3])) for r in rows
+            if struct.pack("<d", r[7]).decode("ascii", "replace").rstrip("\x00 ") == "P"}
+
+
 def face_rows(mesh):
     """``[(element, face, tag), ...]`` for a ``HexMesh``, lexsorted by (element, face).
 

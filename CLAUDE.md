@@ -7,8 +7,7 @@ pip install -e ".[all,dev]"
 
 ruff check nekmeshpy tests examples   # CI's own target; docs/ lints clean too
 mypy                          # config pins files=["nekmeshpy"]; do NOT pass paths
-python -m pytest              # addopts deselect `slow`
-python -m pytest -m slow      # femoral, the one gmsh example
+python -m pytest              # every test in tests/, on every push
 python docs/_ext/gen_viewer_assets.py   # regenerate the gallery's .vtp assets
 sphinx-build -b html -n -W --keep-going docs docs/_build/html
 ```
@@ -71,20 +70,43 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 
 | module | Δ | contents |
 |---|---|---|
-| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge`, `attach` — n-ary; `select` / `remove` / `components` — the inverse |
+| `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge`, `attach`, `refine` — n-ary; `select` / `remove` / `components` — the inverse |
 | `lift.py` | +1 | `extrude` / `sweep` / `annulus` / `from_grid`; `adapter` / `bridge` hex-only |
 | `lower.py` | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
 | `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
+| `periodic.py` | exit | `Periodic` / `periodic_pairs` — hex-only; `attach`'s stated pairing *without* the weld, as the face↔face table a Nek `P` boundary row needs |
 | `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` |
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
 | `tag.py` | 0 | `retag_element`; `retag_point` / `retag_edge` / `retag_face` — rename the tag vocabulary, geometry untouched. Plus the authoring bridges: `quadmesh.tag_edges` takes `(quad, side)` rows, since factories think element-locally; `hexmesh.tag_faces` takes face ids, the natural handle after a weld |
 
-**`loft`, `merge`, `attach`, `select`/`remove`/`components` and `boundary_mesh` are the
-only operations that manufacture a global index space** — `select` and its kin are `merge`
-run backwards, and sit beside it for that reason. To place a new operation: *invents a
-numbering?* → `assemble` (unless it is boundary extraction → `lower`); *changes rung?* →
-`lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`. `morph` is for the
-*geometry* at delta 0, which is why a retag is not in it.
+**`loft`, `merge`, `attach`, `refine`, `select`/`remove`/`components` and `boundary_mesh`
+are the only operations that manufacture a global index space** — `select` and its kin
+are `merge` run backwards, and sit beside it for that reason. To place a new operation:
+*invents a numbering?* → `assemble` (unless it is boundary extraction → `lower`);
+*changes rung?* → `lift`/`lower`; *only renames tags?* → `tag`; *neither?* → `morph`.
+`morph` is for the *geometry* at delta 0, which is why a retag is not in it.
+
+**`refine` is uniform H-refinement, built bottom-up like the ladder itself.**
+`hexmesh.refine` calls `quadmesh.refine` on its shared faces, which calls
+`linemesh.refine` on its shared edges — so a face or edge shared between two elements
+is refined exactly once and its two neighbours automatically agree, the same reason the
+B-rep ladder makes conformality structural everywhere else. Each rung's split is exact
+at any polynomial order: the new midpoint/center/cell-center points and every child's
+own curved interior are read off the *stored* polynomial via `core.interp.
+resample_block_at` (a change of parametric evaluation point, not a resampling onto a
+coarser or straight-sided approximation) — refining a curved mesh does not facet it.
+One call is one level; refine `N` times for `N` levels.
+
+At the hex rung, every quad this rung needs — the 4 sub-quads of each of a hex's 6
+faces, *and* the 12 new quads cutting through its own interior — goes through **one**
+combined B-rep pass (`quadmesh._helpers.entities_from_blocks`), not two separate ones.
+A new interior quad's own edge from an edge-midpoint to a face-center *is* one of that
+face's own `quadmesh.refine` spokes (the face is itself a quad, and the hex edge
+bounding it is one of its own sides) — deduplicating the interior quads against the
+boundary ones after the fact, rather than in the same pass, mistakes that shared spoke
+for two different edges and tears the mesh at a valence-1 seam a single level of refine
+never exposes; it only shows up once the result is itself refined again, when the wrong
+edge count changes which faces the new octants can find.
 
 A reflection has determinant −1, so `mirror` is the coordinate map **plus** a re-winding
 of the connectivity — never `transform` with a reflection matrix, which inverts every
@@ -149,10 +171,9 @@ inward, and the combinators carry it up.
 When testing curved geometry, assert on the **conformal node set**, not corners —
 corner-only passes on a mesh that is high-order in storage and linear in geometry.
 
-A split runs through quality too, though no longer the corner-vs-curved one: since
-`7eb73de` both rungs' `scaled_jacobian` / `quality_summary` read the **curved** block
-and there is no corner-only reading in the namespace (`quality.corner_scaled_jacobian`
-survives for linear meshes). What replaces it is a **sampling** split. The metric is
+A split runs through quality too, though mostly no longer the corner-vs-curved one:
+since `7eb73de` both rungs' `scaled_jacobian` / `quality_summary` read the **curved**
+block, and *that* split is now a **sampling** one. The metric is
 exact at the `(order+1)**dim` GLL nodes and silent between them, while an element's
 Jacobian determinant is a polynomial of far higher degree than its map — so a positive
 reading is not a certificate that the element is not folded. Measured: an order-2 quad
@@ -178,31 +199,53 @@ and folded at 8 and 11 (`hexmesh/quality.py`'s own record of it). At order 7 the
 The sampling is chunked, so peak memory is flat in mesh size and order (unchunked, 500k
 hexes at order 8 is 8.7 GB).
 
+**The corner-vs-curved split is back, for a narrower and different reason: `.re2` has
+no curved format at all.** `hexmesh.corner_scaled_jacobian` / `corner_summary` read the
+straight-sided hex through the 8 corners alone — the exact geometry `.re2` exports at
+any stored order — and are wired into `quality_summary` (above order 1): it still
+returns the curved `QualitySummary` unchanged, but now also runs the corner check and
+`logging.warning`s when the corners disagree with it, the same way `report`'s
+`order_scan` warns on a finer-lattice fold. This is not "the corner check is trustworthy
+again" — a corner reading still cannot see where the interior nodes went, so it is not a
+substitute for the curved one — it is specifically about what gets *written*: an element
+valid only because of its own curvature is valid as a mesh and inverted as a `.re2` file,
+and nothing else catches that. Found on `examples/wire_coil.py`: curved-clean at order 2
+(min `+0.11`), 4 elements read negative (min `-0.035`) at the corners alone — confirmed
+against Nek5000's own `VERRHE` check (`core/connect1.f`), which is exactly this
+computation and is what a real solver run failed on first.
+
 Order-N smoothing is not implemented: a repositioning smoother raises
 `NotImplementedError` above order 1 rather than degrading silently.
 
 ## `examples/femoral.py`: the one mesher with a solver under it
 
 It builds its own surface, tet-meshes the interior with **gmsh** (the only thing in the
-repo that needs it: `[all]`, or `[mesh]` alone; the wheel also wants `libGLU`, which the
-slow-examples CI job installs), solves P1 conduction in the volume, and cuts stations as
-level sets. Caches the surfaces and the tet solve under `examples/data/` — gitignored per
-file, since that directory also holds *tracked* inputs (`car.vtx` / `car.tri`).
+repo that needs it: `[all]`, or `[mesh]` alone; the wheel also wants `libGLU`, which is
+not installed in CI at all — see below), solves P1 conduction in the volume, and cuts
+stations as level sets. Caches the surfaces and the tet solve under `examples/data/` —
+gitignored per file, since that directory also holds *tracked* inputs (`car.vtx` /
+`car.tri`).
+
+**`femoral.py` is excluded from the test harness outright** — `EXCLUDED` in
+`tests/test_examples.py`, and `gen_viewer_assets.SKIP` alongside it — rather than run
+and marked slow. It still ships and is maintained as an example; running it is a manual
+step (below), not something CI or `python -m pytest` ever does.
 
 **gmsh does not tetrahedralize the same way twice** — not across machines, not run to run
 on one. Measured: 157402 / 157446 / 157483 nodes for identical input. So a result checked
 only against the cached tet mesh is not checked at all; three configurations passed
 locally and failed CI for exactly that. Delete `examples/data/femoral_tets.npz` and rerun
-before believing any quality number. This is why femoral is in `SLOW` (316 s cold, and CI
-is always cold) rather than in the default run.
+before believing any quality number.
 
-That non-determinism reaches the test suite: on one unchanged commit femoral's
-inverted-element check went 3 passes and 2 failures (min scaled Jacobian -0.988,
--0.989), so it is in `NONDETERMINISTIC_QUALITY` — a **non-strict** xfail, unlike
-`KNOWN_INVERTED` next to it, because passing is the ordinary outcome and must not be an
-error either. It is marked so a draw of the dice cannot redden an unrelated change, not
-because the defect is accepted: the fix is the layer thickness below, and when the
-mesher no longer depends on the draw the entry comes out.
+That non-determinism is *why* `EXCLUDED` drops it rather than marking it slow: on one
+unchanged commit femoral's inverted-element check went 3 passes and 2 failures (min
+scaled Jacobian -0.988, -0.989), which was carried for a while as a non-strict xfail
+(`NONDETERMINISTIC_QUALITY`) — passing was the ordinary outcome, so it could not be an
+error either. A check whose result is a draw of the dice is not a check, so it was
+retired along with the CI job that ran it rather than kept failing 40% of the time. The
+underlying defect is not accepted, only no longer watched here: the fix is the layer
+thickness below, and it belongs back in the harness once the mesher no longer depends on
+the draw.
 
 What makes the mesher independent of that draw is **layer thickness**, not tolerance.
 `snap_to_wall` moves a node a fixed distance, so the distortion is that distance
@@ -284,6 +327,67 @@ and *which* pairs depended on where the model sat in space, since translating ev
 by `tol/2` moves the cell edges. Measured: a pair 1.697*tol apart welded. It also made
 `tol` a lie exactly where it was load-bearing — chimera_full picks 0.04 to stay under a
 real 0.05 feature, and `0.04*sqrt(3)` is 0.069.
+
+**A periodic pair is `attach` stopped one step early.** `hexmesh.periodic_pairs`
+resolves the same *stated* correspondence between two named face groups, proved the same
+way — bijectivity, no tolerance — and then does **not** weld: the two sides stay two
+distinct boundary faces with their own names, which is what a periodic boundary is. What
+it returns is a `(2K,4)` table of `[element, face, partner element, partner face]`, both
+directions, and `to_re2(..., periodic=)` writes it into the boundary record's `bc(1)` /
+`bc(2)` — the fields a `'P  '` row is meaningless without, and which nothing else in the
+writer ever touches.
+
+The one thing it takes that `attach` refuses to is a **transform**. `attach` needs none
+because its halves are meant to end up in the same place, so nearest-neighbour reads the
+intended correspondence directly; a periodic pair's halves sit a lattice vector apart,
+where the nearest face across the gap is not the periodic image. Stating the map is also
+what makes it checkable — the worst residual after mapping is compared against
+`conform.entity_tol`, so a mis-typed pitch raises quoting the number instead of writing a
+mesh the solver mis-solves. Two things it still cannot catch: a group with a rotational
+symmetry of its own pairs bijectively at residual **zero** onto a cyclic shift (`attach`'s
+own trap), and Nek identifies the two sides in the **global Cartesian frame** — it does
+not rotate a vector across a periodic face, so a rotational pair is a periodicity for a
+scalar and for a velocity field only where that field is invariant in that frame.
+
+Both halves must be named **distinctly**: one tag over both ends of a cell cannot say
+which end is which, and no coordinate can guess it, so `examples/wire_coil.py` splits its
+`cut` into `cut_lo` / `cut_hi` at the three points it is applied. `to_re2` then enforces
+the biconditional **a name coded `'P  '` ⟺ a name in `periodic=`** — a `'P  '` with no
+pairing writes partner element 0, face 0, and a pairing with no `'P  '` exports as
+something else; neither is visible until the solver reads the mesh.
+
+**A conjugate mesh also needs `to_re2(..., fluid=)`.** Nek's `.re2` header carries two
+element counts, `nelgt` (total) and `nelgv` (velocity mesh): a conjugate run solves
+momentum on the first `nelgv` elements only, and expects them **listed first,
+contiguously** — a region *tag* saying which hex is fluid is not what the solver reads,
+the file's own element order is. Before `fluid=` existed, `to_re2` always wrote
+`nelgv == nelgt`, so every conjugate example (`wire_coil.py`, `rod_bundle.py`) exported
+a mesh Nek would run as single-domain, silently solving momentum in the solid too.
+`fluid=` names the velocity-mesh region (`element_mask`'s usual tag-string / bool-mask /
+id-array forms) and reorders the **written bytes** — corners, every boundary row's own
+element, and a periodic row's partner — through the fluid-first permutation; the
+returned `HexMesh` object itself is untouched. `fluid=None` keeps every element as
+velocity-mesh, which is today's behavior and the right one for a single-domain mesh.
+
+**`nelgv < nelgt` also means a second boundary block, or Nek's own reader dies reading
+it.** Found by actually running a mesh (`ierr=4` reading `.re2` boundary data): Nek5000's
+`read_re2_data` (`core/reader_re2.f`) sets `nfldt = max(nfldt, 2)` unconditionally the
+moment `nelgt > nelgv`, and then reads that many boundary blocks back to back —
+regardless of what the header's own field count says, and regardless of whether the case
+even solves heat. A file with only one block reads its first (velocity) fine and then
+tries to read a second block that was never written. `to_re2(..., thermal=)` is that
+second field's own name → code table, over **every** element (not just fluid ones,
+unlike `groups`, which is now the velocity field's own scoped table) — required exactly
+when `fluid=` makes `nelgv < nelgt`, and refused otherwise since there is then only one
+block to write. A name omitted from `thermal=` is left conformal (`'E  '`), which is
+normally right for a genuine conjugate interface: velocity needs an explicit wall
+because the solid side carries no velocity unknown to continue into, but temperature is
+solved on both sides, so nothing needs stating. Each field's own periodic-name check
+(`groups`'s `'P  '` names vs. `periodic=`'s pairs) runs **within that field's own
+region** — `wire_coil`'s `inlet`/`outlet` are periodic for both fields, `cut_lo`/`cut_hi`
+(solid) only for temperature, so `groups` (velocity) never mentions them at all. A name
+coded in `groups` that lands on a non-fluid element raises rather than corrupting Nek's
+`nel=nelv` invariant for that block.
 
 **`merge`'s `tol` is a fraction, not a distance** — of `conform.bbox_scale`, the largest
 of the x/y/z ranges over every point handed in, so the radius is `tol * bbox_scale` and

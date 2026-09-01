@@ -17,6 +17,7 @@ from .._typing import (
 )
 from ..core import conform, stations
 from ..core.fields import gll_nodes
+from ..core.interp import _CORNER_IJK, resample_block_at
 from ..core.tags import (
     ElementTags,
     element_mask,
@@ -26,13 +27,15 @@ from ..core.tags import (
 )
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _subset as line_subset
+from ..linemesh.assemble import refine as line_refine
 from ..linemesh.query import element_blocks as line_blocks
 from ..pointmesh import PointMesh
+from ._helpers import entities_from_blocks
 from .quadmesh import (
     QuadMesh,
     _quad_interior_slots,
 )
-from .query import _boundary_mask, tagged_edges
+from .query import _boundary_mask, element_blocks, tagged_edges
 
 
 def loft(
@@ -758,6 +761,89 @@ def components(mesh: QuadMesh) -> list[QuadMesh]:
     return [_subset(mesh, labels == c)[0] for c in range(n)]
 
 
+def _refine_parts(mesh: QuadMesh) -> tuple[LineMesh, PointArray, IntArray, PointArray]:
+    """The pieces of :func:`refine` from before its own :func:`entities_from_blocks
+    <nekmeshpy.quadmesh._helpers.entities_from_blocks>` call: ``(refined_line, points,
+    flat_corners, flat_blocks)`` -- ``points`` already includes every quad's new
+    center, and ``flat_corners``/``flat_blocks`` are the ``4*n_quads`` sub-quads' own
+    corner ids and curved blocks, in ``4*q+k`` order.
+
+    Split out so :func:`hexmesh.refine <nekmeshpy.hexmesh.assemble.refine>` can fold
+    its own new (hex-interior) quads into the *same* ``entities_from_blocks`` call
+    this makes -- an edge on the boundary between an original quad's own refinement
+    and a hex's new interior split (a face-center-to-edge-midpoint spoke, which is
+    both at once) must be deduplicated in one pass, not stitched after the fact."""
+    order = mesh.order
+    refined_line = line_refine(mesh.line_mesh)
+    n0_line = mesh.line_mesh.n_points
+    blocks = element_blocks(mesh)                          # (Q, (order+1)**2, 3)
+    q_count = blocks.shape[0]
+
+    centers = resample_block_at(
+        blocks, order, [np.array([0.5]), np.array([0.5])], 2)[:, 0, :]
+    points = np.concatenate([refined_line.points, centers])
+    center_id = np.arange(refined_line.n_points, refined_line.n_points + q_count,
+                          dtype=np.int64)
+
+    c = mesh.corners                                        # (Q,4) point ids, CCW
+    mid = n0_line + mesh.quads                              # (Q,4) side-midpoint ids
+
+    # quadrant k's 4 corners, CCW, matching _CORNER_IJK[2] = [(0,0),(1,0),(1,1),(0,1)]
+    subcorners = np.stack([
+        np.stack([c[:, 0], mid[:, 0], center_id, mid[:, 3]], axis=1),
+        np.stack([mid[:, 0], c[:, 1], mid[:, 1], center_id], axis=1),
+        np.stack([center_id, mid[:, 1], c[:, 2], mid[:, 2]], axis=1),
+        np.stack([mid[:, 3], center_id, mid[:, 2], c[:, 3]], axis=1),
+    ], axis=0)                                              # (4,Q,4)
+
+    g = gll_nodes(order)
+    row = (order + 1) ** 2
+    subblocks = np.empty((4, q_count, row, 3), dtype=float)
+    for k, (bu, bv) in enumerate(_CORNER_IJK[2]):
+        subblocks[k] = resample_block_at(
+            blocks, order, [0.5 * g + 0.5 * bu, 0.5 * g + 0.5 * bv], 2)
+
+    flat_corners = subcorners.transpose(1, 0, 2).reshape(4 * q_count, 4)
+    flat_blocks = subblocks.transpose(1, 0, 2, 3).reshape(4 * q_count, row, 3)
+    return refined_line, points, flat_corners, flat_blocks
+
+
+def refine(mesh: QuadMesh) -> QuadMesh:
+    """Uniform H-refinement: split every quad into 4 -- its own true center point plus
+    the edge midpoints :func:`linemesh.refine <nekmeshpy.linemesh.assemble.refine>`
+    already put on its shared ``line_mesh``.
+
+    Exact at any order, the same way ``linemesh.refine`` is: the new center, and every
+    child's own curved interior, are read off the parent's *stored* polynomial map via
+    the internal ``core.interp`` order-N kernel, not a bilinear guess through the
+    corners. An edge shared between two quads is refined
+    through the one shared ``line_mesh`` exactly once, so both neighbours land on the
+    identical midpoint automatically -- no coincidence weld needed for that; the new
+    per-quad center points are then welded/deduped implicitly too, since each is
+    private to its own quad and never shared.
+
+    Quad ``q``'s new center is point id ``linemesh.refine(mesh.line_mesh).n_points +
+    q``. Child ``4*q + k`` (``k`` = 0..3, the ``_CORNER_IJK[2][k]`` corner) is the
+    quadrant nearer corner ``k``. One call is one level."""
+    order = mesh.order
+    refined_line, points, flat_corners, flat_blocks = _refine_parts(mesh)
+    q_count = mesh.n_quads
+
+    lm, elem_edges, flip, interior = entities_from_blocks(
+        flat_blocks, flat_corners, points, order, "quadmesh.refine")
+
+    if len(refined_line.element_tags):
+        match = conform.locate_rows(lm.lines, refined_line.lines,
+                                    who="quadmesh.refine", what="refined edge")
+        lm = LineMesh(lm.points, lm.lines, lm.interior,
+                     refined_line.element_tags.renumber(match))
+
+    # each parent's tag propagates to all 4 children, consecutively -- see
+    # linemesh.refine's own note on why this is ``gather``, not ``repeat_blocks``.
+    element_tags = mesh.element_tags.gather(np.repeat(np.arange(q_count), 4))
+    return QuadMesh(lm, elem_edges, flip, interior, element_tags)
+
+
 __all__ = [
     "Seam",
     "attach",
@@ -766,6 +852,7 @@ __all__ = [
     "loft_fn",
     "loft_spline",
     "merge",
+    "refine",
     "remove",
     "select",
 ]

@@ -79,7 +79,14 @@ placed into one of these.
    :members:
 ```
 
-### `hexmesh.query` — read-only: `bounds`/`centroid`/`volume`, `quality_summary`/`scaled_jacobian` (mesh-level; see the note under `hexmesh.quality` above), topology (`report`/`tag_report`/`is_watertight`/`is_conforming`/`is_overlap_free`), `classify_points`, `tagged_faces`, boundary queries
+### `hexmesh.periodic` — read-only: `Periodic`/`periodic_pairs`, the stated face↔face correspondence a Nek `'P  '` boundary row needs — `attach`'s pairing, with a transform and without the weld
+
+```{eval-rst}
+.. automodule:: nekmeshpy.hexmesh.periodic
+   :members:
+```
+
+### `hexmesh.query` — read-only: `bounds`/`centroid`/`volume`, `quality_summary`/`scaled_jacobian` (mesh-level; see the note under `hexmesh.quality` above), `corner_summary`/`corner_scaled_jacobian` (the linear geometry `.re2` actually exports), topology (`report`/`tag_report`/`is_watertight`/`is_conforming`/`is_overlap_free`), `classify_points`, `tagged_faces`, `face_rows`/`face_tag_rows`, boundary queries
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.hexmesh.query

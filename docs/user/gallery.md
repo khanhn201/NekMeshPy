@@ -145,7 +145,14 @@ rather than a body of its own, and the shared cell walls slide out of its way.
 A helical wire coiled inside a round pipe as a conjugate fluid/solid domain: the
 wire is an o-grid tube swept one turn per pitch, the pipe wall an annular solid
 shell, and the film, inter-turn wedge and axial core are fluid. Every face is
-tagged, with a conjugate `interface` between the two regions.
+tagged, with two conjugate surfaces between the two regions -- `coil` around the wire
+and `wall` at the pipe wall.
+
+The cell is two **whole** pitches, so its two axial ends are a periodic pair under a
+pure translation — the helix's screw symmetry has no rotation left in it at an integer
+number of turns. All four end groups (`inlet` / `outlet` for the fluid, `cut_lo` /
+`cut_hi` for the solid saw cut) export as Nek `P`, paired by
+{func}`hexmesh.periodic_pairs <nekmeshpy.hexmesh.periodic.periodic_pairs>`.
 
 ```{mesh-viewer} wire_coil
 ```
