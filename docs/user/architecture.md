@@ -84,7 +84,7 @@ Each ladder container also exposes derived `points`/`corners` views (see
 | `assemble.py` | `loft`/`loft_fn`/`loft_spline`, the two welds `merge`/`attach` (+ `Seam`), and their inverse `select`/`remove`/`components` |
 | `lift.py` | rung-raising: `extrude`/`sweep`/`sweep_path`/`annulus`/`from_grid`, plus hex-only `adapter`/`bridge` |
 | `lower.py` | `boundary_mesh` (Δ −1) — quad and hex only |
-| `morph.py` | `blend`, `translate`/`rotate`/`scale`/`transform`/`mirror`, `offset`; quad also `reindex`/`place_on_path`, line also `reverse` |
+| `morph.py` | `blend`, `translate`/`rotate`/`scale`/`transform`/`mirror`, `transform_fn` (a non-affine warp), `offset`; quad also `reindex`/`place_on_path`, line also `reverse` |
 | `tag.py` | `retag_*` (rename a vocabulary, geometry untouched) **and** the authoring bridges `quadmesh.tag_edges` / `hexmesh.tag_faces` |
 | `query.py` | reads: measures, `bounds`/`centroid`, `element_blocks`, `tagged_edges`/`tagged_faces`, plus hex `topology_report`/`report`/`tag_report` |
 | `shape.py` | factories: quad region fills and closed surfaces, line `line`/`arc`/`circle`/`rectangle`/`on_surface` and the fraction helpers, hex `tetra` |

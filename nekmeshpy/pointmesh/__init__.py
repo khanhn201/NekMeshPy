@@ -6,11 +6,12 @@ the rungs above index into. There are no factories, no shape model and no ``lift
 :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` reads as its own point tags.
 """
 
-from .morph import mirror, rotate, scale, transform, translate
+from .morph import NodeMap, mirror, rotate, scale, transform, transform_fn, translate
 from .pointmesh import PointMesh
 from .tag import retag_element
 
 __all__ = [
+    "NodeMap",
     "PointMesh",
     "mirror",
     "morph",
@@ -19,5 +20,6 @@ __all__ = [
     "scale",
     "tag",
     "transform",
+    "transform_fn",
     "translate",
 ]

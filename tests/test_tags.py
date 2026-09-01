@@ -318,6 +318,47 @@ def test_retag_face_drops_a_name_welded_shut(built_mesh):
     assert hexmesh.tag_report(got).n_untagged_boundary == n_drop
 
 
+def _row_of_three():
+    """Three unit hexes in a row along x, as three separate blocks."""
+    sec = quadmesh.from_grid(np.array([[[0.0, 0, 0], [0, 1, 0]],
+                                       [[1.0, 0, 0], [1, 1, 0]]]))
+    return [hexmesh.translate(hexmesh.extrude(sec, 1.0, 1, axis=(0, 0, 1)),
+                              (0, 0, float(k))) for k in range(3)]
+
+
+def test_merge_clear_seam_tags_true_drops_every_buried_name():
+    """A block named on its whole boundary, welded shut on two sides: with
+    ``clear_seam_tags=True`` only the faces that stayed on the boundary keep the name."""
+    a, b, c = _row_of_three()
+    a = hexmesh.tag_faces(a, np.arange(a.quad_mesh.n_quads), "skin")   # every face
+    plain = hexmesh.merge([a, b, c])
+    kept = hexmesh.merge([a, b, c], clear_seam_tags=True)
+    assert plain.face_tags.count("skin") == 6            # 5 boundary + 1 buried
+    assert kept.face_tags.count("skin") == 5             # the buried one is gone
+    assert hexmesh.tag_report(kept).n_tagged_interior == 0
+    on_bdry = hexmesh.query.boundary_face_ids(kept)
+    assert on_bdry[np.asarray(kept.face_tags.ids)].all()
+
+
+def test_merge_clear_seam_tags_is_name_scoped_and_still_conflict_checks():
+    """A list clears only the named tags on buried faces; another tag on the same
+    buried face survives, and two different surviving names still raise."""
+    a, b, _ = _row_of_three()                            # stacked along z
+
+    def _cap(m, z):
+        fc = m.quad_mesh.points[np.asarray(m.quad_mesh.corners)].mean(axis=1)
+        return np.flatnonzero(np.isclose(fc[:, 2], z))
+
+    a = hexmesh.tag_faces(a, _cap(a, 1.0), "inlet")      # a's +z cap (welds to b)
+    b = hexmesh.tag_faces(b, _cap(b, 1.0), "wall")       # b's -z cap (same seam)
+    with pytest.raises(ValueError, match="two different names"):
+        hexmesh.merge([a, b])
+    got = hexmesh.merge([a, b], clear_seam_tags=["inlet"])
+    assert got.face_tags.group_tags == ["wall"]          # inlet cleared, wall kept
+    with pytest.raises(ValueError, match="two different names"):
+        hexmesh.merge([a, b], clear_seam_tags=["something-else"])
+
+
 # -- asymmetric boundary conditions --------------------------------------
 def _two_region_block():
     """Two stacked hexes, the interface between them named -- fluid below, solid above.

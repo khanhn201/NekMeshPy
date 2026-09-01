@@ -518,6 +518,7 @@ def merge(
     meshes: Sequence[HexMesh],
     *,
     tol: float = 1e-7,
+    clear_seam_tags: bool | str | Sequence[str] = False,
 ) -> HexMesh:
     """Stitch several hex blocks into one, coordinate-welding coincident seam points in
     a single pass. ``tol`` is a **fraction** of ``conform.bbox_scale`` -- the largest of
@@ -528,19 +529,33 @@ def merge(
     This is the **proximity** join: it is told nothing about what meets what and infers
     every seam in the assembly from coordinates, at one tolerance, over every block's
     whole boundary at once. When you know which face group meets which, :func:`attach`
-    states it and confines the search to those two groups."""
+    states it and confines the search to those two groups.
+
+    ``clear_seam_tags`` drops face names off the faces this weld **buries** -- a face
+    that comes out with a hex on both sides.  A buried face that keeps a name makes the
+    exporter write a boundary row from each side of it, so an interface you tag on the
+    section for one block's benefit and then weld shut has to be cleared afterwards;
+    this does it in the weld.  ``True`` clears every buried face; a name or list of
+    names clears only those, leaving every other tag (a genuine conjugate interface such
+    as a ``"solid"``/fluid wall) on the buried face and still subject to the
+    two-different-names-raise rule.  The default ``False`` keeps today's behaviour: a
+    buried face keeps whatever it was named.  This is :func:`attach`'s ``attach_tag=None``
+    rule, brought to the proximity join -- mesh a block with its whole outer surface
+    named, weld, and what stays named is exactly the part that stayed on the boundary."""
     meshes = list(meshes)
     pos = [m.points for m in meshes]
     points, point_id = conform.weld_points(
         pos, [_boundary_points(m.corners) for m in meshes], tol)
-    return _stitch(meshes, points, point_id, who="HexMesh.merge")
+    return _stitch(meshes, points, point_id, who="HexMesh.merge",
+                   clear_seam_tags=clear_seam_tags)
 
 
 def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *,
             who: str, seam_faces: Mapping[int, IntArray] | None = None,
             named_seams: Sequence[tuple[int, IntArray, str]] = (),
             own_faces: Mapping[int, IntArray] | None = None,
-            check: bool = True) -> HexMesh:
+            check: bool = True,
+            clear_seam_tags: bool | str | Sequence[str] = False) -> HexMesh:
     """Everything a weld does *after* the point remap is decided, shared by
     :func:`merge` and :func:`attach`: concatenate the blocks' B-rep tables, fuse the
     entities whose corners all welded, refit the seam's D4 codes, re-pin the shared
@@ -680,6 +695,16 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     # weld's own conflict rule rather than a concatenation -- which is the point of
     # storing the tag on the face: the disagreement is now visible instead of being
     # two rows nobody reconciles.
+    # faces this weld buried: one merged id carried by more than one hex-face slot
+    if clear_seam_tags is not False:
+        buried_face: BoolArray = np.bincount(
+            np.asarray(elem_faces, dtype=np.int64).reshape(-1),
+            minlength=canonical_conn.shape[0]) > 1
+        clear_names: list[str] | None = (
+            None if clear_seam_tags is True
+            else [clear_seam_tags] if isinstance(clear_seam_tags, str)
+            else [str(t) for t in clear_seam_tags])
+
     off = 0
     ftag_list: list[ElementTags] = []
     seam_merged: list[IntArray] = []
@@ -696,6 +721,11 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         ft = m.face_tags
         if seam_faces is not None and bi in seam_faces:
             ft = ft.select(~np.isin(ft.ids, np.asarray(seam_faces[bi], dtype=np.int64)))
+        if clear_seam_tags is not False and len(ft):
+            drop: BoolArray = buried_face[mine[ft.ids]]
+            if clear_names is not None:
+                drop = drop & np.isin(np.asarray(ft.tags), clear_names)
+            ft = ft.select(~drop)
         ftag_list.append(ft.renumber(mine))
         local_to_merged.append(mine)
         if seam_faces is not None and bi in seam_faces:

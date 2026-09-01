@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import numpy as np
@@ -14,10 +15,14 @@ from .._typing import (
     Vec3,
 )
 from ..core import affine, conform
+from ..pointmesh.morph import NodeMap, _mapped
 from ..quadmesh import QuadMesh
 from ..quadmesh.morph import _affine as quad_affine
+from ..quadmesh.morph import _transform_fn as quad_transform_fn
 from ..quadmesh.morph import blend as quad_blend
 from .hexmesh import HexMesh
+
+_log = logging.getLogger(__name__)
 
 
 def blend(a: HexMesh, b: HexMesh,
@@ -74,6 +79,30 @@ def transform(mesh: HexMesh, matrix: FloatArray,
     """
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
+
+
+def transform_fn(mesh: HexMesh, fn: NodeMap) -> HexMesh:
+    """A new block with every node -- the shared-face :class:`QuadMesh
+    <nekmeshpy.quadmesh.QuadMesh>` all the way down, and the private per-hex
+    ``interior`` -- mapped through an arbitrary ``fn``; :func:`transform` for a warp
+    that is not affine.  ``fn`` is called once per node block with an ``(N, 3)`` array
+    and must return ``(N, 3)``.  Connectivity and tags ride through verbatim.
+
+    ``fn`` can fold space; the result is checked and a ``logging.warning`` (not an
+    error) is emitted when any hex comes out inverted -- sampled on the stored map at
+    ``mesh.order``, a flag rather than a certificate, and no substitute for
+    :func:`quality_summary <nekmeshpy.hexmesh.query.quality_summary>` at the solver's
+    order.  It does **not** re-wind a reflection; use :func:`mirror` for that."""
+    from .query import quality_summary
+
+    out = HexMesh(quad_transform_fn(mesh.quad_mesh, fn), mesh.hexes, mesh.orient,
+                  _mapped(mesh.interior, fn), mesh.element_tags)
+    n = quality_summary(out).n_inverted
+    if n:
+        _log.warning(
+            "hexmesh.transform_fn: fn produced %d inverted hex(es) (scaled Jacobian "
+            "sampled at order %d); the warp folds the mesh there", n, out.order)
+    return out
 
 
 def translate(mesh: HexMesh, vector: Vec3 | Sequence[float]) -> HexMesh:
@@ -157,5 +186,6 @@ __all__ = [
     "rotate",
     "scale",
     "transform",
+    "transform_fn",
     "translate",
 ]

@@ -34,7 +34,7 @@ placed into one of these.
    :members:
 ```
 
-### `linemesh.morph` — Δ0: geometry at the same rung — `blend`, `reverse`, `offset`, and the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`
+### `linemesh.morph` — Δ0: geometry at the same rung — `blend`, `reverse`, `offset`, the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`, and `transform_fn` (a non-affine warp)
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.morph

@@ -292,10 +292,15 @@ free functions on the rung's namespace module (`linemesh.translate(mesh, ...)`,
 | `rotate(mesh, angle, axis=(0,0,1), center=(0,0,0))` | radians, right-handed |
 | `scale(mesh, factor, center=(0,0,0))` | scalar or per-axis `(3,)`, factors must be positive |
 | `mirror(mesh, normal, point=(0,0,0))` | reflection **plus** a re-winding of the connectivity |
-| `transform(mesh, matrix, offset=(0,0,0))` | the general case: `p @ matrix.T + offset` |
+| `transform(mesh, matrix, offset=(0,0,0))` | the general affine case: `p @ matrix.T + offset` |
+| `transform_fn(mesh, fn)` | `transform` with an arbitrary `(N,3) -> (N,3)` callable — a **curved** warp (wrapping a flat template onto a cylinder, a screw map, …) |
 
 Only coordinates move — connectivity and tags ride through verbatim. The map
-reaches every node including private high-order `interior`.
+reaches every node including private high-order `interior`, so a smooth `fn` keeps
+a curved mesh curved. `transform_fn` cannot re-wind: it `logging.warning`s when a
+`fn` folds an element locally at the quad/hex rungs (where volume is signed), and
+like `mirror` it has nothing to check at the line/point rungs. A `fn` that is a
+reflection everywhere is a job for `mirror`, not `transform_fn`.
 
 `mirror` is the one that is not just a coordinate map. A reflection has
 determinant −1, so at the quad and hex rungs it re-winds the connectivity (and

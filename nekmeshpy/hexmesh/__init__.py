@@ -24,7 +24,7 @@ from .lift import (
     sweep_path,
 )
 from .lower import boundary_mesh
-from .morph import blend, mirror, rotate, scale, transform, translate
+from .morph import blend, mirror, rotate, scale, transform, transform_fn, translate
 from .periodic import Periodic, PeriodicPairs, periodic_pairs
 from .quality import order_scan
 from .query import (
@@ -122,5 +122,6 @@ __all__ = [
     "tetra",
     "topology_report",
     "transform",
+    "transform_fn",
     "translate",
 ]

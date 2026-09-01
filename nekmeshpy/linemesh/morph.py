@@ -16,6 +16,7 @@ from .._typing import (
 from ..core import affine, conform
 from ..core.interp import _element_tangents
 from ..pointmesh import PointMesh
+from ..pointmesh.morph import NodeMap, _mapped
 from .linemesh import LineMesh
 from .query import boundary_points, element_blocks
 
@@ -112,6 +113,23 @@ def transform(mesh: LineMesh, matrix: FloatArray,
     """
     return _affine(mesh, np.asarray(matrix, dtype=float).reshape(3, 3),
                    np.asarray(offset, dtype=float).reshape(3))
+
+
+def transform_fn(mesh: LineMesh, fn: NodeMap) -> LineMesh:
+    """A new curve with every node -- corners and the private high-order ``interior``
+    alike -- mapped through an arbitrary ``fn``; :func:`transform` for a warp that is
+    not affine.  ``fn`` is called once per node block with an ``(N, 3)`` array and must
+    return ``(N, 3)``.  Connectivity and tags ride through verbatim.
+
+    This is the one rung -- with :class:`PointMesh <nekmeshpy.pointmesh.PointMesh>`
+    below it -- where the map is *only* coordinates: a line element has no signed
+    Jacobian, the same reason :func:`mirror` needs no re-winding here.  A curved
+    ``fn`` keeps a curved curve curved; a straight-subdivided one (order 1, or built
+    from an explicit point array) stays faceted between its corners -- ``fn`` moves the
+    nodes it is given, it does not add any."""
+    return LineMesh(PointMesh(_mapped(mesh.points, fn), mesh.point_tags),
+                    mesh.lines, _mapped(mesh.interior, fn),
+                    element_tags=mesh.element_tags)
 
 
 def translate(mesh: LineMesh, vector: Vec3 | Sequence[float]) -> LineMesh:
@@ -262,5 +280,6 @@ __all__ = [
     "rotate",
     "scale",
     "transform",
+    "transform_fn",
     "translate",
 ]

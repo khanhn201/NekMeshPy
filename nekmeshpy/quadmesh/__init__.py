@@ -23,6 +23,7 @@ from .morph import (
     rotate,
     scale,
     transform,
+    transform_fn,
     translate,
 )
 from .ports import Port, port
@@ -126,6 +127,7 @@ __all__ = [
     "sweep_path",
     "tag",
     "transform",
+    "transform_fn",
     "translate",
     "tri_patch",
     "tri_patch_tip",

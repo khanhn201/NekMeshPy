@@ -73,7 +73,7 @@ Siblings split on **arity** and **rung delta** (line → quad → hex):
 | `assemble.py` | +1 / 0 | `loft`, `loft_fn`, `loft_spline`, `merge`, `attach`, `refine` — n-ary; `select` / `remove` / `components` — the inverse |
 | `lift.py` | +1 | `extrude` / `sweep` / `annulus` / `from_grid`; `adapter` / `bridge` hex-only |
 | `lower.py` | −1 | `boundary_mesh` — the boundary **as** a mesh one rung down |
-| `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `reindex` quad-only |
+| `morph.py` | 0 | `blend`, `translate` / `rotate` / `scale` / `transform` / `mirror`; `transform_fn` — `transform` with an arbitrary `(N,3)->(N,3)` callable instead of a matrix, for a curved warp (`logging.warning`s a local fold at quad/hex; line/point have no signed measure, the `mirror` exception); `reindex` quad-only |
 | `periodic.py` | exit | `Periodic` / `periodic_pairs` — hex-only; `attach`'s stated pairing *without* the weld, as the face↔face table a Nek `P` boundary row needs |
 | `query.py` | exit | read-only queries, incl. `bounds` / `centroid` and the rung's own measure (`length` / `area` / `volume`); hex also topology / `report` |
 | `shape.py` | +1 | shape factories — own a *shape model*, unlike `lift` |
@@ -266,6 +266,18 @@ every block's whole boundary at once. That is why `examples/chimera_full.py:699`
 runs one seam at `0.04` and the assembly at `0.005` — "loosening the tolerance for
 the whole assembly welded an unrelated, closer-together pair by mistake." The 0.04 is
 picked to stay under a real 0.05 feature; see `merge_at` at `chimera_full.py:129`.
+
+`merge(..., clear_seam_tags=)` is `attach`'s `attach_tag=None` rule brought to the
+proximity join: it drops a face name off the faces this weld **buries** (a face that
+ends up with a hex on both sides — one that kept a name would make the exporter write a
+boundary row from each side). `True` clears every buried face; a name / list of names
+clears only those, leaving any other tag on the buried face (a real conjugate interface
+such as a fluid/solid wall) and still subject to the two-different-names-raise rule.
+The idiom it buys: name a block's *whole* outer surface on the section, weld, and what
+stays named is exactly the part that stayed on the boundary — `examples/wire_coil.py`
+tags the core's entire outer cylinder `"inlet"` and the last branch turn's core-side
+cap `"outlet"`, then `merge(..., clear_seam_tags=["inlet", "outlet"])` leaves only the
+wedge each helical band fails to cover.
 
 `attach(meshes, seams)` is told, by a `Seam` apiece, **which** group meets which — one
 rung down at each level: `face_tags` at the hex rung, `edge_tags` at the quad rung,
