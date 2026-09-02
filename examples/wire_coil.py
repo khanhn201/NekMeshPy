@@ -72,14 +72,28 @@ N_LAYERS = 3            # template v-rows per pitch == core z-layers/pitch
 COIL_TEMPLATE_SKEW = 0.1
 COIL_TEMPLATE_FRAC = 0.8
 
-
 INNER_ARC_DEG = 130.0
 OUTER_ARC_DEG = 110.0
 
 Ls = [-1, -0.7, 0.0, 0.7, 1]   # Latitude to mesh the coil
 
 
+COIL_BL = [0.0, 0.05, 0.1, 0.2, 1.0]
+WRAP_SHRINK = 0.07
+WRAP_KNEE = 1.0 - COIL_BL[-2]
+
+
+COIL_SHRINK = 0.30
+COIL_KNEE = 0.7        # |L| at which the shrink is fully on; flat between the knees
+
+
 ORDER = 2
+
+
+
+
+_BL_OUT = list(COIL_BL)                        # loft stack with the coil section first
+_BL_IN = [1.0 - f for f in reversed(COIL_BL)]  # ... with the coil section last
 
 
 assert N_THETA % N_LAYERS == 0
@@ -195,8 +209,6 @@ coil_template = quadmesh.merge([coil_template_inner,
 RISE = PITCH / (2.0 * np.pi)
 INNER_HALF = np.deg2rad(INNER_ARC_DEG / 2.0)
 OUTER_HALF = np.deg2rad(OUTER_ARC_DEG / 2.0)
-COIL_SHRINK = 0.30
-COIL_KNEE = 0.7        # |L| at which the shrink is fully on; flat between the knees
 
 
 def coil_arc_map(turn, L=1.0):
@@ -295,9 +307,6 @@ coil_inner = [quadmesh.transform_fn(coil_template_inner, coil_arc_map(k))
                        for k in range(TURNS_WIRE)]
 
 # -- Mesh branch from core to inner arc
-_clr_u = {"u0": "", "u1": ""}   # face_wrap doesn't use the wrap-only helix tags
-
-
 def _branch_sec(qm, k):
     # the inner's u0 (turn 0) / u1 (last turn) edges promote to branch's inlet / outlet
     return quadmesh.retag_edge(qm, {"u0": "inlet" if k == 0 else "",
@@ -308,7 +317,8 @@ def _branch_sec(qm, k):
 # "outlet" and let the final merge bury the part that welds onto the core, leaving
 # only the overhang tagged.
 branch = hexmesh.merge([
-    hexmesh.loft([_branch_sec(core_side[k], k), _branch_sec(coil_inner[k], k)],
+    hexmesh.loft(quadmesh.blend(_branch_sec(core_side[k], k),
+                                _branch_sec(coil_inner[k], k), _BL_IN),
                  first_tag="outlet" if k == TURNS_WIRE - 1 else None,
                  last_tag="coil")
     for k in range(TURNS_WIRE)])
@@ -348,13 +358,15 @@ mi_sheet = quadmesh.merge([quadmesh.loft(
 _lo_band = _u_tag(quadmesh.loft([lo_bound, lo_line]))
 _hi_band = _u_tag(quadmesh.loft([hi_line, hi_bound]), bottom_last=True)
 lower = hexmesh.merge([
-    hexmesh.loft([_branch_sec(quadmesh.transform_fn(_lo_band, coil_arc_map(k, 1.0)), k),
-                  quadmesh.loft([mi_arc[k], mi_core[k]])],
+    hexmesh.loft(quadmesh.blend(
+                     _branch_sec(quadmesh.transform_fn(_lo_band, coil_arc_map(k, 1.0)), k),
+                     quadmesh.loft([mi_arc[k], mi_core[k]]), _BL_OUT),
                  first_tag="coil", last_tag="inlet" if k == 0 else None)
     for k in range(TURNS_WIRE)], tol=1e-9)
 higher = hexmesh.merge([
-    hexmesh.loft([_branch_sec(quadmesh.transform_fn(_hi_band, coil_arc_map(k, 1.0)), k),
-                  quadmesh.loft([mi_core[k+1], mi_arc[k+1]])],
+    hexmesh.loft(quadmesh.blend(
+                     _branch_sec(quadmesh.transform_fn(_hi_band, coil_arc_map(k, 1.0)), k),
+                     quadmesh.loft([mi_core[k+1], mi_arc[k+1]]), _BL_OUT),
                  first_tag="coil", last_tag="outlet" if k == TURNS_WIRE - 1 else None)
     for k in range(TURNS_WIRE)], tol=1e-9)
 
@@ -371,13 +383,15 @@ def _mi_outer(k):
 
 
 cap_lo = hexmesh.merge([
-    hexmesh.loft([_u_tag_layers(_cap_outer(lo_bound, k, -1.0), _NL_CAP, k, "inlet", "outlet"),
-                  _mi_outer(k)],
+    hexmesh.loft(quadmesh.blend(
+                     _u_tag_layers(_cap_outer(lo_bound, k, -1.0), _NL_CAP, k, "inlet", "outlet"),
+                     _mi_outer(k), _BL_OUT),
                  first_tag="coil", last_tag="inlet" if k == 0 else None)
     for k in range(TURNS_WIRE)], tol=1e-9)
 cap_hi = hexmesh.merge([
-    hexmesh.loft([_u_tag_layers(_cap_outer(hi_bound, k, 1.0), _NL_CAP, k, "inlet", "outlet"),
-                  _mi_outer(k + 1)],
+    hexmesh.loft(quadmesh.blend(
+                     _u_tag_layers(_cap_outer(hi_bound, k, 1.0), _NL_CAP, k, "inlet", "outlet"),
+                     _mi_outer(k + 1), _BL_OUT),
                  first_tag="coil", last_tag="outlet" if k == TURNS_WIRE - 1 else None)
     for k in range(TURNS_WIRE)], tol=1e-9)
 
@@ -386,44 +400,34 @@ cap_hi = hexmesh.merge([
 
 
 
-# face_wrap: (1) the coil's outward OUTER_ARC_DEG surface (L = Ls[0]) + (2) the
-# OUTWARD lateral side of cap_lo / cap_hi -- the loft's tau = _TAU[0] (beta = b0,
-# the outer-arc-end) face, from _cap_wall out to _mi_outer's outermost profile.
+# face_wrap is split so the boundary layer turns along the pipe wall:
+# (1) face_wrap -- the coil's outward OUTER_ARC_DEG surface (L = Ls[0]), lofted radially
+# to the tube by film / pipe below.  The arc carries coil_template's u0/u1 -> inlet
+# (turn 0) / outlet (last turn), so film/pipe promote those to the film's axial ends.
+# (2) _rest_bands -- the OUTWARD lateral side of cap_lo / cap_hi (_cap_wall @ tau=_TAU[0],
+# the outer-arc end, out to _mi_scaled's rib), as a stack of blend profiles at the
+# COIL_BL fractions; wall_bl_hex / wall_bl2_hex / pipe_rest below carry it to the wall.
 _TAU = [l / Ls[-2] for l in Ls[1:-1]]
 face_wrap = quadmesh.merge(
-    [quadmesh.transform_fn(quadmesh.retag_edge(coil_template, _clr_u), coil_arc_map(k, Ls[0]))
-     for k in range(TURNS_WIRE)]
-    + [quadmesh.loft([_mi_scaled(k, _MI_LS[-1]), _cap_wall(lo_bound, k, -1.0, _TAU[0])])
-       for k in range(TURNS_WIRE)]
-    + [quadmesh.loft([_cap_wall(hi_bound, k, 1.0, _TAU[0]), _mi_scaled(k + 1, _MI_LS[-1])])
-       for k in range(TURNS_WIRE)], tol=1e-9)
+    [quadmesh.transform_fn(_branch_sec(coil_template, k), coil_arc_map(k, Ls[0]))
+     for k in range(TURNS_WIRE)], tol=1e-9)
 
 
-# face_wrap's boundary is two helix-cut loops; tag them so film/pipe promote them
-# to lateral faces.  higher-z loop -> outlet, lower -> inlet (fluid film ends); pipe
-# renames its copies to cut_hi / cut_lo below.
-def _tag_wrap_loops(qm):
-    be = quadmesh.boundary_edges(qm)                             # (N,2) quad, side
-    lid = np.asarray(qm.quads)[be[:, 0], be[:, 1] - 1]
-    ends = np.asarray(qm.line_mesh.lines)[lid]                   # (N,2) node ids
-    parent = np.arange(qm.line_mesh.n_lines)
-
-    def find(a):
-        while parent[a] != a:
-            parent[a] = parent[parent[a]]
-            a = parent[a]
-        return a
-
-    for a, b in ends:
-        parent[find(a)] = find(b)
-    root = np.array([find(a) for a in ends[:, 0]])
-    zmean = {r: qm.points[ends[root == r].ravel(), 2].mean() for r in np.unique(root)}
-    hi_root = max(zmean, key=zmean.get)
-    tags = np.where(root == hi_root, "outlet", "inlet")
-    return quadmesh.tag_edges(qm, be, list(tags))
+# one _rest_bands strip per turn per band: profiles from the _mi_scaled rib
+# (rim_close 0) to a face_wrap rim (rim_close 1), plus the rim_close array that drives
+# the trapezoidal wall map _wall_R below, plus the turn index.
+def _rest_band(k, hi):
+    if hi:
+        prof = linemesh.blend(_cap_wall(hi_bound, k, 1.0, _TAU[0]),
+                              _mi_scaled(k + 1, _MI_LS[-1]), _BL_OUT)
+        return prof, [1.0 - g for g in _BL_OUT], k
+    prof = linemesh.blend(_mi_scaled(k, _MI_LS[-1]),
+                          _cap_wall(lo_bound, k, -1.0, _TAU[0]), _BL_IN)
+    return prof, list(_BL_IN), k
 
 
-face_wrap = _tag_wrap_loops(face_wrap)
+_rest_bands = ([_rest_band(k, False) for k in range(TURNS_WIRE)]
+               + [_rest_band(k, True) for k in range(TURNS_WIRE)])
 
 
 # --- fluid film: face_wrap -> its radial projection onto the pipe wall (R_TUBE),
@@ -437,19 +441,77 @@ def _to_cyl(R):
 
 
 _wrap_tube = quadmesh.transform_fn(face_wrap, _to_cyl(R_TUBE))
-# face_wrap's first TURNS_WIRE blocks are the coil's OUTER_ARC surface (order-preserved
-# by merge); the film's face on that part is the coil conjugate interface.
-_wrap_coil = np.full(face_wrap.n_quads, "", dtype="<U8")
-_wrap_coil[:TURNS_WIRE * coil_template.n_quads] = "coil"
+# face_wrap is now the coil's OUTER_ARC surface only, so the whole film inner face is
+# the coil conjugate interface.
 film = hexmesh.loft([face_wrap, _wrap_tube],
-                    first_tag=ElementTags.from_dense(_wrap_coil),
+                    first_tag="coil",
                     last_tag="wall")   # R_TUBE: fluid film <-> pipe conjugate face
 pipe = hexmesh.retag_face(hexmesh.loft(
     [quadmesh.transform_fn(face_wrap, _to_cyl(R_TUBE + WALL_THICK * i / N_WALL))
      for i in range(N_WALL + 1)], element_tags="solid", last_tag="outer"),
     {"inlet": "cut_lo", "outlet": "cut_hi"})
 
-mesh = hexmesh.merge([coil, branch, core, lower, higher, cap_lo, cap_hi, film, pipe],
+
+# --- carry _rest_bands to the pipe wall.  For each BL level (COIL_BL[:-1], every
+# fraction except the rib at 1.0) build wall_bl[j] -- the profile line projected to its
+# trapezoidal wall radius _wall_R(rim_close), lofted to _mi_scaled at that same radius,
+# then snapped so EVERY node (corners + edge/face interiors) is exactly cylindrical.
+def _wall_R(c):
+    t = max(0.0, min(1.0, (1.0 - c) / (1.0 - WRAP_KNEE)))
+    return R_TUBE * (1.0 - WRAP_SHRINK * t)
+
+
+def _mean_r(line):
+    p = np.asarray(line.points, float)
+    return float(np.hypot(p[:, 0], p[:, 1]).mean())
+
+
+_NV_REST = len(COIL_BL) - 1
+_fat_hex, _bl_hex, _pipe_rest = [], [], []
+for _i, (_prof, _rc, _k) in enumerate(_rest_bands):
+    _hi = _i >= TURNS_WIRE
+    _idx = (list(range(_NV_REST)) if _hi
+            else list(range(len(_prof) - 1, len(_prof) - 1 - _NV_REST, -1)))
+    _mi = _mi_scaled(_k + 1 if _hi else _k, _MI_LS[-1])
+    _rmi = _mean_r(_mi)
+    _tops, _faces = [], []
+    for _j in _idx:
+        _rj = _wall_R(_rc[_j])
+        _wl = linemesh.transform_fn(_prof[_j], _to_cyl(_rj))
+        _tops.append(_wl)
+        _faces.append(quadmesh.transform_fn(
+            quadmesh.loft([_wl, _xy_scale(_mi, _rj / _rmi)]), _to_cyl(_rj)))
+    # region COIL_BL[-2:-1]: the fat _rest_bands layer (last BL level -> rib) lofted
+    # radially THROUGH every wall_bl face, L3 (shrunk) -> ... -> L0 (== R_TUBE).
+    _inner = _u_tag_layers(quadmesh.loft([_prof[_idx[-1]], _mi]), 1, _k,
+                           "inlet", "outlet")
+    _l0 = _u_tag_layers(_faces[0], 1, _k, "cut_lo", "cut_hi")
+    # the band's free rib end (lo band turn 0 / hi band last turn only) is a periodic
+    # axial end: tag its _mi-side edge (side 3) -> inlet/outlet in the fluid fan,
+    # cut_lo/cut_hi in the solid wall.  _mi_scaled(0) and _mi_scaled(TURNS_WIRE) differ
+    # by a pure LEAD z-shift, so they pair under the existing PERIODIC translation.
+    _end = ("inlet" if not _hi and _k == 0
+            else "outlet" if _hi and _k == TURNS_WIRE - 1 else "")
+    if _end:
+        _rib = np.array([[_q, 3] for _q in range(_inner.n_quads)])
+        _inner = quadmesh.tag_edges(_inner, _rib, _end)
+        _l0 = quadmesh.tag_edges(_l0, _rib, "cut_lo" if _end == "inlet" else "cut_hi")
+    _fat_hex.append(hexmesh.loft([_inner, *_faces[::-1]], last_tag="wall"))
+    # the solid pipe wall over that wedge: L0 (R_TUBE) face -> R_TUBE + WALL_THICK.
+    _pipe_rest.append(hexmesh.loft(
+        [quadmesh.transform_fn(_l0, _to_cyl(R_TUBE + WALL_THICK * _n / N_WALL))
+         for _n in range(N_WALL + 1)], element_tags="solid", last_tag="outer"))
+    # BL layers COIL_BL[:-1] on _rest_bands -> a staircase lofted through the wall_bl
+    # top edges (each BL level's line on its own cylinder).
+    _bl_strip = _u_tag_layers(quadmesh.loft([_prof[_j] for _j in _idx]),
+                              _NV_REST - 1, _k, "inlet", "outlet")
+    _bl_hex.append(hexmesh.loft([_bl_strip, quadmesh.loft(_tops)]))
+wall_bl_hex = hexmesh.merge(_fat_hex, tol=1e-9)
+wall_bl2_hex = hexmesh.merge(_bl_hex, tol=1e-9)
+pipe_rest = hexmesh.merge(_pipe_rest, tol=1e-9)
+
+mesh = hexmesh.merge([coil, branch, core, lower, higher, cap_lo, cap_hi, film, pipe,
+                      wall_bl_hex, wall_bl2_hex, pipe_rest],
                      tol=1e-9, clear_seam_tags=["inlet", "outlet"])
 
 # everything not tagged solid at construction is fluid
