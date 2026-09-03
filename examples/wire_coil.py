@@ -58,19 +58,19 @@ RW      = RW_NOM - CLEAR
 PITCH     = (1.0 / 6.0) / 0.375
 
 R_TUBE  = 0.5
-WALL_THICK, N_WALL = 0.10, 3
+WALL_THICK, N_WALL = 0.10, 1
 
-R_CORE = R_HELIX - RW - 0.13
+R_CORE = R_HELIX - RW - 0.05
 CORE_ZSHIFT = 0.1       # manual axial shift of the core relative to the coil
 
 TURNS_WIRE = 2
 LEAD = PITCH * TURNS_WIRE   # periodic cell = whole pitches, so the helix screw
                            # (theta + 2*pi*n, z + n*PITCH) is a pure axial shift
-N_THETA = 24
-N_LAYERS = 3            # template v-rows per pitch == core z-layers/pitch
+N_THETA = 40
+N_LAYERS = 2            # template v-rows per pitch == core z-layers/pitch
 
-COIL_TEMPLATE_SKEW = 0.1
-COIL_TEMPLATE_FRAC = 0.8
+COIL_TEMPLATE_SKEW = 0.05
+COIL_TEMPLATE_FRAC = 0.7
 
 INNER_ARC_DEG = 130.0
 OUTER_ARC_DEG = 110.0
@@ -78,7 +78,7 @@ OUTER_ARC_DEG = 110.0
 Ls = [-1, -0.7, 0.0, 0.7, 1]   # Latitude to mesh the coil
 
 
-COIL_BL = [0.0, 0.05, 0.1, 0.2, 1.0]
+COIL_BL = [0.0, 0.1, 0.2, 0.5, 1.0]
 WRAP_SHRINK = 0.07
 WRAP_KNEE = 1.0 - COIL_BL[-2]
 
@@ -102,7 +102,7 @@ assert N_THETA % N_LAYERS == 0
 # buries all of it except the wedge the rising staircase leaves bare at each end, and
 # merge(clear_seam_tags=...) drops the buried names.
 core = linemesh.circle(R_CORE, N_THETA, order=ORDER)
-core = quadmesh.ogrid(core, N_THETA//4, 1, wall_tag="inlet")
+core = quadmesh.ogrid(core, N_THETA//4, 1, wall_tag="inlet", center_scale=0.9, quadrant_scale=0.9 )
 core = hexmesh.extrude(core, PITCH*TURNS_WIRE, N_LAYERS*TURNS_WIRE,
                        first_tag="inlet", last_tag="outlet")   # z=0 bottom / z=top
 core = hexmesh.translate(core, (0.0, 0.0, -CORE_ZSHIFT))
