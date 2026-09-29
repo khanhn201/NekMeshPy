@@ -8,7 +8,7 @@ import numpy as np
 
 from .._typing import FloatArray, IntArray, PointArray
 from ..core import quality as _core
-from ..core.quality import POOR_THRESHOLD, OrderScan, QualitySummary
+from ..core.quality import POOR_THRESHOLD, OrderScan, QualitySummary, SolverMetrics
 from .hexmesh import HexMesh
 
 # corner -> [corner, +xi, +eta, +zeta] neighbour point positions
@@ -85,6 +85,57 @@ def linear_order_scan(mesh: HexMesh, orders: Sequence[int] | None = None, *,
         invs.append(int(np.sum(sj <= 0)))
     return OrderScan(tuple(keep), tuple(mins), tuple(invs),
                      tuple(n for n in want if n not in keep))
+
+
+# the 12 hex edges as corner pairs, in Nek's corner order
+_EDGES = np.array([[0, 1], [0, 3], [1, 2], [3, 2], [0, 4], [1, 5],
+                   [3, 7], [2, 6], [4, 5], [4, 7], [7, 6], [5, 6]], dtype=np.int64)
+
+_CHUNK = 2048
+
+
+def solver_metrics(mesh: HexMesh, order: int | None = None) -> SolverMetrics:
+    """Nek5000/nekRS's own ``mesh metrics:`` block for this mesh -- GLL grid spacing,
+    the ``min(J)/max(J)`` ratio it prints as "scaled Jacobian", and corner-edge aspect
+    ratio -- of the trilinear map ``.re2`` exports, resampled at ``order``
+    (:data:`SCAN_ORDER <nekmeshpy.core.quality.SCAN_ORDER>` by default: the solver's).
+
+    Matches nekRS's printed line to its digits. Read :class:`SolverMetrics` before
+    comparing its ``jac_ratio`` with :func:`scaled_jacobian`: different quantities."""
+    from ..core.interp import _element_tangents, resample_block
+    n = _core.SCAN_ORDER if order is None else int(order)
+    if n < 1:
+        raise ValueError("solver_metrics: order must be >= 1, got %d" % n)
+    block = _linear_block(mesh)
+    ratio: list[FloatArray] = []
+    d_lo, d_hi = np.inf, 0.0
+    for s in range(0, mesh.n_hexes, _CHUNK):
+        b = resample_block(block[s:s + _CHUNK], 1, n, 3)
+        ti, tj, tk = _element_tangents(b, n, 3)
+        J = np.sum(np.cross(ti, tj) * tk, axis=2)
+        ratio.append(np.min(J, axis=1) / np.max(J, axis=1))
+        g = b.reshape(len(b), n + 1, n + 1, n + 1, 3)
+        for a in (1, 2, 3):
+            d = np.linalg.norm(np.diff(g, axis=a), axis=-1)
+            d_lo, d_hi = min(d_lo, float(d.min())), max(d_hi, float(d.max()))
+    r = np.concatenate(ratio)
+    X = mesh.points[mesh.corners]
+    el = np.linalg.norm(X[:, _EDGES[:, 0]] - X[:, _EDGES[:, 1]], axis=2)
+    ar = el.max(axis=1) / el.min(axis=1)
+    return SolverMetrics(n, d_lo, d_hi, float(r.min()), float(r.max()), float(r.mean()),
+                         float(ar.min()), float(ar.max()), float(ar.mean()))
+
+
+def format_solver_metrics(m: SolverMetrics) -> str:
+    """The :func:`solver_metrics` block, laid out as nekRS prints it."""
+    return "\n".join([
+        "solver metrics (.re2 map, N=%d):" % m.order,
+        "  GLL grid spacing min/max    : %.2e %.2e" % (m.spacing_min, m.spacing_max),
+        "  Jacobian ratio   min/max/avg: %.2e %.2e %.2e  (nekRS \"scaled Jacobian\")"
+        % (m.jac_ratio_min, m.jac_ratio_max, m.jac_ratio_mean),
+        "  aspect ratio     min/max/avg: %.2e %.2e %.2e"
+        % (m.aspect_min, m.aspect_max, m.aspect_mean),
+    ])
 
 
 def corner_scaled_jacobian(points: PointArray, hexes: IntArray) -> FloatArray:
