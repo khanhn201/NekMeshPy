@@ -67,12 +67,12 @@ TURNS_WIRE = 2
 LEAD = PITCH * TURNS_WIRE   # periodic cell = whole pitches, so the helix screw
                            # (theta + 2*pi*n, z + n*PITCH) is a pure axial shift
 N_THETA = 40
-N_LAYERS = 2            # template v-rows per pitch == core z-layers/pitch
+N_LAYERS = 4            # template v-rows per pitch == core z-layers/pitch
 
 COIL_TEMPLATE_SKEW = 0.05
-COIL_TEMPLATE_FRAC = 0.7
+COIL_TEMPLATE_FRAC = 0.9
 
-INNER_ARC_DEG = 130.0
+INNER_ARC_DEG = 150.0
 OUTER_ARC_DEG = 110.0
 
 Ls = [-1, -0.7, 0.0, 0.7, 1]   # Latitude to mesh the coil
@@ -120,8 +120,11 @@ for i in range(N_LAYERS):
          (i/N_LAYERS, i/N_LAYERS+1, 0.0)],
         _nx, N_LAYERS, order=ORDER,
         side_tags={"left": "u0"} if i == 0 else None)
-    if i == N_LAYERS - 1:
-        # u1 = last rect's right column, minus the lowest element (periodic seam)
+    if i == N_LAYERS - 1 and N_LAYERS > 1:
+        # u1 = last rect's right column, minus the lowest element (periodic seam).
+        # At N_LAYERS == 1 that lowest element is the whole column, so the template
+        # carries no u1 at all -- coil_template picks one up from its bands, and the
+        # section retags below skip the tag where it is absent.
         rect = quadmesh.tag_edges(
             rect, np.array([[(_nx - 1)*N_LAYERS + j, 2] for j in range(1, N_LAYERS)]),
             "u1")
@@ -231,9 +234,16 @@ def coil_arc_map(turn, L=1.0):
     return fn
 
 
+def _retag_edge_present(qm, mapping):
+    """retag only the edge tags that are actually there -- at N_LAYERS == 1 the
+    template carries no ``u1``, so the section retags below just skip it."""
+    have = {t: v for t, v in mapping.items() if t in qm.edge_tags.group_tags}
+    return quadmesh.retag_edge(qm, have) if have else qm
+
+
 def _coil_sec(k):
     # coil_template's u0/u1 -> cut_lo on turn 0, cut_hi on the last turn, else dropped
-    return quadmesh.retag_edge(coil_template, {"u0": "cut_lo" if k == 0 else "",
+    return _retag_edge_present(coil_template, {"u0": "cut_lo" if k == 0 else "",
                                                "u1": "cut_hi" if k == TURNS_WIRE - 1 else ""})
 
 
@@ -309,7 +319,7 @@ coil_inner = [quadmesh.transform_fn(coil_template_inner, coil_arc_map(k))
 # -- Mesh branch from core to inner arc
 def _branch_sec(qm, k):
     # the inner's u0 (turn 0) / u1 (last turn) edges promote to branch's inlet / outlet
-    return quadmesh.retag_edge(qm, {"u0": "inlet" if k == 0 else "",
+    return _retag_edge_present(qm, {"u0": "inlet" if k == 0 else "",
                                     "u1": "outlet" if k == TURNS_WIRE - 1 else ""})
 
 
