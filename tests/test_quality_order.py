@@ -561,3 +561,21 @@ def test_report_warns_on_a_linear_sampling_fold(caplog):
     with caplog.at_level("WARNING"):
         hexmesh.report(mesh)
     assert "trilinear geometry is resampled" not in caplog.text
+
+
+def test_solver_metrics_is_ratio_not_angle_metric():
+    """nekRS's "scaled Jacobian" is min(J)/max(J): a shear keeps J uniform so it reads
+    1 where the angle-based metric reads 0.707; a taper does the reverse."""
+    t = np.linspace(0, 1, 3)
+    P = np.stack(np.meshgrid(t, t, t, indexing="ij"), -1)
+    box = hexmesh.from_grid(P * [1.0, 5.0, 20.0])
+    m = hexmesh.solver_metrics(box, order=4)
+    assert m.jac_ratio_min == pytest.approx(1.0)
+    assert m.aspect_max == pytest.approx(20.0)
+    shear = hexmesh.from_grid(P @ np.array([[1.0, 0, 0], [1, 1, 0], [0, 0, 1]]))
+    assert hexmesh.solver_metrics(shear, order=4).jac_ratio_min == pytest.approx(1.0)
+    assert hexmesh.corner_scaled_jacobian(shear).min() == pytest.approx(0.5 ** 0.5)
+    taper = P.copy()
+    taper[..., 0] *= 1 + 3 * P[..., 2]
+    tp = hexmesh.from_grid(taper)
+    assert hexmesh.solver_metrics(tp, order=4).jac_ratio_min < 0.5

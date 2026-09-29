@@ -17,8 +17,9 @@ from .._typing import (
     StrArray,
 )
 from ..core import conform, measure
+from ..core import quality as _core
 from ..core.interp import corner_indices
-from ..core.quality import OrderScan, QualitySummary
+from ..core.quality import OrderScan, QualitySummary, SolverMetrics
 from ..core.tags import _empty_str
 from ..core.topology import TopologyReport
 from .hexmesh import HexMesh
@@ -177,6 +178,14 @@ def linear_order_scan(mesh: HexMesh, orders: Sequence[int] | None = None, *,
     return quality.linear_order_scan(mesh, orders, budget=budget)
 
 
+def solver_metrics(mesh: HexMesh, *, order: int | None = None) -> SolverMetrics:
+    """Nek5000/nekRS's ``mesh metrics:`` block -- GLL spacing, ``min(J)/max(J)``
+    (which nekRS calls "scaled Jacobian") and aspect ratio -- of the ``.re2`` map at
+    ``order``. See :class:`SolverMetrics <nekmeshpy.core.quality.SolverMetrics>`."""
+    from . import quality
+    return quality.solver_metrics(mesh, order)
+
+
 def quality_summary(mesh: HexMesh, *, order: int | None = None) -> QualitySummary:
     """Aggregate scaled-Jacobian statistics over the **curved** elements -- see
     :func:`scaled_jacobian <nekmeshpy.hexmesh.query.scaled_jacobian>`.
@@ -321,6 +330,10 @@ def report(mesh: HexMesh) -> str:
                 "solver's own geometry generation builds and checks at its "
                 "working order", mesh.order,
                 lscan.n_inverted[lscan.orders.index(n)], n, m)
+    if mesh.n_hexes * (_core.SCAN_ORDER + 1) ** 3 <= _core.SCAN_BUDGET:
+        lines.append(quality.format_solver_metrics(quality.solver_metrics(mesh)))
+    else:
+        lines.append("solver metrics: not checked (over SCAN_BUDGET)")
     for name in mesh.face_group_tags:
         n = mesh.face_tags.count(name)
         lines.append("  %-14s : %d faces" % (name, n))
@@ -454,6 +467,7 @@ __all__ = [
     "quality_summary",
     "report",
     "scaled_jacobian",
+    "solver_metrics",
     "tag_report",
     "tagged_faces",
     "topology_report",

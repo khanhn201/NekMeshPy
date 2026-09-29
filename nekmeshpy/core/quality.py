@@ -57,6 +57,33 @@ class OrderScan(NamedTuple):
         return self.orders[i], self.min_sj[i]
 
 
+class SolverMetrics(NamedTuple):
+    """The three numbers Nek5000/nekRS print as ``mesh metrics:``, of the trilinear
+    (``.re2``) map read at one polynomial ``order``.
+
+    **:attr:`jac_ratio` is not a scaled Jacobian in :class:`QualitySummary`'s sense.**
+    nekRS's line reads ``scaled Jacobian`` but computes ``min(J)/max(J)`` of the
+    Jacobian determinant over an element's GLL nodes -- how *uniform* the map is, blind
+    to skew, where the angle-based metric is blind to a size gradient. The two agree
+    on a cube and on nothing else, so ``0.08`` here and ``0.22`` there are the same
+    mesh."""
+
+    #: Polynomial order the map was sampled at.
+    order: int
+    #: Shortest / longest distance between neighbouring GLL nodes, over the mesh.
+    spacing_min: float
+    spacing_max: float
+    #: ``min(J)/max(J)`` per element -- smallest, largest, mean.
+    jac_ratio_min: float
+    jac_ratio_max: float
+    jac_ratio_mean: float
+    #: Longest over shortest of an element's 12 corner-to-corner edges -- smallest,
+    #: largest, mean.
+    aspect_min: float
+    aspect_max: float
+    aspect_mean: float
+
+
 class QualitySummary(NamedTuple):
     """Aggregate scaled-Jacobian statistics over one mesh's elements."""
 
