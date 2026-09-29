@@ -73,11 +73,11 @@ class SolverMetrics(NamedTuple):
     #: Shortest / longest distance between neighbouring GLL nodes, over the mesh.
     spacing_min: float
     spacing_max: float
-    #: ``min(J)/max(J)`` per element: smallest, largest, mean.
+    #: ``min(J)/max(J)`` per element -- smallest, largest, mean.
     jac_ratio_min: float
     jac_ratio_max: float
     jac_ratio_mean: float
-    #: Longest / shortest of an element's 12 corner-to-corner edges: smallest,
+    #: Longest over shortest of an element's 12 corner-to-corner edges -- smallest,
     #: largest, mean.
     aspect_min: float
     aspect_max: float

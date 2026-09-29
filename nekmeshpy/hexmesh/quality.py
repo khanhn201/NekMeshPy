@@ -100,7 +100,7 @@ def solver_metrics(mesh: HexMesh, order: int | None = None) -> SolverMetrics:
     ratio -- of the trilinear map ``.re2`` exports, resampled at ``order``
     (:data:`SCAN_ORDER <nekmeshpy.core.quality.SCAN_ORDER>` by default: the solver's).
 
-    Matches nekRS's printed line to its digits. Read :class:`SolverMetrics` before
+    Matches nekRS's printed line to its digits. Read :class:`SolverMetrics <nekmeshpy.core.quality.SolverMetrics>` before
     comparing its ``jac_ratio`` with :func:`scaled_jacobian`: different quantities."""
     from ..core.interp import _element_tangents, resample_block
     n = _core.SCAN_ORDER if order is None else int(order)
