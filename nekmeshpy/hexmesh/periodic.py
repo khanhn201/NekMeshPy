@@ -96,7 +96,8 @@ class PeriodicPairs(NamedTuple):
 
 
 def _paired_points(mesh: HexMesh, fa: IntArray, fb: IntArray,
-                   transform: affine.Affine, who: str) -> tuple[IntArray, float]:
+                   transform: affine.Affine,
+                   name: str) -> tuple[IntArray, float]:
     """``(perm, worst)``: ``perm`` maps every corner id of group ``a`` to its partner on
     ``b`` (``-1`` elsewhere), and ``worst`` is the largest distance left after the map.
 
@@ -111,7 +112,7 @@ def _paired_points(mesh: HexMesh, fa: IntArray, fb: IntArray,
             "%s: the two groups are not the same surface -- %d faces / %d points on a, "
             "%d faces / %d points on b. Equal face counts with unequal point counts "
             "usually means the two sides are refined differently, which has no periodic "
-            "correspondence." % (who, fa.size, pa.size, fb.size, pb.size))
+            "correspondence." % (name, fa.size, pa.size, fb.size, pb.size))
     moved: PointArray = affine.apply(mesh.points[pa], *transform)
     dist, loc = cKDTree(mesh.points[pb]).query(moved)
     dup = loc.size - np.unique(loc).size
@@ -120,7 +121,7 @@ def _paired_points(mesh: HexMesh, fa: IntArray, fb: IntArray,
             "%s: the pairing is not one-to-one -- %d of a's %d points share a nearest "
             "point on b after the transform, so the two patterns do not correspond one "
             "for one. Either the groups are the same surface meshed differently, or one "
-            "of them is the wrong group." % (who, dup, loc.size))
+            "of them is the wrong group." % (name, dup, loc.size))
     worst = float(np.max(dist)) if dist.size else 0.0
     tol = conform.entity_tol(mesh.points)
     if worst > tol:
@@ -128,14 +129,13 @@ def _paired_points(mesh: HexMesh, fa: IntArray, fb: IntArray,
             "%s: the stated transform leaves a worst residual of %.3e, over the %.3e "
             "these points call coincident. The two groups are not related by this map -- "
             "check the offset or angle, and its sign (it must carry a onto b)."
-            % (who, worst, tol))
+            % (name, worst, tol))
     perm: IntArray = np.full(mesh.n_points, -1, dtype=np.int64)
     perm[pa] = pb[loc]
     return perm, worst
 
 
-def _one_row_each(mesh: HexMesh, faces: IntArray, who: str,
-                  side: str) -> IntArray:
+def _one_row_each(mesh: HexMesh, faces: IntArray, side: str) -> IntArray:
     """``(K,2)`` ``[element, local face]`` for ``faces``, in the given order, insisting
     each face yields exactly one row -- which a boundary face does and an interior one
     does not.  :func:`face_group` has already rejected the interior ones, so a count
@@ -144,8 +144,8 @@ def _one_row_each(mesh: HexMesh, faces: IntArray, who: str,
     if not np.all(counts == 1):
         bad = int(faces[int(np.flatnonzero(counts != 1)[0])])
         raise ValueError(
-            "%s: %s's face %d is carried by %d hexes, not 1; a periodic face must be on "
-            "the domain boundary" % (who, side, bad, int(counts[counts != 1][0])))
+            "%s's face %d is carried by %d hexes, not 1; a periodic face must be on "
+            "the domain boundary" % (side, bad, int(counts[counts != 1][0])))
     return rows
 
 
@@ -173,15 +173,15 @@ def periodic_pairs(mesh: HexMesh, specs: Sequence[Periodic]) -> PeriodicPairs:
     claimed: dict[int, str] = {}
     worst = 0.0
     for k, sp in enumerate(specs):
-        who = "periodic_pairs: specs[%d]" % k
-        fa = face_group(mesh, sp.tag_a, "tag_a", who)
-        fb = face_group(mesh, sp.tag_b, "tag_b", who)
+        name = "specs[%d]" % k
+        fa = face_group(mesh, sp.tag_a, name + ".tag_a")
+        fb = face_group(mesh, sp.tag_b, name + ".tag_b")
         if fa.size != fb.size:
             raise ValueError(
                 "%s pairs groups of different face counts (%d and %d), so they cannot be "
-                "the two ends of one periodic cell." % (who, fa.size, fb.size))
+                "the two ends of one periodic cell." % (name, fa.size, fb.size))
         if fa.size == 0:
-            raise ValueError("%s names empty groups; there is nothing to pair" % who)
+            raise ValueError("%s names empty groups; there is nothing to pair" % name)
         for side, ids in (("tag_a", fa), ("tag_b", fb)):
             seen = np.array([f in claimed for f in ids.tolist()], dtype=bool)
             if seen.any():
@@ -190,19 +190,19 @@ def periodic_pairs(mesh: HexMesh, specs: Sequence[Periodic]) -> PeriodicPairs:
                     "%s.%s: face %d is already claimed by %s. A face has one periodic "
                     "partner, so it may appear in one group of one spec -- naming the "
                     "same plane twice, or pairing a group with itself, gives it two."
-                    % (who, side, f, claimed[f]))
-            claimed.update({int(f): "%s.%s" % (who, side) for f in ids.tolist()})
+                    % (name, side, f, claimed[f]))
+            claimed.update({int(f): "%s.%s" % (name, side) for f in ids.tolist()})
 
-        perm, w = _paired_points(mesh, fa, fb, sp.transform, who)
+        perm, w = _paired_points(mesh, fa, fb, sp.transform, name)
         worst = max(worst, w)
         corners: IntArray = np.asarray(mesh.quad_mesh.corners, dtype=np.int64)
         # the face map falls out of the point map: a's face, read through ``perm``, is
         # the id set of exactly one of b's faces -- ``locate_rows`` finds it and raises
         # when it is not there, so face bijectivity needs no check of its own
         into_b = conform.locate_rows(corners[fb], perm[corners[fa]],
-                                     who=who, what="periodic face")
-        ra = _one_row_each(mesh, fa, who, "tag_a")
-        rb = _one_row_each(mesh, fb[into_b], who, "tag_b")
+                                     what="periodic face")
+        ra = _one_row_each(mesh, fa, name + ".tag_a")
+        rb = _one_row_each(mesh, fb[into_b], name + ".tag_b")
         rows.append(np.concatenate([np.hstack([ra, rb]), np.hstack([rb, ra])], axis=0))
 
     out: IntArray = np.concatenate(rows, axis=0)

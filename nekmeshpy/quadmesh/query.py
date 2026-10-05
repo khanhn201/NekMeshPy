@@ -140,7 +140,7 @@ def area(mesh: QuadMesh, *, high_order: bool = False) -> float:
 def centroid(mesh: QuadMesh, *, high_order: bool = False) -> Point:
     """The **area-weighted** centroid ``integral x dA / integral dA`` -- the mass
     property, not the mean of the points."""
-    return measure.centroid_of(_blocks(mesh, high_order), 2, "quadmesh.centroid")
+    return measure.centroid_of(_blocks(mesh, high_order), 2)
 
 
 def tagged_edges(mesh: QuadMesh, tag: str) -> IntArray:

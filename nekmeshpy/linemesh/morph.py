@@ -95,7 +95,7 @@ def reverse(mesh: LineMesh) -> LineMesh:
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
                     mesh.element_tags.renumber(
-                        (L - 1 - np.arange(L, dtype=np.int64))),
+                        (L - 1 - np.arange(L, dtype=np.int64)), L),
 )
 
 

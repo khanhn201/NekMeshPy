@@ -14,19 +14,12 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..core import conform, stations
 from ..core.conform import _LOCAL_FACES
 from ..core.fields import gll_nodes
 from ..core.interp import _CORNER_IJK, resample_block_at
-from ..core.tags import (
-    Tags,
-    mask_for_selection,
-    sweep_cap,
-    sweep_tags,
-    weld,
-)
+from ..core.selection import Selection, mask_for_selection
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
@@ -34,6 +27,12 @@ from ..quadmesh._helpers import entities_from_blocks
 from ..quadmesh.assemble import _refine_parts as quad_refine_parts
 from ..quadmesh.assemble import _subset as quad_subset
 from ..quadmesh.query import element_blocks as quad_blocks
+from ..tags import (
+    Tags,
+    sweep_cap,
+    sweep_tags,
+    weld,
+)
 from ._helpers import (
     _HEX_OCTANT_OUTER,
     face_lex_perm,
@@ -341,22 +340,16 @@ def loft(
     # cap face **is** a section quad, so with no argument it inherits that quad's own
     # element tag; on a closed sweep the two caps are the same faces and naming them
     # differently is refused rather than resolved by whichever is written second.
-    fnamed = np.full(face_edges.shape[0], "", dtype=object)
-
-    def _name(ids: IntArray, names: StrArray) -> None:
-        hit = names != ""
-        fnamed[np.asarray(ids, dtype=np.int64)[hit]] = names[hit]
-
-    enames: StrArray = sec.edge_tags.to_dense(sec.line_mesh.n_lines)
-    for e0 in sec.edge_tags.ids:
+    ftags = Tags.empty(face_conn.shape[0])
+    for e0, name in sec.edge_tags:
         if eslot[e0] >= 0:
-            fnamed[n_prof * M + lay * ne + eslot[e0]] = enames[e0]
-    closed = Tags.empty()
+            ftags = ftags.put(n_prof * M + lay * ne + eslot[e0], name)
+    closed = Tags.empty(M)
     cap: IntArray = np.arange(M, dtype=np.int64)
     first_caps = sweep_cap(first_tag, closed if loop else sec.element_tags,
-                                M, "HexMesh.loft")
+                                M)
     last_caps = sweep_cap(last_tag, closed if loop else slices[-1].element_tags,
-                               M, "HexMesh.loft")
+                               M)
     if loop:
         clash = np.flatnonzero((first_caps != "") & (last_caps != "")
                                & (first_caps != last_caps))
@@ -367,11 +360,9 @@ def loft(
                 "section quad %d. Name the seam once, or leave one side untagged."
                 % (str(first_caps[clash[0]]), str(last_caps[clash[0]]),
                    int(clash[0])))
-    _name(cap, first_caps)
-    _name(nxt[nz - 1] * M + cap, last_caps)
+    ftags = ftags.put(cap, first_caps).put(nxt[nz - 1] * M + cap, last_caps)
 
-    faces = QuadMesh(edge_lm, face_edges, face_flip, face_nodes,
-                     Tags.from_dense(np.asarray(fnamed, dtype=np.str_)))
+    faces = QuadMesh(edge_lm, face_edges, face_flip, face_nodes, ftags)
 
     # -- 5. the hexes, as indices into that QuadMesh ----------------------------
     # Local faces 0-3 are the section's sides swept across the layer, 4 / 5 the section
@@ -389,7 +380,7 @@ def loft(
     if ho:
         interior = _at(conform._interior_slots(3, order))
 
-    etags = sweep_tags(element_tags, nz, M, "HexMesh.loft")
+    etags = sweep_tags(element_tags, nz, M)
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
 
@@ -546,12 +537,12 @@ def merge(
     pos = [m.points for m in meshes]
     points, point_id = conform.weld_points(
         pos, [_boundary_points(m.corners) for m in meshes], tol)
-    return _stitch(meshes, points, point_id, who="HexMesh.merge",
+    return _stitch(meshes, points, point_id,
                    clear_seam_tags=clear_seam_tags)
 
 
 def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *,
-            who: str, seam_faces: Mapping[int, IntArray] | None = None,
+            seam_faces: Mapping[int, IntArray] | None = None,
             named_seams: Sequence[tuple[int, IntArray, str]] = (),
             own_faces: Mapping[int, IntArray] | None = None,
             check: bool = True,
@@ -585,8 +576,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     eflip_list: list[BoolArray] = []
     ef_list: list[IntArray] = []
     forient_list: list[IntArray] = []
-    etag_list: list[Tags] = []
-    noff = eoff = foff = elem_off = 0
+    noff = eoff = foff = 0
     edge_offs: list[int] = []
     for m, c in zip(meshes, counts):
         hex_list.append(point_id[m.corners + noff])    # local -> concat -> welded id
@@ -596,15 +586,13 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         eflip_list.append(m._edge_flip)
         ef_list.append(m.hexes + foff)
         forient_list.append(m.orient)
-        etag_list.append(m.element_tags.shift(elem_off))
         edge_offs.append(eoff)
         noff += c
         eoff += m.edges.shape[0]
         foff += m.quad_mesh.n_quads
-        elem_off += m.corners.shape[0]
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
-    etags = Tags.concatenate(etag_list)
+    etags = Tags.concatenate([m.element_tags for m in meshes])
 
     order = meshes[0].order if meshes else 1
     if any(mm.order != order for mm in meshes):
@@ -680,7 +668,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
                 foff2 += m2.quad_mesh.n_quads
         edge_nodes, face_nodes = _shared_nodes(
             meshes, e_new, f_new, swap, edges.shape[0], canonical_conn.shape[0],
-            f_rows, canonical_conn, conform.entity_tol(points), who,
+            f_rows, canonical_conn, conform.entity_tol(points),
             prefer_e, prefer_f, check)
         interior = np.concatenate([mm.interior for mm in meshes], axis=0)
     # A face's edge incidence is *stored* on each block's own ``quad_mesh``; the weld
@@ -720,13 +708,13 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         # possible at all.
         ft = m.face_tags
         if seam_faces is not None and bi in seam_faces:
-            ft = ft.compress(~np.isin(ft.ids, np.asarray(seam_faces[bi], dtype=np.int64)))
+            ft = ft.clear(seam_faces[bi])
         if clear_seam_tags is not False and len(ft):
             drop: BoolArray = buried_face[mine[ft.ids]]
             if clear_names is not None:
                 drop = drop & np.isin(np.asarray(ft.tags), clear_names)
             ft = ft.compress(~drop)
-        ftag_list.append(ft.renumber(mine))
+        ftag_list.append(ft.renumber(mine, faces.n_quads))
         local_to_merged.append(mine)
         if seam_faces is not None and bi in seam_faces:
             # the seam in this block's local numbering, carried onto the merged one
@@ -735,7 +723,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     named = [(local_to_merged[bi][np.asarray(f, dtype=np.int64)], tag)
              for bi, f, tag in named_seams]
     faces = QuadMesh(faces.line_mesh, faces.quads, faces.orient, faces.interior,
-                     _seam_named(ftag_list, seam_merged, named, faces.n_quads, who))
+                     _seam_named(ftag_list, seam_merged, named, faces.n_quads))
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
 
@@ -785,7 +773,7 @@ def _first_wins(dst: PointArray, idx: IntArray, src: PointArray,
 def _shared_nodes(
     meshes: Sequence[HexMesh], e_new: IntArray, f_new: IntArray, swap: BoolArray,
     n_edges: int, n_faces: int, f_rows: IntArray, canonical_conn: IntArray,
-    ent_tol: float, who: str, prefer_e: BoolArray | None = None,
+    ent_tol: float, prefer_e: BoolArray | None = None,
     prefer_f: BoolArray | None = None, check: bool = True,
 ) -> tuple[PointArray, PointArray]:
     """The shared edge- and face-interior tables after a weld.
@@ -831,76 +819,72 @@ def _shared_nodes(
         if dup.any() and not np.allclose(src[dup], table[new[dup]],
                                          rtol=0.0, atol=ent_tol):
             raise ValueError(
-                "%s: non-conforming high-order %s -- the two sides disagree on a welded "
+                "non-conforming high-order %s -- the two sides disagree on a welded "
                 "shared %s's interior nodes beyond tolerance (%.3e). If they really "
-                "are the same interface, state it with attach()." % (who, name, name,
-                                                                     ent_tol))
+                "are the same interface, state it with attach()." % (name, name, ent_tol))
     return edge_nodes, face_nodes
 
 
 def _seam_named(ftag_list: Sequence[Tags], seam_merged: Sequence[IntArray],
-                named: Sequence[tuple[IntArray, str]], n_faces: int,
-                who: str) -> Tags:
+                named: Sequence[tuple[IntArray, str]], n_faces: int) -> Tags:
     """The merged face tags, with the welded-shut seam renamed to what the caller asked.
 
     The seam's rows are dropped from **both** sides *before* the combine rather than
     overwritten after it: the caller has said what that face is, so the two sides stop
     being asked about it and cannot conflict. Every face off the seam still goes through
-    :func:`weld <nekmeshpy.core.tags.weld>` and its
+    :func:`weld <nekmeshpy.tags.weld>` and its
     refuse-on-disagreement rule."""
     if not seam_merged:
-        return weld(list(ftag_list), who)
+        return weld(list(ftag_list))
     seam_ids: IntArray = np.unique(np.concatenate(list(seam_merged)))
     # the seam rows were already dropped per block, before the renumber that a self-join
     # would otherwise break; this is the belt to that braces, and costs one isin
-    kept = [t.compress(~np.isin(t.ids, seam_ids)) for t in ftag_list]
-    merged = weld(kept, who)
+    kept = [t.clear(seam_ids) for t in ftag_list]
+    merged = weld(kept)
     if not named:
         return merged
     # object dtype, as ``tag_faces`` does: the merged table's own dtype is only as wide
     # as the longest name already in it, and a new one may be longer.
-    dense = np.asarray(merged.to_dense(n_faces), dtype=object)
     for ids, tag in named:
-        if tag:
-            dense[ids] = tag
-    return Tags.from_dense(np.asarray(dense, dtype=np.str_))
+        merged = merged.put(ids, tag)
+    return merged
 
 
 def face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
-               side: str, who: str = "attach") -> IntArray:
+               side: str) -> IntArray:
     """One stated group's face ids, from a tag name or given outright, checked to be
     on the block's **boundary**.
 
     The resolution step every operation that is *told* which faces it acts on shares --
     :func:`attach` and :func:`periodic_pairs
     <nekmeshpy.hexmesh.periodic.periodic_pairs>` both start here.  ``side`` names the
-    argument that supplied the group and ``who`` the operation asking, so a message
-    from an n-ary call says which of several groups was wrong."""
+    argument that supplied the group, so a message from an n-ary call says which of
+    several groups was wrong."""
     if isinstance(which, str):
         try:
             ids = tagged_faces(mesh, which)
         except ValueError as exc:
             # with several seams in one call, "no face carries the tag" is unactionable
             # unless it says which seam asked for it
-            raise ValueError("%s: %s: %s" % (who, side, exc)) from None
+            raise ValueError("%s: %s" % (side, exc)) from None
     else:
         ids = np.asarray(which, dtype=np.int64).reshape(-1)
         if ids.size and (ids.min() < 0 or ids.max() >= mesh.quad_mesh.n_quads):
             raise ValueError(
-                "%s: %s names face %d, outside this mesh's %d shared faces"
-                % (who, side, int(ids.max()), mesh.quad_mesh.n_quads))
+                "%s names face %d, outside this mesh's %d shared faces"
+                % (side, int(ids.max()), mesh.quad_mesh.n_quads))
     buried = ids[~boundary_face_ids(mesh)[ids]]
     if buried.size:
         raise ValueError(
-            "%s: %s names %d face(s) that already carry a hex on both sides (first "
+            "%s names %d face(s) that already carry a hex on both sides (first "
             "is face %d). A buried face is interior, not part of the domain boundary; "
             "name a group that is still on its block's boundary."
-            % (who, side, buried.size, int(buried[0])))
+            % (side, buried.size, int(buried[0])))
     return ids
 
 
 def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh, fb: IntArray,
-               who: str = "attach") -> tuple[IntArray, float]:
+               name: str = "attach") -> tuple[IntArray, float]:
     """``((M,2) point pairs in each mesh's own numbering, the worst pairing distance)``
     -- the one place :func:`attach` reads a coordinate.
 
@@ -926,7 +910,7 @@ def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh, fb: IntArray,
             "attach: %s joins groups that are not the same surface -- %d faces / %d "
             "points on a, %d faces / %d points on b. Equal face counts with unequal "
             "point counts usually means the two sides are refined differently, which "
-            "has no conformal weld." % (who, fa.size, pa.size, fb.size, pb.size))
+            "has no conformal weld." % (name, fa.size, pa.size, fb.size, pb.size))
     dist, loc = cKDTree(b.points[pb]).query(a.points[pa])
     dup = loc.size - np.unique(loc).size
     if dup:
@@ -934,7 +918,7 @@ def _pair_seam(a: HexMesh, fa: IntArray, b: HexMesh, fb: IntArray,
             "attach: %s: the pairing is not one-to-one -- %d of a's %d seam points "
             "share a nearest point on b, so the two patterns do not correspond one for "
             "one. Either the groups are the same surface meshed differently, or one of "
-            "them is the wrong group." % (who, dup, loc.size))
+            "them is the wrong group." % (name, dup, loc.size))
     return np.stack([pa, pb[loc]], axis=1), float(np.max(dist)) if dist.size else 0.0
 
 
@@ -957,7 +941,7 @@ class Seam(NamedTuple):
     attach_tag: str | None = None
 
 
-def _block_index(ref: int | HexMesh, meshes: Sequence[HexMesh], who: str) -> int:
+def _block_index(ref: int | HexMesh, meshes: Sequence[HexMesh], name: str) -> int:
     """A ``Seam`` endpoint resolved to a position in ``meshes``."""
     if isinstance(ref, HexMesh):
         for i, m in enumerate(meshes):
@@ -965,10 +949,10 @@ def _block_index(ref: int | HexMesh, meshes: Sequence[HexMesh], who: str) -> int
                 return i
         raise ValueError(
             "attach: %s names a mesh that is not in the meshes list. Pass the block "
-            "itself, or its index." % who)
+            "itself, or its index." % name)
     i = int(ref)
     if not 0 <= i < len(meshes):
-        raise ValueError("attach: %s names block %d of %d" % (who, i, len(meshes)))
+        raise ValueError("attach: %s names block %d of %d" % (name, i, len(meshes)))
     return i
 
 
@@ -1011,20 +995,20 @@ def attach(meshes: Sequence[HexMesh], seams: Sequence[Seam]) -> HexMesh:
     #    pairing reads only the two named groups, so it is independent of mesh size.
     resolved: list[tuple[int, IntArray, int, IntArray, str, str | None]] = []
     for k, sm in enumerate(seams):
-        who = "seams[%d]" % k
-        ia = _block_index(sm.a, meshes, who + ".a")
-        ib = _block_index(sm.b, meshes, who + ".b")
+        name = "seams[%d]" % k
+        ia = _block_index(sm.a, meshes, name + ".a")
+        ib = _block_index(sm.b, meshes, name + ".b")
         if sm.own not in ("a", "b"):
-            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
-        fa = face_group(meshes[ia], sm.tag_a, who + ".tag_a")
-        fb = face_group(meshes[ib], sm.tag_b, who + ".tag_b")
+            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (name, sm.own))
+        fa = face_group(meshes[ia], sm.tag_a, name + ".tag_a")
+        fb = face_group(meshes[ib], sm.tag_b, name + ".tag_b")
         if fa.size != fb.size:
             raise ValueError(
                 "attach: %s joins groups of different face counts (%d and %d), so they "
-                "cannot be the same interface." % (who, fa.size, fb.size))
+                "cannot be the same interface." % (name, fa.size, fb.size))
         if fa.size == 0:
             raise ValueError("attach: %s names empty groups; there is nothing to join"
-                             % who)
+                             % name)
         resolved.append((ia, fa, ib, fb, sm.own, sm.attach_tag))
 
     # 2. pair each seam.  Nothing is copied: the weld below keeps exactly one point per
@@ -1056,7 +1040,7 @@ def attach(meshes: Sequence[HexMesh], seams: Sequence[Seam]) -> HexMesh:
         seam_faces.setdefault(ia, []).append(fa)
         seam_faces.setdefault(ib, []).append(fb)
     named = [(ia, fa, tag) for ia, fa, _ib, _fb, _o, tag in resolved if tag]
-    return _stitch(meshes, points, point_id, who="hexmesh.attach",
+    return _stitch(meshes, points, point_id,
                    seam_faces={b: np.unique(np.concatenate(v))
                                for b, v in seam_faces.items()},
                    named_seams=named,
@@ -1087,7 +1071,7 @@ def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
             new_hex_of)
 
 
-def select(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
+def select(mesh: HexMesh, which: Selection
            ) -> HexMesh:
     """The named hexes as a block of their own, renumbered from zero.
 
@@ -1102,16 +1086,14 @@ def select(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
     :func:`boundary_faces <nekmeshpy.hexmesh.query.boundary_faces>` if the export needs
     it.  For the same reason the result is not guaranteed watertight -- that is the
     point of it."""
-    return _subset(mesh, mask_for_selection(which, mesh.element_tags, mesh.n_hexes,
-                                      "hexmesh.select"))[0]
+    return _subset(mesh, mask_for_selection(which, mesh.element_tags))[0]
 
 
-def remove(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
+def remove(mesh: HexMesh, which: Selection
            ) -> HexMesh:
     """The complement of :func:`select`: everything ``which`` does **not** name -- the
     "drop this block and re-fill it" half of the pair."""
-    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags, mesh.n_hexes,
-                                       "hexmesh.remove"))[0]
+    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags))[0]
 
 
 def components(mesh: HexMesh) -> list[HexMesh]:
@@ -1215,21 +1197,22 @@ def refine(mesh: HexMesh) -> HexMesh:
     combined_corners = np.concatenate([outer_corners, unique_corners])
     combined_blocks = np.concatenate([outer_blocks, unique_blocks])
     combined_lm, combined_quads, combined_orient, combined_interior = entities_from_blocks(
-        combined_blocks, combined_corners, points, order, "hexmesh.refine")
+        combined_blocks, combined_corners, points, order)
 
     if len(refined_line.element_tags):
         match = conform.locate_rows(combined_lm.lines, refined_line.lines,
-                                   who="hexmesh.refine", what="refined edge")
+                                   what="refined edge")
         combined_lm = LineMesh(combined_lm.points, combined_lm.lines,
                                combined_lm.interior,
-                               refined_line.element_tags.renumber(match))
+                               refined_line.element_tags.renumber(match, combined_lm.n_lines))
 
     # face (BC) tags: the boundary sub-quads inherit their parent quad's tag,
     # consecutively (child 4*q+k copies quad q) -- see linemesh.refine's own note on
     # why this is ``take``, not ``tile``. The 12E new interior quads are
     # untagged (an interior split, not a boundary), so nothing is added for them.
     face_tags = mesh.quad_mesh.element_tags.take(
-        np.repeat(np.arange(mesh.quad_mesh.n_quads), 4))
+        np.repeat(np.arange(mesh.quad_mesh.n_quads), 4)
+    ).renumber(np.arange(n_outer, dtype=np.int64), combined_quads.shape[0])
     combined_qm = QuadMesh(combined_lm, combined_quads, combined_orient,
                            combined_interior, face_tags)
 
@@ -1253,7 +1236,7 @@ def refine(mesh: HexMesh) -> HexMesh:
         for f in range(6):
             if _HEX_OCTANT_OUTER[k, f]:
                 match = conform.locate_rows(outer_corners, local_all[:, f, :],
-                                           who="hexmesh.refine", what="outer face")
+                                           what="outer face")
                 match_all[:, f] = match
                 canonical_all[:, f, :] = outer_corners[match]
             else:

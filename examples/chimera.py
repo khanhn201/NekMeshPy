@@ -117,9 +117,9 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import paths
-from nekmeshpy.core.tags import Tags
 from nekmeshpy.hexmesh import Seam
 from nekmeshpy.pointmesh import PointMesh
+from nekmeshpy.tags import Tags
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -441,7 +441,8 @@ def solid_section(z0, minus_tag, plus_tag, inner_tag=quadmesh.NO_TAG):
     inner = linemesh.LineMesh(
         PointMesh(ring.points,
                   Tags(np.array([0, ring.n_points - 1]),
-                              np.array([INSULATED_TAG, INSULATED_TAG]))),
+                              np.array([INSULATED_TAG, INSULATED_TAG]),
+                       ring.n_points)),
         ring.lines, ring.interior)
 
     #: The ring's own segment count, split ``n/2 | n | n/2`` round the half-rectangle
@@ -470,7 +471,7 @@ def solid_section(z0, minus_tag, plus_tag, inner_tag=quadmesh.NO_TAG):
 
     rings = linemesh.blend(inner, outer, np.linspace(0.0, 1.0, N_SOLID + 1))
     return to_run(quadmesh.loft(rings, first_tag=inner_tag,
-                                last_tag=Tags(tagged, face[tagged])))
+                                last_tag=Tags(tagged, face[tagged], face.shape[0])))
 
 
 #: Layers in each overhang, at the same target cell length as the hairpin itself.
@@ -627,7 +628,7 @@ fluid = hexmesh.merge(fluids)
 #: of being flattened into one ``"wall"``.
 _Y_RUN = 2.0 * R_BEND
 _free = np.flatnonzero(hexmesh.boundary_face_ids(fluid))
-_named = fluid.face_tags.to_dense(fluid.quad_mesh.n_quads)
+_named = fluid.face_tags.to_dense()
 _cand = _free[_named[_free] == WALL_TAG]
 _mid = fluid.points[fluid.quad_mesh.corners[_cand]].mean(axis=1)
 _hit = ((_mid[:, 0] > X_MID - LOOP_LEN) & (_mid[:, 0] < X_MID)

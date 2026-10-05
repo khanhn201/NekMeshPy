@@ -49,7 +49,7 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import affine
-from nekmeshpy.core.tags import Tags
+from nekmeshpy.tags import Tags
 
 R_HELIX = 0.375
 RW_NOM  = 0.125
@@ -525,7 +525,7 @@ mesh = hexmesh.merge([coil, branch, core, lower, higher, cap_lo, cap_hi, film, p
                      tol=1e-9, clear_seam_tags=["inlet", "outlet"])
 
 # everything not tagged solid at construction is fluid
-_reg = np.asarray(mesh.element_tags.to_dense(mesh.n_hexes), dtype="<U8")
+_reg = np.asarray(mesh.element_tags.to_dense(), dtype="<U8")
 _reg[_reg == ""] = "fluid"
 mesh = hexmesh.HexMesh(mesh.quad_mesh, mesh.hexes, mesh.orient, mesh.interior,
                        Tags.from_dense(_reg))
@@ -539,7 +539,7 @@ for _e in range(mesh.n_hexes):
     for _q in _inc[_e]:
         _owner[_q, _slot[_q]] = _e
         _slot[_q] += 1
-_reg2 = np.asarray(mesh.element_tags.to_dense(mesh.n_hexes))
+_reg2 = np.asarray(mesh.element_tags.to_dense())
 _conj = ((_owner[:, 1] >= 0) & (_reg2[_owner[:, 0]] != _reg2[_owner[:, 1]]))
 _named = set(hexmesh.tagged_faces(mesh, "coil")) | set(hexmesh.tagged_faces(mesh, "wall"))
 assert set(np.flatnonzero(_conj)) == _named, \
@@ -572,7 +572,7 @@ THERMAL = {
 }
 
 print(hexmesh.report(mesh))
-print("regions:", dict(zip(*np.unique(mesh.element_tags.to_dense(mesh.n_hexes),
+print("regions:", dict(zip(*np.unique(mesh.element_tags.to_dense(),
                                       return_counts=True))))
 print("faces  :", ", ".join(sorted(mesh.face_tags.unique())))
 

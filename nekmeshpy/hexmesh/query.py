@@ -20,7 +20,6 @@ from ..core import conform, measure
 from ..core import quality as _core
 from ..core.interp import corner_indices
 from ..core.quality import OrderScan, QualitySummary, SolverMetrics
-from ..core.tags import _empty_str
 from ..core.topology import TopologyReport
 from .hexmesh import HexMesh
 
@@ -112,7 +111,7 @@ def face_tag_rows(mesh: HexMesh) -> tuple[IntArray, StrArray]:
     different codes from the regions on either side."""
     named = mesh.quad_mesh.element_tags
     if not len(named):
-        return np.zeros((0, 2), dtype=np.int64), _empty_str()
+        return np.zeros((0, 2), dtype=np.int64), named.tags
     rows, counts = face_rows(mesh, named.ids)
     tags: StrArray = np.repeat(named.tags, counts)
     p = np.lexsort((rows[:, 1], rows[:, 0]))
@@ -421,7 +420,7 @@ def centroid(mesh: HexMesh, *, high_order: bool = False) -> Point:
     """The **volume-weighted** centroid ``integral x dV / integral dV`` -- the mass
     property, not the mean of the points (which would weight a finely meshed corner
     over a coarse bulk)."""
-    return measure.centroid_of(_blocks(mesh, high_order), 3, "hexmesh.centroid")
+    return measure.centroid_of(_blocks(mesh, high_order), 3)
 
 
 def tagged_faces(mesh: HexMesh, tag: str) -> IntArray:

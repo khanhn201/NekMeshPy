@@ -12,9 +12,9 @@ from .._typing import (
 )
 from ..core import conform
 from ..core.interp import quad_edge_indices
-from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.linemesh import _repr_tags
+from ..tags import Tags
 
 #: Tag sentinel meaning "leave this side unnamed": a side carrying it emits no
 #: side-tag row.  Equal to ``""`` so it reads as "unnamed" everywhere.
@@ -129,8 +129,11 @@ class QuadMesh:
                 "QuadMesh: interior must be (Q,(order-1)**2,3) = (%d,%d,3), got %s"
                 % (E, k, self.interior.shape))
 
-        self.element_tags = Tags.empty() if element_tags is None else element_tags
-        self.element_tags.validate(E)
+        self.element_tags = Tags.empty(E) if element_tags is None else element_tags
+        if self.element_tags.size != E:
+            raise ValueError(
+                "QuadMesh: element_tags must be over the %d quads, got a Tags over %d"
+                % (E, self.element_tags.size))
 
         # corner connectivity is derived from quads/orient and immutable post-construction
         # (point moves don't change it), so memoize it once.

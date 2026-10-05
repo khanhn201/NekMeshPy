@@ -144,7 +144,7 @@ def test_the_row_fit_reproduces_the_hex_read_where_the_frames_coincide(order):
         if not np.array_equal(conform._FACE_CORNER_UV[f], conform._CCW_UV):
             continue
         poly = block.corners[:, hexmesh.HexMesh.FACE_POINTS[f]]
-        idx = conform.locate_rows(block.faces, poly, who="test", what="face")
+        idx = conform.locate_rows(block.faces, poly, what="face")
         got = conform.face_nodes_in_frame(
             np.asarray(block.face_nodes, dtype=float)[idx], poly, canonical[idx])
         assert np.allclose(got, local[:, f])

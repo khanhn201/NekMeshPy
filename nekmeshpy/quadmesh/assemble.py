@@ -13,23 +13,22 @@ from .._typing import (
     FloatArray,
     IntArray,
     PointArray,
-    StrArray,
 )
 from ..core import conform, stations
 from ..core.fields import gll_nodes
 from ..core.interp import _CORNER_IJK, resample_block_at
-from ..core.tags import (
-    Tags,
-    mask_for_selection,
-    sweep_cap,
-    sweep_tags,
-    weld,
-)
+from ..core.selection import Selection, mask_for_selection
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _subset as line_subset
 from ..linemesh.assemble import refine as line_refine
 from ..linemesh.query import element_blocks as line_blocks
 from ..pointmesh import PointMesh
+from ..tags import (
+    Tags,
+    sweep_cap,
+    sweep_tags,
+    weld,
+)
 from ._helpers import entities_from_blocks
 from .quadmesh import (
     QuadMesh,
@@ -181,22 +180,16 @@ def loft(
     # no argument it inherits that line's own element tag -- except on a closed sweep,
     # where the "caps" are the interior seam and only an explicit tag names them.  On a
     # loop the two caps are the same edges and the later write wins: one edge, one name.
-    enamed = np.full(edges.shape[0], "", dtype=object)
-
-    def _name(ids: IntArray, names: StrArray) -> None:
-        hit = names != ""
-        enamed[np.asarray(ids, dtype=np.int64)[hit]] = names[hit]
-
-    pnames: StrArray = slices[0].point_tags.to_dense(nn)
-    for p0 in slices[0].point_tags.ids:
+    etags = Tags.empty(edges.shape[0])
+    for p0, name in slices[0].point_tags:
         if slot[p0] >= 0:
-            enamed[n_prof * L + lay * nu + slot[p0]] = pnames[p0]
-    closed = Tags.empty()
+            etags = etags.put(n_prof * L + lay * nu + slot[p0], name)
+    closed = Tags.empty(L)
     cap: IntArray = np.arange(L, dtype=np.int64)
     first_caps = sweep_cap(first_tag, closed if loop else slices[0].element_tags,
-                                L, "QuadMesh.loft")
+                                L)
     last_caps = sweep_cap(last_tag, closed if loop else slices[-1].element_tags,
-                               L, "QuadMesh.loft")
+                               L)
     if loop:
         # a closed sweep's two "caps" are the *same* seam edges, approached from either
         # side.  Naming each differently used to give two (quad, side) rows on one
@@ -211,12 +204,9 @@ def loft(
                 "section line %d. Name the seam once, or leave one side untagged."
                 % (str(first_caps[clash[0]]), str(last_caps[clash[0]]),
                    int(clash[0])))
-    _name(cap, first_caps)
-    _name(nxt[nz - 1] * L + cap, last_caps)
+    etags = etags.put(cap, first_caps).put(nxt[nz - 1] * L + cap, last_caps)
 
-    lm = LineMesh(points, edges, interior=edge_nodes,
-                  element_tags=Tags.from_dense(
-                      np.asarray(enamed, dtype=np.str_)))
+    lm = LineMesh(points, edges, interior=edge_nodes, element_tags=etags)
 
     # -- 3. the quads, as indices into that LineMesh ----------------------------
     # corners [a_i, b_i, b_j, a_j]; local edges [carried at i, rung at b, carried at j,
@@ -253,7 +243,7 @@ def loft(
             interior = ((1.0 - gv) * curves[i_idx, l_idx][:, iu, :]
                         + gv * curves[j_idx, l_idx][:, iu, :])
 
-    etags = sweep_tags(element_tags, nz, L, "QuadMesh.loft")
+    etags = sweep_tags(element_tags, nz, L)
     return QuadMesh(lm, quad, flip, interior, etags)
 
 
@@ -391,11 +381,11 @@ def merge(meshes: Sequence[QuadMesh], *, tol: float = 1e-7) -> QuadMesh:
         edges, mask = _boundary_mask(m.corners)
         seams.append(np.unique(edges[mask]))
     points, point_id = conform.weld_points(pos, seams, tol)
-    return _stitch(meshes, points, point_id, who="QuadMesh.merge")
+    return _stitch(meshes, points, point_id)
 
 
 def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, *,
-            who: str, seam_edges: Mapping[int, IntArray] | None = None,
+            seam_edges: Mapping[int, IntArray] | None = None,
             own_edges: Mapping[int, IntArray] | None = None, check: bool = True,
             named_seams: Sequence[tuple[int, IntArray, str]] = ()) -> QuadMesh:
     """Everything a weld does *after* the point remap is decided, shared by
@@ -416,19 +406,16 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
     erow_list: list[IntArray] = []
     ee_list: list[IntArray] = []
     eflip_list: list[BoolArray] = []
-    etag_list: list[Tags] = []
     edge_offs: list[int] = []
-    noff = eoff = qoff = 0
+    noff = eoff = 0
     for m, c in zip(meshes, counts):
         erow_list.append(point_id[np.asarray(m.line_mesh.lines, dtype=np.int64) + noff])
         ee_list.append(np.asarray(m.quads, dtype=np.int64) + eoff)
         eflip_list.append(np.asarray(m.orient, dtype=bool))
-        etag_list.append(m.element_tags.shift(qoff))
         edge_offs.append(eoff)
         noff += c
         eoff += m.line_mesh.n_lines
-        qoff += m.n_quads
-    etags = Tags.concatenate(etag_list)
+    etags = Tags.concatenate([m.element_tags for m in meshes])
 
     order = meshes[0].order if meshes else 1
     if any(m.order != order for m in meshes):
@@ -468,7 +455,7 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
                 if loc is not None and len(loc):
                     prefer_e[off3 + np.asarray(loc, dtype=np.int64)] = True
         edge_nodes = _shared_edge_nodes(meshes, e_new, swap, edges.shape[0],
-                                        conform.entity_tol(points), who,
+                                        conform.entity_tol(points),
                                         prefer_e, check)
         interior = np.concatenate([m.interior for m in meshes], axis=0)
     # An edge tag rides the edge, so it has to wait for the merged edge table: block
@@ -487,15 +474,14 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
         # self-join collapses two tagged edges onto one id and ``renumber`` refuses it
         et = m.edge_tags
         if seam_edges is not None and bi2 in seam_edges:
-            et = et.compress(~np.isin(et.ids,
-                                    np.asarray(seam_edges[bi2], dtype=np.int64)))
+            et = et.clear(seam_edges[bi2])
             seam_merged.append(mine[np.asarray(seam_edges[bi2], dtype=np.int64)])
-        edge_tag_list.append(et.renumber(mine))
+        edge_tag_list.append(et.renumber(mine, edges.shape[0]))
     named = [(loc2mrg[bi][np.asarray(e, dtype=np.int64)], tag)
              for bi, e, tag in named_seams]
     lm = LineMesh(points, edges, interior=edge_nodes,
                   element_tags=_seam_named(edge_tag_list, seam_merged, named,
-                                           edges.shape[0], who))
+                                           edges.shape[0]))
     return QuadMesh(lm, elem_edges, flip, interior, etags)
 
 
@@ -514,7 +500,7 @@ def _first_wins(dst: PointArray, idx: IntArray, src: PointArray,
 
 
 def _shared_edge_nodes(meshes: Sequence[QuadMesh], e_new: IntArray, swap: BoolArray,
-                       n_edges: int, ent_tol: float, who: str,
+                       n_edges: int, ent_tol: float,
                        prefer: BoolArray | None = None,
                        check: bool = True) -> PointArray:
     """The shared edge-interior table after a weld -- the quad rung's counterpart of
@@ -536,33 +522,30 @@ def _shared_edge_nodes(meshes: Sequence[QuadMesh], e_new: IntArray, swap: BoolAr
         if dup.any() and not np.allclose(src[dup], out[e_new[dup]],
                                          rtol=0.0, atol=ent_tol):
             raise ValueError(
-                "%s: non-conforming high-order edge -- the two sides disagree on a "
+                "non-conforming high-order edge -- the two sides disagree on a "
                 "welded shared edge's interior nodes beyond tolerance (%.3e). If they "
                 "really are the same interface, state it with attach()."
-                % (who, ent_tol))
+                % ent_tol)
     return out
 
 
 def _seam_named(etag_list: Sequence[Tags], seam_merged: Sequence[IntArray],
-                named: Sequence[tuple[IntArray, str]], n_edges: int,
-                who: str) -> Tags:
+                named: Sequence[tuple[IntArray, str]], n_edges: int) -> Tags:
     """The merged edge tags, with the welded-shut seam renamed -- the quad rung's
     counterpart of :func:`hexmesh._seam_named
     <nekmeshpy.hexmesh.assemble._seam_named>`, and the same rule: the seam's rows leave
     both sides before the combine, so the two cannot conflict over a name the caller has
     already given."""
     if not seam_merged:
-        return weld(list(etag_list), who)
+        return weld(list(etag_list))
     seam_ids: IntArray = np.unique(np.concatenate(list(seam_merged)))
-    kept = [t.compress(~np.isin(t.ids, seam_ids)) for t in etag_list]
-    merged = weld(kept, who)
+    kept = [t.clear(seam_ids) for t in etag_list]
+    merged = weld(kept)
     if not named:
         return merged
-    dense = np.asarray(merged.to_dense(n_edges), dtype=object)
     for ids, tag in named:
-        if tag:
-            dense[ids] = tag
-    return Tags.from_dense(np.asarray(dense, dtype=np.str_))
+        merged = merged.put(ids, tag)
+    return merged
 
 
 def _edge_group(mesh: QuadMesh, which: str | IntArray | Sequence[int],
@@ -602,22 +585,22 @@ class Seam(NamedTuple):
     attach_tag: str | None = None
 
 
-def _section_index(ref: int | QuadMesh, meshes: Sequence[QuadMesh], who: str) -> int:
+def _section_index(ref: int | QuadMesh, meshes: Sequence[QuadMesh], name: str) -> int:
     if isinstance(ref, QuadMesh):
         for i, m in enumerate(meshes):
             if m is ref:
                 return i
         raise ValueError(
             "attach: %s names a section that is not in the meshes list. Pass the "
-            "section itself, or its index." % who)
+            "section itself, or its index." % name)
     i = int(ref)
     if not 0 <= i < len(meshes):
-        raise ValueError("attach: %s names section %d of %d" % (who, i, len(meshes)))
+        raise ValueError("attach: %s names section %d of %d" % (name, i, len(meshes)))
     return i
 
 
 def _pair_edge_seam(a: QuadMesh, ea: IntArray, b: QuadMesh, eb: IntArray,
-                    who: str) -> IntArray:
+                    name: str) -> IntArray:
     """``(M,2)`` point pairs across one stated edge seam, proved by bijectivity."""
     la = np.asarray(a.line_mesh.lines, dtype=np.int64)[ea]
     lb = np.asarray(b.line_mesh.lines, dtype=np.int64)[eb]
@@ -626,13 +609,13 @@ def _pair_edge_seam(a: QuadMesh, ea: IntArray, b: QuadMesh, eb: IntArray,
     if pa.size != pb.size:
         raise ValueError(
             "attach: %s joins groups that are not the same curve -- %d edges / %d "
-            "points on a, %d / %d on b." % (who, ea.size, pa.size, eb.size, pb.size))
+            "points on a, %d / %d on b." % (name, ea.size, pa.size, eb.size, pb.size))
     _dist, loc = cKDTree(b.points[pb]).query(a.points[pa])
     dup = loc.size - np.unique(loc).size
     if dup:
         raise ValueError(
             "attach: %s: the pairing is not one-to-one -- %d of a's %d seam points "
-            "share a nearest point on b." % (who, dup, loc.size))
+            "share a nearest point on b." % (name, dup, loc.size))
     return np.stack([pa, pb[loc]], axis=1)
 
 
@@ -658,20 +641,20 @@ def attach(meshes: Sequence[QuadMesh], seams: Sequence[Seam]) -> QuadMesh:
 
     resolved: list[tuple[int, IntArray, int, IntArray, str, str | None]] = []
     for k, sm in enumerate(seams):
-        who = "seams[%d]" % k
-        ia = _section_index(sm.a, meshes, who + ".a")
-        ib = _section_index(sm.b, meshes, who + ".b")
+        name = "seams[%d]" % k
+        ia = _section_index(sm.a, meshes, name + ".a")
+        ib = _section_index(sm.b, meshes, name + ".b")
         if sm.own not in ("a", "b"):
-            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
-        ea = _edge_group(meshes[ia], sm.tag_a, who + ".tag_a")
-        eb = _edge_group(meshes[ib], sm.tag_b, who + ".tag_b")
+            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (name, sm.own))
+        ea = _edge_group(meshes[ia], sm.tag_a, name + ".tag_a")
+        eb = _edge_group(meshes[ib], sm.tag_b, name + ".tag_b")
         if ea.size != eb.size:
             raise ValueError(
                 "attach: %s joins groups of different edge counts (%d and %d), so they "
-                "cannot be the same interface." % (who, ea.size, eb.size))
+                "cannot be the same interface." % (name, ea.size, eb.size))
         if ea.size == 0:
             raise ValueError("attach: %s names empty groups; there is nothing to join"
-                             % who)
+                             % name)
         resolved.append((ia, ea, ib, eb, sm.own, sm.attach_tag))
 
     # Nothing is copied: the weld keeps exactly one point per fused pair anyway, so
@@ -700,7 +683,7 @@ def attach(meshes: Sequence[QuadMesh], seams: Sequence[Seam]) -> QuadMesh:
         seam_edges.setdefault(ia, []).append(ea)
         seam_edges.setdefault(ib, []).append(eb)
     named = [(ia, ea, tag) for ia, ea, _ib, _eb, _o, tag in resolved if tag]
-    return _stitch(meshes, points, point_id, who="quadmesh.attach",
+    return _stitch(meshes, points, point_id,
                    seam_edges={b: np.unique(np.concatenate(v))
                                for b, v in seam_edges.items()},
                    named_seams=named,
@@ -731,7 +714,7 @@ def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
             new_quad_of)
 
 
-def select(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
+def select(mesh: QuadMesh, which: Selection
            ) -> QuadMesh:
     """The named quads as a section of their own, renumbered from zero.
 
@@ -742,15 +725,13 @@ def select(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
 
     Removing elements can open the section up, so the result is **not** guaranteed to be
     simply connected -- or connected at all.  Ask :func:`components` if that matters."""
-    return _subset(mesh, mask_for_selection(which, mesh.element_tags, mesh.n_quads,
-                                      "quadmesh.select"))[0]
+    return _subset(mesh, mask_for_selection(which, mesh.element_tags))[0]
 
 
-def remove(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
+def remove(mesh: QuadMesh, which: Selection
            ) -> QuadMesh:
     """The complement of :func:`select`: everything ``which`` does **not** name."""
-    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags, mesh.n_quads,
-                                       "quadmesh.remove"))[0]
+    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags))[0]
 
 
 def components(mesh: QuadMesh) -> list[QuadMesh]:
@@ -830,13 +811,13 @@ def refine(mesh: QuadMesh) -> QuadMesh:
     q_count = mesh.n_quads
 
     lm, elem_edges, flip, interior = entities_from_blocks(
-        flat_blocks, flat_corners, points, order, "quadmesh.refine")
+        flat_blocks, flat_corners, points, order)
 
     if len(refined_line.element_tags):
         match = conform.locate_rows(lm.lines, refined_line.lines,
-                                    who="quadmesh.refine", what="refined edge")
+                                    what="refined edge")
         lm = LineMesh(lm.points, lm.lines, lm.interior,
-                     refined_line.element_tags.renumber(match))
+                     refined_line.element_tags.renumber(match, lm.n_lines))
 
     # each parent's tag propagates to all 4 children, consecutively -- see
     # linemesh.refine's own note on why this is ``take``, not ``tile``.

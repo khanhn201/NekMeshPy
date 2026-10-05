@@ -56,7 +56,7 @@ def test_edge_tags_are_stored_on_the_shared_edges_they_name():
 def test_mismatched_ids_and_names_raises():
     """Desynchronized ids and names are rejected by the table, not the container."""
     with pytest.raises(ValueError, match="same length"):
-        Tags([0, 1], ["only"])
+        Tags([0, 1], ["only"], 2)
 
 
 def test_loft_propagates_per_edge_tags_to_side_faces():

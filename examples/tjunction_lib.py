@@ -884,7 +884,7 @@ def skin_wall(core, offsets, *, wall_tags="wall", element_tag="", inner_prefix="
     tags = [wall_tags] if isinstance(wall_tags, str) else list(wall_tags)
 
     surf = hexmesh.boundary_mesh(core)          # every quad named after its parent face
-    names = np.asarray(surf.element_tags.to_dense(surf.n_quads))
+    names = np.asarray(surf.element_tags.to_dense())
     skinned = np.isin(names, tags)
     if not skinned.any():
         raise ValueError("skin_wall: no boundary face carries any of %s; this core has %s"
@@ -920,7 +920,7 @@ def skin_wall(core, offsets, *, wall_tags="wall", element_tag="", inner_prefix="
     # left to that default, which is exactly right: the shell's outer cap *is* the
     # finished wall, and carries each group's own name onward.
     inner = Tags.from_dense(
-        np.char.add(inner_prefix, np.asarray(wall.element_tags.to_dense(wall.n_quads))))
+        np.char.add(inner_prefix, np.asarray(wall.element_tags.to_dense())))
     shell = hexmesh.loft(skins, first_tag=inner, element_tags=element_tag or None)
     return hexmesh.attach([core, shell],
                           [Seam(0, t, 1, inner_prefix + t) for t in tags])

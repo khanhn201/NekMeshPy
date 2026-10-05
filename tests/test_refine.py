@@ -16,11 +16,11 @@ import pytest
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core.fields import gll_nodes
 from nekmeshpy.core.interp import resample_block, resample_block_at
-from nekmeshpy.core.tags import Tags
 from nekmeshpy.hexmesh.hexmesh import HexMesh
 from nekmeshpy.hexmesh.query import element_blocks as hex_blocks
 from nekmeshpy.linemesh.query import element_blocks as line_blocks
 from nekmeshpy.quadmesh.query import element_blocks as quad_blocks
+from nekmeshpy.tags import Tags
 
 ORDERS = [1, 2, 3, 4]
 
@@ -77,7 +77,7 @@ def test_linemesh_refine_tags_propagate_to_both_children():
     m = linemesh.LineMesh(m.point_mesh, m.lines, m.interior,
                           Tags.from_dense(["a", "", "", ""]))
     r = linemesh.refine(m)
-    dense = r.element_tags.to_dense(r.n_lines)
+    dense = r.element_tags.to_dense()
     assert list(dense) == ["a", "a", "", "", "", "", "", ""]
 
 
@@ -121,7 +121,7 @@ def test_quadmesh_refine_region_tags_propagate_to_all_four_children():
     tags = Tags.from_dense(["a", "a", "b", "b"])
     m = quadmesh.QuadMesh(m.line_mesh, m.quads, m.orient, m.interior, tags)
     r = quadmesh.refine(m)
-    dense = r.element_tags.to_dense(r.n_quads)
+    dense = r.element_tags.to_dense()
     assert list(dense[:8]) == ["a"] * 8
     assert list(dense[8:]) == ["b"] * 8
 
@@ -198,7 +198,7 @@ def test_hexmesh_refine_region_tags_propagate_to_all_eight_children():
     tags = Tags.from_dense(["a", "a", "b", "b"])
     m = HexMesh(m.quad_mesh, m.hexes, m.orient, m.interior, tags)
     r = hexmesh.refine(m)
-    dense = r.element_tags.to_dense(r.n_hexes)
+    dense = r.element_tags.to_dense()
     assert list(dense[:16]) == ["a"] * 16
     assert list(dense[16:]) == ["b"] * 16
 

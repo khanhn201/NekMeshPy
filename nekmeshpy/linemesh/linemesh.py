@@ -10,8 +10,8 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..core.tags import Tags
 from ..pointmesh import PointMesh
+from ..tags import Tags
 
 
 def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
@@ -44,7 +44,7 @@ class LineMesh:
         """Construct from the rung below: ``point_mesh`` (a ``PointMesh``, or a bare
         ``(N,3)`` array promoted to an untagged one), the **required** ``lines``
         ``(L,2)`` connectivity, the per-line ``interior`` nodes, and an optional
-        :class:`Tags <nekmeshpy.core.tags.Tags>` naming whichever lines
+        :class:`Tags <nekmeshpy.tags.Tags>` naming whichever lines
         are tagged.
 
         Passing an array is the authoring form and the one every factory building fresh
@@ -72,8 +72,11 @@ class LineMesh:
                 "LineMesh: interior must be (L, order-1, 3) with L = %d lines, "
                 "got %s" % (E, self.interior.shape))
 
-        self.element_tags = Tags.empty() if element_tags is None else element_tags
-        self.element_tags.validate(E)
+        self.element_tags = Tags.empty(E) if element_tags is None else element_tags
+        if self.element_tags.size != E:
+            raise ValueError(
+                "LineMesh: element_tags must be over the %d lines, got a Tags over %d"
+                % (E, self.element_tags.size))
 
     @property
     def corners(self) -> IntArray:

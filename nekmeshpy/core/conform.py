@@ -758,15 +758,15 @@ def unique_edges(conn: IntArray, dim: int) -> tuple[IntArray, IntArray, BoolArra
 
 
 def locate_rows(haystack: IntArray, needles: IntArray, *,
-                who: str, what: str) -> IntArray:
+                what: str) -> IntArray:
     """``idx`` such that ``haystack[idx[i]]`` holds the same *set* of ids as
     ``needles[i]`` -- the id-set lookup behind reading one mesh's entities out of
     another's tables, for edges (2 columns), quads (4) or any width."""
     a: IntArray = np.sort(np.asarray(haystack, dtype=np.int64), axis=1)
     b: IntArray = np.sort(np.asarray(needles, dtype=np.int64), axis=1)
     if a.shape[1] != b.shape[1]:
-        raise ValueError("%s: %s rows are %d wide on one side and %d on the other"
-                         % (who, what, a.shape[1], b.shape[1]))
+        raise ValueError("%s rows are %d wide on one side and %d on the other"
+                         % (what, a.shape[1], b.shape[1]))
     h = a.shape[0]
     uniq, inv, _ = unique_rows(np.concatenate([a, b], axis=0))
     pos: IntArray = np.full(uniq.shape[0], -1, dtype=np.int64)
@@ -775,8 +775,8 @@ def locate_rows(haystack: IntArray, needles: IntArray, *,
     missing = int(np.count_nonzero(idx < 0))
     if missing:
         raise ValueError(
-            "%s: %d of %d %s rows have no counterpart in the target -- the two do not "
-            "describe the same connectivity" % (who, missing, idx.size, what))
+            "%d of %d %s rows have no counterpart in the target -- the two do not "
+            "describe the same connectivity" % (missing, idx.size, what))
     return idx
 
 
@@ -849,7 +849,7 @@ def _k_from_face_width(k2: int) -> int:
 
 
 def scatter_edge_nodes(local: PointArray, elem_edges: IntArray, edge_flip: BoolArray,
-                       n_edges: int, tol: float, who: str,
+                       n_edges: int, tol: float,
                        prefer: BoolArray | None = None,
                        check: bool = True) -> PointArray:
     """Scatter element-local edge-interior nodes into the shared canonical table.
@@ -876,16 +876,16 @@ def scatter_edge_nodes(local: PointArray, elem_edges: IntArray, edge_flip: BoolA
             edge_nodes[flat_eid[p][::-1]] = canon_flat[p][::-1]
     if check and not np.allclose(canon_flat, edge_nodes[flat_eid], rtol=0.0, atol=tol):
         raise ValueError(
-            "%s: non-conforming high-order edge -- incident elements disagree on a "
+            "non-conforming high-order edge -- incident elements disagree on a "
             "shared edge's interior nodes beyond tolerance (%.3e). The inputs are not "
-            "structurally conformal." % (who, tol))
+            "structurally conformal." % tol)
     if edge_nodes.shape[0] != n_edges:                         # pragma: no cover
-        raise AssertionError("%s: edge owner count mismatch" % who)
+        raise AssertionError("edge owner count mismatch")
     return edge_nodes
 
 
 def scatter_face_nodes(local: PointArray, elem_faces: IntArray, face_orient: IntArray,
-                       n_faces: int, tol: float, who: str) -> PointArray:
+                       n_faces: int, tol: float) -> PointArray:
     """Scatter element-local hex-face interior nodes into the shared canonical table."""
     k2 = local.shape[2]
     _, inv = _perm_tables(_k_from_face_width(k2) + 1)          # INV: elem->canon gather
@@ -898,11 +898,11 @@ def scatter_face_nodes(local: PointArray, elem_faces: IntArray, face_orient: Int
     face_nodes: PointArray = canon_flat[first]                 # (Nf,k2,3)
     if not np.allclose(canon_flat, face_nodes[flat_fid], rtol=0.0, atol=tol):
         raise ValueError(
-            "%s: non-conforming high-order face -- incident hexes disagree on a shared "
+            "non-conforming high-order face -- incident hexes disagree on a shared "
             "face's interior nodes beyond tolerance (%.3e). The inputs are not "
-            "structurally conformal." % (who, tol))
+            "structurally conformal." % tol)
     if face_nodes.shape[0] != n_faces:                         # pragma: no cover
-        raise AssertionError("%s: face owner count mismatch" % who)
+        raise AssertionError("face owner count mismatch")
     return face_nodes
 
 

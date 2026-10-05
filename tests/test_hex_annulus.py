@@ -162,7 +162,7 @@ def test_loft_per_quad_first_tag_and_scalar_last_tag():
 
 def test_loft_cap_tags_must_name_quads_the_section_has():
     s0, s1 = _two_quad_slices()
-    with pytest.raises(ValueError, match="only 2 elements"):
-        hexmesh.loft([s0, s1], first_tag=Tags([2], ["off_the_end"]))
+    with pytest.raises(ValueError, match="over the 2 elements"):
+        hexmesh.loft([s0, s1], first_tag=Tags([2], ["off_the_end"], 3))
     with pytest.raises(TypeError, match="cap tag must be"):
         hexmesh.loft([s0, s1], first_tag=["a", "b"])

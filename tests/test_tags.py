@@ -1,4 +1,4 @@
-"""``core.tags`` -- the sparse element-tag table every rung stores, and the two
+"""``tags`` -- the sparse element-tag table every rung stores, and the two
 vocabularies a mesh keeps in it.
 
 There is one table now. A rung's side tags *are* the rung below's ``element_tags``, so
@@ -20,8 +20,8 @@ import pytest
 from conftest import face_rows, read_re2_boundary
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
-from nekmeshpy.core.tags import Tags
 from nekmeshpy.quadmesh import QuadMesh
+from nekmeshpy.tags import Tags
 
 VOCAB = ["", "wall", "inlet", "outlet", "a_much_longer_region_name"]
 
@@ -36,8 +36,8 @@ def random_dense(rng, n, p_tagged=0.4):
 
 # -- Tags: construction / normalization ---------------------------
 def test_element_tags_empty_allocates_nothing():
-    empty = Tags.empty()
-    assert len(empty) == 0 and not empty
+    empty = Tags.empty(5)
+    assert len(empty) == 0 and not empty and empty.size == 5
     assert empty.ids.nbytes == 0 and empty.tags.nbytes == 0
     assert empty.unique() == []
 
@@ -50,28 +50,40 @@ def test_from_dense_drops_empties():
 
 
 def test_normalization_sorts_and_rejects_duplicates():
-    t = Tags([3, 1], ["c", "a"])
+    t = Tags([3, 1], ["c", "a"], 4)
     assert np.array_equal(t.ids, [1, 3]) and np.array_equal(t.tags, ["a", "c"])
-    assert len(Tags([0, 1], ["", "x"])) == 1          # "" dropped
+    assert len(Tags([0, 1], ["", "x"], 2)) == 1          # "" dropped
     with pytest.raises(ValueError, match="tagged more than once"):
-        Tags([2, 2], ["a", "b"])
+        Tags([2, 2], ["a", "b"], 3)
     with pytest.raises(ValueError, match="negative element id"):
-        Tags([-1], ["a"])
+        Tags([-1], ["a"], 3)
     with pytest.raises(ValueError, match="same length"):
-        Tags([0, 1], ["a"])
+        Tags([0, 1], ["a"], 2)
+
+
+def test_size_is_validated_at_construction():
+    assert Tags([3], ["fluid"], 4).size == 4              # 0..3 -> fine
+    with pytest.raises(ValueError, match="element 3 is tagged but the table is over "
+                                         "only 3"):
+        Tags([3], ["fluid"], 3)
+    with pytest.raises(ValueError, match="non-negative"):
+        Tags.empty(-1)
+    Tags.empty(0)                                          # empty is always fine
+    assert Tags.from_dense(["a", "", ""]).size == 3
+    assert Tags.full(4, "").size == 4 and len(Tags.full(4, "")) == 0
 
 
 def test_uniform_does_not_clip_the_tag():
     """The ``<U1`` footgun: ``np.full(n, tag, dtype=np.str_)`` would give ``'w'``."""
     t = Tags.full(3, "wall")
     assert t.tags.tolist() == ["wall"] * 3
-    assert t.to_dense(3).tolist() == ["wall"] * 3
-    assert len(Tags.full(4, "")) == 0
+    assert t.to_dense().tolist() == ["wall"] * 3
+    assert len(Tags.full(4, "")) == 0 and Tags.full(4, "wall").size == 4
 
 
 def test_concat_promotes_string_width():
     a = Tags.full(1, "a")
-    b = Tags([1], ["a_much_longer_region_name"])
+    b = Tags([0], ["a_much_longer_region_name"], 1)
     both = Tags.concatenate([a, b])
     assert both.tags.tolist() == ["a", "a_much_longer_region_name"]
 
@@ -88,7 +100,7 @@ def test_dense_roundtrip():
     rng = np.random.default_rng(1)
     for n in (0, 1, 7, 64):
         d = random_dense(rng, n)
-        assert Tags.from_dense(d).to_dense(n).tolist() == d.tolist()
+        assert Tags.from_dense(d).to_dense().tolist() == d.tolist()
 
 
 def test_gather_matches_dense_indexing():
@@ -97,14 +109,14 @@ def test_gather_matches_dense_indexing():
         n = int(rng.integers(1, 30))
         d = random_dense(rng, n)
         idx = rng.integers(0, n, size=int(rng.integers(0, 40))).astype(np.int64)
-        got = Tags.from_dense(d).take(idx).to_dense(idx.shape[0])
+        got = Tags.from_dense(d).take(idx).to_dense()
         assert got.tolist() == d[idx].tolist()
 
 
 def test_gather_does_not_leak_a_neighbours_tag():
     """A searchsorted miss must not pick up the neighbouring id's tag."""
-    t = Tags([5], ["wall"])                  # nothing tagged below id 5
-    assert t.take(np.array([0, 1, 5], dtype=np.int64)).to_dense(3).tolist() == [
+    t = Tags([5], ["wall"], 6)               # nothing tagged below id 5
+    assert t.take(np.array([0, 1, 5], dtype=np.int64)).to_dense().tolist() == [
         "", "", "wall"]
 
 
@@ -114,30 +126,37 @@ def test_tile_matches_np_tile():
         m = int(rng.integers(1, 8))
         nz = int(rng.integers(1, 6))
         d = random_dense(rng, m)
-        got = Tags.from_dense(d).tile(nz, m).to_dense(nz * m)
-        assert got.tolist() == np.tile(d, nz).tolist()
+        tiled = Tags.from_dense(d).tile(nz)
+        assert tiled.size == nz * m
+        assert tiled.to_dense().tolist() == np.tile(d, nz).tolist()
 
 
-def test_offset_and_concat_for_merge():
+def test_concatenate_offsets_each_table_by_the_sizes_before_it():
     a = Tags.from_dense(["wall", ""])
     b = Tags.from_dense(["", "inlet"])
-    m = Tags.concatenate([a, b.shift(2)])
-    assert m.to_dense(4).tolist() == ["wall", "", "", "inlet"]
-    assert Tags.concatenate([]).unique() == []
+    m = Tags.concatenate([a, b])
+    assert m.size == 4
+    assert m.to_dense().tolist() == ["wall", "", "", "inlet"]
+    assert Tags.concatenate([]).unique() == [] and Tags.concatenate([]).size == 0
+    assert Tags.concatenate([Tags.empty(2), Tags.empty(3)]).size == 5
 
 
 def test_renumber_reverses_with_the_elements():
     t = Tags.from_dense(["a", "", "c"])
     n = 3
-    rev = t.renumber((n - 1 - np.arange(n)).astype(np.int64))
-    assert rev.to_dense(n).tolist() == ["c", "", "a"]
+    rev = t.renumber((n - 1 - np.arange(n)).astype(np.int64), n)
+    assert rev.to_dense().tolist() == ["c", "", "a"]
+    grown = t.renumber(np.array([0, 1, 4]), 6)           # into a larger id space
+    assert grown.size == 6 and grown.to_dense().tolist() == ["a", "", "", "", "c", ""]
+    with pytest.raises(ValueError, match="only 3 elements"):
+        t.renumber(np.array([0, 1, 5]), 3)
 
 
 def test_is_uniform():
-    assert Tags.full(4, "wall").is_uniform(4)
-    assert not Tags.full(4, "wall").is_uniform(5)       # partly tagged
-    assert not Tags.from_dense(["a", "b"]).is_uniform(2)   # two vocabularies
-    assert not Tags.empty().is_uniform(3)
+    assert Tags.full(4, "wall").is_uniform()
+    assert not Tags.from_dense(["wall", ""]).is_uniform()       # partly tagged
+    assert not Tags.from_dense(["a", "b"]).is_uniform()         # two vocabularies
+    assert not Tags.empty(3).is_uniform()
 
 
 def test_group_tags_sorted_unique():
@@ -145,27 +164,17 @@ def test_group_tags_sorted_unique():
     assert t.unique() == ["a", "b"]
 
 
-# -- validation the table does for itself ---------------------------------
-def test_validate_is_the_only_thing_needing_the_mesh():
-    """Element *count* is the mesh's, not the table's -- so it is the one check a
-    container passes in. Everything the three side-tag types used to validate for
-    themselves (a side in 1..SIDES, the rung's own noun in the message) went away with
-    them: a tag names an entity id now, and an id out of range is this same check."""
-    et = Tags([3], ["fluid"])
-    et.validate(4)                                           # 0..3 -> fine
-    with pytest.raises(ValueError, match="element_tags names element 3"):
-        et.validate(3)
-    Tags.empty().validate(0)                          # empty is always fine
-
-
-def test_the_container_still_rejects_an_out_of_range_element():
+# -- the container checks the table against its own element count ---------
+def test_the_container_rejects_a_table_over_the_wrong_element_count():
     from nekmeshpy import HexMesh
     ring = linemesh.circle(1.0, 8)
     sec = quadmesh.ogrid(ring, 2, np.linspace(0.5, 1.0, 3))
     blk = hexmesh.extrude(sec, length=1.0, layers=2)
-    with pytest.raises(ValueError, match="element_tags names element"):
+    with pytest.raises(ValueError, match="element_tags must be over the"):
         HexMesh(blk.quad_mesh, blk.hexes, blk.orient, None,
-                Tags([blk.n_hexes], ["fluid"]))
+                Tags([0], ["fluid"], blk.n_hexes + 1))
+    assert HexMesh(blk.quad_mesh, blk.hexes, blk.orient, None).element_tags.size \
+        == blk.n_hexes
 
 
 # -- renaming: the tag.py rung operations --------------------------------
@@ -173,7 +182,7 @@ def test_rename_applies_simultaneously_and_can_widen():
     """The map is read off the *original* tags, so a swap is a swap rather than two
     sequential overwrites collapsing both groups onto one -- and the result is re-sized
     to the new names, not written into the old array's fixed width."""
-    t = Tags([0, 1, 2, 3], ["a", "b", "a", "wall"])
+    t = Tags([0, 1, 2, 3], ["a", "b", "a", "wall"], 4)
     got = t.rename({"a": "b", "b": "a"})
     assert got.tags.tolist() == ["b", "a", "b", "wall"]
     assert t.rename({"a": "a_much_longer_region_name"}).tags.tolist() == [
@@ -183,19 +192,19 @@ def test_rename_applies_simultaneously_and_can_widen():
 def test_rename_merges_and_keeps_row_order():
     """Two keys may share an image. Row order is untouched -- ``.re2`` writes rows in
     it, so a rename must not become a re-sort."""
-    t = Tags([4, 0, 2], ["inlet", "outlet", "wall"])
+    t = Tags([4, 0, 2], ["inlet", "outlet", "wall"], 5)
     got = t.rename({"inlet": "open", "outlet": "open"})
     assert list(got) == [(0, "open"), (2, "wall"), (4, "open")]
 
 
 def test_rename_to_no_tag_drops_side_rows_but_keeps_the_rest():
-    t = Tags([0, 1, 2], ["inlet", "wall", "outlet"])
+    t = Tags([0, 1, 2], ["inlet", "wall", "outlet"], 3)
     got = t.rename({"inlet": "", "outlet": ""})
     assert list(got) == [(1, "wall")]
 
 
 def test_rename_to_no_tag_untags_elements():
-    t = Tags([0, 2, 5], ["fluid", "solid", "fluid"])
+    t = Tags([0, 2, 5], ["fluid", "solid", "fluid"], 6)
     got = t.rename({"fluid": ""})
     assert got.ids.tolist() == [2] and got.tags.tolist() == ["solid"]
 
@@ -203,11 +212,11 @@ def test_rename_to_no_tag_untags_elements():
 def test_rename_rejects_a_key_that_names_nothing():
     """A rename matching nothing is almost always a typo, and a mis-spelled boundary
     name is not visible again until the solver reads it."""
-    t = Tags([0], ["wall"])
+    t = Tags([0], ["wall"], 1)
     with pytest.raises(ValueError, match="nothing is tagged 'wal'"):
-        t.rename({"wal": "wall"}, "quadmesh.retag_edge")
+        t.rename({"wal": "wall"})
     assert t.rename({}).tags.tolist() == ["wall"]
-    assert Tags.empty().rename({}).tags.tolist() == []
+    assert Tags.empty(1).rename({}).tags.tolist() == []
 
 
 def _ladder():
@@ -493,7 +502,7 @@ def test_quadrant_ogrid_names_its_own_elements():
     s2 = linemesh.line(np.zeros(3), arc.points[-1], fr)
     q = quadmesh.quadrant_ogrid(arc, s1, s2, 2, center_scale=0.7, element_tag="patch")
     assert q.element_group_tags == ["patch"]
-    assert q.element_tags.is_uniform(q.n_quads)
+    assert q.element_tags.is_uniform()
     plain = quadmesh.quadrant_ogrid(arc, s1, s2, 2, center_scale=0.7)
     assert plain.element_group_tags == []
 
@@ -516,6 +525,93 @@ def test_isin_takes_one_name_or_several():
     assert t.isin(["a", "c"]).tolist() == [True, False, True]
 
 
-def test_take_refuses_a_negative_index():
+def test_take_follows_np_take_bounds():
+    t = Tags.from_dense(["a", "", "b"])
+    assert t.take([-1, 0]).to_dense().tolist() == ["b", "a"]      # negatives wrap
+    assert t.take([2, 2]).size == 2                               # size = len(indices)
     with pytest.raises(IndexError):
-        Tags.from_dense(["a"]).take(np.array([-1]))
+        t.take([3])
+    with pytest.raises(IndexError):
+        t.take([-4])
+    assert Tags.empty(3).take([1, 2]).size == 2
+
+
+def test_selection_by_several_tag_names():
+    from nekmeshpy.core.selection import mask_for_selection
+    t = Tags.from_dense(["a", "b", "", "c", "a"])
+    assert mask_for_selection(["a", "c"], t).tolist() == [True, False, False, True, True]
+    assert mask_for_selection(np.array(["b"]), t).tolist() == [False, True, False, False, False]
+    assert mask_for_selection("a", t).tolist() == [True, False, False, False, True]
+    with pytest.raises(ValueError, match="'zzz'"):
+        mask_for_selection(["a", "zzz"], t)
+
+
+def test_flatnonzero_gives_the_ids_carrying_any_name():
+    t = Tags.from_dense(["a", "b", "", "c", "a"])
+    assert t.flatnonzero("a").tolist() == [0, 4]
+    assert t.flatnonzero(["c", "b"]).tolist() == [1, 3]
+    assert t.flatnonzero("zzz").tolist() == []
+
+
+def test_put_overwrites_names_and_skips_empty_values():
+    t = Tags.from_dense(["a", "", "b", ""])
+    got = t.put([1, 2, 3], ["x", "", "a_much_longer_name"])
+    assert got.to_dense().tolist() == ["a", "x", "b", "a_much_longer_name"]
+    assert t.put([0, 3], "w").to_dense().tolist() == ["w", "", "b", "w"]
+    assert t.put([1, 1], ["p", "q"]).to_dense().tolist() == ["a", "q", "b", ""]
+    assert t.put([], "z") is t
+    with pytest.raises(ValueError):
+        t.put([0, 1], ["x"])
+
+
+def test_clear_untags_and_ignores_untagged_ids():
+    t = Tags.from_dense(["a", "", "b", "c"])
+    got = t.clear([0, 1, 3])
+    assert got.to_dense().tolist() == ["", "", "b", ""] and got.size == 4
+    assert t.clear([]) is t
+    with pytest.raises(IndexError):
+        t.clear([4])
+
+
+def test_take_dense_reads_names_by_id():
+    t = Tags.from_dense(["a", "", "b"])
+    assert t.take_dense([2, 1, 0, 2, -1]).tolist() == ["b", "", "a", "b", "b"]
+    assert t.take_dense([]).tolist() == []
+    with pytest.raises(IndexError):
+        t.take_dense([9])
+
+
+def test_unique_return_inverse_codes_each_row():
+    t = Tags.from_dense(["b", "", "a", "b"])
+    names, inverse = t.unique(return_inverse=True)
+    assert names == ["a", "b"] and inverse.tolist() == [1, 0, 1]
+    assert Tags.empty(3).unique(return_inverse=True)[1].tolist() == []
+
+
+def test_put_refuses_an_id_outside_the_table():
+    t = Tags.from_dense(["a", "", "b"])
+    assert t.put([-1], "z").to_dense().tolist() == ["a", "", "z"]    # negative wraps
+    with pytest.raises(IndexError):
+        t.put([3], "z")
+    assert t.put([0], "z").size == 3
+
+
+def test_weld_requires_one_element_count():
+    from nekmeshpy.tags import weld
+    a = Tags.from_dense(["w", ""])
+    b = Tags.from_dense(["", "i"])
+    assert weld([a, b]).to_dense().tolist() == ["w", "i"]
+    with pytest.raises(ValueError, match="different element counts"):
+        weld([a, Tags.empty(3)])
+
+
+def test_sweep_arguments_must_be_over_one_slice():
+    from nekmeshpy.tags import sweep_cap, sweep_tags
+    t = Tags.from_dense(["a", "b"])
+    assert sweep_tags(t, 3, 2).size == 6
+    assert sweep_tags(None, 3, 2).size == 6 and sweep_tags("x", 3, 2).size == 6
+    assert sweep_cap(t, Tags.empty(2), 2).tolist() == ["a", "b"]
+    with pytest.raises(ValueError, match="over the 3 elements of one slice"):
+        sweep_tags(t, 2, 3)
+    with pytest.raises(ValueError, match="over the 3 elements of one slice"):
+        sweep_cap(t, Tags.empty(3), 3)

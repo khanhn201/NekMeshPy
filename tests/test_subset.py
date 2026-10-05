@@ -89,7 +89,8 @@ def test_select_by_tag_takes_exactly_the_tagged_elements():
     tagged = quadmesh.QuadMesh(
         section.line_mesh, section.quads, section.orient, section.interior,
         Tags(np.arange(0, section.n_quads, 3),
-                    np.full(len(np.arange(0, section.n_quads, 3)), "core")))
+                    np.full(len(np.arange(0, section.n_quads, 3)), "core"),
+             section.n_quads))
     got = quadmesh.select(tagged, "core")
     assert got.n_quads == len(np.arange(0, section.n_quads, 3))
     assert got.element_group_tags == ["core"]

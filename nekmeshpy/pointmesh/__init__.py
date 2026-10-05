@@ -3,7 +3,7 @@
 Deliberately thin: a point cloud is not something this toolkit meshes, only something
 the rungs above index into. There are no factories, no shape model and no ``lift`` /
 ``lower`` here; what it carries is the coordinates and the tags on them, which
-:class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` reads as its own point tags.
+:class:`LineMesh <nekmeshpy.linemesh.LineMesh>` reads as its own point tags.
 """
 
 from .morph import NodeMap, mirror, rotate, scale, transform, transform_fn, translate

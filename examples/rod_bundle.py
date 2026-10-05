@@ -48,8 +48,8 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core.fields import geometric_spacing, gll_nodes
-from nekmeshpy.core.tags import Tags
 from nekmeshpy.quadmesh import QuadMesh
+from nekmeshpy.tags import Tags
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -392,7 +392,7 @@ for other in slices[1:]:
 # would export its ends as a boundary condition called "fluid".  Only the coolant has
 # an inlet and an outlet; the rod and duct ends are solid metal, named once for both
 # ends because nothing flows through them.
-region_of = section.element_tags.to_dense(section.n_quads)
+region_of = section.element_tags.to_dense()
 inlet = Tags.from_dense(np.where(region_of == "fluid", "inlet", "cut"))
 outlet = Tags.from_dense(np.where(region_of == "fluid", "outlet", "cut"))
 

@@ -327,7 +327,7 @@ def test_reverse_remaps_element_and_point_tags_to_the_same_physical_points():
     lm = LineMesh(chain.point_mesh, chain.lines, chain.interior,
                   Tags.from_dense(["a", "b"]))
     out = linemesh.reverse(lm)
-    assert out.element_tags.to_dense(out.n_lines).tolist() == ["b", "a"]
+    assert out.element_tags.to_dense().tolist() == ["b", "a"]
     # the tag that named the x=0 end still names it after the relabel
     tagged = {t: out.points[i].tolist() for i, t in out.point_tags}
     assert tagged["in"] == [0.0, 0.0, 0.0]
@@ -370,7 +370,7 @@ def test_a_reversed_rings_per_segment_tags_stay_on_their_segments():
     ring = linemesh.circle(1.0, 8)
     named = LineMesh(ring.point_mesh, ring.lines, ring.interior,
                      Tags(np.arange(8),
-                                 np.array(["s%d" % k for k in range(8)])))
+                                 np.array(["s%d" % k for k in range(8)]), 8))
     rev = linemesh.reverse(named)
     section = quadmesh.ogrid(rev, 2, 2)
     where = dict(zip(rev.element_tags.tags.tolist(), rev.element_tags.ids.tolist()))

@@ -11,9 +11,9 @@ from .._typing import (
     PointArray,
 )
 from ..core import conform
-from ..core.tags import Tags
 from ..linemesh.linemesh import _repr_tags
 from ..quadmesh import QuadMesh
+from ..tags import Tags
 
 # default sweep axis / origin for extrude
 _Z_AXIS = np.array([0.0, 0.0, 1.0])
@@ -100,8 +100,11 @@ class HexMesh:
                 "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
                 % (E, k, self.interior.shape))
 
-        self.element_tags = Tags.empty() if element_tags is None else element_tags
-        self.element_tags.validate(E)
+        self.element_tags = Tags.empty(E) if element_tags is None else element_tags
+        if self.element_tags.size != E:
+            raise ValueError(
+                "HexMesh: element_tags must be over the %d hexes, got a Tags over %d"
+                % (E, self.element_tags.size))
 
         # Corner connectivity is derived from the shared faces and immutable
         # post-construction (point moves don't change it), so memoize it once.

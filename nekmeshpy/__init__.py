@@ -5,14 +5,14 @@ from .core import fields, topology
 from .core.fields import AxisLinearField, ConstantField, DistanceField, Field, MinField
 from .core.mesh import Mesh
 from .core.physical import PhysicalGroup, PhysicalGroups
-from .core.tags import (
-    Tags,
-)
 from .hexmesh import HexMesh
 from .io import writer
 from .linemesh import LineMesh
 from .pointmesh import PointMesh
 from .quadmesh import NO_TAG, QuadMesh
+from .tags import (
+    Tags,
+)
 from .tetmesh import TetMesh
 from .trimesh import TriMesh
 

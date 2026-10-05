@@ -23,7 +23,7 @@ def retag_element(mesh: LineMesh, mapping: Mapping[str, str]) -> LineMesh:
     names no tag on this mesh raises -- a rename matching nothing is a typo, and a
     mis-named region is not visible again until the solver reads it."""
     return LineMesh(mesh.point_mesh, mesh.lines, mesh.interior,
-                    mesh.element_tags.rename(mapping, "linemesh.retag_element"))
+                    mesh.element_tags.rename(mapping))
 
 
 def retag_point(mesh: LineMesh, mapping: Mapping[str, str]) -> LineMesh:

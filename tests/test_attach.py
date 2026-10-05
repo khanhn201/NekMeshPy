@@ -497,7 +497,7 @@ def test_the_stated_path_still_catches_a_non_conforming_seam():
     cat = np.stack([pairs[:, 0], a.n_points + pairs[:, 1]], axis=1)
     pts, pid = conform.weld_pairs([a.points, bad.points], cat)
     with pytest.raises(ValueError, match="non-conforming high-order"):
-        asm._stitch([a, bad], pts, pid, who="t", seam_faces={0: fa, 1: fb})
+        asm._stitch([a, bad], pts, pid, seam_faces={0: fa, 1: fb})
 
 
 # -- linemesh.attach ----------------------------------------------------------
