@@ -1,4 +1,4 @@
-"""Shared internals for the :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>`
+"""Shared internals for the :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>`
 factory functions."""
 
 from __future__ import annotations

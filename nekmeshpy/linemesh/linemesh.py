@@ -24,7 +24,7 @@ def _repr_tags(tags: Sequence[str], limit: int = 4) -> str:
 
 
 class LineMesh:
-    """A 1-D mesh: a :class:`PointMesh <nekmeshpy.pointmesh.pointmesh.PointMesh>` of the shared
+    """A 1-D mesh: a :class:`PointMesh <nekmeshpy.pointmesh.PointMesh>` of the shared
     points with ``(L,2)`` line connectivity and a sparse per-line ``element_tags``.
 
     Its **point tags are the point mesh's own element tags** -- a point is one object

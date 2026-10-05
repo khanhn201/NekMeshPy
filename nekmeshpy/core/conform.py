@@ -522,7 +522,7 @@ _FRAME_CODE_TAB: IntArray = _frame_code_table()
 
 #: The ``(u,v)`` grid position of each corner of a **bare CCW quad row** -- ``u`` along
 #: corner 0 -> 1, ``v`` along corner 0 -> 3.  That is ``_CORNER_IJK[2]``, and so the
-#: lattice a :class:`QuadMesh <nekmeshpy.quadmesh.quadmesh.QuadMesh>`'s own ``interior``
+#: lattice a :class:`QuadMesh <nekmeshpy.quadmesh.QuadMesh>`'s own ``interior``
 #: is stored on.  A hex's *local face* frame (:data:`_FACE_CORNER_UV`) is not always
 #: this one -- it takes the two in-face axes ascending, which turns faces 3 and 4 -- so
 #: a face read out of a hex **into a quad** cannot reuse the hex's ``face_orient``.
