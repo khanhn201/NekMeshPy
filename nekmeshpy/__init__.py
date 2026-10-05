@@ -9,7 +9,7 @@ from .core.tags import (
     ElementTags,
 )
 from .hexmesh import HexMesh, smoothing
-from .io import viz, writer
+from .io import writer
 from .linemesh import LineMesh
 from .pointmesh import PointMesh
 from .quadmesh import NO_TAG, QuadMesh
@@ -36,7 +36,7 @@ __all__ = [
     "PhysicalGroup", "PhysicalGroups",
     "topology",
     "fields",
-    "smoothing", "viz", "writer",
+    "smoothing", "writer",
     "Field", "ConstantField", "AxisLinearField", "DistanceField", "MinField",
     "register_section_smoothing", "SECTION_METHODS", "set_section_smoothing",
 ]

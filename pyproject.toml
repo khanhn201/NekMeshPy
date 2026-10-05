@@ -36,7 +36,7 @@ dev = ["ruff>=0.5", "mypy>=1.0", "pytest>=7.0"]
 # example that rots.
 mesh = ["gmsh>=4.11"]
 all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0", "gmsh>=4.11"]
-# docs also pulls in matplotlib/meshio so autodoc can import io.viz / io.export
+# docs also pulls in matplotlib/meshio so autodoc can import io.export
 docs = [
     "sphinx>=7",
     "myst-parser>=2",

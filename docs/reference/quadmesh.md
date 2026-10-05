@@ -39,9 +39,7 @@ does to the mesh — but each is also re-exported flat on `quadmesh` itself, so
 `quadmesh.circle(...)` and `quadmesh.shape.circle(...)` are the *same* function,
 not two. Prefer the flat form in code (`quadmesh.circle`, not `QuadMesh.circle` —
 there are no methods); the grouping below exists to help you find the right
-operation, not to document it twice. See
-[Architecture](../user/architecture.md#package-layout) for how a new operation is
-placed into one of these.
+operation, not to document it twice.
 
 ### `quadmesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
 

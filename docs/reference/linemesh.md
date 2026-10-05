@@ -16,9 +16,7 @@ does to the mesh — but each is also re-exported flat on `linemesh` itself, so
 `linemesh.circle(...)` and `linemesh.shape.circle(...)` are the *same* function,
 not two. Prefer the flat form in code (`linemesh.circle`, not `LineMesh.circle` —
 there are no methods); the grouping below exists to help you find the right
-operation, not to document it twice. See
-[Architecture](../user/architecture.md#package-layout) for how a new operation is
-placed into one of these.
+operation, not to document it twice.
 
 ### `linemesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
 

@@ -1,96 +1,104 @@
 # Getting started
 
-Build, inspect, and export your first all-hex mesh — an O-grid pipe. Assumes
-Python 3.9+.
-
-## Install
-
-NekMeshPy is driven from Python; there is no config file or CLI.
-
+## Quick start
 ```bash
-pip install -e .              # core (numpy, scipy)
-pip install -e ".[all]"       # + matplotlib, meshio, pytest
+git clone https://github.com/khanhn201/NekMeshPy.git
+cd NekMeshPy
+PYTHONPATH=. python examples/flow_past_hemisphere.py
 ```
 
-Extras: `plot` (matplotlib, for {mod}`nekmeshpy.io.viz`), `io` (meshio), `test`
-(pytest), `dev` (ruff, mypy, pytest), `docs` (Sphinx), and `all`.
-
 ## Build a mesh
-
-The pattern is always: describe the **boundary** as a
-{class}`~nekmeshpy.linemesh.LineMesh`, fill it into a **section**
-({class}`~nekmeshpy.quadmesh.QuadMesh`), then sweep into a **volume**
-({class}`~nekmeshpy.hexmesh.HexMesh`). Boundaries are named as you build — the tag
-rides up onto the swept faces — so no post-hoc face detection is needed.
 
 ```python
 from nekmeshpy import writer, linemesh, quadmesh, hexmesh
 
-# 1. Boundary: a closed circular loop, tagged "wall" at the lowest level.
-n = 4 * 6                                   # 4 * n_side points around the ring
-boundary = linemesh.circle(radius=0.5, n=n, element_tag="wall")
-
-# 2. Section: fill the loop with an O-grid, 4 radial layers.
-section = quadmesh.ogrid(boundary, n_side=6, radial=4)
-
-# 3. Volume: sweep 40 layers along +z; name the two end caps.
+n_side = 6
+boundary = linemesh.circle(radius=0.5, n=4*n_side, element_tag="wall")
+section = quadmesh.ogrid(boundary, n_side=n_side, radial=4)
 mesh = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
                        first_tag="inlet", last_tag="outlet")
+print(hexmesh.report(mesh))
 ```
-
-`radial=4` / `layers=40` is the plain-`int` spelling: *that many uniform layers*,
-i.e. exactly `uniform_spacing(n)` from {mod}`nekmeshpy.core.fields`. Pass an
-explicit position array there instead (`geometric_spacing(4, 1.2)`) when you want
-the layers graded — see
-[the layer convention](concepts.md#the-explicit-initial-layer-convention).
-
-## Inspect it
-
-Containers are pure data; the checks take the mesh as their first argument.
-
-```python
-print(mesh)                          # <HexMesh 5945 points, 5280 hexes, order 1, …>
-print(hexmesh.report(mesh))          # element / point / boundary counts
-
-stats = hexmesh.quality_summary(mesh) # a QualitySummary NamedTuple, not a dict
-print(stats.min, stats.mean, stats.n_inverted)
-
-assert hexmesh.is_watertight(mesh)   # closed, leak-tight boundary, single body
-assert hexmesh.is_conforming(mesh)   # no hanging-point / T-junction interfaces
-print(mesh.face_group_tags)          # ['inlet', 'outlet', 'wall']
-```
-
-Every container has a `__repr__`, so `print(mesh)` gives the one-line inventory —
-counts, `order`, and the two tag vocabularies — without reaching for `report()`.
-The report-returning reads are **NamedTuples**, reached by attribute:
-{class}`~nekmeshpy.core.quality.QualitySummary` from `quality_summary()`,
-{class}`~nekmeshpy.core.topology.TopologyReport` from `topology_report()`, and
-{class}`~nekmeshpy.hexmesh.query.TagReport` from `tag_report()`.
 
 ## Export it
 
-Boundary **names** map to Nek BC codes (or integer ids) only at export.
+Tag names map to Nek BC codes at export.
 
 ```python
-codes = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-writer.to_re2(mesh, "pipe.re2", groups=codes) # native Nek5000/NekRS binary mesh
-writer.to_vtu(mesh, "pipe.vtu", groups=codes) # ParaView / VisIt (XML VTK)
-writer.write(mesh, "pipe.msh", groups=codes)  # anything meshio supports
+GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
+THERMAL = {"wall": "I  ", "inlet": "t  ", "outlet": "O  "}
+writer.to_re2(mesh, "case.re2", groups=GROUPS, thermal=THERMAL) # native Nek5000/NekRS binary mesh
+writer.to_fld(mesh, "case.f00000")             # contains high order nodes
+writer.to_vtu(mesh, "case.vtu", groups=GROUPS) # ParaView / VisIt (XML VTK)
 ```
 
-## Visualize it (optional)
+## Visualize it
 
-With the `plot` extra, render named boundary faces:
+It is recommended to export and open the `.vtu` file with your favorite visualizer
+(Paraview/Visit) and reload the file as you mesh to the `.vtu` file.
+
+## Use it in Nek5000/NekRS
+### Boundary condition
+Currently, `writer.to_re2` export the 3 characters array `cbc` to `.re2` file.
+
+To convert to `boundaryID`, do it in usrdat2:
+```
+      subroutine usrdat2
+
+      include 'SIZE'
+      include 'TOTAL'
+      integer e,f
+      parameter (lt=lx1*ly1*lz1*lelt)
+
+      n = nx1*ny1*nz1*nelt
+
+      do iel=1,nelt
+      do ifc=1,2*ndim
+         if (cbc(ifc,iel,1) .eq. 'W  ') boundaryID(ifc,iel) = 1
+         if (cbc(ifc,iel,1) .eq. 'v  ') boundaryID(ifc,iel) = 2
+         if (cbc(ifc,iel,1) .eq. 'O  ') boundaryID(ifc,iel) = 3
+      enddo
+      enddo
+
+      do iel=1,nelt
+      do ifc=1,2*ndim
+         if (cbc(ifc,iel,2) .eq. 'I  ') boundaryIDt(ifc,iel) = 1
+         if (cbc(ifc,iel,2) .eq. 't  ') boundaryIDt(ifc,iel) = 2
+         if (cbc(ifc,iel,2) .eq. 'O  ') boundaryIDt(ifc,iel) = 3
+      enddo
+      enddo
+
+      return
+      end
+```
+
+
+### High order nodes
+`.re2` only store the linear mesh. Higher order nodes can be exported through fld file
 
 ```python
-from nekmeshpy.io import viz
-viz.plot(mesh, names=["inlet", "outlet", "wall"])   # matplotlib
+writer.to_re2(mesh, "case.re2", groups=GROUPS)   # topology + BCs, linear
+writer.to_fld(mesh, "case.f00000")               # contains high order nodes
 ```
 
-## Next steps
+`to_fld` writes the `X` field — the mesh's high-order GLL nodes.
+Point the solver's `.par` restart at it so Nek5000/RS reads the
+high-order nodes:
 
-- {doc}`concepts` — how the ladder, tag systems, factories, and smoothing fit
-  together.
-- {doc}`howto` — recipes for pipes, external-flow domains, spheres, and merged
-  multi-block meshes.
-- {doc}`../reference/index` — the full API.
+```
+# Nek5000/NekRS .par file
+[GENERAL]
+startFrom = case.f00000
+```
+
+Restarting a run with velocity while keeping the high-order geometry
+
+```
+# Nek5000 .par file
+[GENERAL]
+startFrom = "checkpoint1.f00000 v,case.f00000 x"
+
+# NekRS .par file
+[GENERAL]
+startFrom = "checkpoint1.f00000+v,case.f00000+x"
+```

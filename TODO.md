@@ -16,5 +16,5 @@ Local, immediate simple tasks that can be done right away
 - [ ] 19) Self-attach (like wirecoil)
 - [ ] 20) boundaryID export
 - [ ] 21) Move Using a high-order mesh in Nek5000 / NekRS to Getting Started and also guide on cbc/boundaryID
-- [ ] 22) Recommend visualizing with Paraview/Visit on vtu files instead
 - [ ] 23) move wirecoil up gallery
+- [ ] 24) Use center node in re2 for order=2

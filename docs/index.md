@@ -1,50 +1,37 @@
 # NekMeshPy
 
-An object-oriented, all-hex meshing **toolkit** with Nek5000/NekRS export.
-
-The library is a set of composable primitives built on a B-rep ladder --
-`PointMesh` / `LineMesh` / `QuadMesh` / `HexMesh`, each storing the rung below --
-with `TriMesh` and `TetMesh` off to the side as things you solve a field on rather
-than export. On top of that: named physical groups, shape factories and sweeps at
-every rung, the two welds (`merge` and `attach`), smoothing / surface operations,
-sizing fields, quality + topology checks, and Nek5000 / meshio I/O. Concrete meshers
-(carotid vessel, straight pipes, wire-wrapped bundles, external-flow domains) live
-in [`examples/`](https://github.com/khanhn201/NekMeshPy/tree/main/examples), not
-in the library.
+A high-order all-hex meshing toolkit.
 
 ```python
 from nekmeshpy import writer, linemesh, quadmesh, hexmesh
-from nekmeshpy.core.fields import uniform_spacing
 
-boundary = linemesh.circle(0.5, 24, element_tag="wall")
-section  = quadmesh.ogrid(boundary, n_side=6, radial=uniform_spacing(4))
-mesh     = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0,
-                           layers=uniform_spacing(40),
-                           first_tag="inlet", last_tag="outlet")
-writer.to_re2(mesh, "pipe.re2", groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "})
+n_side = 6
+boundary = linemesh.circle(radius=0.5, n=4*n_side, element_tag="wall")
+section = quadmesh.ogrid(boundary, n_side=n_side, radial=4)
+mesh = hexmesh.extrude(section, axis=(0, 0, 1), length=5.0, layers=40,
+                       first_tag="inlet", last_tag="outlet")
+print(hexmesh.report(mesh))
+
+GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
+THERMAL = {"wall": "I  ", "inlet": "t  ", "outlet": "O  "}
+writer.to_re2(mesh, "case.re2", groups=GROUPS, thermal=THERMAL) # native Nek5000/NekRS binary mesh
+writer.to_fld(mesh, "case.f00000")             # contains high order nodes
+writer.to_vtu(mesh, "case.vtu", groups=GROUPS) # ParaView / VisIt (XML VTK)
 ```
 
 ## Where to go next
 
-- **{doc}`user/getting-started`** — install, build, and export your first mesh.
-- **{doc}`user/concepts`** — the line→quad→hex ladder, tag systems, factories,
-  smoothing, export.
-- **{doc}`user/howto`** — recipes distilled from `examples/`.
-- **{doc}`user/architecture`** — how the toolkit is laid out and why.
-- **{doc}`user/conventions`** — typing, naming, and the invariants the code holds to.
-- **{doc}`user/gallery`** — live, in-browser views of most examples' meshes (the three that need gmsh or
-  build no mesh of their own are skipped).
-- **{doc}`reference/index`** — auto-generated API reference.
+- **{doc}`user/getting-started`**
+- **{doc}`user/howto`**
+- **{doc}`user/gallery`**
+- **{doc}`reference/index`**
 
 ```{toctree}
 :hidden:
 :caption: Guide
 
 user/getting-started
-user/concepts
 user/howto
-user/architecture
-user/conventions
 user/gallery
 ```
 

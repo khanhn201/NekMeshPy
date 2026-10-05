@@ -5,66 +5,20 @@ This live viewer only renders elements linearly.
 
 ## carotid
 
-Vessel surface pipeline: seams cut into legs, O-grid legs, lofted and attached.
-
 ```{mesh-viewer} carotid
 ```
 
 [`examples/carotid.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/carotid.py)
 
-## circular_pipe
+## wire_coil
 
-O-grid circular pipe.
-
-```{mesh-viewer} circular_pipe
+```{mesh-viewer} wire_coil
 ```
 
-[`examples/circular_pipe.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/circular_pipe.py)
+[`examples/wire_coil.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/wire_coil.py)
 
-## circular_pipe_tjunction
-
-Analytic pipe T-junction.
-
-```{mesh-viewer} circular_pipe_tjunction
-```
-
-[`examples/circular_pipe_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/circular_pipe_tjunction.py)
-
-## quadrant_pipe_tjunction
-
-Welded small-branch T-junction, built from quadrant blocks.
-
-```{mesh-viewer} quadrant_pipe_tjunction
-```
-
-[`examples/quadrant_pipe_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/quadrant_pipe_tjunction.py)
-
-## cob_tjunction
-
-Unequal-radius T-junction with the branch cut straight through the main pipe, so
-there is no hub to degenerate at a small radius ratio, and a boundary layer grown
-outward over the wall.
-
-```{mesh-viewer} cob_tjunction
-```
-
-[`examples/cob_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/cob_tjunction.py)
-
-## serpentine_pipe
-
-One O-grid disc swept along a path.
-
-```{mesh-viewer} serpentine_pipe
-:height: 480px
-```
-
-[`examples/serpentine_pipe.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/serpentine_pipe.py)
 
 ## chimera
-
-Several two-manifold units chained along one axis, alternating connector pipe;
-cob T-junctions throughout, a boundary layer over the whole fluid wall, and a
-solid jacket attached to the finished tube.
 
 ```{mesh-viewer} chimera
 :height: 560px
@@ -74,92 +28,44 @@ solid jacket attached to the finished tube.
 
 ## chimera_full
 
-The full manifold: risers, T1/T2 junction chains, and a serpentine coil feeding
-`chimera.py`'s two ports.
-
 ```{mesh-viewer} chimera_full
 :height: 560px
 ```
 
 [`examples/chimera_full.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/chimera_full.py)
 
-
-## backward_facing_step
-
-Backward-facing step channel.
-
-```{mesh-viewer} backward_facing_step
-```
-
-[`examples/backward_facing_step.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/backward_facing_step.py)
-
-## flow_past_cylinder
-
-External flow around a circular cylinder.
-
-```{mesh-viewer} flow_past_cylinder
-```
-
-[`examples/flow_past_cylinder.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/flow_past_cylinder.py)
-
-## flow_past_half_cylinder
-
-External flow over a half-cylinder bump.
-
-```{mesh-viewer} flow_past_half_cylinder
-```
-
-[`examples/flow_past_half_cylinder.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/flow_past_half_cylinder.py)
-
-## flow_past_sphere
-
-External flow around a sphere (cubed-sphere far field).
-
-```{mesh-viewer} flow_past_sphere
-```
-
-[`examples/flow_past_sphere.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/flow_past_sphere.py)
-
-## flow_past_hemisphere
-
-External flow around a hemisphere on the ground.
-
-```{mesh-viewer} flow_past_hemisphere
-```
-
-[`examples/flow_past_hemisphere.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/flow_past_hemisphere.py)
-
 ## rod_bundle
-
-61-rod hexagonal fuel bundle with a helical wire wrap: solid rods, coolant, and the
-duct wall as three conjugate regions. The wire is a bulge in the rod's own wall profile
-rather than a body of its own, and the shared cell walls slide out of its way.
 
 ```{mesh-viewer} rod_bundle
 ```
 
 [`examples/rod_bundle.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/rod_bundle.py)
 
-## wire_coil
+## circular_pipe_tjunction
 
-A helical wire coiled inside a round pipe as a conjugate fluid/solid domain: the
-wire's cross-section is a skewed rectangular template blended through the disc by a
-non-affine {func}`quadmesh.transform_fn
-<nekmeshpy.quadmesh.morph.transform_fn>` warp (an o-grid butterfly without an o-grid)
-and lofted turn by turn, the pipe wall is an annular solid shell, and the film,
-inter-turn wedge and axial core are fluid. Every face is tagged at construction, with
-two conjugate surfaces between the regions -- `coil` around the wire and `wall` at the
-pipe wall. `core`'s whole outer cylinder is named `inlet` and the last branch turn
-`outlet`; `merge(clear_seam_tags=...)` then drops those names off every face the
-helical band welds shut, leaving exactly the wedge it does not cover.
-
-The cell is two **whole** pitches, so its two axial ends are a periodic pair under a
-pure translation — the helix's screw symmetry has no rotation left in it at an integer
-number of turns. All four end groups (`inlet` / `outlet` for the fluid, `cut_lo` /
-`cut_hi` for the solid saw cut) export as Nek `P`, paired by
-{func}`hexmesh.periodic_pairs <nekmeshpy.hexmesh.periodic.periodic_pairs>`.
-
-```{mesh-viewer} wire_coil
+```{mesh-viewer} circular_pipe_tjunction
 ```
 
-[`examples/wire_coil.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/wire_coil.py)
+[`examples/circular_pipe_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/circular_pipe_tjunction.py)
+
+## quadrant_pipe_tjunction
+
+```{mesh-viewer} quadrant_pipe_tjunction
+```
+
+[`examples/quadrant_pipe_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/quadrant_pipe_tjunction.py)
+
+## cob_tjunction
+
+```{mesh-viewer} cob_tjunction
+```
+
+[`examples/cob_tjunction.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/cob_tjunction.py)
+
+
+## flow_past_hemisphere
+
+```{mesh-viewer} flow_past_hemisphere
+```
+
+[`examples/flow_past_hemisphere.py`](https://github.com/khanhn201/NekMeshPy/tree/main/examples/flow_past_hemisphere.py)

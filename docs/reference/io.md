@@ -1,7 +1,7 @@
 # `io`
 
 Reading a mesh in (`.rea`), writing one out (`.re2` / Nek field file / `.vtu` /
-meshio), and matplotlib visualization.
+meshio).
 
 ## `io.writer`
 
@@ -14,12 +14,5 @@ meshio), and matplotlib visualization.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.io.reader
-   :members:
-```
-
-## `io.viz`
-
-```{eval-rst}
-.. automodule:: nekmeshpy.io.viz
    :members:
 ```

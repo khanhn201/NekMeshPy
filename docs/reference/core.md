@@ -4,7 +4,7 @@ The mesh-agnostic layer: the shared-point `Mesh`, physical groups, topology
 checks, and sizing fields. The order-N kernel — `core.interp` (numerics over GLL
 reference nodes) and `core.conform` (topology / orientation / reconciliation
 behind the B-rep) — is internal; see
-[Concepts](../user/concepts.md#high-order-order-n-elements).
+[Concepts](../user/getting-started.md#high-order-nodes).
 
 ## `core.mesh`
 

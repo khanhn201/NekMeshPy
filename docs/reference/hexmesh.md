@@ -24,7 +24,7 @@ corners only; the one re-exported on `hexmesh` (defined in `hexmesh.query`) take
 `HexMesh` and always reads the curved order-N block — the split
 that matters most here, since a mesh reading `0 inverted` at the corners can still
 be inverted once its curved nodes are read (see
-[Concepts](../user/concepts.md#high-order-order-n-elements)). Call through
+[Concepts](../user/getting-started.md#high-order-nodes)). Call through
 `hexmesh.scaled_jacobian`/`hexmesh.quality_summary` unless you are working with
 bare arrays.
 
@@ -40,9 +40,7 @@ does to the mesh — but each is also re-exported flat on `hexmesh` itself, so
 `hexmesh.extrude(...)` and `hexmesh.lift.extrude(...)` are the *same* function, not
 two. Prefer the flat form in code (`hexmesh.extrude`, not `HexMesh.extrude` — there
 are no methods); the grouping below exists to help you find the right operation,
-not to document it twice. See
-[Architecture](../user/architecture.md#package-layout) for how a new operation is
-placed into one of these.
+not to document it twice.
 
 ### `hexmesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
 

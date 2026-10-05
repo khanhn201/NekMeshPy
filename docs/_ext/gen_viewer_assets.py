@@ -6,7 +6,8 @@ and ``CLAUDE.md``'s Commands block), same as a human running it locally:
 
     python docs/_ext/gen_viewer_assets.py
 
-Each example is executed the same way ``tests/test_examples.py`` does (``runpy.run_path``,
+Only examples the gallery embeds (``mesh-viewer`` directives in
+``docs/user/gallery.md``) are built. Each is executed the same way ``tests/test_examples.py`` does (``runpy.run_path``,
 cwd inside a scratch directory so any files an example writes don't land in the repo),
 and its ``mesh`` global is exported through ``writer.boundary_to_vtp`` -- the boundary
 surface only, corners only, never the interior volume a ``.vtu`` would carry. That is
@@ -17,6 +18,7 @@ web-sized: a viewer only ever shows the outer surface anyway.
 from __future__ import annotations
 
 import os
+import re
 import runpy
 import sys
 import tempfile
@@ -29,18 +31,17 @@ _OUT = os.path.join(_DOCS, "_static", "meshes")
 
 sys.path.insert(0, _REPO)
 
-#: Scripts that build no ``mesh`` of their own (imported as a library by another
-#: example) or need an extra the ``docs`` install group doesn't pull in (``gmsh``, for
-#: the tet-meshed femoral pair) -- mirrors ``tests/test_examples.py``'s
-#: ``LIBRARY_ONLY`` / ``EXCLUDED`` sets, kept separate rather than imported from there since
-#: ``tests/`` isn't packaged either and this script has its own, narrower reason to skip
-#: each one.
-SKIP = {"tjunction_lib.py", "femoral_vol.py", "femoral.py"}
+_GALLERY = os.path.join(_DOCS, "user", "gallery.md")
 
 
 def _examples() -> list[str]:
-    return sorted(f for f in os.listdir(_EXAMPLES)
-                  if f.endswith(".py") and f not in SKIP)
+    """Examples named by a ``mesh-viewer`` directive in the gallery -- nothing else."""
+    with open(_GALLERY) as fh:
+        stems = re.findall(r"^`{3,}\{mesh-viewer\}\s+(\S+)", fh.read(), re.M)
+    missing = [s for s in stems if not os.path.isfile(os.path.join(_EXAMPLES, s + ".py"))]
+    if missing:
+        raise SystemExit("gallery names examples that do not exist: %s" % missing)
+    return [s + ".py" for s in stems]
 
 
 def _run(name: str, scratch: str) -> dict:

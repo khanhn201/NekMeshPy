@@ -10,8 +10,7 @@ import os
 import sys
 from importlib import metadata
 
-# autodoc imports nekmeshpy.io.viz, which imports matplotlib -- force a headless
-# backend so the build works in CI without a display.
+# force a headless matplotlib backend so the build works in CI without a display.
 import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
