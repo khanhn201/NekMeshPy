@@ -18,7 +18,7 @@ from ..core import conform, stations
 from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
 from ..core.interp import resample_block_at
-from ..core.tags import ElementTags, element_mask, welded_element_tags
+from ..core.tags import Tags, mask_for_selection, weld
 from ..pointmesh import PointMesh
 from .linemesh import LineMesh
 from .query import boundary_points, element_blocks
@@ -52,7 +52,7 @@ def loft(
     <nekmeshpy.hexmesh.assemble.loft>`.
 
     A slice here is a single **point**, so the three tag arguments the upper rungs
-    take as "one tag or an ``ElementTags`` over the slice" reduce to one tag each:
+    take as "one tag or an ``Tags`` over the slice" reduce to one tag each:
     ``element_tags`` names every lofted line, and ``first_tag`` / ``last_tag`` name
     the chain's two end points."""
     pts = np.asarray(points, dtype=float)
@@ -71,14 +71,14 @@ def loft(
     # later write wins: one point cannot carry two names.
     first = _one_tag(first_tag, "first_tag")
     last = _one_tag(last_tag, "last_tag")
-    ptags = ElementTags.empty()
+    ptags = Tags.empty()
     if (first or last) and lines.shape[0]:
         named = np.full(pts.shape[0], "", dtype=object)
         if first:
             named[lines[0, 0]] = first
         if last:
             named[lines[-1, 1]] = last
-        ptags = ElementTags.from_dense(np.asarray(named, dtype=np.str_))
+        ptags = Tags.from_dense(np.asarray(named, dtype=np.str_))
 
     if order > 1 and interior is None:
         # straight GLL blend between each line's two endpoints -- the same
@@ -88,7 +88,7 @@ def loft(
         g = gll_nodes(order)[1:order]              # interior GLL nodes only
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
     tag = _one_tag(element_tags, "element_tags")
-    etags = ElementTags.uniform(lines.shape[0], tag) if tag else ElementTags.empty()
+    etags = Tags.full(lines.shape[0], tag) if tag else Tags.empty()
     return LineMesh(PointMesh(pts, ptags), lines, interior, etags)
 
 
@@ -201,13 +201,13 @@ def merge(meshes: Sequence[LineMesh], *, tol: float = 1e-7) -> LineMesh:
     points, point_id = conform.weld_points(pos, [boundary_points(m) for m in meshes], tol)
 
     line_list: list[IntArray] = []
-    ptag_list: list[ElementTags] = []
-    etag_list: list[ElementTags] = []
+    ptag_list: list[Tags] = []
+    etag_list: list[Tags] = []
     noff = loff = 0
     for m, c in zip(meshes, counts):
         line_list.append(point_id[m.lines + noff])   # local -> welded id
         # ids shift by this block's offset; sides stay local to their element
-        etag_list.append(m.element_tags.offset(loff))
+        etag_list.append(m.element_tags.shift(loff))
         # a point tag rides its point through the weld -- and two blocks welding on a
         # named end land both names on the one surviving point, which is where the
         # merge's own conflict rule lives
@@ -216,8 +216,8 @@ def merge(meshes: Sequence[LineMesh], *, tol: float = 1e-7) -> LineMesh:
         loff += m.n_lines
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
-    etags = ElementTags.concat(etag_list)
-    ptags = welded_element_tags(ptag_list, "LineMesh.merge")
+    etags = Tags.concatenate(etag_list)
+    ptags = weld(ptag_list, "LineMesh.merge")
 
     # order-N: welding only touches endpoints (corners, which are re-numbered into
     # the merged points), and every high-order node of a line is *private*, so the
@@ -271,11 +271,11 @@ def _point_group(mesh: LineMesh, which: str | IntArray | Sequence[int],
     non-manifold mistake."""
     if isinstance(which, str):
         t = mesh.point_tags
-        ids: IntArray = np.asarray(t.ids[t.mask_for(which)], dtype=np.int64)
+        ids: IntArray = np.asarray(t.ids[t.isin(which)], dtype=np.int64)
         if ids.size == 0:
             raise ValueError(
                 "attach: %s: no point carries the tag %r; this mesh has %s"
-                % (side, which, sorted(t.group_tags) or "no tagged points"))
+                % (side, which, sorted(t.unique()) or "no tagged points"))
         return ids
     ids = np.asarray(which, dtype=np.int64).reshape(-1)
     if ids.size and (ids.min() < 0 or ids.max() >= mesh.n_points):
@@ -369,33 +369,33 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
         seam_local.setdefault(ib, []).append(pr[:, 1])
 
     line_list: list[IntArray] = []
-    ptag_list: list[ElementTags] = []
-    etag_list: list[ElementTags] = []
+    ptag_list: list[Tags] = []
+    etag_list: list[Tags] = []
     loff = 0
     for i, m in enumerate(meshes):
         line_list.append(point_id[m.lines + offs[i]])
-        etag_list.append(m.element_tags.offset(loff))
+        etag_list.append(m.element_tags.shift(loff))
         pt = m.point_tags
         if i in seam_local:
-            pt = pt.select(~np.isin(pt.ids, np.concatenate(seam_local[i])))
+            pt = pt.compress(~np.isin(pt.ids, np.concatenate(seam_local[i])))
         ptag_list.append(pt.renumber(point_id[offs[i]:offs[i + 1]]))
         loff += m.n_lines
 
-    ptags = welded_element_tags(ptag_list, "linemesh.attach")
+    ptags = weld(ptag_list, "linemesh.attach")
     named = [(point_id[pr[:, 0] + offs[ia]], tag)
              for (ia, _pa, _ib, _pb, _o, tag), pr in zip(resolved, pair_list) if tag]
     if named:
-        dense = np.asarray(ptags.dense(points.shape[0]), dtype=object)
+        dense = np.asarray(ptags.to_dense(points.shape[0]), dtype=object)
         for ids, tag in named:
             dense[ids] = tag
-        ptags = ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
+        ptags = Tags.from_dense(np.asarray(dense, dtype=np.str_))
 
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
     interior: PointArray | None = (np.concatenate([m.interior for m in meshes], axis=0)
                                    if meshes else None)
     return LineMesh(PointMesh(points, ptags), lines,
-                    interior, ElementTags.concat(etag_list))
+                    interior, Tags.concatenate(etag_list))
 
 
 def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
@@ -413,7 +413,7 @@ def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
     return (LineMesh(PointMesh(mesh.points[used],
                                mesh.point_tags.renumber(new_point_of)),
                      new_point_of[lines], mesh.interior[kept],
-                     mesh.element_tags.gather(kept)),
+                     mesh.element_tags.take(kept)),
             new_line_of)
 
 
@@ -425,14 +425,14 @@ def select(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
     array of line ids.  Kept lines hold their relative order and their tags; points no
     kept line touches are dropped.  The inverse of :func:`merge`, and one of the three
     operations that manufacture a numbering."""
-    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_lines,
+    return _subset(mesh, mask_for_selection(which, mesh.element_tags, mesh.n_lines,
                                       "linemesh.select"))[0]
 
 
 def remove(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
            ) -> LineMesh:
     """The complement of :func:`select`: everything ``which`` does **not** name."""
-    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_lines,
+    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags, mesh.n_lines,
                                        "linemesh.remove"))[0]
 
 
@@ -483,10 +483,10 @@ def refine(mesh: LineMesh) -> LineMesh:
         interior = np.zeros((2 * l_count, 0, 3), dtype=float)
 
     # each parent's tag propagates to BOTH its children, consecutively (child 2*i
-    # and 2*i+1 both copy source i) -- ``gather`` with a repeated index, not
-    # ``repeat_blocks`` (which tiles a whole block pattern across many copies, the
+    # and 2*i+1 both copy source i) -- ``take`` with a repeated index, not
+    # ``tile`` (which tiles a whole block pattern across many copies, the
     # sweep-layer shape of problem, not this one).
-    element_tags = mesh.element_tags.gather(np.repeat(np.arange(l_count), 2))
+    element_tags = mesh.element_tags.take(np.repeat(np.arange(l_count), 2))
     return LineMesh(PointMesh(points, mesh.point_tags), lines, interior, element_tags)
 
 

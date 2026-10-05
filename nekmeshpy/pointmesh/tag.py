@@ -19,7 +19,7 @@ def retag_element(mesh: PointMesh, mapping: Mapping[str, str]) -> PointMesh:
     :func:`linemesh.retag_point <nekmeshpy.linemesh.tag.retag_point>` calls through to.
     """
     return PointMesh(mesh.points,
-                     mesh.element_tags.renamed(mapping, "pointmesh.retag_element"))
+                     mesh.element_tags.rename(mapping, "pointmesh.retag_element"))
 
 
 __all__ = [

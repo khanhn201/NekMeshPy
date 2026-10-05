@@ -3,7 +3,7 @@ vocabularies a mesh keeps in it.
 
 There is one table now. A rung's side tags *are* the rung below's ``element_tags``, so
 what used to be three ``(element, side)`` tables -- ``PointTags`` / ``EdgeTags`` /
-``FaceTags`` -- is the same ``ElementTags`` seen one rung down, addressed by the id of
+``FaceTags`` -- is the same ``Tags`` seen one rung down, addressed by the id of
 the entity it names. It is deliberately *not* called "the boundary": it names a chosen
 subset of entities, which is a different set from the topological domain boundary that
 ``boundary_faces`` computes.
@@ -20,7 +20,7 @@ import pytest
 from conftest import face_rows, read_re2_boundary
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
-from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.core.tags import Tags
 from nekmeshpy.quadmesh import QuadMesh
 
 VOCAB = ["", "wall", "inlet", "outlet", "a_much_longer_region_name"]
@@ -34,61 +34,61 @@ def random_dense(rng, n, p_tagged=0.4):
     return out
 
 
-# -- ElementTags: construction / normalization ---------------------------
+# -- Tags: construction / normalization ---------------------------
 def test_element_tags_empty_allocates_nothing():
-    empty = ElementTags.empty()
+    empty = Tags.empty()
     assert len(empty) == 0 and not empty
     assert empty.ids.nbytes == 0 and empty.tags.nbytes == 0
-    assert empty.group_tags == []
+    assert empty.unique() == []
 
 
 def test_from_dense_drops_empties():
-    t = ElementTags.from_dense(["", "wall", "", "inlet"])
+    t = Tags.from_dense(["", "wall", "", "inlet"])
     assert np.array_equal(t.ids, [1, 3])
     assert np.array_equal(t.tags, ["wall", "inlet"])
     assert len(t) == 2                     # tagged count, NOT element count
 
 
 def test_normalization_sorts_and_rejects_duplicates():
-    t = ElementTags([3, 1], ["c", "a"])
+    t = Tags([3, 1], ["c", "a"])
     assert np.array_equal(t.ids, [1, 3]) and np.array_equal(t.tags, ["a", "c"])
-    assert len(ElementTags([0, 1], ["", "x"])) == 1          # "" dropped
+    assert len(Tags([0, 1], ["", "x"])) == 1          # "" dropped
     with pytest.raises(ValueError, match="tagged more than once"):
-        ElementTags([2, 2], ["a", "b"])
+        Tags([2, 2], ["a", "b"])
     with pytest.raises(ValueError, match="negative element id"):
-        ElementTags([-1], ["a"])
+        Tags([-1], ["a"])
     with pytest.raises(ValueError, match="same length"):
-        ElementTags([0, 1], ["a"])
+        Tags([0, 1], ["a"])
 
 
 def test_uniform_does_not_clip_the_tag():
     """The ``<U1`` footgun: ``np.full(n, tag, dtype=np.str_)`` would give ``'w'``."""
-    t = ElementTags.uniform(3, "wall")
+    t = Tags.full(3, "wall")
     assert t.tags.tolist() == ["wall"] * 3
-    assert t.dense(3).tolist() == ["wall"] * 3
-    assert len(ElementTags.uniform(4, "")) == 0
+    assert t.to_dense(3).tolist() == ["wall"] * 3
+    assert len(Tags.full(4, "")) == 0
 
 
 def test_concat_promotes_string_width():
-    a = ElementTags.uniform(1, "a")
-    b = ElementTags([1], ["a_much_longer_region_name"])
-    both = ElementTags.concat([a, b])
+    a = Tags.full(1, "a")
+    b = Tags([1], ["a_much_longer_region_name"])
+    both = Tags.concatenate([a, b])
     assert both.tags.tolist() == ["a", "a_much_longer_region_name"]
 
 
 def test_element_tags_read_only_and_repr():
-    t = ElementTags.uniform(2, "wall")
+    t = Tags.full(2, "wall")
     with pytest.raises(ValueError):
         t.ids[0] = 7
-    assert repr(t) == "<ElementTags 2 tagged {wall}>"
+    assert repr(t) == "<Tags 2 tagged {wall}>"
 
 
-# -- ElementTags: each op against its dense reference --------------------
+# -- Tags: each op against its dense reference --------------------
 def test_dense_roundtrip():
     rng = np.random.default_rng(1)
     for n in (0, 1, 7, 64):
         d = random_dense(rng, n)
-        assert ElementTags.from_dense(d).dense(n).tolist() == d.tolist()
+        assert Tags.from_dense(d).to_dense(n).tolist() == d.tolist()
 
 
 def test_gather_matches_dense_indexing():
@@ -97,93 +97,65 @@ def test_gather_matches_dense_indexing():
         n = int(rng.integers(1, 30))
         d = random_dense(rng, n)
         idx = rng.integers(0, n, size=int(rng.integers(0, 40))).astype(np.int64)
-        got = ElementTags.from_dense(d).gather(idx).dense(idx.shape[0])
+        got = Tags.from_dense(d).take(idx).to_dense(idx.shape[0])
         assert got.tolist() == d[idx].tolist()
 
 
 def test_gather_does_not_leak_a_neighbours_tag():
     """A searchsorted miss must not pick up the neighbouring id's tag."""
-    t = ElementTags([5], ["wall"])                  # nothing tagged below id 5
-    assert t.gather(np.array([0, 1, 5], dtype=np.int64)).dense(3).tolist() == [
+    t = Tags([5], ["wall"])                  # nothing tagged below id 5
+    assert t.take(np.array([0, 1, 5], dtype=np.int64)).to_dense(3).tolist() == [
         "", "", "wall"]
 
 
-def test_repeat_blocks_matches_tile():
+def test_tile_matches_np_tile():
     rng = np.random.default_rng(3)
     for _ in range(30):
         m = int(rng.integers(1, 8))
         nz = int(rng.integers(1, 6))
         d = random_dense(rng, m)
-        got = ElementTags.from_dense(d).repeat_blocks(nz, m).dense(nz * m)
+        got = Tags.from_dense(d).tile(nz, m).to_dense(nz * m)
         assert got.tolist() == np.tile(d, nz).tolist()
 
 
-def test_blocks_matches_repeat():
-    rng = np.random.default_rng(4)
-    for _ in range(30):
-        m = int(rng.integers(1, 8))
-        nz = int(rng.integers(1, 6))
-        layers = random_dense(rng, nz)
-        got = ElementTags.blocks(layers, m).dense(nz * m)
-        assert got.tolist() == np.repeat(layers, m).tolist()
-
-
-def test_overlay_matches_np_where():
-    """``overlay`` is the sparse form of ``np.where(over != "", over, base)``."""
-    rng = np.random.default_rng(5)
-    for _ in range(80):
-        n = int(rng.integers(1, 40))
-        base_d = random_dense(rng, n, 0.5)
-        over_d = random_dense(rng, n, 0.3)
-        got = ElementTags.from_dense(base_d).overlay(
-            ElementTags.from_dense(over_d)).dense(n)
-        assert got.tolist() == np.where(over_d != "", over_d, base_d).tolist()
-
-
-def test_overlay_edge_cases():
-    a = ElementTags.uniform(2, "base")
-    assert a.overlay(ElementTags.empty()) is a
-    assert ElementTags.empty().overlay(a) is a
-
-
 def test_offset_and_concat_for_merge():
-    a = ElementTags.from_dense(["wall", ""])
-    b = ElementTags.from_dense(["", "inlet"])
-    m = ElementTags.concat([a, b.offset(2)])
-    assert m.dense(4).tolist() == ["wall", "", "", "inlet"]
-    assert ElementTags.concat([]).group_tags == []
+    a = Tags.from_dense(["wall", ""])
+    b = Tags.from_dense(["", "inlet"])
+    m = Tags.concatenate([a, b.shift(2)])
+    assert m.to_dense(4).tolist() == ["wall", "", "", "inlet"]
+    assert Tags.concatenate([]).unique() == []
 
 
 def test_renumber_reverses_with_the_elements():
-    t = ElementTags.from_dense(["a", "", "c"])
+    t = Tags.from_dense(["a", "", "c"])
     n = 3
     rev = t.renumber((n - 1 - np.arange(n)).astype(np.int64))
-    assert rev.dense(n).tolist() == ["c", "", "a"]
+    assert rev.to_dense(n).tolist() == ["c", "", "a"]
 
 
 def test_is_uniform():
-    assert ElementTags.uniform(4, "wall").is_uniform(4)
-    assert not ElementTags.uniform(4, "wall").is_uniform(5)       # partly tagged
-    assert not ElementTags.from_dense(["a", "b"]).is_uniform(2)   # two vocabularies
-    assert not ElementTags.empty().is_uniform(3)
+    assert Tags.full(4, "wall").is_uniform(4)
+    assert not Tags.full(4, "wall").is_uniform(5)       # partly tagged
+    assert not Tags.from_dense(["a", "b"]).is_uniform(2)   # two vocabularies
+    assert not Tags.empty().is_uniform(3)
 
 
 def test_group_tags_sorted_unique():
-    t = ElementTags.from_dense(["b", "a", "b", ""])
-    assert t.group_tags == ["a", "b"]
+    t = Tags.from_dense(["b", "a", "b", ""])
+    assert t.unique() == ["a", "b"]
 
 
 # -- validation the table does for itself ---------------------------------
-def test_check_within_is_the_only_thing_needing_the_mesh():
+def test_validate_is_the_only_thing_needing_the_mesh():
     """Element *count* is the mesh's, not the table's -- so it is the one check a
     container passes in. Everything the three side-tag types used to validate for
     themselves (a side in 1..SIDES, the rung's own noun in the message) went away with
     them: a tag names an entity id now, and an id out of range is this same check."""
-    et = ElementTags([3], ["fluid"])
-    et.check_within(4)                                           # 0..3 -> fine
+    et = Tags([3], ["fluid"])
+    et.validate(4)                                           # 0..3 -> fine
     with pytest.raises(ValueError, match="element_tags names element 3"):
-        et.check_within(3)
-    ElementTags.empty().check_within(0)                          # empty is always fine
+        et.validate(3)
+    Tags.empty().validate(0)                          # empty is always fine
 
 
 def test_the_container_still_rejects_an_out_of_range_element():
@@ -193,49 +165,49 @@ def test_the_container_still_rejects_an_out_of_range_element():
     blk = hexmesh.extrude(sec, length=1.0, layers=2)
     with pytest.raises(ValueError, match="element_tags names element"):
         HexMesh(blk.quad_mesh, blk.hexes, blk.orient, None,
-                ElementTags([blk.n_hexes], ["fluid"]))
+                Tags([blk.n_hexes], ["fluid"]))
 
 
 # -- renaming: the tag.py rung operations --------------------------------
-def test_renamed_applies_simultaneously_and_can_widen():
+def test_rename_applies_simultaneously_and_can_widen():
     """The map is read off the *original* tags, so a swap is a swap rather than two
     sequential overwrites collapsing both groups onto one -- and the result is re-sized
     to the new names, not written into the old array's fixed width."""
-    t = ElementTags([0, 1, 2, 3], ["a", "b", "a", "wall"])
-    got = t.renamed({"a": "b", "b": "a"})
+    t = Tags([0, 1, 2, 3], ["a", "b", "a", "wall"])
+    got = t.rename({"a": "b", "b": "a"})
     assert got.tags.tolist() == ["b", "a", "b", "wall"]
-    assert t.renamed({"a": "a_much_longer_region_name"}).tags.tolist() == [
+    assert t.rename({"a": "a_much_longer_region_name"}).tags.tolist() == [
         "a_much_longer_region_name", "b", "a_much_longer_region_name", "wall"]
 
 
-def test_renamed_merges_and_keeps_row_order():
+def test_rename_merges_and_keeps_row_order():
     """Two keys may share an image. Row order is untouched -- ``.re2`` writes rows in
     it, so a rename must not become a re-sort."""
-    t = ElementTags([4, 0, 2], ["inlet", "outlet", "wall"])
-    got = t.renamed({"inlet": "open", "outlet": "open"})
+    t = Tags([4, 0, 2], ["inlet", "outlet", "wall"])
+    got = t.rename({"inlet": "open", "outlet": "open"})
     assert list(got) == [(0, "open"), (2, "wall"), (4, "open")]
 
 
-def test_renamed_to_no_tag_drops_side_rows_but_keeps_the_rest():
-    t = ElementTags([0, 1, 2], ["inlet", "wall", "outlet"])
-    got = t.renamed({"inlet": "", "outlet": ""})
+def test_rename_to_no_tag_drops_side_rows_but_keeps_the_rest():
+    t = Tags([0, 1, 2], ["inlet", "wall", "outlet"])
+    got = t.rename({"inlet": "", "outlet": ""})
     assert list(got) == [(1, "wall")]
 
 
-def test_renamed_to_no_tag_untags_elements():
-    t = ElementTags([0, 2, 5], ["fluid", "solid", "fluid"])
-    got = t.renamed({"fluid": ""})
+def test_rename_to_no_tag_untags_elements():
+    t = Tags([0, 2, 5], ["fluid", "solid", "fluid"])
+    got = t.rename({"fluid": ""})
     assert got.ids.tolist() == [2] and got.tags.tolist() == ["solid"]
 
 
-def test_renamed_rejects_a_key_that_names_nothing():
+def test_rename_rejects_a_key_that_names_nothing():
     """A rename matching nothing is almost always a typo, and a mis-spelled boundary
     name is not visible again until the solver reads it."""
-    t = ElementTags([0], ["wall"])
+    t = Tags([0], ["wall"])
     with pytest.raises(ValueError, match="nothing is tagged 'wal'"):
-        t.renamed({"wal": "wall"}, "quadmesh.retag_edge")
-    assert t.renamed({}).tags.tolist() == ["wall"]
-    assert ElementTags.empty().renamed({}).tags.tolist() == []
+        t.rename({"wal": "wall"}, "quadmesh.retag_edge")
+    assert t.rename({}).tags.tolist() == ["wall"]
+    assert Tags.empty().rename({}).tags.tolist() == []
 
 
 def _ladder():
@@ -263,17 +235,17 @@ def test_retag_side_is_geometry_preserving_at_every_rung(rung, retag_side, side_
     """Each rung's ``tag.py`` renames its own side table and touches nothing else --
     that is the whole reason these are not in ``morph``."""
     mesh = _ladder()[rung]
-    before = getattr(mesh, side_slot).group_tags
+    before = getattr(mesh, side_slot).unique()
     assert "inlet" in before
     got = getattr(rung, retag_side)(mesh, {"inlet": "supply"})
 
-    assert getattr(got, side_slot).group_tags == sorted(
+    assert getattr(got, side_slot).unique() == sorted(
         "supply" if t == "inlet" else t for t in before)
     assert len(getattr(got, side_slot)) == len(getattr(mesh, side_slot))
     assert np.array_equal(got.points, mesh.points)
     assert got.order == mesh.order
-    assert got.element_tags.group_tags == mesh.element_tags.group_tags
-    assert getattr(mesh, side_slot).group_tags == before      # original untouched
+    assert got.element_tags.unique() == mesh.element_tags.unique()
+    assert getattr(mesh, side_slot).unique() == before      # original untouched
 
 
 @pytest.mark.parametrize("rung", [linemesh, quadmesh, hexmesh])
@@ -281,14 +253,14 @@ def test_retag_element_at_every_rung(rung):
     mesh = _ladder()[rung]
     side_slot = {linemesh: "point_tags", quadmesh: "edge_tags",
                  hexmesh: "face_tags"}[rung]
-    before = getattr(mesh, side_slot).group_tags
-    old = mesh.element_tags.group_tags[0]
+    before = getattr(mesh, side_slot).unique()
+    old = mesh.element_tags.unique()[0]
     got = rung.retag_element(mesh, {old: "renamed"})
 
-    assert got.element_tags.group_tags == ["renamed"]
+    assert got.element_tags.unique() == ["renamed"]
     assert len(got.element_tags) == len(mesh.element_tags)
     assert np.array_equal(got.points, mesh.points)
-    assert getattr(got, side_slot).group_tags == before
+    assert getattr(got, side_slot).unique() == before
 
 
 def test_retag_element_leaves_a_shared_word_in_the_side_table(built_mesh):
@@ -298,22 +270,22 @@ def test_retag_element_leaves_a_shared_word_in_the_side_table(built_mesh):
     two vocabularies are only kept apart by convention, so the separation is worth
     holding to."""
     mesh = built_mesh["mesh"]
-    assert "wall" in mesh.face_tags.group_tags
+    assert "wall" in mesh.face_tags.unique()
     collided = hexmesh.HexMesh(mesh.quad_mesh, mesh.hexes, mesh.orient, mesh.interior,
-                               ElementTags.uniform(mesh.hexes.shape[0], "wall"))
+                               Tags.full(mesh.hexes.shape[0], "wall"))
     got = hexmesh.retag_element(collided, {"wall": "fluid"})
-    assert got.element_tags.group_tags == ["fluid"]
-    assert got.face_tags.group_tags == mesh.face_tags.group_tags
+    assert got.element_tags.unique() == ["fluid"]
+    assert got.face_tags.unique() == mesh.face_tags.unique()
 
 
 def test_retag_face_drops_a_name_welded_shut(built_mesh):
     """Renaming to ``NO_TAG`` retires a boundary name without disturbing the rows
     around it -- what ``tag_report`` flags after a weld makes a tagged face interior."""
     mesh = built_mesh["mesh"]
-    assert "trunk_outlet" in mesh.face_tags.group_tags
+    assert "trunk_outlet" in mesh.face_tags.unique()
     n_drop = mesh.face_tags.count("trunk_outlet")
     got = hexmesh.retag_face(mesh, {"trunk_outlet": ""})
-    assert "trunk_outlet" not in got.face_tags.group_tags
+    assert "trunk_outlet" not in got.face_tags.unique()
     assert len(got.face_tags) == len(mesh.face_tags) - n_drop
     assert hexmesh.tag_report(got).n_untagged_boundary == n_drop
 
@@ -354,7 +326,7 @@ def test_merge_clear_seam_tags_is_name_scoped_and_still_conflict_checks():
     with pytest.raises(ValueError, match="two different names"):
         hexmesh.merge([a, b])
     got = hexmesh.merge([a, b], clear_seam_tags=["inlet"])
-    assert got.face_tags.group_tags == ["wall"]          # inlet cleared, wall kept
+    assert got.face_tags.unique() == ["wall"]          # inlet cleared, wall kept
     with pytest.raises(ValueError, match="two different names"):
         hexmesh.merge([a, b], clear_seam_tags=["something-else"])
 
@@ -437,13 +409,13 @@ def _two_region_section():
     section = quadmesh.merge([lower, upper])
     return QuadMesh(section.line_mesh, section.quads, section.orient,
                     section.interior,
-                    ElementTags.from_dense(["solid", "solid", "fluid", "fluid"]))
+                    Tags.from_dense(["solid", "solid", "fluid", "fluid"]))
 
 
 def test_element_tag_ids_are_the_sorted_vocabulary_one_based():
     """Ids are a function of the mesh alone -- the sorted vocabulary, 1-based, with 0
     for untagged -- so a reader recovers the legend without the file carrying one."""
-    tags = ElementTags.from_dense(["fluid", "", "solid", "fluid"])
+    tags = Tags.from_dense(["fluid", "", "solid", "fluid"])
     ids, names = writer.element_tag_ids(tags, 4)
     assert names == ["fluid", "solid"]
     assert list(ids) == [1, 0, 2, 1]
@@ -493,14 +465,14 @@ def test_tag_edges_broadcasts_one_name_over_every_row():
     rows = np.array([[q, 1] for q in range(3)], dtype=np.int64)
     tagged = quadmesh.tag_edges(_plain_section(), rows, "wall")
     assert tagged.element_group_tags == []          # elements untouched
-    assert sorted(tagged.edge_tags.group_tags) == ["wall"]
+    assert sorted(tagged.edge_tags.unique()) == ["wall"]
     assert len(quadmesh.tagged_edges(tagged, "wall")) == 3
 
 
 def test_tag_edges_takes_one_name_per_row():
     rows = np.array([[0, 1], [1, 1], [2, 1]], dtype=np.int64)
     tagged = quadmesh.tag_edges(_plain_section(), rows, ["a", "b", "b"])
-    assert sorted(tagged.edge_tags.group_tags) == ["a", "b"]
+    assert sorted(tagged.edge_tags.unique()) == ["a", "b"]
     assert len(quadmesh.tagged_edges(tagged, "b")) == 2
 
 
@@ -524,3 +496,26 @@ def test_quadrant_ogrid_names_its_own_elements():
     assert q.element_tags.is_uniform(q.n_quads)
     plain = quadmesh.quadrant_ogrid(arc, s1, s2, 2, center_scale=0.7)
     assert plain.element_group_tags == []
+
+
+def test_compress_follows_np_compress_over_the_stored_rows():
+    t = Tags.from_dense(["a", "", "b", "c"])           # rows: (0,a) (2,b) (3,c)
+    assert t.compress([True, False, True]).ids.tolist() == [0, 3]
+    assert t.compress([False, True]).ids.tolist() == [2]       # shorter than the table
+    assert t.compress([]).ids.tolist() == []
+    assert t.compress([True, False, False, False, False]).ids.tolist() == [0]
+    with pytest.raises(IndexError):
+        t.compress([False, False, False, True])
+    with pytest.raises(ValueError):
+        t.compress([[True]])
+
+
+def test_isin_takes_one_name_or_several():
+    t = Tags.from_dense(["a", "b", "", "c"])
+    assert t.isin("b").tolist() == [False, True, False]
+    assert t.isin(["a", "c"]).tolist() == [True, False, True]
+
+
+def test_take_refuses_a_negative_index():
+    with pytest.raises(IndexError):
+        Tags.from_dense(["a"]).take(np.array([-1]))

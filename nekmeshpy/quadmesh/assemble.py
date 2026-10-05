@@ -19,11 +19,11 @@ from ..core import conform, stations
 from ..core.fields import gll_nodes
 from ..core.interp import _CORNER_IJK, resample_block_at
 from ..core.tags import (
-    ElementTags,
-    element_mask,
-    sweep_cap_tags,
-    sweep_element_tags,
-    welded_element_tags,
+    Tags,
+    mask_for_selection,
+    sweep_cap,
+    sweep_tags,
+    weld,
 )
 from ..linemesh import LineMesh
 from ..linemesh.assemble import _subset as line_subset
@@ -43,9 +43,9 @@ def loft(
     *,
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[LineMesh]] | None = None,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> QuadMesh:
     """Loft a stack of conformal ``LineMesh`` profiles into a quad section (the general
     primitive behind :func:`extrude <nekmeshpy.quadmesh.lift.extrude>`, and the middle
@@ -187,15 +187,15 @@ def loft(
         hit = names != ""
         enamed[np.asarray(ids, dtype=np.int64)[hit]] = names[hit]
 
-    pnames: StrArray = slices[0].point_tags.dense(nn)
+    pnames: StrArray = slices[0].point_tags.to_dense(nn)
     for p0 in slices[0].point_tags.ids:
         if slot[p0] >= 0:
             enamed[n_prof * L + lay * nu + slot[p0]] = pnames[p0]
-    closed = ElementTags.empty()
+    closed = Tags.empty()
     cap: IntArray = np.arange(L, dtype=np.int64)
-    first_caps = sweep_cap_tags(first_tag, closed if loop else slices[0].element_tags,
+    first_caps = sweep_cap(first_tag, closed if loop else slices[0].element_tags,
                                 L, "QuadMesh.loft")
-    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+    last_caps = sweep_cap(last_tag, closed if loop else slices[-1].element_tags,
                                L, "QuadMesh.loft")
     if loop:
         # a closed sweep's two "caps" are the *same* seam edges, approached from either
@@ -215,7 +215,7 @@ def loft(
     _name(nxt[nz - 1] * L + cap, last_caps)
 
     lm = LineMesh(points, edges, interior=edge_nodes,
-                  element_tags=ElementTags.from_dense(
+                  element_tags=Tags.from_dense(
                       np.asarray(enamed, dtype=np.str_)))
 
     # -- 3. the quads, as indices into that LineMesh ----------------------------
@@ -253,7 +253,7 @@ def loft(
             interior = ((1.0 - gv) * curves[i_idx, l_idx][:, iu, :]
                         + gv * curves[j_idx, l_idx][:, iu, :])
 
-    etags = sweep_element_tags(element_tags, nz, L, "QuadMesh.loft")
+    etags = sweep_tags(element_tags, nz, L, "QuadMesh.loft")
     return QuadMesh(lm, quad, flip, interior, etags)
 
 
@@ -262,9 +262,9 @@ def _loft_evaluated(
     order: int,
     *,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
     name: str = "loft_fn",
 ) -> QuadMesh:
     """The shared tail of every sweep whose profiles are **evaluated** on the refined
@@ -282,9 +282,9 @@ def loft_spline(
     slices: Sequence[LineMesh],
     *,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> QuadMesh:
     """:func:`loft <nekmeshpy.quadmesh.assemble.loft>` with the sweep-direction nodes read
     off a **cubic spline through the whole stack** of profiles, rather than blended
@@ -340,9 +340,9 @@ def loft_fn(
     *,
     loop: bool = False,
     order: int | None = None,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> QuadMesh:
     """Loft a section from a **parametrized family of profiles** -- :func:`loft
     <nekmeshpy.quadmesh.assemble.loft>` with the slices evaluated rather than handed in,
@@ -416,19 +416,19 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
     erow_list: list[IntArray] = []
     ee_list: list[IntArray] = []
     eflip_list: list[BoolArray] = []
-    etag_list: list[ElementTags] = []
+    etag_list: list[Tags] = []
     edge_offs: list[int] = []
     noff = eoff = qoff = 0
     for m, c in zip(meshes, counts):
         erow_list.append(point_id[np.asarray(m.line_mesh.lines, dtype=np.int64) + noff])
         ee_list.append(np.asarray(m.quads, dtype=np.int64) + eoff)
         eflip_list.append(np.asarray(m.orient, dtype=bool))
-        etag_list.append(m.element_tags.offset(qoff))
+        etag_list.append(m.element_tags.shift(qoff))
         edge_offs.append(eoff)
         noff += c
         eoff += m.line_mesh.n_lines
         qoff += m.n_quads
-    etags = ElementTags.concat(etag_list)
+    etags = Tags.concatenate(etag_list)
 
     order = meshes[0].order if meshes else 1
     if any(m.order != order for m in meshes):
@@ -475,7 +475,7 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
     # ``m``'s local edge ``m.quads[q, s]`` is merged edge ``elem_edges[qoff + q, s]``,
     # which is the whole map.  Two blocks welding onto one shared edge can each name
     # it, so the combine is the weld's own conflict rule rather than a concatenation.
-    edge_tag_list: list[ElementTags] = []
+    edge_tag_list: list[Tags] = []
     seam_merged: list[IntArray] = []
     loc2mrg: dict[int, IntArray] = {}
     for bi2, (m, off3) in enumerate(zip(meshes, edge_offs)):
@@ -487,7 +487,7 @@ def _stitch(meshes: Sequence[QuadMesh], points: PointArray, point_id: IntArray, 
         # self-join collapses two tagged edges onto one id and ``renumber`` refuses it
         et = m.edge_tags
         if seam_edges is not None and bi2 in seam_edges:
-            et = et.select(~np.isin(et.ids,
+            et = et.compress(~np.isin(et.ids,
                                     np.asarray(seam_edges[bi2], dtype=np.int64)))
             seam_merged.append(mine[np.asarray(seam_edges[bi2], dtype=np.int64)])
         edge_tag_list.append(et.renumber(mine))
@@ -543,26 +543,26 @@ def _shared_edge_nodes(meshes: Sequence[QuadMesh], e_new: IntArray, swap: BoolAr
     return out
 
 
-def _seam_named(etag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray],
+def _seam_named(etag_list: Sequence[Tags], seam_merged: Sequence[IntArray],
                 named: Sequence[tuple[IntArray, str]], n_edges: int,
-                who: str) -> ElementTags:
+                who: str) -> Tags:
     """The merged edge tags, with the welded-shut seam renamed -- the quad rung's
     counterpart of :func:`hexmesh._seam_named
     <nekmeshpy.hexmesh.assemble._seam_named>`, and the same rule: the seam's rows leave
     both sides before the combine, so the two cannot conflict over a name the caller has
     already given."""
     if not seam_merged:
-        return welded_element_tags(list(etag_list), who)
+        return weld(list(etag_list), who)
     seam_ids: IntArray = np.unique(np.concatenate(list(seam_merged)))
-    kept = [t.select(~np.isin(t.ids, seam_ids)) for t in etag_list]
-    merged = welded_element_tags(kept, who)
+    kept = [t.compress(~np.isin(t.ids, seam_ids)) for t in etag_list]
+    merged = weld(kept, who)
     if not named:
         return merged
-    dense = np.asarray(merged.dense(n_edges), dtype=object)
+    dense = np.asarray(merged.to_dense(n_edges), dtype=object)
     for ids, tag in named:
         if tag:
             dense[ids] = tag
-    return ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
+    return Tags.from_dense(np.asarray(dense, dtype=np.str_))
 
 
 def _edge_group(mesh: QuadMesh, which: str | IntArray | Sequence[int],
@@ -727,7 +727,7 @@ def _subset(mesh: QuadMesh, keep: BoolArray) -> tuple[QuadMesh, IntArray]:
     # the compacted edge numbering, which is the whole of it
     return (QuadMesh(sub_lines, new_edge_of[quad], mesh.orient[kept],
                      mesh.interior[kept],
-                     mesh.element_tags.gather(kept)),
+                     mesh.element_tags.take(kept)),
             new_quad_of)
 
 
@@ -742,14 +742,14 @@ def select(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
 
     Removing elements can open the section up, so the result is **not** guaranteed to be
     simply connected -- or connected at all.  Ask :func:`components` if that matters."""
-    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_quads,
+    return _subset(mesh, mask_for_selection(which, mesh.element_tags, mesh.n_quads,
                                       "quadmesh.select"))[0]
 
 
 def remove(mesh: QuadMesh, which: str | BoolArray | IntArray | Sequence[int]
            ) -> QuadMesh:
     """The complement of :func:`select`: everything ``which`` does **not** name."""
-    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_quads,
+    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags, mesh.n_quads,
                                        "quadmesh.remove"))[0]
 
 
@@ -839,8 +839,8 @@ def refine(mesh: QuadMesh) -> QuadMesh:
                      refined_line.element_tags.renumber(match))
 
     # each parent's tag propagates to all 4 children, consecutively -- see
-    # linemesh.refine's own note on why this is ``gather``, not ``repeat_blocks``.
-    element_tags = mesh.element_tags.gather(np.repeat(np.arange(q_count), 4))
+    # linemesh.refine's own note on why this is ``take``, not ``tile``.
+    element_tags = mesh.element_tags.take(np.repeat(np.arange(q_count), 4))
     return QuadMesh(lm, elem_edges, flip, interior, element_tags)
 
 

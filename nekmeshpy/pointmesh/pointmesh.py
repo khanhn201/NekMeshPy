@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .._typing import PointArray
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 
 
 class PointMesh:
@@ -13,8 +13,8 @@ class PointMesh:
 
     A point has no interior, no orientation and no connectivity -- its "incidence" is
     the identity, so element ``i`` *is* point ``i``. That leaves only the two fields
-    every rung has: the coordinates, and an :class:`ElementTags
-    <nekmeshpy.core.tags.ElementTags>` naming whichever of them are named.
+    every rung has: the coordinates, and an :class:`Tags
+    <nekmeshpy.core.tags.Tags>` naming whichever of them are named.
 
     It exists so the rule that holds between every other pair of rungs -- **a mesh's
     side tags are its rung-below's element tags** -- holds at the bottom too, rather
@@ -30,17 +30,17 @@ class PointMesh:
     def __init__(
         self,
         points: PointArray,
-        element_tags: ElementTags | None = None,
+        element_tags: Tags | None = None,
     ) -> None:
         """Construct from ``points`` ``(N,3)`` (must be 3-D) and an optional
-        :class:`ElementTags <nekmeshpy.core.tags.ElementTags>` over point ids."""
+        :class:`Tags <nekmeshpy.core.tags.Tags>` over point ids."""
         self.points: PointArray = np.asarray(points, dtype=float)
         if self.points.ndim != 2 or self.points.shape[1] != 3:
             raise ValueError(
                 "PointMesh: points must be (N,3) 3-D coordinates; got %s -- add a z "
                 "column (all geometry lives in 3-D)" % (self.points.shape,))
-        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.element_tags.check_within(self.points.shape[0])
+        self.element_tags = Tags.empty() if element_tags is None else element_tags
+        self.element_tags.validate(self.points.shape[0])
 
     def __repr__(self) -> str:
         from ..linemesh.linemesh import _repr_tags
@@ -64,4 +64,4 @@ class PointMesh:
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-point tags present on the mesh."""
-        return self.element_tags.group_tags
+        return self.element_tags.unique()

@@ -436,11 +436,11 @@ def tagged_faces(mesh: HexMesh, tag: str) -> IntArray:
     A tag that names nothing raises rather than returning an empty group: a mis-spelled
     interface name is otherwise invisible until the solver reads the mesh."""
     t = mesh.face_tags
-    hit: IntArray = np.asarray(t.ids[t.mask_for(tag)], dtype=np.int64)
+    hit: IntArray = np.asarray(t.ids[t.isin(tag)], dtype=np.int64)
     if hit.size == 0:
         raise ValueError(
             "tagged_faces: no face carries the tag %r; this mesh has %s"
-            % (tag, sorted(t.group_tags) or "no tagged faces"))
+            % (tag, sorted(t.unique()) or "no tagged faces"))
     return hit
 
 

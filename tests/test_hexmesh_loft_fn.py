@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from conftest import conformal, face_rows
 
-from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
+from nekmeshpy import Tags, hexmesh, linemesh, quadmesh
 
 R, RT, NS, NV = 2.0, 0.6, 2, 6
 RADIAL = np.array([0.5, 1.0])
@@ -216,9 +216,9 @@ def test_element_tags_name_the_swept_column_of_each_section_quad():
         linemesh.circle(RT, 4 * NS, center=(R, 0.0, 0.0), normal=(0, 1, 0)),
         NS, RADIAL)
     f = lambda t: quadmesh.rotate(base, t, axis=(0, 0, 1))                   # noqa: E731
-    per_quad = ElementTags.from_dense(["hot"] + [""] * (base.n_quads - 1))
+    per_quad = Tags.from_dense(["hot"] + [""] * (base.n_quads - 1))
     blk = hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=per_quad)
-    tags = blk.element_tags.dense(blk.n_hexes).reshape(3, base.n_quads)   # hex (layer i, quad q)
+    tags = blk.element_tags.to_dense(blk.n_hexes).reshape(3, base.n_quads)   # hex (layer i, quad q)
     assert list(np.unique(tags[:, 0])) == ["hot"]
     assert list(np.unique(tags[:, 1:])) == [""]
     assert hexmesh.loft_fn(f, np.linspace(0.0, 1.0, 4),
@@ -236,14 +236,14 @@ def test_side_and_cap_boundary_tags_survive_the_element_tags():
     assert sides("inlet") == {5}
     assert sides("outlet") == {6}
     assert sides("wall") <= {1, 2, 3, 4}
-    assert blk.element_tags.group_tags == ["a"]
+    assert blk.element_tags.unique() == ["a"]
 
 
 def test_loft_rejects_element_tags_naming_a_quad_the_section_lacks():
     base = _flat_disc(1)
     slices = [quadmesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="only %d elements" % base.n_quads):
-        hexmesh.loft(slices, element_tags=ElementTags([base.n_quads], ["off"]))
+        hexmesh.loft(slices, element_tags=Tags([base.n_quads], ["off"]))
     with pytest.raises(TypeError, match="element_tags must be"):
         hexmesh.loft(slices, element_tags=["a", "b"])
 

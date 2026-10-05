@@ -17,7 +17,7 @@ what keeps the goldens frozen.
 import numpy as np
 import pytest
 
-from nekmeshpy import ElementTags, linemesh, quadmesh
+from nekmeshpy import Tags, linemesh, quadmesh
 from nekmeshpy.core import conform
 
 R, RT, NU, NV = 2.0, 0.6, 8, 6
@@ -175,9 +175,9 @@ def test_element_tags_name_the_swept_column_of_each_profile_line():
     from it, at every layer -- and a single string names the whole section."""
     base = linemesh.circle(RT, NU, center=(R, 0.0, 0.0), normal=(0, 1, 0))
     f = lambda t: linemesh.rotate(base, t, axis=(0, 0, 1))                   # noqa: E731
-    per_line = ElementTags.from_dense(["hot"] + [""] * (NU - 1))
+    per_line = Tags.from_dense(["hot"] + [""] * (NU - 1))
     sec = quadmesh.loft_fn(f, np.linspace(0.0, 1.0, 4), element_tags=per_line)
-    tags = sec.element_tags.dense(sec.n_quads).reshape(3, NU)      # quad (layer i, line l) = i*NU + l
+    tags = sec.element_tags.to_dense(sec.n_quads).reshape(3, NU)      # quad (layer i, line l) = i*NU + l
     assert list(np.unique(tags[:, 0])) == ["hot"]
     assert list(np.unique(tags[:, 1:])) == [""]
     assert quadmesh.loft_fn(f, np.linspace(0.0, 1.0, 4),
@@ -188,7 +188,7 @@ def test_loft_rejects_element_tags_naming_a_line_the_profile_lacks():
     base = _tube_ring(1)
     slices = [linemesh.translate(base, (0.0, 0.0, z)) for z in (0.0, 1.0, 2.0)]
     with pytest.raises(ValueError, match="only %d elements" % base.n_lines):
-        quadmesh.loft(slices, element_tags=ElementTags([base.n_lines], ["off"]))
+        quadmesh.loft(slices, element_tags=Tags([base.n_lines], ["off"]))
     with pytest.raises(TypeError, match="element_tags must be"):
         quadmesh.loft(slices, element_tags=["a", "b"])
 

@@ -17,7 +17,7 @@ from ..core.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
 from ..core.physical import PhysicalGroup, PhysicalGroups
-from ..core.tags import ElementTags, element_mask
+from ..core.tags import Tags, mask_for_selection
 from ..hexmesh import HexMesh
 from ..hexmesh.lower import boundary_mesh
 from ..hexmesh.periodic import Periodic, PeriodicPairs, periodic_pairs
@@ -48,8 +48,8 @@ GroupsArg = Union[PhysicalGroups, Mapping[str, GroupSpec], None]
 #: <nekmeshpy.hexmesh.periodic.periodic_pairs>`.
 PeriodicArg = Union[Sequence[Periodic], PeriodicPairs, None]
 #: What ``to_re2``'s ``fluid=`` accepts: a region name, a ready boolean mask, an array
-#: of element ids, or ``None`` -- see :func:`core.tags.element_mask
-#: <nekmeshpy.core.tags.element_mask>`, which resolves it.
+#: of element ids, or ``None`` -- see :func:`core.tags.mask_for_selection
+#: <nekmeshpy.core.tags.mask_for_selection>`, which resolves it.
 FluidArg = Union[str, BoolArray, IntArray, Sequence[int], None]
 
 
@@ -70,7 +70,7 @@ def _export_rows(mesh: HexMesh, g: PhysicalGroups,
     <nekmeshpy.hexmesh.periodic.PeriodicPairs.partner_of>`; a row it does not name gets
     ``(-1, -1)``, which every writer but ``.re2`` drops on the floor."""
     rows, names = face_tag_rows(mesh)
-    regions = mesh.element_tags.dense(mesh.hexes.shape[0])
+    regions = mesh.element_tags.to_dense(mesh.hexes.shape[0])
     out: list[tuple[int, int, str, str, int, int]] = []
     for (elem, face), name in zip(rows.tolist(), names.tolist()):
         pe, pf = (partners or {}).get((int(elem), int(face)), (-1, -1))
@@ -182,7 +182,7 @@ def _fluid_first_order(mesh: HexMesh, fluid: FluidArg
     n = mesh.n_hexes
     if fluid is None:
         return np.arange(n, dtype=np.int64), n, None
-    mask: BoolArray = element_mask(fluid, mesh.element_tags, n, "to_re2: fluid")
+    mask: BoolArray = mask_for_selection(fluid, mesh.element_tags, n, "to_re2: fluid")
     order: IntArray = np.concatenate(
         [np.flatnonzero(mask), np.flatnonzero(~mask)]).astype(np.int64)
     return order, int(np.count_nonzero(mask)), mask
@@ -218,7 +218,7 @@ def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
     coded = {grp.name for grp in g if grp.code == PERIODIC_CODE
              or (grp.side_codes is not None
                  and PERIODIC_CODE in grp.side_codes.values())}
-    named = mesh.face_tags.dense(mesh.quad_mesh.n_quads)
+    named = mesh.face_tags.to_dense(mesh.quad_mesh.n_quads)
     hexes: IntArray = np.asarray(mesh.hexes, dtype=np.int64)
     paired = {str(named[hexes[elem, face - 1]])
              for elem, face in partners if mask is None or mask[elem]}
@@ -247,7 +247,7 @@ def _field_rows(mesh: HexMesh, g: PhysicalGroups,
     that *is* coded but lands on an element outside ``mask`` is unambiguously a mistake
     -- the wrong field's table -- and raises rather than corrupting the block."""
     rows, names = face_tag_rows(mesh)
-    regions = mesh.element_tags.dense(mesh.hexes.shape[0])
+    regions = mesh.element_tags.to_dense(mesh.hexes.shape[0])
     out: list[tuple[int, int, str, str, int, int]] = []
     for (elem, face), name in zip(rows.tolist(), names.tolist()):
         grp = g.get(name)
@@ -513,17 +513,17 @@ def _lagrange_quad_perm(order: int) -> IntArray:
 # connectivity = consecutive blocks) -- byte-for-byte the historical output.  At
 # ``order > 1`` the conformal walk (:mod:`nekmeshpy.core.conform`) emits **shared**
 # nodes: a node on an edge / face between two elements is written once.
-def element_tag_ids(tags: ElementTags, n_elements: int) -> tuple[IntArray, list[str]]:
+def element_tag_ids(tags: Tags, n_elements: int) -> tuple[IntArray, list[str]]:
     """``(per-element id (n_elements,), name per id)`` for a region table: 1-based
     positions in the **sorted** tag vocabulary, ``0`` where an element carries no tag.
 
     A ``.vtu`` cannot hold the names themselves -- VTK's string arrays are per-file
     field data, not something a cell scalar can point into -- so the array written is
     integer, exactly as ``bc_id`` already is.  What keeps it readable is that the
-    mapping is a function of the mesh alone: ``sorted(mesh.element_tags.group_tags)``
+    mapping is a function of the mesh alone: ``sorted(mesh.element_tags.unique())``
     reproduces it anywhere, with no legend to carry alongside the file."""
-    names = sorted(tags.group_tags)
-    dense = tags.dense(n_elements)
+    names = sorted(tags.unique())
+    dense = tags.to_dense(n_elements)
     ids: IntArray = np.zeros(n_elements, dtype=np.int64)
     for i, name in enumerate(names):
         ids[dense == name] = i + 1
@@ -615,7 +615,7 @@ def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
 
 
 # -- the unstructured-grid writer ---------------------------------------
-def _cell_tags(tags: ElementTags, n_elements: int) -> IntArray | None:
+def _cell_tags(tags: Tags, n_elements: int) -> IntArray | None:
     """The ``element_tag`` cell array, or ``None`` for an untagged mesh -- which writes
     no ``CellData`` at all rather than a meaningless column of zeros."""
     if not tags:
@@ -839,7 +839,7 @@ def boundary_to_vtp(mesh: HexMesh, fname: str, *, tag: str | None = None,
     bc_out: IntArray | None = None
     if names:
         name_to_id = {name: i + 1 for i, name in enumerate(names)}
-        dense = surf.element_tags.dense(surf.n_quads)
+        dense = surf.element_tags.to_dense(surf.n_quads)
         bc_out = np.array(
             [name_to_id.get(str(n), 0) for n in dense.tolist()], dtype=np.int64)
         groups_path = (fname[:-4] if fname.endswith(".vtp") else fname) + ".groups.json"

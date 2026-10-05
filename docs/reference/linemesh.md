@@ -1,8 +1,5 @@
 # `linemesh`
 
-The 1-D mesh sibling of `QuadMesh` / `HexMesh`: a `(N,3)` point array plus
-branching `(L,2)` line connectivity, open or closed.
-
 ```{eval-rst}
 .. autoclass:: nekmeshpy.linemesh.LineMesh
    :members:
@@ -11,42 +8,35 @@ branching `(L,2)` line connectivity, open or closed.
 
 ## Operations
 
-Every operation lives in exactly one of the namespaces below, grouped by what it
-does to the mesh — but each is also re-exported flat on `linemesh` itself, so
-`linemesh.circle(...)` and `linemesh.shape.circle(...)` are the *same* function,
-not two. Prefer the flat form in code (`linemesh.circle`, not `LineMesh.circle` —
-there are no methods); the grouping below exists to help you find the right
-operation, not to document it twice.
-
-### `linemesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
+### `linemesh.assemble`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.assemble
    :members:
 ```
 
-### `linemesh.shape` — factories: own a shape model, exact at any order
+### `linemesh.shape`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.shape
    :members:
 ```
 
-### `linemesh.morph` — Δ0: geometry at the same rung — `blend`, `reverse`, `offset`, the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`, and `transform_fn` (a non-affine warp)
+### `linemesh.morph`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.morph
    :members:
 ```
 
-### `linemesh.query` — read-only: `bounds`/`centroid`/`length`, boundary queries, `element_blocks`
+### `linemesh.query`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.query
    :members:
 ```
 
-### `linemesh.tag` — vocabulary only: renames the tag tables, geometry untouched
+### `linemesh.tag`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.linemesh.tag

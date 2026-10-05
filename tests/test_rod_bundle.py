@@ -43,7 +43,7 @@ def _duct_hexagon_area(ns):
 
 def test_regions_partition_the_duct(bundle):
     section = bundle["section"]
-    tags = section.element_tags.dense(section.n_quads)
+    tags = section.element_tags.to_dense(section.n_quads)
     assert set(np.unique(tags)) == set(REGIONS)
 
     total = _duct_hexagon_area(bundle)
@@ -69,7 +69,7 @@ def test_rod_region_is_the_wire_wrapped_profile(bundle):
     profile = 0.5 * np.sum(r * np.roll(r, -1) * np.sin(2.0 * np.pi / n))
     circle = 0.5 * n * r0 ** 2 * np.sin(2.0 * np.pi / n)
 
-    tags = section.element_tags.dense(section.n_quads)
+    tags = section.element_tags.to_dense(section.n_quads)
     got = quadmesh.element_areas(section)[tags == "rod"].sum()
     assert got == pytest.approx(61 * profile, rel=1e-12)
     assert got > 61 * circle * (1.0 + 1e-6)
@@ -174,8 +174,8 @@ def test_the_twist_costs_the_regions_only_the_chord_error(bundle):
     own staleness."""
     mesh, section = bundle["mesh"], bundle["section"]
     vol = hexmesh.element_volumes(mesh)
-    hex_tags = mesh.element_tags.dense(mesh.n_hexes)
-    quad_tags = section.element_tags.dense(section.n_quads)
+    hex_tags = mesh.element_tags.to_dense(mesh.n_hexes)
+    quad_tags = section.element_tags.to_dense(section.n_quads)
     areas = quadmesh.element_areas(section)
 
     defect = {}
@@ -209,7 +209,7 @@ def test_conjugate_interfaces_export_from_the_fluid_side_only(bundle):
     assert n["duct_surface"] == n["outer"]
 
     section = bundle["section"]
-    tags = section.element_tags.dense(section.n_quads)
+    tags = section.element_tags.to_dense(section.n_quads)
     assert n["inlet"] == n["outlet"] == int((tags == "fluid").sum())
     assert n["cut"] == 2 * int((tags != "fluid").sum())
 
@@ -234,7 +234,7 @@ def test_vtu_carries_the_three_regions_per_cell(bundle, bundle_dir):
     assert names == sorted(REGIONS)
     assert np.array_equal(got, ids)
 
-    quad_tags = section.element_tags.dense(section.n_quads)
+    quad_tags = section.element_tags.to_dense(section.n_quads)
     for i, name in enumerate(names):
         assert int((got == i + 1).sum()) == \
             int((quad_tags == name).sum()) * bundle["N_SPAN"]

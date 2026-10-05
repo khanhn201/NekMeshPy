@@ -16,7 +16,7 @@ import pytest
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core.fields import gll_nodes
 from nekmeshpy.core.interp import resample_block, resample_block_at
-from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.core.tags import Tags
 from nekmeshpy.hexmesh.hexmesh import HexMesh
 from nekmeshpy.hexmesh.query import element_blocks as hex_blocks
 from nekmeshpy.linemesh.query import element_blocks as line_blocks
@@ -75,9 +75,9 @@ def test_linemesh_refine_curved_circle_stays_on_the_circle():
 def test_linemesh_refine_tags_propagate_to_both_children():
     m = _line(1)
     m = linemesh.LineMesh(m.point_mesh, m.lines, m.interior,
-                          ElementTags.from_dense(["a", "", "", ""]))
+                          Tags.from_dense(["a", "", "", ""]))
     r = linemesh.refine(m)
-    dense = r.element_tags.dense(r.n_lines)
+    dense = r.element_tags.to_dense(r.n_lines)
     assert list(dense) == ["a", "a", "", "", "", "", "", ""]
 
 
@@ -118,10 +118,10 @@ def test_quadmesh_refine_count_arithmetic():
 
 def test_quadmesh_refine_region_tags_propagate_to_all_four_children():
     m = _rect(2, 2)                                      # 4 quads
-    tags = ElementTags.from_dense(["a", "a", "b", "b"])
+    tags = Tags.from_dense(["a", "a", "b", "b"])
     m = quadmesh.QuadMesh(m.line_mesh, m.quads, m.orient, m.interior, tags)
     r = quadmesh.refine(m)
-    dense = r.element_tags.dense(r.n_quads)
+    dense = r.element_tags.to_dense(r.n_quads)
     assert list(dense[:8]) == ["a"] * 8
     assert list(dense[8:]) == ["b"] * 8
 
@@ -130,7 +130,7 @@ def test_quadmesh_refine_edge_tags_propagate_and_new_edges_stay_untagged():
     m = _rect(2, 2)
     m = quadmesh.tag_edges(m, [(0, 4)], ["wall"])
     r = quadmesh.refine(m)
-    assert r.edge_tags.group_tags == ["wall"]
+    assert r.edge_tags.unique() == ["wall"]
     assert len(r.edge_tags) == 2                          # the one edge's two halves
 
 
@@ -195,10 +195,10 @@ def test_hexmesh_refine_count_arithmetic():
 
 def test_hexmesh_refine_region_tags_propagate_to_all_eight_children():
     m = _box(2, 2, 1)                                    # 4 hexes
-    tags = ElementTags.from_dense(["a", "a", "b", "b"])
+    tags = Tags.from_dense(["a", "a", "b", "b"])
     m = HexMesh(m.quad_mesh, m.hexes, m.orient, m.interior, tags)
     r = hexmesh.refine(m)
-    dense = r.element_tags.dense(r.n_hexes)
+    dense = r.element_tags.to_dense(r.n_hexes)
     assert list(dense[:16]) == ["a"] * 16
     assert list(dense[16:]) == ["b"] * 16
 
@@ -208,7 +208,7 @@ def test_hexmesh_refine_face_tags_propagate_and_new_faces_stay_untagged():
     face_id = int(np.flatnonzero(hexmesh.boundary_face_ids(m))[0])
     m = hexmesh.tag_faces(m, [face_id], "wall")
     r = hexmesh.refine(m)
-    assert r.face_tags.group_tags == ["wall"]
+    assert r.face_tags.unique() == ["wall"]
     assert len(r.face_tags) == 4                          # that one face's 4 children
 
 

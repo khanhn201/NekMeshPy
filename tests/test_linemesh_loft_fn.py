@@ -390,7 +390,7 @@ def test_loop_tags_every_line_including_the_seam():
     ring = linemesh.loft_fn(_circle_f(), _ring_fractions(n), loop=True,
                             order=2, element_tags="wall")
     # n lines, not n+1 -- the seam line is tagged like the rest
-    assert ring.element_tags.dense(ring.n_lines).tolist() == ["wall"] * n
+    assert ring.element_tags.to_dense(ring.n_lines).tolist() == ["wall"] * n
 
 
 def test_loop_rejects_a_parametrization_that_does_not_close():
@@ -410,7 +410,7 @@ def test_loop_rejects_fewer_than_three_fractions():
 
 def test_element_tags_land_on_the_elements():
     lm = linemesh.loft_fn(_collar, _uniform(5), order=2, element_tags="a")
-    assert lm.element_tags.dense(lm.n_lines).tolist() == ["a"] * 5
+    assert lm.element_tags.to_dense(lm.n_lines).tolist() == ["a"] * 5
     assert lm.element_group_tags == ["a"]
 
 

@@ -16,7 +16,7 @@ from .._typing import (
 from ..core import frames, stations
 from ..core.fields import validate_layers
 from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
@@ -36,9 +36,9 @@ def extrude(
     *,
     axis: Vec3 = _Z_AXIS,
     origin: Point = _ORIGIN,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> QuadMesh:
     """Sweep a ``LineMesh`` a distance ``length`` along ``axis`` into a quad section
     (the straight special case of :func:`loft <nekmeshpy.quadmesh.assemble.loft>`)."""
@@ -79,9 +79,9 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
     # outer_tag overrides for the whole ring.  ``None`` is "not asked for" and
     # inherits; ``NO_TAG`` is an explicit override *to* untagged, so it suppresses
     # the loop's own tags rather than falling through to them.
-    inner_caps: str | ElementTags | None = (
+    inner_caps: str | Tags | None = (
         inner_tag if inner_tag is not None else inner.element_tags or None)
-    outer_caps: str | ElementTags | None = (
+    outer_caps: str | Tags | None = (
         outer_tag if outer_tag is not None else outer.element_tags or None)
 
     # Blend the loops (carrying their curved blocks) and loft directly -- ring k =
@@ -114,7 +114,7 @@ def from_grid(
         if side in tags:
             # loft carries the profile's first point onto quad side 4, its last onto 2
             pnamed[0 if _GRID_SIDES[side][1] == 4 else -1] = tags[side]
-    pbnd_t = ElementTags.from_dense(np.asarray(pnamed, dtype=np.str_))
+    pbnd_t = Tags.from_dense(np.asarray(pnamed, dtype=np.str_))
     # each profile is itself a ``LineMesh.loft`` of its ``i`` points: the rung below
     # builds the open ``i = 0..ni`` chain and, at order > 1, each segment's private
     # interior as the straight GLL blend of its two endpoints.  ``loft`` here builds
@@ -142,9 +142,9 @@ def sweep(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> QuadMesh:
     """A strip swept from one ``LineMesh`` ``profile`` along the curve ``path``."""
     order = profile.order
@@ -176,9 +176,9 @@ def sweep_path(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> QuadMesh:
     """:func:`sweep <nekmeshpy.quadmesh.lift.sweep>` driven by a :class:`Path
     <nekmeshpy.core.paths.Path>`, which carries its own analytic tangent and

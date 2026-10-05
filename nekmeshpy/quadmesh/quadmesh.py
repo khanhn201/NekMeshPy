@@ -12,7 +12,7 @@ from .._typing import (
 )
 from ..core import conform
 from ..core.interp import quad_edge_indices
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.linemesh import _repr_tags
 
@@ -86,7 +86,7 @@ class QuadMesh:
         quads: IntArray,
         orient: BoolArray,
         interior: PointArray | None = None,
-        element_tags: ElementTags | None = None,
+        element_tags: Tags | None = None,
     ) -> None:
         """Construct from the B-rep directly: ``line_mesh`` (a ``LineMesh`` holding every
         shared edge -- its ``points`` are the shared corners, its ``lines`` the shared
@@ -129,8 +129,8 @@ class QuadMesh:
                 "QuadMesh: interior must be (Q,(order-1)**2,3) = (%d,%d,3), got %s"
                 % (E, k, self.interior.shape))
 
-        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.element_tags.check_within(E)
+        self.element_tags = Tags.empty() if element_tags is None else element_tags
+        self.element_tags.validate(E)
 
         # corner connectivity is derived from quads/orient and immutable post-construction
         # (point moves don't change it), so memoize it once.
@@ -141,7 +141,7 @@ class QuadMesh:
         cls,
         points: PointArray,
         quads: IntArray,
-        element_tags: ElementTags | None = None,
+        element_tags: Tags | None = None,
         *,
         order: int = 1,
     ) -> QuadMesh:
@@ -169,7 +169,7 @@ class QuadMesh:
         return cls(lm, elem_edges, flip, None, element_tags)
 
     @property
-    def edge_tags(self) -> ElementTags:
+    def edge_tags(self) -> Tags:
         """The tags on the shared edges, over **edge ids**.
 
         This is ``lines``' own ``element_tags`` read through, not a table of its own:
@@ -253,10 +253,10 @@ class QuadMesh:
     @property
     def edge_group_tags(self) -> list[str]:
         """Sorted unique tags of the tagged edges."""
-        return self.edge_tags.group_tags
+        return self.edge_tags.unique()
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-quad element tags present on the section."""
-        return self.element_tags.group_tags
+        return self.element_tags.unique()
 

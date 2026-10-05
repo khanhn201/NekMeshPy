@@ -10,7 +10,7 @@ from .._typing import (
     IntArray,
     PointArray,
 )
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..pointmesh import PointMesh
 
 
@@ -39,12 +39,12 @@ class LineMesh:
         point_mesh: PointMesh | PointArray,
         lines: IntArray,
         interior: PointArray | None = None,
-        element_tags: ElementTags | None = None,
+        element_tags: Tags | None = None,
     ) -> None:
         """Construct from the rung below: ``point_mesh`` (a ``PointMesh``, or a bare
         ``(N,3)`` array promoted to an untagged one), the **required** ``lines``
         ``(L,2)`` connectivity, the per-line ``interior`` nodes, and an optional
-        :class:`ElementTags <nekmeshpy.core.tags.ElementTags>` naming whichever lines
+        :class:`Tags <nekmeshpy.core.tags.Tags>` naming whichever lines
         are tagged.
 
         Passing an array is the authoring form and the one every factory building fresh
@@ -72,8 +72,8 @@ class LineMesh:
                 "LineMesh: interior must be (L, order-1, 3) with L = %d lines, "
                 "got %s" % (E, self.interior.shape))
 
-        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.element_tags.check_within(E)
+        self.element_tags = Tags.empty() if element_tags is None else element_tags
+        self.element_tags.validate(E)
 
     @property
     def corners(self) -> IntArray:
@@ -93,7 +93,7 @@ class LineMesh:
         return self.point_mesh.points
 
     @property
-    def point_tags(self) -> ElementTags:
+    def point_tags(self) -> Tags:
         """The tags on the shared points, over **point ids**.
 
         This is ``point_mesh``'s own ``element_tags`` read through, not a table of its
@@ -138,9 +138,9 @@ class LineMesh:
     @property
     def point_group_tags(self) -> list[str]:
         """Sorted unique tags of the tagged end points present on the mesh."""
-        return self.point_tags.group_tags
+        return self.point_tags.unique()
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-line element tags present on the mesh."""
-        return self.element_tags.group_tags
+        return self.element_tags.unique()

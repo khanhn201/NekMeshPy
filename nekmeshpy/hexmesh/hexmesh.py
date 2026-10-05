@@ -11,7 +11,7 @@ from .._typing import (
     PointArray,
 )
 from ..core import conform
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh.linemesh import _repr_tags
 from ..quadmesh import QuadMesh
 
@@ -58,7 +58,7 @@ class HexMesh:
         hexes: IntArray,
         orient: IntArray,
         interior: PointArray | None = None,
-        element_tags: ElementTags | None = None,
+        element_tags: Tags | None = None,
     ) -> None:
         """Construct from the B-rep directly: ``quad_mesh`` (a ``QuadMesh`` holding every
         shared face -- its ``points`` are the shared corners, its ``quads`` the shared
@@ -100,8 +100,8 @@ class HexMesh:
                 "HexMesh: interior must be (E,(order-1)**3,3) = (%d,%d,3), got %s"
                 % (E, k, self.interior.shape))
 
-        self.element_tags = ElementTags.empty() if element_tags is None else element_tags
-        self.element_tags.check_within(E)
+        self.element_tags = Tags.empty() if element_tags is None else element_tags
+        self.element_tags.validate(E)
 
         # Corner connectivity is derived from the shared faces and immutable
         # post-construction (point moves don't change it), so memoize it once.
@@ -135,7 +135,7 @@ class HexMesh:
         cls,
         points: PointArray,
         hexes: IntArray,
-        element_tags: ElementTags | None = None,
+        element_tags: Tags | None = None,
         *,
         order: int = 1,
     ) -> HexMesh:
@@ -160,7 +160,7 @@ class HexMesh:
         return cls(quads, elem_faces, face_orient, None, element_tags)
 
     @property
-    def face_tags(self) -> ElementTags:
+    def face_tags(self) -> Tags:
         """The tags on the shared faces, over **face ids**.
 
         This is ``quads``' own ``element_tags`` read through, not a table of its own:
@@ -258,12 +258,12 @@ class HexMesh:
     @property
     def face_group_tags(self) -> list[str]:
         """Sorted unique tags of the tagged faces."""
-        return self.face_tags.group_tags
+        return self.face_tags.unique()
 
     @property
     def element_group_tags(self) -> list[str]:
         """Sorted unique non-empty per-hex element tags present on the mesh."""
-        return self.element_tags.group_tags
+        return self.element_tags.unique()
 
     # -- helpers for the operation modules -----------------------------
     @staticmethod

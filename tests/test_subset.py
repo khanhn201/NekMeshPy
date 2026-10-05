@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from conftest import face_rows
 
-from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
+from nekmeshpy import Tags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import conform
 
 RADIAL = np.linspace(0.5, 1.0, 3)
@@ -88,7 +88,7 @@ def test_select_by_tag_takes_exactly_the_tagged_elements():
     section = quadmesh.ogrid(linemesh.circle(1.0, 8), 2, RADIAL)
     tagged = quadmesh.QuadMesh(
         section.line_mesh, section.quads, section.orient, section.interior,
-        ElementTags(np.arange(0, section.n_quads, 3),
+        Tags(np.arange(0, section.n_quads, 3),
                     np.full(len(np.arange(0, section.n_quads, 3)), "core")))
     got = quadmesh.select(tagged, "core")
     assert got.n_quads == len(np.arange(0, section.n_quads, 3))

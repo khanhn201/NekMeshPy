@@ -10,7 +10,7 @@ import numpy as np
 from .._typing import FloatArray, Point, PointArray, Vec3
 from ..core.paths import Path
 from ..core.surfaces import SurfaceCurve, SurfaceMap
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ._plane import _arc_interior, _arc_points, _in_plane_axes
 from .assemble import _eval_curve, loft, loft_fn
 from .linemesh import LineMesh
@@ -238,7 +238,7 @@ def rectangle(width: float, height: float, n: int, *,
     if tags is None:
         return lm
     return LineMesh(lm.point_mesh, lm.lines, lm.interior,
-                    ElementTags.from_dense(tags))
+                    Tags.from_dense(tags))
 
 __all__ = [
     "arc",

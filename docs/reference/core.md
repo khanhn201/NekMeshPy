@@ -1,11 +1,5 @@
 # `core`
 
-The mesh-agnostic layer: the shared-point `Mesh`, physical groups, topology
-checks, and sizing fields. The order-N kernel — `core.interp` (numerics over GLL
-reference nodes) and `core.conform` (topology / orientation / reconciliation
-behind the B-rep) — is internal; see
-[Concepts](../user/getting-started.md#high-order-nodes).
-
 ## `core.mesh`
 
 ```{eval-rst}
@@ -43,9 +37,6 @@ behind the B-rep) — is internal; see
 
 ## `core.stations`
 
-The sweep-station machinery every `loft` / `sweep` / `extrude` reads: `split_evaluated`,
-`refined_lattice`, `spline_levels`, `sweep_lattice`.
-
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.stations
    :members:
@@ -67,11 +58,6 @@ The sweep-station machinery every `loft` / `sweep` / `extrude` reads: `split_eva
 
 ## `core.paths`
 
-`Move`, `UpSpec` and `Orientation` — the union of the three move types, what a sweep
-accepts for `up`, and the frame-generator names — are excluded below: they are `typing`
-aliases, and autodoc renders those through `typing`'s own docstring, which does not
-survive `-n`. `line`, `arc` and `helix` below document the move forms themselves.
-
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.paths
    :members:
@@ -79,10 +65,6 @@ survive `-n`. `line`, `arc` and `helix` below document the move forms themselves
 ```
 
 ## `core.surfaces`
-
-`SurfaceMap` — a `(K,2) -> (K,3)` callable — is excluded below for the same
-reason as `paths.Move`: it is a `typing` alias, and autodoc renders those through
-`typing`'s own docstring, which does not survive `-n`.
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.core.surfaces

@@ -21,7 +21,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import HexMesh, hexmesh, quadmesh, writer
-from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.core.tags import Tags
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -71,7 +71,7 @@ box = hexmesh.from_grid(grid, order=ORDER,
                                    ("x_min", "x_max", "y_min", "y_max", "z_min", "z_max")})
 # ``from_grid``'s element_tag never reaches the hexes, so name the region here
 box = HexMesh(box.quad_mesh, box.hexes, box.orient, box.interior,
-              ElementTags.uniform(box.n_hexes, "solid"))
+              Tags.full(box.n_hexes, "solid"))
 
 # -- 2. remove the hexes around the U -----------------------------------------
 centres = box.points[box.corners].mean(axis=1)

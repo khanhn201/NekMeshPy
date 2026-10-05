@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from conftest import assert_same_side_tags
 
-from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
+from nekmeshpy import Tags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import conform, frames
 from nekmeshpy.core.fields import uniform_spacing
 
@@ -239,11 +239,11 @@ def test_element_tags_name_the_swept_column_of_each_section_quad():
     """``element_tags`` is per *section element*, not per layer: the tag on quad q
     lands on every hex swept from it, at every layer."""
     sec = disc(1)
-    per_quad = ElementTags.from_dense(["hot"] + [""] * (sec.n_quads - 1))
+    per_quad = Tags.from_dense(["hot"] + [""] * (sec.n_quads - 1))
     blk = hexmesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 4),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
                         element_tags=per_quad)
-    tags = blk.element_tags.dense(blk.n_hexes).reshape(3, sec.n_quads)      # hex e = layer*M + q
+    tags = blk.element_tags.to_dense(blk.n_hexes).reshape(3, sec.n_quads)      # hex e = layer*M + q
     assert list(np.unique(tags[:, 0])) == ["hot"]        # quad 0's column, every layer
     assert list(np.unique(tags[:, 1:])) == [""]
     # and a single string names the whole block
@@ -357,7 +357,7 @@ def test_quad_rung_sweeps_a_segment_into_an_exact_flat_annulus(order):
     assert r.min() == pytest.approx(RB - RP, abs=1e-13)
     assert r.max() == pytest.approx(RB + RP, abs=1e-13)
     assert sorted(rib.edge_group_tags) == ["a", "b"]
-    assert rib.element_tags.group_tags == ["fin"]
+    assert rib.element_tags.unique() == ["fin"]
 
 
 def test_quad_rung_needs_a_normal_for_a_collinear_profile():

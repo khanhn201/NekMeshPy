@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from conftest import face_rows
 
-from nekmeshpy import ElementTags, HexMesh, QuadMesh, hexmesh, quadmesh
+from nekmeshpy import HexMesh, QuadMesh, Tags, hexmesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
 
 # the six cube faces: outward normal n with right-handed tangents (u x v = n)
@@ -28,7 +28,7 @@ _SIDE = {(1, 0, 0): "xp", (-1, 0, 0): "xm", (0, 1, 0): "yp",
 def _retag(m, name):
     """``m`` with every quad tagged ``name``, its B-rep untouched."""
     return QuadMesh(m.line_mesh, m.quads, m.orient, m.interior,
-                    ElementTags.uniform(m.n_quads, name))
+                    Tags.full(m.n_quads, name))
 
 
 def _cube_surface(half, nf, *, tag_faces=True):
@@ -152,7 +152,7 @@ def _two_quad_slices():
 def test_loft_per_quad_first_tag_and_scalar_last_tag():
     s0, s1 = _two_quad_slices()
     block = hexmesh.loft([s0, s1], last_tag="top",
-                         first_tag=ElementTags.from_dense(["capA", "capB"]))
+                         first_tag=Tags.from_dense(["capA", "capB"]))
     tag_at = {(e, f): t for e, f, t in face_rows(block)}
     assert tag_at[(0, 5)] == "capA"        # per-quad bottom caps
     assert tag_at[(1, 5)] == "capB"
@@ -163,6 +163,6 @@ def test_loft_per_quad_first_tag_and_scalar_last_tag():
 def test_loft_cap_tags_must_name_quads_the_section_has():
     s0, s1 = _two_quad_slices()
     with pytest.raises(ValueError, match="only 2 elements"):
-        hexmesh.loft([s0, s1], first_tag=ElementTags([2], ["off_the_end"]))
+        hexmesh.loft([s0, s1], first_tag=Tags([2], ["off_the_end"]))
     with pytest.raises(TypeError, match="cap tag must be"):
         hexmesh.loft([s0, s1], first_tag=["a", "b"])

@@ -21,11 +21,11 @@ from ..core.conform import _LOCAL_FACES
 from ..core.fields import gll_nodes
 from ..core.interp import _CORNER_IJK, resample_block_at
 from ..core.tags import (
-    ElementTags,
-    element_mask,
-    sweep_cap_tags,
-    sweep_element_tags,
-    welded_element_tags,
+    Tags,
+    mask_for_selection,
+    sweep_cap,
+    sweep_tags,
+    weld,
 )
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
@@ -66,9 +66,9 @@ def loft(
     *,
     loop: bool = False,
     sweep_nodes: Sequence[Sequence[QuadMesh]] | None = None,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> HexMesh:
     """Loft a stack of conformal quad profiles into a hex block (the general primitive
     behind ``extrude``, and the top rung of the uniform sweep shared with
@@ -347,15 +347,15 @@ def loft(
         hit = names != ""
         fnamed[np.asarray(ids, dtype=np.int64)[hit]] = names[hit]
 
-    enames: StrArray = sec.edge_tags.dense(sec.line_mesh.n_lines)
+    enames: StrArray = sec.edge_tags.to_dense(sec.line_mesh.n_lines)
     for e0 in sec.edge_tags.ids:
         if eslot[e0] >= 0:
             fnamed[n_prof * M + lay * ne + eslot[e0]] = enames[e0]
-    closed = ElementTags.empty()
+    closed = Tags.empty()
     cap: IntArray = np.arange(M, dtype=np.int64)
-    first_caps = sweep_cap_tags(first_tag, closed if loop else sec.element_tags,
+    first_caps = sweep_cap(first_tag, closed if loop else sec.element_tags,
                                 M, "HexMesh.loft")
-    last_caps = sweep_cap_tags(last_tag, closed if loop else slices[-1].element_tags,
+    last_caps = sweep_cap(last_tag, closed if loop else slices[-1].element_tags,
                                M, "HexMesh.loft")
     if loop:
         clash = np.flatnonzero((first_caps != "") & (last_caps != "")
@@ -371,7 +371,7 @@ def loft(
     _name(nxt[nz - 1] * M + cap, last_caps)
 
     faces = QuadMesh(edge_lm, face_edges, face_flip, face_nodes,
-                     ElementTags.from_dense(np.asarray(fnamed, dtype=np.str_)))
+                     Tags.from_dense(np.asarray(fnamed, dtype=np.str_)))
 
     # -- 5. the hexes, as indices into that QuadMesh ----------------------------
     # Local faces 0-3 are the section's sides swept across the layer, 4 / 5 the section
@@ -389,7 +389,7 @@ def loft(
     if ho:
         interior = _at(conform._interior_slots(3, order))
 
-    etags = sweep_element_tags(element_tags, nz, M, "HexMesh.loft")
+    etags = sweep_tags(element_tags, nz, M, "HexMesh.loft")
     return HexMesh(faces, elem_faces, face_orient, interior, etags)
 
 
@@ -398,9 +398,9 @@ def _loft_evaluated(
     order: int,
     *,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
     name: str = "loft_fn",
 ) -> HexMesh:
     """The shared tail of every sweep whose sections are **evaluated** on the refined
@@ -418,9 +418,9 @@ def loft_spline(
     slices: Sequence[QuadMesh],
     *,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> HexMesh:
     """:func:`loft <nekmeshpy.hexmesh.assemble.loft>` with the sweep-direction nodes read
     off a **cubic spline through the whole stack** of sections, rather than blended
@@ -484,9 +484,9 @@ def loft_fn(
     *,
     loop: bool = False,
     order: int | None = None,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> HexMesh:
     """Loft a block from a **parametrized family of sections** -- :func:`loft
     <nekmeshpy.hexmesh.assemble.loft>` with the slices evaluated rather than handed in,
@@ -585,7 +585,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
     eflip_list: list[BoolArray] = []
     ef_list: list[IntArray] = []
     forient_list: list[IntArray] = []
-    etag_list: list[ElementTags] = []
+    etag_list: list[Tags] = []
     noff = eoff = foff = elem_off = 0
     edge_offs: list[int] = []
     for m, c in zip(meshes, counts):
@@ -596,7 +596,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         eflip_list.append(m._edge_flip)
         ef_list.append(m.hexes + foff)
         forient_list.append(m.orient)
-        etag_list.append(m.element_tags.offset(elem_off))
+        etag_list.append(m.element_tags.shift(elem_off))
         edge_offs.append(eoff)
         noff += c
         eoff += m.edges.shape[0]
@@ -604,7 +604,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         elem_off += m.corners.shape[0]
     hexes = (np.concatenate(hex_list, axis=0) if hex_list
              else np.zeros((0, 8), np.int64))
-    etags = ElementTags.concat(etag_list)
+    etags = Tags.concatenate(etag_list)
 
     order = meshes[0].order if meshes else 1
     if any(mm.order != order for mm in meshes):
@@ -706,7 +706,7 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
             else [str(t) for t in clear_seam_tags])
 
     off = 0
-    ftag_list: list[ElementTags] = []
+    ftag_list: list[Tags] = []
     seam_merged: list[IntArray] = []
     local_to_merged: list[IntArray] = []
     for bi, m in enumerate(meshes):
@@ -720,12 +720,12 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         # possible at all.
         ft = m.face_tags
         if seam_faces is not None and bi in seam_faces:
-            ft = ft.select(~np.isin(ft.ids, np.asarray(seam_faces[bi], dtype=np.int64)))
+            ft = ft.compress(~np.isin(ft.ids, np.asarray(seam_faces[bi], dtype=np.int64)))
         if clear_seam_tags is not False and len(ft):
             drop: BoolArray = buried_face[mine[ft.ids]]
             if clear_names is not None:
                 drop = drop & np.isin(np.asarray(ft.tags), clear_names)
-            ft = ft.select(~drop)
+            ft = ft.compress(~drop)
         ftag_list.append(ft.renumber(mine))
         local_to_merged.append(mine)
         if seam_faces is not None and bi in seam_faces:
@@ -838,32 +838,32 @@ def _shared_nodes(
     return edge_nodes, face_nodes
 
 
-def _seam_named(ftag_list: Sequence[ElementTags], seam_merged: Sequence[IntArray],
+def _seam_named(ftag_list: Sequence[Tags], seam_merged: Sequence[IntArray],
                 named: Sequence[tuple[IntArray, str]], n_faces: int,
-                who: str) -> ElementTags:
+                who: str) -> Tags:
     """The merged face tags, with the welded-shut seam renamed to what the caller asked.
 
     The seam's rows are dropped from **both** sides *before* the combine rather than
     overwritten after it: the caller has said what that face is, so the two sides stop
     being asked about it and cannot conflict. Every face off the seam still goes through
-    :func:`welded_element_tags <nekmeshpy.core.tags.welded_element_tags>` and its
+    :func:`weld <nekmeshpy.core.tags.weld>` and its
     refuse-on-disagreement rule."""
     if not seam_merged:
-        return welded_element_tags(list(ftag_list), who)
+        return weld(list(ftag_list), who)
     seam_ids: IntArray = np.unique(np.concatenate(list(seam_merged)))
     # the seam rows were already dropped per block, before the renumber that a self-join
     # would otherwise break; this is the belt to that braces, and costs one isin
-    kept = [t.select(~np.isin(t.ids, seam_ids)) for t in ftag_list]
-    merged = welded_element_tags(kept, who)
+    kept = [t.compress(~np.isin(t.ids, seam_ids)) for t in ftag_list]
+    merged = weld(kept, who)
     if not named:
         return merged
     # object dtype, as ``tag_faces`` does: the merged table's own dtype is only as wide
     # as the longest name already in it, and a new one may be longer.
-    dense = np.asarray(merged.dense(n_faces), dtype=object)
+    dense = np.asarray(merged.to_dense(n_faces), dtype=object)
     for ids, tag in named:
         if tag:
             dense[ids] = tag
-    return ElementTags.from_dense(np.asarray(dense, dtype=np.str_))
+    return Tags.from_dense(np.asarray(dense, dtype=np.str_))
 
 
 def face_group(mesh: HexMesh, which: str | IntArray | Sequence[int],
@@ -1083,7 +1083,7 @@ def _subset(mesh: HexMesh, keep: BoolArray) -> tuple[HexMesh, IntArray]:
     # the compacted face numbering
     return (HexMesh(sub_quads, new_face_of[hexes], mesh.orient[kept],
                     mesh.interior[kept],
-                    mesh.element_tags.gather(kept)),
+                    mesh.element_tags.take(kept)),
             new_hex_of)
 
 
@@ -1102,7 +1102,7 @@ def select(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
     :func:`boundary_faces <nekmeshpy.hexmesh.query.boundary_faces>` if the export needs
     it.  For the same reason the result is not guaranteed watertight -- that is the
     point of it."""
-    return _subset(mesh, element_mask(which, mesh.element_tags, mesh.n_hexes,
+    return _subset(mesh, mask_for_selection(which, mesh.element_tags, mesh.n_hexes,
                                       "hexmesh.select"))[0]
 
 
@@ -1110,7 +1110,7 @@ def remove(mesh: HexMesh, which: str | BoolArray | IntArray | Sequence[int]
            ) -> HexMesh:
     """The complement of :func:`select`: everything ``which`` does **not** name -- the
     "drop this block and re-fill it" half of the pair."""
-    return _subset(mesh, ~element_mask(which, mesh.element_tags, mesh.n_hexes,
+    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags, mesh.n_hexes,
                                        "hexmesh.remove"))[0]
 
 
@@ -1226,9 +1226,9 @@ def refine(mesh: HexMesh) -> HexMesh:
 
     # face (BC) tags: the boundary sub-quads inherit their parent quad's tag,
     # consecutively (child 4*q+k copies quad q) -- see linemesh.refine's own note on
-    # why this is ``gather``, not ``repeat_blocks``. The 12E new interior quads are
+    # why this is ``take``, not ``tile``. The 12E new interior quads are
     # untagged (an interior split, not a boundary), so nothing is added for them.
-    face_tags = mesh.quad_mesh.element_tags.gather(
+    face_tags = mesh.quad_mesh.element_tags.take(
         np.repeat(np.arange(mesh.quad_mesh.n_quads), 4))
     combined_qm = QuadMesh(combined_lm, combined_quads, combined_orient,
                            combined_interior, face_tags)
@@ -1277,8 +1277,8 @@ def refine(mesh: HexMesh) -> HexMesh:
         interior[k::8] = octant_blocks[k][:, islots, :]
 
     # each parent's region tag propagates to all 8 children, consecutively -- see
-    # linemesh.refine's own note on why this is ``gather``, not ``repeat_blocks``.
-    element_tags = mesh.element_tags.gather(np.repeat(np.arange(e_count), 8))
+    # linemesh.refine's own note on why this is ``take``, not ``tile``.
+    element_tags = mesh.element_tags.take(np.repeat(np.arange(e_count), 8))
     return HexMesh(combined_qm, hexes, orient, interior, element_tags)
 
 

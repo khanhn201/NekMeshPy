@@ -129,7 +129,7 @@ def test_tag_report_flags_an_untagged_boundary():
     mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
     mesh = hexmesh.HexMesh(
         quadmesh.QuadMesh(mesh.quad_mesh.line_mesh, mesh.quad_mesh.quads, mesh.quad_mesh.orient, None,
-                          tags_mod.ElementTags([int(mesh.hexes[0, 4])], ["bottom"])),
+                          tags_mod.Tags([int(mesh.hexes[0, 4])], ["bottom"])),
         mesh.hexes, mesh.orient)
     assert hexmesh.tag_report(mesh) == (1, 5, 0)
 

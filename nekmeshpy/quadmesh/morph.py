@@ -262,7 +262,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     new_ei: PointArray = np.asarray(target.line_mesh.interior, dtype=float)[tidx].copy()
     new_ei[rev] = new_ei[rev][:, ::-1]
     new_lines = LineMesh(PointMesh(target.points[s],
-                                   target.line_mesh.point_tags.gather(s)),
+                                   target.line_mesh.point_tags.take(s)),
                          structure.line_mesh.lines, new_ei,
                          target.line_mesh.element_tags)
 

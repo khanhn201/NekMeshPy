@@ -48,7 +48,7 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core.fields import geometric_spacing, gll_nodes
-from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.core.tags import Tags
 from nekmeshpy.quadmesh import QuadMesh
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -247,7 +247,7 @@ def region(section, tag):
     region argument -- ``element_tags`` enters at the sweep that lifts a section into a
     volume -- so a 2-D region is named by rebuilding the container over its own parts."""
     return QuadMesh(section.line_mesh, section.quads, section.orient,
-                    section.interior, ElementTags.uniform(section.n_quads, tag))
+                    section.interior, Tags.full(section.n_quads, tag))
 
 
 def key(vertex):
@@ -383,7 +383,7 @@ for other in slices[1:]:
     assert np.array_equal(other.corners, section.corners)
     assert np.array_equal(other.line_mesh.lines, section.line_mesh.lines)
 
-# ``element_tags`` takes an ElementTags over *one slice's* elements, which tags each
+# ``element_tags`` takes a Tags over *one slice's* elements, which tags each
 # swept column by the quad it came from -- so the section's own rod / fluid / duct
 # split rides up into the volume unchanged.
 #
@@ -392,9 +392,9 @@ for other in slices[1:]:
 # would export its ends as a boundary condition called "fluid".  Only the coolant has
 # an inlet and an outlet; the rod and duct ends are solid metal, named once for both
 # ends because nothing flows through them.
-region_of = section.element_tags.dense(section.n_quads)
-inlet = ElementTags.from_dense(np.where(region_of == "fluid", "inlet", "cut"))
-outlet = ElementTags.from_dense(np.where(region_of == "fluid", "outlet", "cut"))
+region_of = section.element_tags.to_dense(section.n_quads)
+inlet = Tags.from_dense(np.where(region_of == "fluid", "inlet", "cut"))
+outlet = Tags.from_dense(np.where(region_of == "fluid", "outlet", "cut"))
 
 mesh = hexmesh.loft(slices, element_tags=section.element_tags,
                     first_tag=inlet, last_tag=outlet)

@@ -88,10 +88,10 @@ def reverse(mesh: LineMesh) -> LineMesh:
     rmap = _reverse_relabel(mesh)
     lines: IntArray = rmap[mesh.lines][::-1, ::-1]
     # a point tag rides its point through the relabel -- new point j is old point
-    # rmap[j], which is exactly what ``gather`` means.  Nothing to remap side-wise:
+    # rmap[j], which is exactly what ``take`` means.  Nothing to remap side-wise:
     # the tag names the point, not one line's view of it.
     return LineMesh(PointMesh(np.ascontiguousarray(mesh.points[rmap]),
-                              mesh.point_tags.gather(rmap)),
+                              mesh.point_tags.take(rmap)),
                     np.ascontiguousarray(lines),
                     np.ascontiguousarray(mesh.interior[::-1, ::-1, :]),
                     mesh.element_tags.renumber(

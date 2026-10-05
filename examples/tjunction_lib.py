@@ -25,9 +25,9 @@ from collections import defaultdict, namedtuple
 import numpy as np
 
 from nekmeshpy import (
-    ElementTags,
     LineMesh,
     QuadMesh,
+    Tags,
     hexmesh,
     linemesh,
     quadmesh,
@@ -413,9 +413,9 @@ def build_eqtee(R, Z_NEAR, H_BRANCH, *, n_half=8, order=2, n_layers_main=5,
         """Name a leg's seam cap by half-disc.  ``spined_ogrid`` welds the two halves in
         order, so the first half of the quads is ``join_arcs``' first arc -- and each
         half is shared with a *different* leg, so one name for the whole cap will not
-        do.  ``last_tag`` takes an ``ElementTags`` over the slice's own elements."""
+        do.  ``last_tag`` takes an ``Tags`` over the slice's own elements."""
         half = slice_.n_quads // 2
-        return ElementTags.from_dense(
+        return Tags.from_dense(
             np.array([first] * half + [second] * (slice_.n_quads - half)))
 
     # the three legs meet pairwise on the three arcs: a_lm joins minus to plus, a_lb
@@ -777,7 +777,7 @@ def build_cob(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=None, N_THETA_MAIN=32,
              for k in range(nrow)]
     # TOP is the collar's far cap: its bore half is the branch's root, its rim half is
     # the pipe wall the bore was cut out of
-    _top_tags = ElementTags.from_dense(
+    _top_tags = Tags.from_dense(
         np.array(["att_bore"] * bore_p.n_quads + [wall_tag] * collar_p.n_quads))
     # ``first_tag`` is the collar's *far* cap -- the band runs wall to wall, so the slot's
     # bottom is the pipe wall opposite the branch and the bore is blind.  It has to be
@@ -790,8 +790,8 @@ def build_cob(R_MAIN, R_BRANCH, H_BRANCH, *, Z_NEAR=None, N_THETA_MAIN=32,
     # -- the pipe around the slot, and the two legs out to +-Z_NEAR ------------
     # a leg's cap meets *two* blocks: the pipe over the section, the collar over the band
     # it removed.  One name for the whole cap will not do, and ``first_tag`` / ``last_tag``
-    # take an ``ElementTags`` over the slice's own elements for exactly that.
-    _leg_cap = ElementTags.from_dense(
+    # take an ``Tags`` over the slice's own elements for exactly that.
+    _leg_cap = Tags.from_dense(
         np.where(np.isin(np.arange(section.n_quads), band), "att_band", "att_pipe"))
     _pt_minus, _pt_plus = port_tags if port_tags else ("", "")
 
@@ -884,7 +884,7 @@ def skin_wall(core, offsets, *, wall_tags="wall", element_tag="", inner_prefix="
     tags = [wall_tags] if isinstance(wall_tags, str) else list(wall_tags)
 
     surf = hexmesh.boundary_mesh(core)          # every quad named after its parent face
-    names = np.asarray(surf.element_tags.dense(surf.n_quads))
+    names = np.asarray(surf.element_tags.to_dense(surf.n_quads))
     skinned = np.isin(names, tags)
     if not skinned.any():
         raise ValueError("skin_wall: no boundary face carries any of %s; this core has %s"
@@ -919,8 +919,8 @@ def skin_wall(core, offsets, *, wall_tags="wall", element_tag="", inner_prefix="
     # group, so the seam below is stated per group and not by proximity.  ``last_tag`` is
     # left to that default, which is exactly right: the shell's outer cap *is* the
     # finished wall, and carries each group's own name onward.
-    inner = ElementTags.from_dense(
-        np.char.add(inner_prefix, np.asarray(wall.element_tags.dense(wall.n_quads))))
+    inner = Tags.from_dense(
+        np.char.add(inner_prefix, np.asarray(wall.element_tags.to_dense(wall.n_quads))))
     shell = hexmesh.loft(skins, first_tag=inner, element_tags=element_tag or None)
     return hexmesh.attach([core, shell],
                           [Seam(0, t, 1, inner_prefix + t) for t in tags])

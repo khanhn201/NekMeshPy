@@ -19,7 +19,7 @@ from .._typing import (
 from ..core import frames, stations
 from ..core.fields import validate_layers
 from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh.shape import path_fractions
 from ..quadmesh import QuadMesh
 from ..quadmesh.lift import from_grid as quad_from_grid
@@ -43,9 +43,9 @@ def extrude(
     *,
     axis: Vec3 = _Z_AXIS,
     origin: Point = _ORIGIN,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> HexMesh:
     """Sweep a single quad ``section`` a distance ``length`` along ``axis`` into a hex
     block."""
@@ -95,9 +95,9 @@ def annulus(
     # overrides.  ``None`` is "not asked for" and inherits; ``NO_TAG`` is an
     # explicit override *to* untagged, so it suppresses the surface's own tags
     # rather than falling through to them.
-    inner_caps: str | ElementTags | None = (
+    inner_caps: str | Tags | None = (
         inner_tag if inner_tag is not None else inner.element_tags or None)
-    outer_caps: str | ElementTags | None = (
+    outer_caps: str | Tags | None = (
         outer_tag if outer_tag is not None else outer.element_tags or None)
     return loft(shells, first_tag=inner_caps, last_tag=outer_caps)
 
@@ -136,9 +136,9 @@ def sweep(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> HexMesh:
     """A block swept from one ``QuadMesh`` ``section`` along the curve ``path`` -- a
     round pipe bent through a 90-degree elbow or a U-turn, from one O-grid disc."""
@@ -171,9 +171,9 @@ def sweep_path(
     close_twist: bool = True,
     normal: Vec3 | Sequence[float] | None = None,
     loop: bool = False,
-    element_tags: str | ElementTags | None = None,
-    first_tag: str | ElementTags | None = None,
-    last_tag: str | ElementTags | None = None,
+    element_tags: str | Tags | None = None,
+    first_tag: str | Tags | None = None,
+    last_tag: str | Tags | None = None,
 ) -> HexMesh:
     """:func:`sweep <nekmeshpy.hexmesh.lift.sweep>` driven by a :class:`Path
     <nekmeshpy.core.paths.Path>` rather than by a loose ``(centerline, tangent,
@@ -218,7 +218,7 @@ def _self_map(a: QuadMesh, k: int, axis: Vec3 | Sequence[float]) -> IntArray:
 def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
             axis: Vec3 | Sequence[float] | None = None, layers: int = 2,
             max_deviation: float = 0.2, radius_tol: float = 0.05,
-            element_tags: str | ElementTags | None = None) -> HexMesh:
+            element_tags: str | Tags | None = None) -> HexMesh:
     """A short block morphing between two same-connectivity sections whose *node
     patterns* differ slightly -- and whose **both** end faces are bit-exact.
 
@@ -313,7 +313,7 @@ def _stub_sections(disc: QuadMesh, direction: Vec3, distance: float,
 def bridge(a: QuadMesh | Port, b: QuadMesh | Port, *, layers: int = 4,
            stub_fraction: float = 0.3, stub_max: float = 1.5, blend_layers: int = 6,
            radius_tol: float = 0.05,
-           element_tags: str | ElementTags | None = None) -> HexMesh:
+           element_tags: str | Tags | None = None) -> HexMesh:
     """A connector between two same-radius sections whose node patterns are too far
     apart for :func:`adapter <nekmeshpy.hexmesh.lift.adapter>` -- two legs of different
     T-junctions, built by different algorithms.

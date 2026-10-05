@@ -20,7 +20,7 @@ from ..core import conform, surfaces
 from ..core.fields import gll_nodes, validate_layers
 from ..core.interp import coons_grid, coons_grid_fn
 from ..core.surfaces import SurfaceCurve, SurfaceMap
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.assemble import loft_fn as line_loft_fn
@@ -43,7 +43,7 @@ def _seg_tags(curve: LineMesh) -> list[str] | None:
     element is untagged (so an untagged curve stays untagged)."""
     if not curve.element_tags:
         return None
-    return [str(x) for x in curve.element_tags.dense(curve.n_lines).tolist()]
+    return [str(x) for x in curve.element_tags.to_dense(curve.n_lines).tolist()]
 
 
 def _ordered_sides(edges: Sequence[LineMesh] | Mapping[str, LineMesh],
@@ -220,7 +220,7 @@ def _slice_chain(chain: LineMesh, a: int, b: int) -> LineMesh:
     lm = line_loft(p, interior=interior, order=chain.order)
     if tags is None:
         return lm
-    return LineMesh(lm.point_mesh, lm.lines, lm.interior, ElementTags.from_dense(tags))
+    return LineMesh(lm.point_mesh, lm.lines, lm.interior, Tags.from_dense(tags))
 
 
 def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
@@ -584,7 +584,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
                    np.concatenate([r for r, _ in blocks], axis=0),
                    np.concatenate([n for _, n in blocks]))
     qm = QuadMesh(qm.line_mesh, qm.quads, qm.orient, qm.interior,
-                  ElementTags.uniform(qm.n_quads, element_tag))
+                  Tags.full(qm.n_quads, element_tag))
 
     # -- order N.  Overlay every O-ring so the wall's curvature blends inward, and both
     # seams with their *own* nodes so a bowed radius is meshed exactly rather than
@@ -790,7 +790,7 @@ def sphere(radius: float, n: int | Sequence[int] | IntArray, *,
         """Push every node of ``a`` (last axis = xyz) radially onto the sphere."""
         return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
 
-    etags = ElementTags.uniform(cube.n_quads, element_tag)
+    etags = Tags.full(cube.n_quads, element_tag)
     # the cube's B-rep is reused verbatim (same topology, same edge numbering); only
     # the node coordinates move, so there is nothing to re-derive or reconcile.
     lines = LineMesh(project(cube.points), cube.line_mesh.lines,
@@ -863,7 +863,7 @@ def hemisphere(radius: float, n: int | Sequence[int] | IntArray, *,
         """Push every node of ``a`` (last axis = xyz) radially onto the sphere."""
         return radius * a / np.linalg.norm(a, axis=-1, keepdims=True)
 
-    etags = ElementTags.uniform(cube.n_quads, element_tag)
+    etags = Tags.full(cube.n_quads, element_tag)
     lines = LineMesh(project(cube.points), cube.line_mesh.lines,
                      interior=project(cube.line_mesh.interior) if order > 1 else None)
     qm = QuadMesh(lines, cube.quads, cube.orient,

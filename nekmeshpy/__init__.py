@@ -6,7 +6,7 @@ from .core.fields import AxisLinearField, ConstantField, DistanceField, Field, M
 from .core.mesh import Mesh
 from .core.physical import PhysicalGroup, PhysicalGroups
 from .core.tags import (
-    ElementTags,
+    Tags,
 )
 from .hexmesh import HexMesh
 from .io import writer
@@ -26,7 +26,7 @@ __all__ = [
     "QuadMesh",
     "HexMesh",
     "NO_TAG",
-    "ElementTags",
+    "Tags",
     "Mesh",
     "PhysicalGroup", "PhysicalGroups",
     "topology",

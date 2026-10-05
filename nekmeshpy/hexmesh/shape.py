@@ -10,7 +10,7 @@ import numpy as np
 from .._typing import IntArray, Point, PointArray
 from ..core import conform
 from ..core.interp import coons_grid
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..pointmesh import PointMesh
@@ -217,7 +217,7 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str],
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
-    bnd = ElementTags([0], [ti]) if ti else None
+    bnd = Tags([0], [ti]) if ti else None
 
     def profile(j: int, k: int) -> LineMesh:
         col: PointArray = lat[:, j, k, :]

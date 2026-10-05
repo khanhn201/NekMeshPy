@@ -7,7 +7,7 @@ from scipy.spatial import cKDTree
 
 from .._typing import IntArray, PointArray
 from ..core import conform
-from ..core.tags import ElementTags
+from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
@@ -25,7 +25,7 @@ def _selected_faces(mesh: HexMesh, tag: str | None) -> IntArray:
     if hit.shape[0] == 0:
         raise ValueError(
             "boundary_mesh: no face carries the tag %r; this mesh has %s"
-            % (tag, sorted(mesh.face_tags.group_tags) or "no tagged faces"))
+            % (tag, sorted(mesh.face_tags.unique()) or "no tagged faces"))
     return np.asarray(hit, dtype=np.int64)
 
 
@@ -77,11 +77,11 @@ def boundary_mesh(mesh: HexMesh, tag: str | None = None, *,
     edges, elem_edges, flip = conform.unique_edges(local, 2)
     en, fn = _high_order_nodes(mesh, poly, gids[edges])
     if tag is not None:
-        elem = ElementTags.uniform(poly.shape[0], tag)
+        elem = Tags.full(poly.shape[0], tag)
     else:
         # the extracted quad inherits the name of the parent face it came from
-        named = mesh.face_tags.dense(mesh.quad_mesh.n_quads)
-        elem = ElementTags.from_dense(
+        named = mesh.face_tags.to_dense(mesh.quad_mesh.n_quads)
+        elem = Tags.from_dense(
             named[np.asarray(mesh.hexes, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
     lines = LineMesh(mesh.points[gids], edges, en)
     return QuadMesh(lines, elem_edges, flip, fn, elem)

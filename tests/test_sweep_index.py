@@ -37,15 +37,15 @@ def _profiles(n_prof, loop, order=1):
 def test_elements_are_layer_major(loop):
     """``e = layer * n_per_slice + k`` at both rungs, and a closed sweep adds exactly one
     more layer.  Every tagging and node check below indexes by it, and ``loft``'s
-    ``element_tags`` contract -- an ``ElementTags`` over *one* slice's elements tags each
+    ``element_tags`` contract -- an ``Tags`` over *one* slice's elements tags each
     swept column -- is only meaningful because of it."""
-    from nekmeshpy.core.tags import ElementTags
+    from nekmeshpy.core.tags import Tags
     profs = _profiles(4, loop)
     L, nz = profs[0].n_lines, 4 if loop else 3
-    per_line = ElementTags.from_dense(np.array(["e%d" % k for k in range(L)]))
+    per_line = Tags.from_dense(np.array(["e%d" % k for k in range(L)]))
     qm = quadmesh.loft(profs, loop=loop, element_tags=per_line)
     assert qm.n_quads == nz * L                       # a closed sweep adds one layer
-    assert qm.element_tags.dense(nz * L).tolist() == ["e%d" % k for k in range(L)] * nz
+    assert qm.element_tags.to_dense(nz * L).tolist() == ["e%d" % k for k in range(L)] * nz
 
 
 def _relabel_lines(m):

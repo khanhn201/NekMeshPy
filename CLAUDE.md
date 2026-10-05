@@ -2,25 +2,7 @@
 
 ## Commands
 
-```bash
-pip install -e ".[all,dev]"
-
-ruff check nekmeshpy tests examples   # CI's own target; docs/ lints clean too
-mypy                          # config pins files=["nekmeshpy"]; do NOT pass paths
-python -m pytest              # every test in tests/, on every push
-python docs/_ext/gen_viewer_assets.py   # regenerate the gallery's .vtp assets
-sphinx-build -b html -n -W --keep-going docs docs/_build/html
-```
-
-The four checks and `sphinx-build` **are** the CI gates. A local pass is not the gate
-— after pushing, poll `gh pr checks <n>`. `gen_viewer_assets.py` isn't a gate itself
-(`sphinx-build` doesn't check the `.vtp` files exist, so a docs build passes without it)
-but the deployed gallery needs it run first — `.github/workflows/docs.yml` does so
-before every `sphinx-build`.
-
-The docs build is nitpicky (`-n -W`), so every `:func:`/`:class:` role needs a fully
-qualified target naming the *namespace* module, not the private container module:
-``:func:`quadmesh.blend <nekmeshpy.quadmesh.morph.blend>` ``.
+Refer to REAME.md
 
 ## Golden regression
 
@@ -297,7 +279,7 @@ are identical, so no geometry distinguishes the two readings.
 **Naming the interface is the work, and it happens at the rung below.** A section's
 *edge* tags become the swept block's lateral *face* tags, so a seam down a block's side
 is named by tagging the section that swept it. A cap is named by `first_tag` /
-`last_tag`, and those take an `ElementTags` over the slice, so a cap shared with two
+`last_tag`, and those take a `Tags` over the slice, so a cap shared with two
 different neighbours — three legs meeting about a spine, where each seam is *half* a
 disc — is named per element. At the line rung a slice is one point, so `first_tag` /
 `last_tag` name the chain ends. Getting a half wrong cannot pass quietly: `attach` pairs
@@ -375,7 +357,7 @@ contiguously** — a region *tag* saying which hex is fluid is not what the solv
 the file's own element order is. Before `fluid=` existed, `to_re2` always wrote
 `nelgv == nelgt`, so every conjugate example (`wire_coil.py`, `rod_bundle.py`) exported
 a mesh Nek would run as single-domain, silently solving momentum in the solid too.
-`fluid=` names the velocity-mesh region (`element_mask`'s usual tag-string / bool-mask /
+`fluid=` names the velocity-mesh region (`mask_for_selection`'s usual tag-string / bool-mask /
 id-array forms) and reorders the **written bytes** — corners, every boundary row's own
 element, and a periodic row's partner — through the fluid-first permutation; the
 returned `HexMesh` object itself is untouched. `fluid=None` keeps every element as
@@ -414,7 +396,7 @@ mistake. A caller who knows a real distance divides — `examples/chimera_full.p
 ## Tags
 
 **A rung's side tags *are* the rung below's `element_tags`.** There is one table type,
-`ElementTags` from `core/tags.py`, and a mesh reads the one under it through a named
+`Tags` from `core/tags.py`, and a mesh reads the one under it through a named
 property: `HexMesh.face_tags` is `quad_mesh.element_tags`, `QuadMesh.edge_tags` is
 `line_mesh.element_tags`, `LineMesh.point_tags` is `point_mesh.element_tags` on the
 `PointMesh` the ladder bottoms out on. A tag is addressed by **entity id**, never by
@@ -449,7 +431,7 @@ tagged `"fluid"` exports its caps as a `"fluid"` **boundary condition**.
 `element_tags` never becomes a face tag — nothing is above it to read them.
 
 **`loft`'s three tag arguments are the same shape at every rung**: `element_tags` names
-the *swept* elements — one string for all of them, or an `ElementTags` over **one
+the *swept* elements — one string for all of them, or a `Tags` over **one
 slice's** elements, which tags each swept column by the slice element it came from.
 `first_tag` / `last_tag` take the same two shapes and name the cap sides, defaulting to
 the bounding slice's own `element_tags` (a cap side *is* that slice element) — except on
@@ -491,7 +473,7 @@ middle of the pipe. The geometry was identical and only the boundary block gave 
 - **Export.** `.re2` is binary-only, takes the full filename, and stays linear (corners
   only) — a mesh exports byte-identically at any order. `.vtu` emits VTK Lagrange cells,
   per-**point** `bc_id` and per-**cell** `element_tag` (region ids: 1-based positions in
-  `sorted(element_tags.group_tags)`, 0 untagged, no `CellData` at all when untagged — a
+  `sorted(element_tags.unique())`, 0 untagged, no `CellData` at all when untagged — a
   region belongs to the element, and on a conjugate mesh a per-point one would be
   ambiguous at every interface node).
   `.re2` element ids are 1-based on write; every internal index is 0-based.

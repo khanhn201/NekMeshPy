@@ -53,7 +53,7 @@ import sys
 import numpy as np
 
 from nekmeshpy import (
-    ElementTags,
+    Tags,
     TetMesh,
     TriMesh,
     fields,
@@ -1771,7 +1771,7 @@ def cap_tags(slice_, first, second):
     order, so the first half of the quads is ``LEG_ARCS[leg]``'s first arc; each half is
     shared with a different leg, so one name for the whole cap will not do."""
     half = slice_.n_quads // 2
-    return ElementTags.from_dense(
+    return Tags.from_dense(
         np.array([first] * half + [second] * (slice_.n_quads - half)))
 
 

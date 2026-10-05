@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from conftest import face_rows
 
-from nekmeshpy import ElementTags, hexmesh, linemesh, quadmesh
+from nekmeshpy import Tags, hexmesh, linemesh, quadmesh
 from nekmeshpy.core import topology
 
 R0, RSEC = 3.0, 1.0          # torus major / minor radius
@@ -229,7 +229,7 @@ def test_hex_loft_loop_places_cap_tags(cap):
 def test_loft_loop_places_a_per_line_cap_table():
     """The per-slice-element form lands on the seam too -- not just the scalar."""
     profiles = _ring_profiles(nsec=4)
-    caps = ElementTags.from_dense(["seam"] + [""] * (NRING - 1))
+    caps = Tags.from_dense(["seam"] + [""] * (NRING - 1))
     qm = quadmesh.loft(profiles, loop=True, first_tag=caps)
     assert qm.edge_tags.count("seam") == 1
 

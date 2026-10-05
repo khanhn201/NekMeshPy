@@ -179,14 +179,14 @@ def test_the_joined_faces_are_cleared_by_default():
     boundary row from each side of it -- which callers used to strip by hand."""
     a = _block(2)
     m = _join(a, _stub(a, 2), "outlet", "join")
-    assert "join" not in m.face_tags.group_tags
+    assert "join" not in m.face_tags.unique()
     assert hexmesh.tag_report(m).n_tagged_interior == 0
 
 
 def test_attach_tag_names_the_interface_instead():
     a = _block(2)
     m = _join(a, _stub(a, 2), "outlet", "join", attach_tag="interface")
-    assert "interface" in m.face_tags.group_tags
+    assert "interface" in m.face_tags.unique()
     assert hexmesh.tag_report(m).n_tagged_interior == len(
         hexmesh.tagged_faces(a, "outlet"))
 
@@ -342,7 +342,7 @@ def test_each_seam_carries_its_own_name_and_owner():
     bl = _stack(3)
     m = hexmesh.attach(bl, [Seam(0, "hi", 1, "lo", attach_tag="first"),
                             Seam(1, "hi", 2, "lo")])
-    assert "first" in m.face_tags.group_tags
+    assert "first" in m.face_tags.unique()
     # the unnamed seam is buried, so exactly one interface is tagged
     assert hexmesh.tag_report(m).n_tagged_interior == len(
         hexmesh.tagged_faces(bl[0], "hi"))
@@ -394,14 +394,14 @@ def test_quad_attach_joins_two_sections_along_an_edge_group(order):
     assert m.n_quads == a.n_quads + b.n_quads
     assert m.n_points == a.n_points + b.n_points - 4        # the shared column
     assert quadmesh.area(m) == pytest.approx(2.0)
-    assert "seam" not in m.edge_tags.group_tags
+    assert "seam" not in m.edge_tags.unique()
 
 
 def test_quad_attach_tag_names_the_seam():
     a = _rect(0, 1, 2, {"right": "seam"})
     b = _rect(1, 2, 2, {"left": "seam"})
     assert "mid" in quadmesh.attach([a, b], [EdgeSeam(0, "seam", 1, "seam",
-                                             attach_tag="mid")]).edge_tags.group_tags
+                                             attach_tag="mid")]).edge_tags.unique()
 
 
 def test_quad_attach_refuses_unequal_groups():
@@ -537,10 +537,10 @@ def test_line_attach_clears_the_joined_point_names():
     a, b, c = _chain3()
     n = linemesh.attach([a, b, c], [PointSeam(0, "j1", 1, "j1"),
                                     PointSeam(1, "j2", 2, "j2")])
-    assert n.point_tags.group_tags == []
+    assert n.point_tags.unique() == []
     named = linemesh.attach([a, b, c], [PointSeam(0, "j1", 1, "j1", attach_tag="j1"),
                                         PointSeam(1, "j2", 2, "j2")])
-    assert named.point_tags.group_tags == ["j1"]
+    assert named.point_tags.unique() == ["j1"]
 
 
 def test_line_attach_refuses_an_unknown_tag_naming_the_seam():
@@ -566,13 +566,13 @@ def test_a_block_can_be_attached_to_itself():
     rep = hexmesh.topology_report(m)
     assert rep.n_components == 1 and rep.watertight
     assert m.n_points < a.n_points                    # the two caps fused
-    assert "inlet" not in m.face_tags.group_tags and "outlet" not in m.face_tags.group_tags
+    assert "inlet" not in m.face_tags.unique() and "outlet" not in m.face_tags.unique()
 
 
 def test_a_self_attached_seam_can_still_be_named():
     a = _block(1)
     m = hexmesh.attach([a], [Seam(0, "outlet", 0, "inlet", attach_tag="periodic")])
-    assert "periodic" in m.face_tags.group_tags
+    assert "periodic" in m.face_tags.unique()
 
 
 def test_quad_and_line_rungs_attach_to_themselves_too():

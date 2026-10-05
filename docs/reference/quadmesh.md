@@ -1,8 +1,5 @@
 # `quadmesh`
 
-The quad cross-section container, its factories, and
-per-quad quality metrics.
-
 ```{eval-rst}
 .. autoclass:: nekmeshpy.quadmesh.QuadMesh
    :members:
@@ -13,13 +10,6 @@ per-quad quality metrics.
 
 ## `quadmesh.quality`
 
-`scaled_jacobian` here is **not** the same function as `quadmesh.scaled_jacobian`
-below, despite the shared name: this one takes raw `(points, quads)` and reads
-corners only; the one re-exported on `quadmesh` (defined in `quadmesh.query`) takes
-a `QuadMesh` and always reads the curved order-N block. Call
-through `quadmesh.scaled_jacobian`/`quadmesh.quality_summary` unless you are
-working with bare arrays.
-
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.quality
    :members:
@@ -27,63 +17,56 @@ working with bare arrays.
 
 ## Operations
 
-Every operation lives in exactly one of the namespaces below, grouped by what it
-does to the mesh — but each is also re-exported flat on `quadmesh` itself, so
-`quadmesh.circle(...)` and `quadmesh.shape.circle(...)` are the *same* function,
-not two. Prefer the flat form in code (`quadmesh.circle`, not `QuadMesh.circle` —
-there are no methods); the grouping below exists to help you find the right
-operation, not to document it twice.
-
-### `quadmesh.assemble` — n-ary: builds a new numbering (`loft`/`loft_fn`/`loft_spline`/`merge`/`attach`) or runs it backward (`select`/`remove`/`components`)
+### `quadmesh.assemble`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.assemble
    :members:
 ```
 
-### `quadmesh.lift` — Δ+1: `extrude`/`sweep`/`sweep_path`/`annulus`/`from_grid` onto `HexMesh`
+### `quadmesh.lift`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.lift
    :members:
 ```
 
-### `quadmesh.shape` — factories: region fills (`ogrid`/`quadrant_ogrid`/`spined_ogrid`/…) and closed surfaces (`box`/`sphere`/…), exact at any order
+### `quadmesh.shape`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.shape
    :members:
 ```
 
-### `quadmesh.ports` — `Port`: a section plus the outward direction and axis point it cannot state about itself, for the rung above to check a join against rather than guess
+### `quadmesh.ports`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.ports
    :members:
 ```
 
-### `quadmesh.lower` — Δ−1: `boundary_mesh`, the boundary one rung down as a `LineMesh`
+### `quadmesh.lower`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.lower
    :members:
 ```
 
-### `quadmesh.morph` — Δ0: geometry at the same rung — `blend`, `reindex`, `place_on_path`, `offset`, the affine placements `translate`/`rotate`/`scale`/`transform`/`mirror`, and `transform_fn` (a non-affine warp)
+### `quadmesh.morph`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.morph
    :members:
 ```
 
-### `quadmesh.query` — read-only: `bounds`/`centroid`/`area`, `quality_summary`/`scaled_jacobian` (mesh-level; see the note under `quadmesh.quality` above), `plane_normal`, boundary queries
+### `quadmesh.query`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.query
    :members:
 ```
 
-### `quadmesh.tag` — vocabulary only: renames the tag tables, geometry untouched
+### `quadmesh.tag`
 
 ```{eval-rst}
 .. automodule:: nekmeshpy.quadmesh.tag

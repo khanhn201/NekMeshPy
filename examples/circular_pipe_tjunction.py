@@ -26,7 +26,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import (
-    ElementTags,
+    Tags,
     hexmesh,
     linemesh,
     quadmesh,
@@ -160,13 +160,13 @@ def cap_tags(slice_, first, second):
     """Name a leg's seam cap by half-disc: ``spined_ogrid`` welds the two halves in
     order, so the first half of the quads is the first arc's side and the second half
     the other's.  Each half is shared with a *different* leg, which is why one name for
-    the whole cap will not do -- ``last_tag`` takes an ``ElementTags`` over the slice's
+    the whole cap will not do -- ``last_tag`` takes an ``Tags`` over the slice's
     own elements for exactly this.
 
     Mis-assigning the halves cannot pass silently: ``attach`` pairs a named group
     against a named group and refuses anything that is not one-to-one."""
     half = slice_.n_quads // 2
-    return ElementTags.from_dense(
+    return Tags.from_dense(
         np.array([first] * half + [second] * (slice_.n_quads - half)))
 
 

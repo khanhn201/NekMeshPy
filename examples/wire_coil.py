@@ -49,7 +49,7 @@ import numpy as np
 
 from nekmeshpy import hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import affine
-from nekmeshpy.core.tags import ElementTags
+from nekmeshpy.core.tags import Tags
 
 R_HELIX = 0.375
 RW_NOM  = 0.125
@@ -237,7 +237,7 @@ def coil_arc_map(turn, L=1.0):
 def _retag_edge_present(qm, mapping):
     """retag only the edge tags that are actually there -- at N_LAYERS == 1 the
     template carries no ``u1``, so the section retags below just skip it."""
-    have = {t: v for t, v in mapping.items() if t in qm.edge_tags.group_tags}
+    have = {t: v for t, v in mapping.items() if t in qm.edge_tags.unique()}
     return quadmesh.retag_edge(qm, have) if have else qm
 
 
@@ -525,10 +525,10 @@ mesh = hexmesh.merge([coil, branch, core, lower, higher, cap_lo, cap_hi, film, p
                      tol=1e-9, clear_seam_tags=["inlet", "outlet"])
 
 # everything not tagged solid at construction is fluid
-_reg = np.asarray(mesh.element_tags.dense(mesh.n_hexes), dtype="<U8")
+_reg = np.asarray(mesh.element_tags.to_dense(mesh.n_hexes), dtype="<U8")
 _reg[_reg == ""] = "fluid"
 mesh = hexmesh.HexMesh(mesh.quad_mesh, mesh.hexes, mesh.orient, mesh.interior,
-                       ElementTags.from_dense(_reg))
+                       Tags.from_dense(_reg))
 
 # --- conjugate-surface check: the coil/wall faces named at construction must be
 # exactly the assembled topology's fluid<->solid interfaces, nothing more or less.
@@ -539,7 +539,7 @@ for _e in range(mesh.n_hexes):
     for _q in _inc[_e]:
         _owner[_q, _slot[_q]] = _e
         _slot[_q] += 1
-_reg2 = np.asarray(mesh.element_tags.dense(mesh.n_hexes))
+_reg2 = np.asarray(mesh.element_tags.to_dense(mesh.n_hexes))
 _conj = ((_owner[:, 1] >= 0) & (_reg2[_owner[:, 0]] != _reg2[_owner[:, 1]]))
 _named = set(hexmesh.tagged_faces(mesh, "coil")) | set(hexmesh.tagged_faces(mesh, "wall"))
 assert set(np.flatnonzero(_conj)) == _named, \
@@ -572,9 +572,9 @@ THERMAL = {
 }
 
 print(hexmesh.report(mesh))
-print("regions:", dict(zip(*np.unique(mesh.element_tags.dense(mesh.n_hexes),
+print("regions:", dict(zip(*np.unique(mesh.element_tags.to_dense(mesh.n_hexes),
                                       return_counts=True))))
-print("faces  :", ", ".join(sorted(mesh.face_tags.group_tags)))
+print("faces  :", ", ".join(sorted(mesh.face_tags.unique())))
 
 writer.to_re2(mesh, "wire_coil.re2", groups=GROUPS, periodic=PERIODIC,
               fluid="fluid", thermal=THERMAL)

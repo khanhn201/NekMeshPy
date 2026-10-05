@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from conftest import face_rows
 
-from nekmeshpy import NO_TAG, ElementTags, HexMesh, QuadMesh, hexmesh, quadmesh
+from nekmeshpy import NO_TAG, HexMesh, QuadMesh, Tags, hexmesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
 from nekmeshpy.quadmesh.tag import tag_edges
 
@@ -56,7 +56,7 @@ def test_edge_tags_are_stored_on_the_shared_edges_they_name():
 def test_mismatched_ids_and_names_raises():
     """Desynchronized ids and names are rejected by the table, not the container."""
     with pytest.raises(ValueError, match="same length"):
-        ElementTags([0, 1], ["only"])
+        Tags([0, 1], ["only"])
 
 
 def test_loft_propagates_per_edge_tags_to_side_faces():
