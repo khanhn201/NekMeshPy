@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TypeAlias, Union
+from typing import Union
 
 import numpy as np
 
@@ -14,8 +14,8 @@ __all__ = ["Selection", "mask_for_selection"]
 
 #: A ``select`` / ``remove`` argument: one tag name, several tag names, a boolean mask
 #: over the elements, or element ids.
-Selection: TypeAlias = Union[str, Sequence[str], StrArray, BoolArray, IntArray,
-                             Sequence[int]]
+Selection = Union[str, Sequence[str], StrArray, BoolArray, IntArray,
+                 Sequence[int]]
 
 
 def mask_for_selection(which: Selection, tags: Tags) -> BoolArray:
