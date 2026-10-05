@@ -1,5 +1,5 @@
 """Shared internals for the planar :class:`LineMesh
-<nekmeshpy.linemesh.linemesh.LineMesh>` factories."""
+<nekmeshpy.linemesh.LineMesh>` factories."""
 
 from __future__ import annotations
 

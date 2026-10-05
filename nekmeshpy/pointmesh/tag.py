@@ -14,7 +14,7 @@ def retag_element(mesh: PointMesh, mapping: Mapping[str, str]) -> PointMesh:
     untagged. The map applies simultaneously, so ``{"a": "b", "b": "a"}`` swaps the
     two, and two keys may share an image. A key that names no tag on this mesh raises.
 
-    These are the tags a :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` built on this
+    These are the tags a :class:`LineMesh <nekmeshpy.linemesh.LineMesh>` built on this
     point set reads as its own point tags, so this is what
     :func:`linemesh.retag_point <nekmeshpy.linemesh.tag.retag_point>` calls through to.
     """

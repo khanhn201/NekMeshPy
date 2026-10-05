@@ -19,7 +19,7 @@ class PointMesh:
     It exists so the rule that holds between every other pair of rungs -- **a mesh's
     side tags are its rung-below's element tags** -- holds at the bottom too, rather
     than the line rung carrying a table of its own shape. Almost nothing constructs one
-    directly: :class:`LineMesh <nekmeshpy.linemesh.linemesh.LineMesh>` promotes a bare ``(N,3)``
+    directly: :class:`LineMesh <nekmeshpy.linemesh.LineMesh>` promotes a bare ``(N,3)``
     array into an untagged one, which is what a factory building fresh geometry wants.
     Reach for it when you need the tags to survive -- a transform rebuilding a mesh
     around moved coordinates, or a point group named before there is a line to hang it
