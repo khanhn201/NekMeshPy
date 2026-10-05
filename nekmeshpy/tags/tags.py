@@ -250,11 +250,8 @@ class Tags:
         ids = (self.ids[:, None] * r + np.arange(r, dtype=np.int64)[None, :]).ravel()
         return Tags(ids, np.repeat(self.tags, r), r * self.size)
 
-    def astype(self, dtype: type[bool]) -> BoolArray:
-        """The ``(size,)`` mask of tagged elements, as ``dense.astype(bool)`` (a
-        non-empty name is true). Only ``bool`` is supported."""
-        if dtype is not bool:
-            raise TypeError("astype: only bool is supported, got %r" % (dtype,))
+    def is_tagged(self) -> BoolArray:
+        """The ``(size,)`` mask of tagged elements."""
         out: BoolArray = np.zeros(self.size, dtype=bool)
         out[self.ids] = True
         return out

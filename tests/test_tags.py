@@ -624,8 +624,7 @@ def test_repeat_matches_np_repeat():
     assert Tags.empty(2).repeat(4).size == 8
 
 
-def test_astype_bool_marks_tagged_elements():
+def test_is_tagged_marks_tagged_elements():
     t = Tags.from_dense(["a", "", "b"])
-    assert t.astype(bool).tolist() == [True, False, True]
-    with pytest.raises(TypeError):
-        t.astype(int)
+    assert t.is_tagged().tolist() == [True, False, True]
+    assert Tags.empty(2).is_tagged().tolist() == [False, False]

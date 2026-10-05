@@ -282,7 +282,7 @@ def tag_report(mesh: HexMesh) -> TagReport:
     :class:`TagReport <nekmeshpy.hexmesh.query.TagReport>`)."""
     on_boundary = boundary_face_ids(mesh)
     ft = mesh.face_tags
-    named = ft.astype(bool)
+    named = ft.is_tagged()
     return TagReport(len(ft),
                      int(np.count_nonzero(on_boundary & ~named)),
                      int(np.count_nonzero(named & ~on_boundary)))
