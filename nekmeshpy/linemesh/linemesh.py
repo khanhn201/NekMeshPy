@@ -44,7 +44,7 @@ class LineMesh:
         """Construct from the rung below: ``point_mesh`` (a ``PointMesh``, or a bare
         ``(N,3)`` array promoted to an untagged one), the **required** ``lines``
         ``(L,2)`` connectivity, the per-line ``interior`` nodes, and an optional
-        :class:`Tags <nekmeshpy.tags.tags.Tags>` naming whichever lines
+        :class:`Tags <nekmeshpy.tags.Tags>` naming whichever lines
         are tagged.
 
         Passing an array is the authoring form and the one every factory building fresh

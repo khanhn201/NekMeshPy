@@ -20,7 +20,7 @@ def sweep_tags(spec: str | Tags | None, n_layers: int, n_slice: int) -> Tags:
     """The swept elements' region tags from a ``loft``'s ``element_tags`` argument.
 
     ``None`` tags nothing, a ``str`` tags every swept element, and an
-    :class:`Tags <nekmeshpy.tags.tags.Tags>` over one slice's ``n_slice`` elements tags each element by
+    :class:`Tags <nekmeshpy.tags.Tags>` over one slice's ``n_slice`` elements tags each element by
     the slice element it was extruded from (element ``i*n_slice + k``)."""
     if spec is None:
         return Tags.empty(int(n_layers) * int(n_slice))

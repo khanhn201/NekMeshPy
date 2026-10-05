@@ -14,7 +14,7 @@ class PointMesh:
     A point has no interior, no orientation and no connectivity -- its "incidence" is
     the identity, so element ``i`` *is* point ``i``. That leaves only the two fields
     every rung has: the coordinates, and an :class:`Tags
-    <nekmeshpy.tags.tags.Tags>` naming whichever of them are named.
+    <nekmeshpy.tags.Tags>` naming whichever of them are named.
 
     It exists so the rule that holds between every other pair of rungs -- **a mesh's
     side tags are its rung-below's element tags** -- holds at the bottom too, rather
@@ -33,7 +33,7 @@ class PointMesh:
         element_tags: Tags | None = None,
     ) -> None:
         """Construct from ``points`` ``(N,3)`` (must be 3-D) and an optional
-        :class:`Tags <nekmeshpy.tags.tags.Tags>` over point ids."""
+        :class:`Tags <nekmeshpy.tags.Tags>` over point ids."""
         self.points: PointArray = np.asarray(points, dtype=float)
         if self.points.ndim != 2 or self.points.shape[1] != 3:
             raise ValueError(

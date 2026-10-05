@@ -17,7 +17,7 @@ def weld(tables: Sequence[Tags]) -> Tags:
     """Combine tables that may name the **same** element -- what a ``merge`` produces
     once its weld has carried two blocks' tags onto one shared entity.
 
-    Plain :meth:`Tags.concatenate <nekmeshpy.tags.tags.Tags.concatenate>` cannot do this: it would hand the constructor two
+    Plain :meth:`Tags.concatenate <nekmeshpy.tags.Tags.concatenate>` cannot do this: it would hand the constructor two
     rows for one id, which is rejected. Here the duplicate is expected and meaningful,
     so it is resolved rather than refused -- but only when the two agree. Two different
     non-empty names on one entity is the contradiction the shared-entity storage exists

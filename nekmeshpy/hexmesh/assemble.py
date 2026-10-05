@@ -832,7 +832,7 @@ def _seam_named(ftag_list: Sequence[Tags], seam_merged: Sequence[IntArray],
     The seam's rows are dropped from **both** sides *before* the combine rather than
     overwritten after it: the caller has said what that face is, so the two sides stop
     being asked about it and cannot conflict. Every face off the seam still goes through
-    :func:`weld <nekmeshpy.tags.welding.weld>` and its
+    :func:`weld <nekmeshpy.tags.weld>` and its
     refuse-on-disagreement rule."""
     if not seam_merged:
         return weld(list(ftag_list))
