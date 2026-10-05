@@ -808,7 +808,6 @@ def refine(mesh: QuadMesh) -> QuadMesh:
     quadrant nearer corner ``k``. One call is one level."""
     order = mesh.order
     refined_line, points, flat_corners, flat_blocks = _refine_parts(mesh)
-    q_count = mesh.n_quads
 
     lm, elem_edges, flip, interior = entities_from_blocks(
         flat_blocks, flat_corners, points, order)
@@ -821,7 +820,7 @@ def refine(mesh: QuadMesh) -> QuadMesh:
 
     # each parent's tag propagates to all 4 children, consecutively -- see
     # linemesh.refine's own note on why this is ``take``, not ``tile``.
-    element_tags = mesh.element_tags.take(np.repeat(np.arange(q_count), 4))
+    element_tags = mesh.element_tags.repeat(4)
     return QuadMesh(lm, elem_edges, flip, interior, element_tags)
 
 

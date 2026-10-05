@@ -151,7 +151,7 @@ def tagged_edges(mesh: QuadMesh, tag: str) -> IntArray:
 
     A tag that names nothing raises rather than returning an empty group."""
     t = mesh.edge_tags
-    hit: IntArray = np.asarray(t.ids[t.isin(tag)], dtype=np.int64)
+    hit: IntArray = t.flatnonzero(tag)
     if hit.size == 0:
         raise ValueError(
             "tagged_edges: no edge carries the tag %r; this section has %s"

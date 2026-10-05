@@ -238,6 +238,27 @@ class Tags:
             return self
         return self.compress(~np.isin(self.ids, i))
 
+    def repeat(self, repeats: int) -> Tags:
+        """Each element repeated ``repeats`` times in place, over ``repeats * size``
+        elements: element ``i*repeats + j`` copies ``i``.
+
+        The sparse form of ``np.repeat(dense, repeats)`` -- a refine's children each
+        inherit their parent's name."""
+        r = int(repeats)
+        if not len(self):
+            return Tags.empty(r * self.size)
+        ids = (self.ids[:, None] * r + np.arange(r, dtype=np.int64)[None, :]).ravel()
+        return Tags(ids, np.repeat(self.tags, r), r * self.size)
+
+    def astype(self, dtype: type[bool]) -> BoolArray:
+        """The ``(size,)`` mask of tagged elements, as ``dense.astype(bool)`` (a
+        non-empty name is true). Only ``bool`` is supported."""
+        if dtype is not bool:
+            raise TypeError("astype: only bool is supported, got %r" % (dtype,))
+        out: BoolArray = np.zeros(self.size, dtype=bool)
+        out[self.ids] = True
+        return out
+
     def tile(self, reps: int) -> Tags:
         """This table tiled ``reps`` times, over ``reps * size`` elements: element
         ``i*size + q``.

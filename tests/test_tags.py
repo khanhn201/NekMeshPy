@@ -615,3 +615,17 @@ def test_sweep_arguments_must_be_over_one_slice():
         sweep_tags(t, 2, 3)
     with pytest.raises(ValueError, match="over the 3 elements of one slice"):
         sweep_cap(t, Tags.empty(3), 3)
+
+
+def test_repeat_matches_np_repeat():
+    d = np.array(["a", "", "b"])
+    got = Tags.from_dense(d).repeat(3)
+    assert got.size == 9 and got.to_dense().tolist() == np.repeat(d, 3).tolist()
+    assert Tags.empty(2).repeat(4).size == 8
+
+
+def test_astype_bool_marks_tagged_elements():
+    t = Tags.from_dense(["a", "", "b"])
+    assert t.astype(bool).tolist() == [True, False, True]
+    with pytest.raises(TypeError):
+        t.astype(int)

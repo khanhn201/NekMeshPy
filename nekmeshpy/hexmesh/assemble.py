@@ -710,10 +710,8 @@ def _stitch(meshes: Sequence[HexMesh], points: PointArray, point_id: IntArray, *
         if seam_faces is not None and bi in seam_faces:
             ft = ft.clear(seam_faces[bi])
         if clear_seam_tags is not False and len(ft):
-            drop: BoolArray = buried_face[mine[ft.ids]]
-            if clear_names is not None:
-                drop = drop & np.isin(np.asarray(ft.tags), clear_names)
-            ft = ft.compress(~drop)
+            named = ft.ids if clear_names is None else ft.flatnonzero(clear_names)
+            ft = ft.clear(named[buried_face[mine[named]]])
         ftag_list.append(ft.renumber(mine, faces.n_quads))
         local_to_merged.append(mine)
         if seam_faces is not None and bi in seam_faces:
@@ -1261,7 +1259,7 @@ def refine(mesh: HexMesh) -> HexMesh:
 
     # each parent's region tag propagates to all 8 children, consecutively -- see
     # linemesh.refine's own note on why this is ``take``, not ``tile``.
-    element_tags = mesh.element_tags.take(np.repeat(np.arange(e_count), 8))
+    element_tags = mesh.element_tags.repeat(8)
     return HexMesh(combined_qm, hexes, orient, interior, element_tags)
 
 

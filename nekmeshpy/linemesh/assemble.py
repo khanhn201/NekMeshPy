@@ -264,7 +264,7 @@ def _point_group(mesh: LineMesh, which: str | IntArray | Sequence[int],
     non-manifold mistake."""
     if isinstance(which, str):
         t = mesh.point_tags
-        ids: IntArray = np.asarray(t.ids[t.isin(which)], dtype=np.int64)
+        ids: IntArray = t.flatnonzero(which)
         if ids.size == 0:
             raise ValueError(
                 "attach: %s: no point carries the tag %r; this mesh has %s"
@@ -471,7 +471,7 @@ def refine(mesh: LineMesh) -> LineMesh:
     # and 2*i+1 both copy source i) -- ``take`` with a repeated index, not
     # ``tile`` (which tiles a whole block pattern across many copies, the
     # sweep-layer shape of problem, not this one).
-    element_tags = mesh.element_tags.take(np.repeat(np.arange(l_count), 2))
+    element_tags = mesh.element_tags.repeat(2)
     point_tags = mesh.point_tags.renumber(np.arange(n0, dtype=np.int64),
                                           points.shape[0])
     return LineMesh(PointMesh(points, point_tags), lines, interior, element_tags)
