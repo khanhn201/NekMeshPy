@@ -22,7 +22,7 @@ def mask_for_selection(which: Selection, tags: Tags) -> BoolArray:
     """The ``(n_elements,)`` boolean mask a ``select`` / ``remove`` argument names.
 
     ``which`` is a tag name or a list / array of them (resolved by
-    :meth:`Tags.flatnonzero`; a name absent from the mesh's vocabulary is an error,
+    :meth:`Tags.flatnonzero <nekmeshpy.tags.tags.Tags.flatnonzero>`; a name absent from the mesh's vocabulary is an error,
     since a silent empty selection is almost always a typo), a ready
     ``(n_elements,)`` boolean mask, or an array of element ids."""
     arr = np.asarray(which)
