@@ -1,4 +1,4 @@
-"""2-D quad mesh container (``QuadMesh``), its operations, and smoothing."""
+"""2-D quad mesh container (``QuadMesh``), and its operations."""
 
 from .assemble import (
     Seam,

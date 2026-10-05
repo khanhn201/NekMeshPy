@@ -1,6 +1,6 @@
 # `quadmesh`
 
-The quad cross-section container, its factories, the smoothing registry, and
+The quad cross-section container, its factories, and
 per-quad quality metrics.
 
 ```{eval-rst}
@@ -9,13 +9,6 @@ per-quad quality metrics.
    :show-inheritance:
 
 .. autodata:: nekmeshpy.quadmesh.NO_TAG
-```
-
-## `quadmesh.smoothing`
-
-```{eval-rst}
-.. automodule:: nekmeshpy.quadmesh.smoothing
-   :members:
 ```
 
 ## `quadmesh.quality`

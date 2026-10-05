@@ -5,7 +5,7 @@ coordinates."""
 import numpy as np
 import pytest
 
-from nekmeshpy import ElementTags, LineMesh, hexmesh, linemesh, quadmesh, set_section_smoothing
+from nekmeshpy import ElementTags, LineMesh, hexmesh, linemesh, quadmesh
 from nekmeshpy.core.fields import geometric_spacing, uniform_spacing
 
 
@@ -227,20 +227,6 @@ def test_ogrid_counts_and_boundary():
     assert quadmesh.boundary_edges(qm).shape[0] == 4 * 4      # outer ring = the wall loop
 
 
-def test_ogrid_smoothing_method_repositions():
-    boundary = _circle(0.5, 16)
-    raw = quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3))
-    smoothed = set_section_smoothing(
-        quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3)), "conduction")
-    r = np.asarray(raw.points)
-    s = np.asarray(smoothed.points)
-    # same topology, interior points moved, boundary (wall) held fixed
-    assert r.shape == s.shape
-    assert np.max(np.abs(r - s)) > 1e-9
-    bn = quadmesh.boundary_points(raw)
-    assert np.allclose(r[bn], s[bn])
-
-
 def _square_loop(half):
     return linemesh.loft([(-half, -half, 0.0), (half, -half, 0.0),
                       (half, half, 0.0), (-half, half, 0.0)], loop=True)
@@ -299,19 +285,6 @@ def test_extrude_rejects_single_layer_position():
                           radial=uniform_spacing(2))
     with pytest.raises(ValueError, match="at least 2 layer positions"):
         hexmesh.extrude(qm, length=1.0, layers=np.array([1.0]))
-
-
-def test_annulus_smoothing_method_repositions():
-    inner = _circle(0.5, 24)
-    outer = _far_box(3.0, inner.n_points)
-    raw = quadmesh.annulus(inner, outer, radial=uniform_spacing(4))
-    smoothed = set_section_smoothing(
-        quadmesh.annulus(inner, outer, radial=uniform_spacing(4)), "winslow")
-    r, s = np.asarray(raw.points), np.asarray(smoothed.points)
-    assert r.shape == s.shape
-    assert np.max(np.abs(r - s)) > 1e-9             # interior rings moved
-    bn = quadmesh.boundary_points(raw)                       # inner + outer rings held
-    assert np.allclose(r[bn], s[bn])
 
 
 def test_annulus_grading_clusters_toward_inner():
@@ -457,47 +430,6 @@ def _saddle_loop(n, amp=0.4):
     ``z = amp*cos(2 theta)`` (a saddle / Pringle), sampled densely."""
     th = np.linspace(0.0, 2 * np.pi, n, endpoint=False)
     return linemesh.loft(np.column_stack([np.cos(th), np.sin(th), amp * np.cos(2 * th)]), loop=True)
-
-
-def test_ogrid_on_curvy_boundary_stays_nonplanar():
-    # a curvy (non-planar) boundary must NOT be flattened to a plane: the wall ring
-    # sits on the true curved surface and conduction lifts the interior onto it.
-    amp = 0.4
-    boundary = _saddle_loop(4 * 4, amp)              # 4*n_side points, meshed exactly
-    qm = set_section_smoothing(
-        quadmesh.ogrid(boundary, n_side=4, radial=uniform_spacing(3)), "conduction")
-    X = np.asarray(qm.points)
-    # the whole section is genuinely non-planar (not snapped to a best-fit plane)
-    dev = np.abs((X - X.mean(axis=0)) @ _plane_normal(X))
-    assert dev.max() > 0.3                       # ~ the saddle's own z-amplitude
-    # the wall ring lies exactly on the analytic saddle surface z = amp*cos(2*theta)
-    wall_ids = quadmesh.boundary_points(qm).tolist()      # topological outline (untagged)
-    wall = X[wall_ids]
-    ang = np.arctan2(wall[:, 1], wall[:, 0])
-    assert np.max(np.abs(wall[:, 2] - amp * np.cos(2 * ang))) < 1e-4
-    assert np.max(np.abs(np.hypot(wall[:, 0], wall[:, 1]) - 1.0)) < 1e-4
-    # conduction lifts the interior onto the curved surface (not flat at z=0),
-    # holding the boundary ring fixed
-    interior = np.setdiff1d(np.arange(len(X)), wall_ids)
-    assert np.abs(X[interior, 2]).max() > 0.1
-    raw = np.asarray(quadmesh.ogrid(boundary, n_side=4,
-                                    radial=uniform_spacing(3)).points)
-    assert np.max(np.abs(raw[interior] - X[interior])) > 1e-3   # interior moved
-    assert np.allclose(raw[wall_ids], X[wall_ids])              # wall held fixed
-
-
-def test_annulus_on_curvy_boundaries_stays_nonplanar():
-    # a curvy inner/outer pair blends in 3-D (no projection): the result follows
-    # the curved surface rather than collapsing onto a plane.
-    inner = _saddle_loop(24, amp=0.4)
-    outer = _saddle_loop(24, amp=0.4)
-    outer = linemesh.loft(2.0 * outer.points, loop=True)        # scaled-out saddle, same 24 points
-    qm = set_section_smoothing(
-        quadmesh.annulus(inner, outer, radial=uniform_spacing(4)), "conduction")
-    X = np.asarray(qm.points)
-    dev = np.abs((X - X.mean(axis=0)) @ _plane_normal(X))
-    assert dev.max() > 0.3
-    assert not np.any(np.isnan(X))
 
 
 def test_rectangle_far_field_in_tilted_plane():

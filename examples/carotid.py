@@ -3,7 +3,7 @@ Carotid vessel mesher: load a triangulated surface, solve three Laplacian
 seam fields, cut into legs A/B/C, build conformal seam rings + a central spine,
 refit each station's scanned wall ring as a truncated Fourier series so the
 high-order nodes sit on a genuine curve, extrude each leg's O-grid sections into
-hexes, weld, smooth, export::
+hexes, weld, export::
 
     PYTHONPATH=. python examples/carotid.py
 
@@ -21,7 +21,6 @@ from nekmeshpy import (
     hexmesh,
     linemesh,
     quadmesh,
-    smoothing,
     trimesh,
     writer,
 )
@@ -53,8 +52,6 @@ PROJECT_TO_STL = True
 # all a flat half-disc seam needs.
 ORDER = 3
 FOURIER_KEEP = 0.5            # fraction of the rFFT modes kept in the wall refit
-SMOOTH_ITERS = 0             # post-assembly untangle/polish sweeps (0 = off)
-SMOOTH_LAMBDA = 0.5
 FLUX_OFFSET = 2              # hex layers in from the outlet cap (0 = off)
 OUT_NAME = "carotid"
 EXPORT_RE2 = True
@@ -253,12 +250,6 @@ mesh = hexmesh.attach(blocks, flux_seams + [
     Seam(seam_block[0], "attach2", seam_block[2], "attach2"),
     Seam(seam_block[1], "attach3", seam_block[2], "attach3"),
 ])
-
-if SMOOTH_ITERS > 0:
-    # takes the result: the smoother builds a new mesh rather than writing through
-    # this one's live points
-    mesh = smoothing.smooth(mesh, surf, smooth_iters=SMOOTH_ITERS, smooth_lambda=SMOOTH_LAMBDA,
-                     wall="wall", project_to_stl=PROJECT_TO_STL)
 
 print(hexmesh.report(mesh))
 if EXPORT_VTK:

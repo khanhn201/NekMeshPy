@@ -5,14 +5,11 @@ mesh the carotid example builds)."""
 import numpy as np
 
 from nekmeshpy import (
-    SECTION_METHODS,
     PhysicalGroup,
     PhysicalGroups,
     hexmesh,
     linemesh,
     quadmesh,
-    register_section_smoothing,
-    set_section_smoothing,
     writer,
 )
 from nekmeshpy.hexmesh import quality
@@ -52,23 +49,6 @@ def test_to_mesh_without_groups_cannot_orient_an_interior_plane(built_mesh):
     side a measurement plane belongs to is a property of the groups, not the mesh."""
     m = writer.to_mesh(built_mesh["mesh"])
     assert m.cells["quad"].shape == (2000, 4)
-
-
-def test_section_smoothing_registry_extensible():
-    calls = {}
-
-    @register_section_smoothing("noop_test")
-    def _noop(qm, **opts):
-        calls["hit"] = True
-        return qm
-
-    assert "noop_test" in SECTION_METHODS
-    qm = quadmesh.structured(
-        [linemesh.loft([(0, 0, 0), (1, 0, 0)]), linemesh.loft([(1, 0, 0), (1, 1, 0)]),
-         linemesh.loft([(1, 1, 0), (0, 1, 0)]), linemesh.loft([(0, 1, 0), (0, 0, 0)])])
-    set_section_smoothing(qm, "noop_test")
-    assert calls.get("hit") is True
-    del SECTION_METHODS["noop_test"]
 
 
 def test_quality_module_matches_mesh(built_mesh):

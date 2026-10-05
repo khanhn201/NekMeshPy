@@ -21,7 +21,7 @@ Overlay = tuple[IntArray, int, LineMesh]
 
 def _elevate(qm: QuadMesh, order: int,
              overlays: list[Overlay] | None = None) -> QuadMesh:
-    """Return the order-N form of a linear (post-smoothing) region ``qm``."""
+    """Return the order-N form of a linear region ``qm``."""
     if order == 1:
         return qm
     points: PointArray = qm.points

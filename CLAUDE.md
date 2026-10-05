@@ -214,8 +214,8 @@ and nothing else catches that. Found on `examples/wire_coil.py`: curved-clean at
 against Nek5000's own `VERRHE` check (`core/connect1.f`), which is exactly this
 computation and is what a real solver run failed on first.
 
-Order-N smoothing is not implemented: a repositioning smoother raises
-`NotImplementedError` above order 1 rather than degrading silently.
+There is no smoothing in the toolkit at present: the section and volume smoothers were
+removed, to be reworked.
 
 ## `examples/femoral.py`: the one mesher with a solver under it
 
@@ -227,8 +227,8 @@ gitignored per file, since that directory also holds *tracked* inputs (`car.vtx`
 `car.tri`).
 
 **`femoral.py` is excluded from the test harness outright** — `EXCLUDED` in
-`tests/test_examples.py`, and `gen_viewer_assets.SKIP` alongside it — rather than run
-and marked slow. It still ships and is maintained as an example; running it is a manual
+`tests/test_examples.py`; it is also absent from the gallery, and `gen_viewer_assets.py`
+builds only the examples `docs/user/gallery.md` names — rather than run and marked slow. It still ships and is maintained as an example; running it is a manual
 step (below), not something CI or `python -m pytest` ever does.
 
 **gmsh does not tetrahedralize the same way twice** — not across machines, not run to run

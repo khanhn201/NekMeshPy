@@ -88,8 +88,7 @@ def hex_face_indices(face: int, order: int) -> IntArray:
 
 
 #: Hex local edges as corner-index pairs into ``_CORNER_IJK[3]`` -- the 12 edges in
-#: Nek order (bottom quad, top quad, then the four verticals), matching the ``he``
-#: table used by :mod:`nekmeshpy.hexmesh.smoothing`.
+#: Nek order (bottom quad, top quad, then the four verticals).
 _HEX_EDGES: list[tuple[int, int]] = [
     (0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
     (0, 4), (1, 5), (2, 6), (3, 7)]
@@ -186,15 +185,15 @@ def sampled_scaled_jacobian(curved: PointArray, order: int, new_order: int,
     points* rather than elements, so it shrinks automatically as the order climbs and
     the working set stays flat in both mesh size and order -- see
     :data:`CHUNK_POINTS`."""
-    if new_order == order:
-        return scaled_jacobian(curved, order, dim)
     per = max(1, CHUNK_POINTS // (new_order + 1) ** dim)
     n = curved.shape[0]
     out: FloatArray = np.empty(n, dtype=float)
     for lo in range(0, n, per):
         hi = min(lo + per, n)
-        out[lo:hi] = scaled_jacobian(
-            resample_block(curved[lo:hi], order, new_order, dim), new_order, dim)
+        block = curved[lo:hi]
+        if new_order != order:
+            block = resample_block(block, order, new_order, dim)
+        out[lo:hi] = scaled_jacobian(block, new_order, dim)
     return out
 
 

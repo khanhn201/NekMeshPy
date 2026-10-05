@@ -27,11 +27,9 @@ import numpy as np
 
 from nekmeshpy import (
     ElementTags,
-    TriMesh,
     hexmesh,
     linemesh,
     quadmesh,
-    smoothing,
     writer,
 )
 from nekmeshpy.hexmesh import Seam
@@ -51,13 +49,6 @@ RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, las
 ORDER = 4                     # polynomial order; 1 = linear.  The seam arcs and
                               # openings are meshed at ORDER, so .vtu renders the
                               # curved walls (.re2 stays linear either way)
-# post-assembly untangle/polish sweeps (0 = off).  hexmesh.smoothing.smooth is
-# order-1 only (it moves corner nodes and would leave the curved nodes behind), so
-# it is switched off at ORDER > 1; the call below is kept so a reader can set
-# ORDER = 1 + SMOOTH_ITERS = 8 to exercise the STL-constrained wall polish.
-SMOOTH_ITERS = 0
-SMOOTH_LAMBDA = 0.5
-N_SURF = 48                   # tris per ring on the analytic wall (smoothing target)
 OUT_NAME = "circular_pipe_tjunction"
 
 # boundary name -> Nek BC code, applied only at export
@@ -156,51 +147,6 @@ def leg_slices(open_ring, seam_ring, n_slices):
         wall_tag="wall") for loop in loops]
 
 
-# -- analytic wall surface (smoothing projection target) ---------------------
-def wall_surface():
-    """Triangulated walls of the three tubes, trimmed at the collar, as one
-    :class:`TriMesh` projection target for the smoother.  The main tube spans
-    ``x in [-L, L]`` minus the branch opening (``z > 0``, ``|x| < sqrt(R^2 -
-    y^2)``); the branch tube spans ``z in [0, H]``."""
-    th = np.linspace(0.0, 2.0 * np.pi, N_SURF, endpoint=False)
-    tris, pts = [], []
-
-    def add_quad(p00, p01, p11, p10):
-        b = len(pts)
-        pts.extend([p00, p01, p11, p10])
-        tris.extend([[b, b + 1, b + 2], [b, b + 2, b + 3]])
-
-    # main tube wall (y = R cos, z = R sin), skipping the branch cut-out
-    nx = 2 * (N_SLICES_MAIN - 1)
-    xs = np.linspace(-L, L, nx + 1)
-    for i in range(nx):
-        for j in range(N_SURF):
-            y0, z0 = R * np.cos(th[j]), R * np.sin(th[j])
-            y1, z1 = R * np.cos(th[(j + 1) % N_SURF]), R * np.sin(th[(j + 1) % N_SURF])
-            xa, xb = xs[i], xs[i + 1]
-            # skip panels inside the collar (branch opening: z>0 and |x|<sqrt(R^2-y^2))
-            cut = R * R - max(y0, y1) ** 2
-            if z0 > 1e-9 and z1 > 1e-9 and cut > 0 and abs(0.5 * (xa + xb)) < np.sqrt(cut):
-                continue
-            add_quad([xa, y0, z0], [xb, y0, z0], [xb, y1, z1], [xa, y1, z1])
-
-    # branch tube wall (x = R cos, y = R sin), from the collar up to z = H
-    nz = N_SLICES_BRANCH - 1
-    for j in range(N_SURF):
-        x0, y0 = R * np.cos(th[j]), R * np.sin(th[j])
-        x1, y1 = R * np.cos(th[(j + 1) % N_SURF]), R * np.sin(th[(j + 1) % N_SURF])
-        zc0 = np.sqrt(max(R * R - y0 * y0, 0.0))   # collar height at this station
-        zc1 = np.sqrt(max(R * R - y1 * y1, 0.0))
-        for i in range(nz):
-            za0 = zc0 + (H - zc0) * i / nz
-            zb0 = zc0 + (H - zc0) * (i + 1) / nz
-            za1 = zc1 + (H - zc1) * i / nz
-            zb1 = zc1 + (H - zc1) * (i + 1) / nz
-            add_quad([x0, y0, za0], [x0, y0, zb0], [x1, y1, zb1], [x1, y1, za1])
-
-    return TriMesh(np.array(pts, dtype=float), np.array(tris, dtype=np.int64))
-
-
 # -- pipeline (flat driver) --------------------------------------------------
 a_lm = arc_main_lower()
 a_lb = arc_collar(-1.0)
@@ -242,13 +188,6 @@ blocks = [
 mesh = hexmesh.attach(blocks, [Seam(0, "attach1", 1, "attach1"),
                                Seam(0, "attach2", 2, "attach2"),
                                Seam(1, "attach3", 2, "attach3")])
-
-if SMOOTH_ITERS > 0:
-    # takes the result: the smoother builds a new mesh rather than writing through
-    # this one's live points
-    mesh = smoothing.smooth(mesh, wall_surface(), smooth_iters=SMOOTH_ITERS,
-                     smooth_lambda=SMOOTH_LAMBDA, wall="wall",
-                     project_to_stl=True)
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))

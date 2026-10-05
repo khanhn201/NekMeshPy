@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from conftest import curved, vtu_cell_types
 
-from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh, set_section_smoothing
+from nekmeshpy import LineMesh, QuadMesh, linemesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
 from nekmeshpy.core.interp import corner_indices, quad_edge_indices
 from nekmeshpy.io import writer
@@ -56,8 +56,7 @@ def test_box_nodes_on_flat_faces(order):
 def test_ogrid_wall_nodes_on_the_circle(order):
     r = 2.0
     loop = linemesh.circle(r, 16, order=order)          # 16 pts = 4 per side
-    # no smoothing: the wall overlay stamps the true arc regardless (a repositioning
-    # smoother is rejected at order > 1 -- see test_high_order_smoothing_rejected).
+    # the wall overlay stamps the true arc
     qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
     assert qm.order == order
     cb = curved(qm)
@@ -241,31 +240,6 @@ def test_annulus_wall_nodes_on_both_rings(order):
         nodes = cb[np.where(on)[0][:, None], idx[None, :], :]
         rr = np.linalg.norm(nodes.reshape(-1, 3)[:, :2], axis=1)
         assert np.allclose(rr, radius, atol=1e-9)
-
-
-# -- high-order smoothing is rejected (corner-only relaxers) -----------
-@pytest.mark.parametrize("method", ["conduction", "winslow"])
-def test_high_order_smoothing_rejected(method):
-    # a repositioning smoother moves only corner nodes, so it cannot smooth an
-    # order-N section; set_section_smoothing must raise rather than silently degrade.
-    loop = linemesh.circle(2.0, 16, order=3)
-    qm = quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0])
-    with pytest.raises(NotImplementedError, match="order-3"):
-        set_section_smoothing(qm, method)
-    inner = linemesh.circle(1.0, 16, order=3)
-    outer = linemesh.circle(3.0, 16, order=3)
-    ann = quadmesh.annulus(inner, outer, radial=[0.0, 0.5, 1.0])
-    with pytest.raises(NotImplementedError, match="order-3"):
-        set_section_smoothing(ann, method)
-
-
-def test_high_order_noop_smoothing_allowed():
-    # the no-op strategies (bilinear/tfi/none) leave every node in place, so they
-    # stay allowed at any order (e.g. circular_pipe.py runs order 2 + "bilinear").
-    loop = linemesh.circle(2.0, 16, order=3)
-    for method in ("bilinear", "tfi", "none"):
-        qm = set_section_smoothing(quadmesh.ogrid(loop, 4, [0.0, 0.5, 1.0]), method)
-        assert qm.order == 3
 
 
 # -- structured / rectangle straight-sided elevation --------------------

@@ -12,7 +12,7 @@ from typing import Any, Union
 import numpy as np
 
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
-from ..core import conform, topology
+from ..core import conform
 from ..core.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
@@ -848,19 +848,3 @@ def boundary_to_vtp(mesh: HexMesh, fname: str, *, tag: str | None = None,
     _write_vtp(fname, nodes, conn, bc_out=bc_out, binary=binary)
     return surf
 
-
-# -- reporting ----------------------------------------------------------
-def summary(mesh: HexMesh) -> None:
-    """Log element/boundary counts, per-name face totals, and the topology report."""
-    _log.info("mesh: %d hex elements, %d boundary faces",
-              mesh.corners.shape[0], len(mesh.face_tags))
-    for name in mesh.face_group_tags:
-        _log.info("  %-14s: %d faces", name, mesh.face_tags.count(name))
-    rep = topology.hex_report(mesh.points, mesh.corners)
-    # topology.count_overlapping_pairs left out here too -- see hexmesh.query.report's
-    # own note; it is a geometric search too costly to run by default.
-    # n_overlap = topology.count_overlapping_pairs(mesh.points, mesh.corners)
-    _log.info("  watertight=%s  conformal=%s  components=%d  "
-              "non-manifold faces=%d  hanging points=%d",
-              rep.watertight, rep.conformal, rep.n_components,
-              rep.n_nonmanifold_faces, rep.n_hanging_points)

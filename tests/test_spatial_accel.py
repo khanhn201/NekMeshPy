@@ -12,7 +12,6 @@ import pytest
 
 from nekmeshpy import TriMesh
 from nekmeshpy.core.fields import DistanceField
-from nekmeshpy.hexmesh import smoothing as hsmooth
 from nekmeshpy.trimesh import ops
 
 
@@ -139,25 +138,3 @@ def test_distance_field_matches_the_broadcast_form():
     want = 0.1 + np.clip(d / 2.0, 0.0, 1.0) * (1.0 - 0.1)
     assert np.array_equal(f(P), want)
 
-
-# -- smoother adjacency / incidence ------------------------------------------
-def test_csr_groups_match_the_list_of_lists():
-    rng = np.random.default_rng(0)
-    nu = 200
-    HC = rng.integers(0, nu, size=(400, 8))
-    E = np.unique(np.sort(rng.integers(0, nu, size=(1500, 2)), axis=1), axis=0)
-    E = E[E[:, 0] != E[:, 1]]
-
-    adj = [[] for _ in range(nu)]
-    for a, b in E:
-        adj[a].append(b)
-        adj[b].append(a)
-    nh = [[] for _ in range(nu)]
-    for e in range(HC.shape[0]):
-        for k in range(8):
-            nh[HC[e, k]].append(e)
-
-    got_adj, got_nh = hsmooth._adjacency_lists(E, nu), hsmooth._incidence_lists(HC, nu)
-    for v in range(nu):
-        assert np.array_equal(np.unique(adj[v]), np.unique(got_adj[v]))
-        assert np.array_equal(np.unique(nh[v]), np.unique(got_nh[v]))

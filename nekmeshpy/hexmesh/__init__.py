@@ -1,4 +1,4 @@
-"""3-D hex mesh container (``HexMesh``), its operations, and constrained smoothing."""
+"""3-D hex mesh container (``HexMesh``), and its operations."""
 
 from .assemble import (
     Seam,

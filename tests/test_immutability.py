@@ -16,7 +16,6 @@ import pytest
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core.fields import uniform_spacing
-from nekmeshpy.quadmesh import smoothing as qsmooth
 
 
 def _rungs():
@@ -43,21 +42,3 @@ def test_operations_leave_their_input_untouched(rung):
         assert out is not mesh
         assert np.array_equal(mesh.points, before), op
 
-
-@pytest.mark.parametrize("smoother", [qsmooth.conduction_section,
-                                      qsmooth.winslow_section])
-def test_section_smoothers_return_a_new_mesh_and_move_something(smoother):
-    """Both halves matter: untouched input, and a result that is genuinely different.
-
-    The interior of an O-grid is not at the smoother's fixed point, so a working
-    smoother has to move it; one that returned its input unchanged would satisfy the
-    immutability half alone."""
-    _, sec, _ = _rungs()
-    before = sec.points.copy()
-    out = smoother(sec)
-    assert out is not sec
-    assert np.array_equal(sec.points, before)            # input untouched
-    assert not np.allclose(out.points, before)           # and it actually fired
-    # the boundary is held fixed; only interior points move
-    ring = np.isclose(np.linalg.norm(before[:, :2], axis=1), 1.0)
-    assert np.allclose(out.points[ring], before[ring])

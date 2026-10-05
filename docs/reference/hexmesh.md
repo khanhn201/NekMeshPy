@@ -1,19 +1,12 @@
 # `hexmesh`
 
-The immutable all-hex volume container, its factories, the volume smoother, and
+The immutable all-hex volume container, its factories, and
 per-hex quality metrics.
 
 ```{eval-rst}
 .. autoclass:: nekmeshpy.hexmesh.HexMesh
    :members:
    :show-inheritance:
-```
-
-## `hexmesh.smoothing`
-
-```{eval-rst}
-.. automodule:: nekmeshpy.hexmesh.smoothing
-   :members:
 ```
 
 ## `hexmesh.quality`
