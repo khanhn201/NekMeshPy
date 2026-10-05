@@ -76,26 +76,26 @@ def _elevate(qm: QuadMesh, order: int,
     edges, elem_edges, flip = conform.unique_edges(quads, 2)
     edge_nodes = conform.scatter_edge_nodes(
         local, elem_edges, flip, edges.shape[0],
-        conform.entity_tol(points), "QuadMesh._elevate")
+        conform.entity_tol(points))
     # the edge table is rebuilt here, so the tags are carried onto the new ids
     # rather than reused: local edge ``qm.quads[q, s]`` becomes ``elem_edges[q, s]``
     mine: IntArray = np.full(qm.line_mesh.n_lines, -1, dtype=np.int64)
     mine[np.asarray(qm.quads, dtype=np.int64).ravel()] = np.asarray(
         elem_edges, dtype=np.int64).ravel()
     lm = LineMesh(points, edges, interior=edge_nodes,
-                  element_tags=qm.edge_tags.renumber(mine))
+                  element_tags=qm.edge_tags.renumber(mine, edges.shape[0]))
     return QuadMesh(lm, elem_edges, flip, interior, qm.element_tags)
 
 
 def entities_from_blocks(blocks: PointArray, quads: IntArray, points: PointArray,
-                         order: int, who: str) -> tuple[LineMesh, IntArray,
-                                                        IntArray, PointArray]:
+                         order: int) -> tuple[LineMesh, IntArray,
+                                              IntArray, PointArray]:
     """Decompose per-element curved blocks into the B-rep tables."""
     local: PointArray = blocks[:, _edge_interior_slots(order)]
     interior: PointArray = blocks[:, _quad_interior_slots(order)]
     edges, elem_edges, flip = conform.unique_edges(quads, 2)
     edge_nodes = conform.scatter_edge_nodes(
-        local, elem_edges, flip, edges.shape[0], conform.entity_tol(points), who)
+        local, elem_edges, flip, edges.shape[0], conform.entity_tol(points))
     lm = LineMesh(points, edges, interior=edge_nodes)
     return lm, elem_edges, flip, interior
 

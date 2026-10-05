@@ -17,7 +17,7 @@ from ..core.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
 from ..core.physical import PhysicalGroup, PhysicalGroups
-from ..core.tags import Tags, mask_for_selection
+from ..core.selection import Selection, mask_for_selection
 from ..hexmesh import HexMesh
 from ..hexmesh.lower import boundary_mesh
 from ..hexmesh.periodic import Periodic, PeriodicPairs, periodic_pairs
@@ -25,6 +25,7 @@ from ..hexmesh.query import face_tag_rows
 from ..linemesh import LineMesh
 from ..quadmesh import QuadMesh
 from ..quadmesh.assemble import select as quadmesh_select
+from ..tags import Tags
 
 # VTK cell-type ids: linear + high-order (Lagrange) line / quad / hex.
 _VTK_LINE = 3
@@ -47,10 +48,10 @@ GroupsArg = Union[PhysicalGroups, Mapping[str, GroupSpec], None]
 #: resolved by :func:`hexmesh.periodic_pairs
 #: <nekmeshpy.hexmesh.periodic.periodic_pairs>`.
 PeriodicArg = Union[Sequence[Periodic], PeriodicPairs, None]
-#: What ``to_re2``'s ``fluid=`` accepts: a region name, a ready boolean mask, an array
-#: of element ids, or ``None`` -- see :func:`core.tags.mask_for_selection
-#: <nekmeshpy.core.tags.mask_for_selection>`, which resolves it.
-FluidArg = Union[str, BoolArray, IntArray, Sequence[int], None]
+#: What ``to_re2``'s ``fluid=`` accepts: region name(s), a ready boolean mask, an array
+#: of element ids, or ``None`` -- see :func:`core.selection.mask_for_selection
+#: <nekmeshpy.core.selection.mask_for_selection>`, which resolves it.
+FluidArg = Union[Selection, None]
 
 
 def _export_rows(mesh: HexMesh, g: PhysicalGroups,
@@ -70,16 +71,17 @@ def _export_rows(mesh: HexMesh, g: PhysicalGroups,
     <nekmeshpy.hexmesh.periodic.PeriodicPairs.partner_of>`; a row it does not name gets
     ``(-1, -1)``, which every writer but ``.re2`` drops on the floor."""
     rows, names = face_tag_rows(mesh)
-    regions = mesh.element_tags.to_dense(mesh.hexes.shape[0])
+    regions = mesh.element_tags.take_dense(rows[:, 0])
     out: list[tuple[int, int, str, str, int, int]] = []
-    for (elem, face), name in zip(rows.tolist(), names.tolist()):
+    for (elem, face), name, region in zip(rows.tolist(), names.tolist(),
+                                          regions.tolist()):
         pe, pf = (partners or {}).get((int(elem), int(face)), (-1, -1))
         grp = g.get(name)
         if grp is None:
             _log.warning("unknown boundary name: %s", name)
             out.append((int(elem), int(face), name, "   ", pe, pf))
             continue
-        code = grp.code_for_side(str(regions[elem]))
+        code = grp.code_for_side(region)
         if code is None:
             continue
         out.append((int(elem), int(face), name, code, pe, pf))
@@ -182,7 +184,7 @@ def _fluid_first_order(mesh: HexMesh, fluid: FluidArg
     n = mesh.n_hexes
     if fluid is None:
         return np.arange(n, dtype=np.int64), n, None
-    mask: BoolArray = mask_for_selection(fluid, mesh.element_tags, n, "to_re2: fluid")
+    mask: BoolArray = mask_for_selection(fluid, mesh.element_tags)
     order: IntArray = np.concatenate(
         [np.flatnonzero(mask), np.flatnonzero(~mask)]).astype(np.int64)
     return order, int(np.count_nonzero(mask)), mask
@@ -203,7 +205,7 @@ def _resolve_periodic(mesh: HexMesh, periodic: PeriodicArg
 
 def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
                           partners: Mapping[tuple[int, int], tuple[int, int]],
-                          mask: BoolArray | None, who: str) -> None:
+                          mask: BoolArray | None, field: str) -> None:
     """Raise unless a name coded ``'P  '`` in ``g`` and a periodic-paired name whose
     element lies in ``mask`` (the mesh's own numbering; ``None`` means every element)
     are the same set.
@@ -218,10 +220,10 @@ def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
     coded = {grp.name for grp in g if grp.code == PERIODIC_CODE
              or (grp.side_codes is not None
                  and PERIODIC_CODE in grp.side_codes.values())}
-    named = mesh.face_tags.to_dense(mesh.quad_mesh.n_quads)
     hexes: IntArray = np.asarray(mesh.hexes, dtype=np.int64)
-    paired = {str(named[hexes[elem, face - 1]])
-             for elem, face in partners if mask is None or mask[elem]}
+    pairs = np.array([(elem, face) for elem, face in partners
+                      if mask is None or mask[elem]], dtype=np.int64).reshape(-1, 2)
+    paired = set(mesh.face_tags.take_dense(hexes[pairs[:, 0], pairs[:, 1] - 1]).tolist())
     if coded != paired:
         raise ValueError(
             "%s: %r is the periodic code, so a name carrying it and a name named by "
@@ -229,14 +231,14 @@ def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
             "periodic= pairs %s in this field's own region. A 'P' row with no pairing "
             "writes partner element 0, face 0, and a pairing with no 'P' exports as "
             "something else -- neither is visible until the solver reads the mesh."
-            % (who, PERIODIC_CODE,
+            % (field, PERIODIC_CODE,
                ", ".join(repr(n) for n in sorted(coded)) or "nothing",
                ", ".join(repr(n) for n in sorted(paired)) or "nothing"))
 
 
 def _field_rows(mesh: HexMesh, g: PhysicalGroups,
                 partners: Mapping[tuple[int, int], tuple[int, int]],
-                mask: BoolArray | None, who: str) -> list[tuple[int, int, str, str, int, int]]:
+                mask: BoolArray | None, field: str) -> list[tuple[int, int, str, str, int, int]]:
     """One field's boundary rows: ``(element, face, name, code, partner element,
     partner face)``, restricted to elements in ``mask`` -- Nek's velocity field reads
     only the fluid region, a thermal one every element (``mask=None``).
@@ -247,20 +249,21 @@ def _field_rows(mesh: HexMesh, g: PhysicalGroups,
     that *is* coded but lands on an element outside ``mask`` is unambiguously a mistake
     -- the wrong field's table -- and raises rather than corrupting the block."""
     rows, names = face_tag_rows(mesh)
-    regions = mesh.element_tags.to_dense(mesh.hexes.shape[0])
+    regions = mesh.element_tags.take_dense(rows[:, 0])
     out: list[tuple[int, int, str, str, int, int]] = []
-    for (elem, face), name in zip(rows.tolist(), names.tolist()):
+    for (elem, face), name, region in zip(rows.tolist(), names.tolist(),
+                                          regions.tolist()):
         grp = g.get(name)
         if grp is None:
             continue
-        code = grp.code_for_side(str(regions[elem]))
+        code = grp.code_for_side(region)
         if code is None:
             continue
         if mask is not None and not mask[elem]:
             raise ValueError(
                 "%s: %r names element %d, outside this field's own region -- a "
                 "velocity-field code on a non-fluid element, or vice versa."
-                % (who, name, elem))
+                % (field, name, elem))
         pe, pf = partners.get((elem, face), (-1, -1))
         out.append((elem, face, name, code, pe, pf))
     return out
@@ -344,14 +347,14 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg,
     partners, _pairs = _resolve_periodic(mesh, periodic)
     g_vel = _as_groups(mesh, groups)
     if not multi_field:
-        _check_periodic_names(mesh, g_vel, partners, None, "to_re2: groups")
+        _check_periodic_names(mesh, g_vel, partners, None, "groups")
         blocks = [_export_rows(mesh, g_vel, partners)]
     else:
-        _check_periodic_names(mesh, g_vel, partners, fluid_mask, "to_re2: groups")
+        _check_periodic_names(mesh, g_vel, partners, fluid_mask, "groups")
         g_therm = _as_groups(mesh, thermal)
-        _check_periodic_names(mesh, g_therm, partners, None, "to_re2: thermal")
-        blocks = [_field_rows(mesh, g_vel, partners, fluid_mask, "to_re2: groups"),
-                 _field_rows(mesh, g_therm, partners, None, "to_re2: thermal")]
+        _check_periodic_names(mesh, g_therm, partners, None, "thermal")
+        blocks = [_field_rows(mesh, g_vel, partners, fluid_mask, "groups"),
+                 _field_rows(mesh, g_therm, partners, None, "thermal")]
 
     # ``new_id_of[old]`` is where element ``old`` lands in the written, fluid-first
     # numbering -- the inverse of ``order``, and what every element id in a boundary
@@ -522,11 +525,9 @@ def element_tag_ids(tags: Tags, n_elements: int) -> tuple[IntArray, list[str]]:
     integer, exactly as ``bc_id`` already is.  What keeps it readable is that the
     mapping is a function of the mesh alone: ``sorted(mesh.element_tags.unique())``
     reproduces it anywhere, with no legend to carry alongside the file."""
-    names = sorted(tags.unique())
-    dense = tags.to_dense(n_elements)
+    names, inverse = tags.unique(return_inverse=True)
     ids: IntArray = np.zeros(n_elements, dtype=np.int64)
-    for i, name in enumerate(names):
-        ids[dense == name] = i + 1
+    ids[tags.ids] = inverse + 1
     return ids, names
 
 
@@ -839,9 +840,7 @@ def boundary_to_vtp(mesh: HexMesh, fname: str, *, tag: str | None = None,
     bc_out: IntArray | None = None
     if names:
         name_to_id = {name: i + 1 for i, name in enumerate(names)}
-        dense = surf.element_tags.to_dense(surf.n_quads)
-        bc_out = np.array(
-            [name_to_id.get(str(n), 0) for n in dense.tolist()], dtype=np.int64)
+        bc_out, _ = element_tag_ids(surf.element_tags, surf.n_quads)
         groups_path = (fname[:-4] if fname.endswith(".vtp") else fname) + ".groups.json"
         with open(groups_path, "w") as fid:
             json.dump({str(i): name for name, i in name_to_id.items()}, fid)

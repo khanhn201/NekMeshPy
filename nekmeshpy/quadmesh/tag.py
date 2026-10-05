@@ -13,7 +13,6 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 from .._typing import IntArray, StrArray
-from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh import tag as linemesh
 from .quadmesh import QuadMesh
@@ -28,7 +27,7 @@ def retag_element(mesh: QuadMesh, mapping: Mapping[str, str]) -> QuadMesh:
     names no tag on this mesh raises -- a rename matching nothing is a typo, and a
     mis-named region is not visible again until the solver reads it."""
     return QuadMesh(mesh.line_mesh, mesh.quads, mesh.orient, mesh.interior,
-                    mesh.element_tags.rename(mapping, "quadmesh.retag_element"))
+                    mesh.element_tags.rename(mapping))
 
 
 def retag_edge(mesh: QuadMesh, mapping: Mapping[str, str]) -> QuadMesh:
@@ -69,13 +68,10 @@ def tag_edges(mesh: QuadMesh, rows: IntArray,
         raise ValueError(
             "tag_edges: got %d rows but %d tags -- pass one name for all of them or "
             "one per row" % (r.shape[0], names.shape[0]))
-    named = np.asarray(mesh.edge_tags.to_dense(mesh.line_mesh.n_lines), dtype=object)
-    for (q, side), nm in zip(r, names):
-        if nm:
-            named[edge_of[int(q), int(side) - 1]] = str(nm)
+    named = mesh.edge_tags.put(edge_of[r[:, 0], r[:, 1] - 1], names)
     return QuadMesh(
         LineMesh(mesh.line_mesh.point_mesh, mesh.line_mesh.lines, mesh.line_mesh.interior,
-                 Tags.from_dense(np.asarray(named, dtype=np.str_))),
+                 named),
         mesh.quads, mesh.orient, mesh.interior, mesh.element_tags)
 
 

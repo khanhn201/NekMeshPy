@@ -10,12 +10,12 @@ import numpy as np
 from .._typing import IntArray, Point, PointArray
 from ..core import conform
 from ..core.interp import coons_grid
-from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from ..quadmesh.assemble import loft as quad_loft
+from ..tags import Tags
 from .assemble import loft as hex_loft
 from .assemble import merge
 from .hexmesh import HexMesh
@@ -48,7 +48,7 @@ def _side_map(quads: IntArray) -> dict[tuple[int, int], list[int]]:
 
 
 def _patch_walk(quads: IntArray, sides: dict[tuple[int, int], list[int]],
-                q0: int, l0: int, who: str) -> IntArray:
+                q0: int, l0: int) -> IntArray:
     """The ``(A, B, 2)`` grid of ``(quad, origin)`` states of one structured patch."""
     def step(state: tuple[int, int], axis: int) -> tuple[int, int] | None:
         q, l = state
@@ -71,9 +71,9 @@ def _patch_walk(quads: IntArray, sides: dict[tuple[int, int], list[int]],
     widths = {len(c) for c in rows}
     if len(widths) != 1:
         raise ValueError(
-            "%s: a face patch is not a structured grid (row lengths %s) -- each face "
+            "a face patch is not a structured grid (row lengths %s) -- each face "
             "must be three structured patches meeting at one interior node"
-            % (who, sorted(widths)))
+            % sorted(widths))
     return np.array(rows, dtype=np.int64).transpose(1, 0, 2)
 
 
@@ -99,7 +99,7 @@ def _lattice(patch: IntArray, blocks: PointArray, order: int) -> PointArray:
     return out
 
 
-def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
+def _face_patches(qm: QuadMesh) -> list[PointArray]:
     """Recover a triangular face as its three patches, each a node lattice indexed
     **from its corner**: ``[0, 0]`` is the corner and ``[-1, -1]`` the face centre."""
     quads: IntArray = qm.corners
@@ -108,10 +108,10 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
     centres: IntArray = np.flatnonzero(val == 3)
     if corners.shape[0] != 3 or centres.shape[0] != 1:
         raise ValueError(
-            "%s: each face must be a triangle meshed as three structured patches "
+            "each face must be a triangle meshed as three structured patches "
             "meeting at one interior node -- expected 3 nodes on exactly one quad and "
             "1 node on exactly three, got %d and %d"
-            % (who, corners.shape[0], centres.shape[0]))
+            % (corners.shape[0], centres.shape[0]))
     order = qm.order
     nodes, conn = conform.conformal_quad(qm.points, quads, qm.quads, qm.orient,
                                          qm.line_mesh.interior, qm.interior, order)
@@ -122,20 +122,20 @@ def _face_patches(qm: QuadMesh, who: str) -> list[PointArray]:
     for q0 in (int(q) for q in np.flatnonzero((quads == c).any(axis=1))):
         l0 = int(np.flatnonzero(quads[q0] == c)[0])
         # centre-origin, then flipped so [0,0] is the corner and [-1,-1] the centre
-        lats.append(_lattice(_patch_walk(quads, sides, q0, l0, who),
+        lats.append(_lattice(_patch_walk(quads, sides, q0, l0),
                              blocks, order)[::-1, ::-1])
     got = np.array([lat[0, 0] for lat in lats])
     want = qm.points[corners]
     if not np.allclose(np.sort(got, axis=0), np.sort(want, axis=0),
                        rtol=0.0, atol=1e-9):
         raise ValueError(
-            "%s: the three patches do not reach the face's three corners -- it is not "
-            "a triangle meshed as three structured patches" % who)
+            "the three patches do not reach the face's three corners -- it is not "
+            "a triangle meshed as three structured patches")
     return lats
 
 
-def _corner_incidence(rec: Sequence[Sequence[PointArray]], tol: float,
-                      who: str) -> list[list[tuple[int, int]]]:
+def _corner_incidence(rec: Sequence[Sequence[PointArray]],
+                      tol: float) -> list[list[tuple[int, int]]]:
     """``[[(face, patch), x3], x4]`` -- the three patches meeting at each of the
     tetrahedron's four corners."""
     pts: list[Point] = []
@@ -153,20 +153,20 @@ def _corner_incidence(rec: Sequence[Sequence[PointArray]], tol: float,
         ids.append(row)
     if len(pts) != 4:
         raise ValueError(
-            "%s: the four faces must meet at exactly 4 corners, found %d -- they do "
-            "not bound a tetrahedron" % (who, len(pts)))
+            "the four faces must meet at exactly 4 corners, found %d -- they do "
+            "not bound a tetrahedron" % len(pts))
 
     at: list[list[tuple[int, int]]] = [[] for _ in range(4)]
     for fi, row in enumerate(ids):
         if len(set(row)) != 3:
-            raise ValueError("%s: face %d meets the same corner twice" % (who, fi))
+            raise ValueError("face %d meets the same corner twice" % fi)
         for k, v in enumerate(row):
             at[v].append((fi, k))
     for v, lst in enumerate(at):
         if len(lst) != 3:
             raise ValueError(
-                "%s: corner %d lies on %d faces, expected 3 -- the four faces must "
-                "share their six edges pairwise" % (who, v, len(lst)))
+                "corner %d lies on %d faces, expected 3 -- the four faces must "
+                "share their six edges pairwise" % (v, len(lst)))
     return at
 
 
@@ -197,17 +197,17 @@ def _coons3(f: dict[tuple[int, int], PointArray]) -> PointArray:
     return out
 
 
-def _face_tag(qm: QuadMesh, who: str) -> str:
+def _face_tag(qm: QuadMesh) -> str:
     """A face's single ``element_tags`` name, or ``""`` if it carries none."""
     names = qm.element_group_tags
     if len(names) > 1:
         raise ValueError(
-            "%s: a face must carry one element tag or none, got %s -- a tetrahedron "
-            "side is a single boundary patch" % (who, list(names)))
-    if names and not qm.element_tags.is_uniform(qm.n_quads):
+            "a face must carry one element tag or none, got %s -- a tetrahedron "
+            "side is a single boundary patch" % list(names))
+    if names and not qm.element_tags.is_uniform():
         raise ValueError(
-            "%s: face tagged %r has untagged quads -- tag the whole face or none of it"
-            % (who, names[0]))
+            "face tagged %r has untagged quads -- tag the whole face or none of it"
+            % names[0])
     return str(names[0]) if names else ""
 
 
@@ -217,7 +217,7 @@ def _block(lat: PointArray, order: int, tags: tuple[str, str, str],
     o = order
     ti, tj, tk = tags
     nl, nm, nn = ((s - 1) // o for s in lat.shape[:3])
-    bnd = Tags([0], [ti]) if ti else None
+    bnd = Tags([0], [ti], nl + 1) if ti else None
 
     def profile(j: int, k: int) -> LineMesh:
         col: PointArray = lat[:, j, k, :]
@@ -245,8 +245,8 @@ def _match(a: PointArray, b: PointArray, tol: float) -> bool:
 
 
 def _orient(a: tuple[PointArray, str], b: tuple[PointArray, str],
-            c: tuple[PointArray, str], tol: float,
-            who: str) -> tuple[tuple[PointArray, str], ...]:
+            c: tuple[PointArray, str],
+            tol: float) -> tuple[tuple[PointArray, str], ...]:
     """Put the three patches meeting at one corner on a common axis frame."""
     e0, e1 = a[0][:, 0], a[0][0, :]
     out: dict[int, tuple[PointArray, str]] = {}
@@ -258,9 +258,9 @@ def _orient(a: tuple[PointArray, str], b: tuple[PointArray, str],
                 out[2] = (cand, tag)               # (e0, e2)
     if set(out) != {1, 2}:
         raise ValueError(
-            "%s: the three patches meeting at a corner do not share their two edges "
+            "the three patches meeting at a corner do not share their two edges "
             "pairwise -- the faces are not conformal along the tetrahedron's edges "
-            "(or two of them are the same face)" % who)
+            "(or two of them are the same face)")
     return a, out[1], out[2]
 
 
@@ -271,23 +271,22 @@ def tetra(faces: Sequence[QuadMesh], *,
 
     ``element_tag`` names all four octants, so a tetra filling a corner of a larger
     region can carry that region's name like any other block does."""
-    who = "HexMesh.tetra"
     fs = list(faces)
     if len(fs) != 4:
-        raise ValueError("%s needs exactly 4 faces, got %d" % (who, len(fs)))
+        raise ValueError("a tetrahedron needs exactly 4 faces, got %d" % len(fs))
     orders = {f.order for f in fs}
     if len(orders) != 1:
         raise ValueError(
-            "%s: all four faces must share an order (got %s) -- a face's own nodes are "
+            "all four faces must share an order (got %s) -- a face's own nodes are "
             "the block boundary, so a lower-order one cannot describe it"
-            % (who, sorted(orders)))
+            % sorted(orders))
     order = fs[0].order
-    rec = [_face_patches(f, who) for f in fs]
-    ftag = [_face_tag(f, who) for f in fs]
+    rec = [_face_patches(f) for f in fs]
+    ftag = [_face_tag(f) for f in fs]
     tol = conform.entity_tol(np.vstack([f.points for f in fs]))
 
     # the four tetrahedron corners, matched across faces by position
-    at = _corner_incidence(rec, tol, who)
+    at = _corner_incidence(rec, tol)
     mid: Point = (np.mean([r[0][-1, -1] for r in rec], axis=0)
                   if center is None
                   else np.asarray(center, dtype=float).reshape(3))
@@ -297,14 +296,14 @@ def tetra(faces: Sequence[QuadMesh], *,
         (fa, ka), (fb, kb), (fc, kc) = at[v]
         (pa, ta), (pb, tb), (pc, tc) = _orient(
             (rec[fa][ka], ftag[fa]), (rec[fb][kb], ftag[fb]),
-            (rec[fc][kc], ftag[fc]), tol, who)
+            (rec[fc][kc], ftag[fc]), tol)
         # axis 0 / 1 / 2 run along the three tetrahedron edges at this corner;
         # pa spans (0, 1), pb spans (1, 2), pc spans (0, 2).
         if pb.shape[1] != pc.shape[1]:
             raise ValueError(
-                "%s: the patches at a corner disagree on an edge's node count "
+                "the patches at a corner disagree on an edge's node count "
                 "(%d vs %d) -- the faces are not conformal along that edge"
-                % (who, pb.shape[1], pc.shape[1]))
+                % (pb.shape[1], pc.shape[1]))
         qa, qb, qc = pa[-1, -1], pb[-1, -1], pc[-1, -1]      # the three face centres
         t0, t1, t2 = _lin(pa.shape[0]), _lin(pa.shape[1]), _lin(pb.shape[1])
         # the three inner sides are transfinite patches of two face spokes and two

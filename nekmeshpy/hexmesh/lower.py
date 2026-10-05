@@ -7,10 +7,10 @@ from scipy.spatial import cKDTree
 
 from .._typing import IntArray, PointArray
 from ..core import conform
-from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
+from ..tags import Tags
 from .hexmesh import HexMesh
 from .query import boundary_faces, face_tag_rows
 
@@ -43,7 +43,7 @@ def _high_order_nodes(mesh: HexMesh, quads_global: IntArray, edges_global: IntAr
     """The parent's own shared edge-interior and face-interior nodes for the given
     global edges and quads -- read out, never re-derived, which is the whole point."""
     e_idx = conform.locate_rows(mesh.edges, edges_global,
-                                who="boundary_mesh", what="edge")
+                                what="edge")
     en: PointArray = np.asarray(mesh.edge_nodes, dtype=float)[e_idx].copy()
     # the parent stores an edge's nodes min->max corner; flip those our edge traverses
     # the other way, so they read along the extracted edge's own direction
@@ -51,7 +51,7 @@ def _high_order_nodes(mesh: HexMesh, quads_global: IntArray, edges_global: IntAr
     if en.size:
         en[rev] = en[rev][:, ::-1]
     f_idx = conform.locate_rows(mesh.faces, quads_global,
-                                who="boundary_mesh", what="face")
+                                what="face")
     # the parent stores a face's interior in the frame of the row *it* chose, not of the
     # winding we are extracting it with -- turn it into ours, the face-family
     # counterpart of the edge reversal just above
@@ -80,9 +80,8 @@ def boundary_mesh(mesh: HexMesh, tag: str | None = None, *,
         elem = Tags.full(poly.shape[0], tag)
     else:
         # the extracted quad inherits the name of the parent face it came from
-        named = mesh.face_tags.to_dense(mesh.quad_mesh.n_quads)
-        elem = Tags.from_dense(
-            named[np.asarray(mesh.hexes, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
+        elem = Tags.from_dense(mesh.face_tags.take_dense(
+            np.asarray(mesh.hexes, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]))
     lines = LineMesh(mesh.points[gids], edges, en)
     return QuadMesh(lines, elem_edges, flip, fn, elem)
 

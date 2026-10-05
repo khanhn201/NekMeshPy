@@ -170,7 +170,7 @@ def integrate(blocks: PointArray, dim: int, *, moments: bool = False
     return meas, mom
 
 
-def centroid_of(blocks: PointArray, dim: int, who: str) -> Point:
+def centroid_of(blocks: PointArray, dim: int) -> Point:
     """The measure-weighted centroid ``integral x d(Omega) / integral d(Omega)`` of the
     elements ``blocks`` describes -- the mass-property centroid, not the mean of the
     nodes."""
@@ -178,9 +178,8 @@ def centroid_of(blocks: PointArray, dim: int, who: str) -> Point:
     total = float(meas.sum())
     if total == 0.0:
         raise ValueError(
-            "%s: the elements measure zero in total, so they have no centroid "
-            "(an empty mesh, or one whose elements cancel because some are inverted)"
-            % who)
+            "the elements measure zero in total, so they have no centroid "
+            "(an empty mesh, or one whose elements cancel because some are inverted)")
     out: Point = mom.sum(axis=0) / total
     return out
 

@@ -75,8 +75,8 @@ def test_line_spline_is_loft_at_order_one():
     assert np.array_equal(a.points, b.points)
     assert np.array_equal(np.asarray(a.lines), np.asarray(b.lines))
     assert list(a.point_tags) == list(b.point_tags)
-    assert np.array_equal(a.element_tags.to_dense(a.n_lines),
-                          b.element_tags.to_dense(b.n_lines))
+    assert np.array_equal(a.element_tags.to_dense(),
+                          b.element_tags.to_dense())
 
 
 # -- the middle rung ---------------------------------------------------------
@@ -109,8 +109,8 @@ def test_quad_spline_matches_loft_at_order_one():
     b = quadmesh.loft_spline(profs, loop=True, element_tags="w")
     assert np.array_equal(a.points, b.points)
     assert np.array_equal(np.asarray(a.corners), np.asarray(b.corners))
-    assert np.array_equal(a.element_tags.to_dense(a.n_quads),
-                          b.element_tags.to_dense(b.n_quads))
+    assert np.array_equal(a.element_tags.to_dense(),
+                          b.element_tags.to_dense())
 
 
 def test_quad_spline_carries_the_tag_arguments():
@@ -119,7 +119,7 @@ def test_quad_spline_carries_the_tag_arguments():
                              first_tag="lo", last_tag="hi")
     names = set(np.asarray(m.edge_tags.tags))
     assert {"lo", "hi"} <= names
-    assert set(m.element_tags.to_dense(m.n_quads)) == {"skin"}
+    assert set(m.element_tags.to_dense()) == {"skin"}
 
 
 def test_quad_spline_rejects_a_mismatched_profile():
@@ -186,8 +186,8 @@ def test_hex_spline_matches_loft_at_order_one():
     b = hexmesh.loft_spline(secs, loop=True, element_tags="core")
     assert np.array_equal(a.points, b.points)
     assert np.array_equal(np.asarray(a.corners), np.asarray(b.corners))
-    assert np.array_equal(a.element_tags.to_dense(a.n_hexes),
-                          b.element_tags.to_dense(b.n_hexes))
+    assert np.array_equal(a.element_tags.to_dense(),
+                          b.element_tags.to_dense())
 
 
 def test_hex_spline_takes_element_tags_over_a_slice():
@@ -195,4 +195,4 @@ def test_hex_spline_takes_element_tags_over_a_slice():
     secs = _sections(ORDER, 6)
     per = Tags.full(secs[0].n_quads, "col")
     m = hexmesh.loft_spline(secs[:4], element_tags=per)
-    assert set(m.element_tags.to_dense(m.n_hexes)) == {"col"}
+    assert set(m.element_tags.to_dense()) == {"col"}

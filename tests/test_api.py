@@ -72,8 +72,8 @@ def test_quality_module_matches_mesh(built_mesh):
 def test_int_layer_count_is_uniform_spacing():
     from nekmeshpy.core.fields import uniform_spacing, validate_layers
     # an int counts *layers* (cells), not positions -- 3 -> 4 positions
-    assert np.array_equal(validate_layers(3, "who"), uniform_spacing(3))
-    assert validate_layers(3, "who").size == 4
+    assert np.array_equal(validate_layers(3), uniform_spacing(3))
+    assert validate_layers(3).size == 4
 
 
 def test_int_layer_count_reaches_the_factories_bit_identically():
@@ -92,9 +92,9 @@ def test_layer_count_rejects_zero_and_floats():
 
     from nekmeshpy.core.fields import validate_layers
     with pytest.raises(ValueError):
-        validate_layers(0, "who")            # zero layers is not a mesh
+        validate_layers(0)            # zero layers is not a mesh
     with pytest.raises(ValueError):
-        validate_layers(2.0, "who")          # a lone float is not a position array
+        validate_layers(2.0)          # a lone float is not a position array
 
 
 # -- repr on the quad / hex / tri containers ----------------------------------

@@ -123,7 +123,7 @@ def test_box_is_closed_surface_with_face_tags():
     assert quadmesh.boundary_edges(qm).shape[0] == 0          # watertight: no free edges
     assert np.max(np.abs(qm.points), axis=0) == pytest.approx([2.0, 2.0, 2.0])
     from collections import Counter
-    counts = Counter(qm.element_tags.to_dense(qm.n_quads).tolist())
+    counts = Counter(qm.element_tags.to_dense().tolist())
     for side in ("inlet", "outlet", "bottom", "top", "front", "back"):
         assert counts[side] == 4 * 4                  # one face-worth of quads each
 
@@ -146,7 +146,7 @@ def test_sphere_pairs_with_box_by_index():
     # a shape does not name itself: untagged unless the caller asks
     assert not sph.element_tags
     assert set(quadmesh.sphere(R, N, element_tag="ball")
-               .element_tags.to_dense(box.n_quads).tolist()) == {"ball"}
+               .element_tags.to_dense().tolist()) == {"ball"}
 
 
 def test_sphere_box_annulus_is_watertight():
@@ -167,7 +167,7 @@ def test_half_box_is_open_at_the_ground_with_face_tags():
     assert np.min(qm.points[:, 2]) == pytest.approx(0.0)      # sits on z = 0
     assert np.max(np.abs(qm.points), axis=0) == pytest.approx([2.0, 2.0, 2.0])
     from collections import Counter
-    counts = Counter(qm.element_tags.to_dense(qm.n_quads).tolist())
+    counts = Counter(qm.element_tags.to_dense().tolist())
     for side in ("inlet", "outlet", "front", "back"):
         assert counts[side] == 4 * 3
     assert counts["top"] == 4 * 4
@@ -188,7 +188,7 @@ def test_hemisphere_pairs_with_half_box_by_index():
     assert not hs.element_tags                     # untagged unless asked, as above
     assert set(hs.edge_tags.tags.tolist()) == {"ground"}
     assert set(quadmesh.hemisphere(R, N, n_vertical=NV, element_tag="dome")
-               .element_tags.to_dense(hs.n_quads).tolist()) == {"dome"}
+               .element_tags.to_dense().tolist()) == {"dome"}
 
 
 @pytest.mark.parametrize("order", [1, 2, 3, 4])
@@ -448,7 +448,7 @@ def test_rectangle_far_field_in_tilted_plane():
 def test_loop_element_tags_name_every_line():
     # a closed 3-point loop has 3 line elements; one name covers them all
     lm = linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)], element_tags="a", loop=True)
-    assert lm.element_tags.to_dense(3).tolist() == ["a", "a", "a"]
+    assert lm.element_tags.to_dense().tolist() == ["a", "a", "a"]
     with pytest.raises(TypeError, match="single tag string"):
         linemesh.loft([(0, 0, 0), (1, 0, 0), (1, 1, 0)],
                       element_tags=["a", "b", "c"], loop=True)
@@ -465,7 +465,7 @@ def test_rectangle_far_field_carries_element_tags_by_side():
     assert outer.n_lines == 64
     assert len(outer.element_tags) == 64      # every line is tagged
     from collections import Counter
-    counts = Counter(outer.element_tags.to_dense(outer.n_lines).tolist())
+    counts = Counter(outer.element_tags.to_dense().tolist())
     # 64 line elements split evenly across the four symmetric box sides
     assert counts == {"bottom": 16, "outlet": 16, "top": 16, "inlet": 16}
     # each output line element's midpoint direction matches the side it was tagged with
@@ -474,7 +474,7 @@ def test_rectangle_far_field_carries_element_tags_by_side():
     ang = np.degrees(np.arctan2(mids[:, 1], mids[:, 0]))
     for target, side in ((0, "outlet"), (90, "top"), (180, "inlet"), (-90, "bottom")):
         k = int(np.argmin(np.abs(((ang - target + 180) % 360) - 180)))
-        assert outer.element_tags.to_dense(outer.n_lines)[k] == side
+        assert outer.element_tags.to_dense()[k] == side
 
 
 def test_annulus_consumes_outer_loop_element_tags():

@@ -16,7 +16,6 @@ from .._typing import (
 from ..core import frames, stations
 from ..core.fields import validate_layers
 from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
-from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.morph import blend as line_blend
@@ -24,6 +23,7 @@ from ..linemesh.morph import transform as line_transform
 from ..linemesh.morph import translate
 from ..linemesh.shape import path_fractions
 from ..pointmesh import PointMesh
+from ..tags import Tags
 from ._helpers import _check_boundary
 from .assemble import _loft_evaluated, loft
 from .quadmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, QuadMesh
@@ -44,7 +44,7 @@ def extrude(
     (the straight special case of :func:`loft <nekmeshpy.quadmesh.assemble.loft>`)."""
     axis_u: Vec3 = np.asarray(axis, dtype=float)
     axis_u = axis_u / np.linalg.norm(axis_u)
-    offsets = validate_layers(layers, "extrude layers") * float(length)
+    offsets = validate_layers(layers) * float(length)
     # the sweep is a rigid translation, so it *is* the rung-preserving ``translate``:
     # every node -- corner and private high-order interior alike -- rides the same
     # vector, and the tags / connectivity come through verbatim.  Each slice reuses
@@ -60,7 +60,7 @@ def annulus(inner: LineMesh, outer: LineMesh, radial: int | FloatArray, *,
             ) -> QuadMesh:
     """Ring O-grid filling the region between an inner and an outer closed loop -- e.g.
     a circular body inside a square far-field box."""
-    radial = validate_layers(radial, "annulus radial")
+    radial = validate_layers(radial)
     A: PointArray = _check_boundary(inner, "annulus inner", 3)   # (N,3)
     B: PointArray = _check_boundary(outer, "annulus outer", 3)   # (N,3)
     if A.shape[0] != B.shape[0]:
@@ -109,12 +109,12 @@ def from_grid(
     # -- the column profile, shared by every level -----------------------
     # tagged profile end points -> the two swept walls (loft: vertex 1 -> quad side
     # 4, vertex 2 -> side 2), which is exactly x_min / x_max.
-    pnamed = np.full(P.shape[0], "", dtype=object)
+    pbnd_t = Tags.empty(P.shape[0])
     for side in ("x_min", "x_max"):
         if side in tags:
             # loft carries the profile's first point onto quad side 4, its last onto 2
-            pnamed[0 if _GRID_SIDES[side][1] == 4 else -1] = tags[side]
-    pbnd_t = Tags.from_dense(np.asarray(pnamed, dtype=np.str_))
+            end = 0 if _GRID_SIDES[side][1] == 4 else P.shape[0] - 1
+            pbnd_t = pbnd_t.put([end], tags[side])
     # each profile is itself a ``LineMesh.loft`` of its ``i`` points: the rung below
     # builds the open ``i = 0..ni`` chain and, at order > 1, each segment's private
     # interior as the straight GLL blend of its two endpoints.  ``loft`` here builds

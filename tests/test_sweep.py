@@ -243,7 +243,7 @@ def test_element_tags_name_the_swept_column_of_each_section_quad():
     blk = hexmesh.sweep(sec, elbow, np.linspace(0.0, 1.0, 4),
                         orientation="fixed", up=(0, 1, 0), origin=(RB, 0.0, 0.0),
                         element_tags=per_quad)
-    tags = blk.element_tags.to_dense(blk.n_hexes).reshape(3, sec.n_quads)      # hex e = layer*M + q
+    tags = blk.element_tags.to_dense().reshape(3, sec.n_quads)      # hex e = layer*M + q
     assert list(np.unique(tags[:, 0])) == ["hot"]        # quad 0's column, every layer
     assert list(np.unique(tags[:, 1:])) == [""]
     # and a single string names the whole block

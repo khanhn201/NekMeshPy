@@ -89,7 +89,7 @@ def centroid(mesh: LineMesh, *, high_order: bool = False) -> Point:
     """The **length-weighted** centroid ``integral x ds / integral ds`` -- the mass
     property, not the mean of the points (which would weight a dense region of nodes
     over a long sparse one)."""
-    return measure.centroid_of(_blocks(mesh, high_order), 1, "linemesh.centroid")
+    return measure.centroid_of(_blocks(mesh, high_order), 1)
 
 
 __all__ = [

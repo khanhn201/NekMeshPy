@@ -34,42 +34,42 @@ PLANAR_TOL: float = 1e-9
 CURVATURE_TOL: float = 1e-10
 
 
-def _as_points(points: PointArray, who: str) -> PointArray:
+def _as_points(points: PointArray) -> PointArray:
     """Validate a ``(K,3)`` sampled curve, ``K >= 2``."""
     P: PointArray = np.asarray(points, dtype=float)
     if P.ndim != 2 or P.shape[1] != 3:
-        raise ValueError("%s: points must be a (K,3) array of 3-D coordinates, got %s; "
+        raise ValueError("points must be a (K,3) array of 3-D coordinates, got %s; "
                          "curves live honestly in 3-D, a (K,2) array is not padded"
-                         % (who, (P.shape,)))
+                         % (P.shape,))
     if P.shape[0] < 2:
-        raise ValueError("%s: need at least 2 points to define a tangent, got %d"
-                         % (who, P.shape[0]))
+        raise ValueError("need at least 2 points to define a tangent, got %d"
+                         % P.shape[0])
     return P
 
 
-def _as_frames_tangents(tangents: PointArray, k: int, who: str) -> PointArray:
+def _as_frames_tangents(tangents: PointArray, k: int) -> PointArray:
     """Validate a ``(K,3)`` tangent field against a known point count and unit-check it."""
     T: PointArray = np.asarray(tangents, dtype=float)
     if T.shape != (k, 3):
-        raise ValueError("%s: tangents must be (K,3) matching the %d points, got %s"
-                         % (who, k, (T.shape,)))
+        raise ValueError("tangents must be (K,3) matching the %d points, got %s"
+                         % (k, (T.shape,)))
     n: FloatArray = np.linalg.norm(T, axis=1)
     bad = int(np.argmax(np.abs(n - 1.0)))
     if abs(n[bad] - 1.0) > 1e-9:
-        raise ValueError("%s: tangents must be unit vectors; |tangents[%d]| = %.17g. "
-                         "Build them with frames.tangents(points)." % (who, bad, n[bad]))
+        raise ValueError("tangents must be unit vectors; |tangents[%d]| = %.17g. "
+                         "Build them with frames.tangents(points)." % (bad, n[bad]))
     return T
 
 
-def _unit_literal(vector: Vec3 | Sequence[float], who: str, name: str) -> Vec3:
+def _unit_literal(vector: Vec3 | Sequence[float], name: str) -> Vec3:
     """Validate and normalize a ``(3,)`` direction literal."""
     v: Vec3 = np.asarray(vector, dtype=float).reshape(-1)
     if v.shape != (3,):
-        raise ValueError("%s: %s must be a (3,) direction, got %s"
-                         % (who, name, (np.shape(vector),)))
+        raise ValueError("%s must be a (3,) direction, got %s"
+                         % (name, (np.shape(vector),)))
     n = float(np.linalg.norm(v))
     if n == 0.0:
-        raise ValueError("%s: %s must be a non-zero direction" % (who, name))
+        raise ValueError("%s must be a non-zero direction" % name)
     return v / n
 
 
@@ -92,7 +92,7 @@ def _end_derivative(x0: Point, x1: Point, x2: Point, a: float, b: float) -> Vec3
 
 def tangents(points: PointArray, *, loop: bool = False) -> PointArray:
     """Unit tangents ``(K,3)`` of the ``(K,3)`` sampled curve ``points``."""
-    P = _as_points(points, "tangents")
+    P = _as_points(points)
     k = P.shape[0]
 
     seg: PointArray = np.diff(P, axis=0)
@@ -138,8 +138,8 @@ def fixed_up(tangents: PointArray, up: Vec3 | Sequence[float]) -> FloatArray:
     T: PointArray = np.asarray(tangents, dtype=float)
     if T.ndim != 2 or T.shape[1] != 3:
         raise ValueError("fixed_up: tangents must be a (K,3) array, got %s" % (T.shape,))
-    T = _as_frames_tangents(T, T.shape[0], "fixed_up")
-    U: Vec3 = _unit_literal(up, "fixed_up", "up")
+    T = _as_frames_tangents(T, T.shape[0])
+    U: Vec3 = _unit_literal(up, "up")
 
     dot: FloatArray = T @ U
     bad = int(np.argmax(np.abs(dot)))
@@ -181,16 +181,16 @@ def _transport_reference(points: PointArray, tangents: PointArray, r0: Vec3,
     return R, R[-1]
 
 
-def _seed(tangent: Vec3, up0: Vec3 | Sequence[float], who: str) -> Vec3:
+def _seed(tangent: Vec3, up0: Vec3 | Sequence[float]) -> Vec3:
     """Orthonormalize the seed ``up0`` against the first tangent, or reject it."""
-    U: Vec3 = _unit_literal(up0, who, "up0")
+    U: Vec3 = _unit_literal(up0, "up0")
     d = float(U @ tangent)
     if abs(d) >= 1.0 - PARALLEL_TOL:
         raise ValueError(
-            "%s: up0 = %s is parallel to tangents[0] = %s (|cos| = %.17g); the seed must "
+            "up0 = %s is parallel to tangents[0] = %s (|cos| = %.17g); the seed must "
             "have a component in the first cross-section plane. Pick an up0 transverse "
             "to the path's start direction."
-            % (who, np.array2string(U, precision=6),
+            % (np.array2string(U, precision=6),
                np.array2string(np.asarray(tangent), precision=6), abs(d)))
     r: Vec3 = U - d * tangent
     return r / float(np.linalg.norm(r))
@@ -200,9 +200,9 @@ def parallel_transport(points: PointArray, tangents: PointArray,
                        up0: Vec3 | Sequence[float], *, loop: bool = False,
                        distribute: bool = True) -> FloatArray:
     """``(K,3,3)`` rotation-minimizing frames along ``points``, seeded by ``up0``."""
-    P = _as_points(points, "parallel_transport")
-    T = _as_frames_tangents(tangents, P.shape[0], "parallel_transport")
-    r0 = _seed(T[0], up0, "parallel_transport")
+    P = _as_points(points)
+    T = _as_frames_tangents(tangents, P.shape[0])
+    r0 = _seed(T[0], up0)
 
     R, wrap = _transport_reference(P, T, r0, loop=loop)
     if loop and distribute:
@@ -232,9 +232,9 @@ def holonomy(points: PointArray, tangents: PointArray,
     """The residual twist, in **radians**, of transporting a frame once around the
     closed curve ``points`` (the closing segment ``points[K-1] -> points[0]`` included).
     """
-    P = _as_points(points, "holonomy")
-    T = _as_frames_tangents(tangents, P.shape[0], "holonomy")
-    r0 = _seed(T[0], up0, "holonomy")
+    P = _as_points(points)
+    T = _as_frames_tangents(tangents, P.shape[0])
+    r0 = _seed(T[0], up0)
     R, wrap = _transport_reference(P, T, r0, loop=True)
     return _signed_angle(R[0], wrap, T[0])
 
@@ -242,8 +242,8 @@ def holonomy(points: PointArray, tangents: PointArray,
 def frenet(points: PointArray, tangents: PointArray) -> FloatArray:
     """``(K,3,3)`` Frenet-Serret frames: ``u`` the principal normal, ``v`` the binormal,
     ``w`` the tangent."""
-    P = _as_points(points, "frenet")
-    T = _as_frames_tangents(tangents, P.shape[0], "frenet")
+    P = _as_points(points)
+    T = _as_frames_tangents(tangents, P.shape[0])
 
     D: PointArray = np.empty_like(T)
     D[1:-1] = 0.5 * (T[2:] - T[:-2])
@@ -307,7 +307,7 @@ def plane_frame(points: PointArray, *,
         raise ValueError("plane_frame: every point is coincident, so the section has "
                          "no plane and no size")
     if normal is not None:
-        w: Vec3 = _unit_literal(normal, "plane_frame", "normal")
+        w: Vec3 = _unit_literal(normal, "normal")
     elif P.shape[0] < 3:
         raise ValueError("plane_frame: %d points do not determine a plane; pass "
                          "normal= to name it" % (P.shape[0],))
@@ -322,7 +322,7 @@ def plane_frame(points: PointArray, *,
                 "fitted plane, %.3g of the section's own extent (tolerance %.0e). Pass "
                 "normal= to name the plane to sweep it from."
                 % (off, off / extent, PLANAR_TOL))
-    if hint is not None and float(w @ _unit_literal(hint, "plane_frame", "hint")) < 0.0:
+    if hint is not None and float(w @ _unit_literal(hint, "hint")) < 0.0:
         w = -w
     Q: PointArray = D - np.outer(D @ w, w)
     nq: FloatArray = np.linalg.norm(Q, axis=1)
@@ -350,10 +350,10 @@ def sweep_placements(profile_points: PointArray, path_points: PointArray, *,
     """One rigid ``(matrix, offset)`` per path station, carrying a planar profile from
     its own plane onto the moving frame of the sampled curve ``path_points`` ``(K,3)``.
     """
-    P = _as_points(path_points, "sweep_placements")
+    P = _as_points(path_points)
     K = P.shape[0]
     T = (tangents(P, loop=loop) if path_tangents is None
-         else _as_frames_tangents(path_tangents, K, "sweep_placements"))
+         else _as_frames_tangents(path_tangents, K))
     R_from, o_from = plane_frame(profile_points, normal=normal, origin=origin,
                                  hint=T[0])
     # ``up`` carries either a single ``(3,)`` world direction or a ``(K,3)`` per-station

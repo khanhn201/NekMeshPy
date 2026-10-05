@@ -79,9 +79,9 @@
    :members:
 ```
 
-## `core.tags`
+## `core.selection`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.core.tags
+.. automodule:: nekmeshpy.core.selection
    :members:
 ```

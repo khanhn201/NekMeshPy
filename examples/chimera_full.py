@@ -915,7 +915,7 @@ print("stage3:", mesh3.n_hexes, "watertight",
 # having to teach each blend about tags -- and it is safe precisely because everything
 # that is *not* wall here is already named: the two riser caps, and the two chimera
 # ports named in ``place_t1``.
-_named = mesh3.face_tags.to_dense(mesh3.quad_mesh.n_quads)
+_named = mesh3.face_tags.to_dense()
 _free = np.flatnonzero(hexmesh.boundary_face_ids(mesh3))
 mesh3 = hexmesh.tag_faces(mesh3, _free[_named[_free] == ""], "wall")
 
@@ -978,7 +978,7 @@ else:
 # the morph blocks' own lateral faces are unnamed for the same reason the blends' were
 # -- and the two manifold-side port names have just been welded shut, so they go too
 mesh_out = hexmesh.retag_face(mesh_out, {PORT_TAG_IN: "", PORT_TAG_OUT: ""})
-_named = mesh_out.face_tags.to_dense(mesh_out.quad_mesh.n_quads)
+_named = mesh_out.face_tags.to_dense()
 _free = np.flatnonzero(hexmesh.boundary_face_ids(mesh_out))
 mesh_out = hexmesh.tag_faces(mesh_out, _free[_named[_free] == ""], "wall")
 

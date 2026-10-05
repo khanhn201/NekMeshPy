@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from .._typing import IntArray, PointArray, StrArray
+from .._typing import IntArray, PointArray
 from ..core import conform
-from ..core.tags import Tags
 from ..linemesh import LineMesh
+from ..tags import Tags
 from .quadmesh import QuadMesh
 from .query import boundary_edges
 
@@ -16,11 +16,11 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
     """A section's boundary as a ``LineMesh``, carrying the section's **own** nodes."""
     # a tag names a shared *edge*, so the quads carrying it are looked up rather than
     # stored: an edge on the boundary has one, an interior one has both of its own.
-    named: StrArray = mesh.edge_tags.to_dense(mesh.line_mesh.n_lines)
+    quads = np.asarray(mesh.quads, dtype=np.int64)
     if tag is None:
         sel: IntArray = boundary_edges(mesh)
     else:
-        hit = np.argwhere(named[np.asarray(mesh.quads, dtype=np.int64)] == tag)
+        hit = np.argwhere(mesh.edge_tags.take_dense(quads).reshape(quads.shape) == tag)
         if hit.shape[0] == 0:
             raise ValueError(
                 "boundary_mesh: no edge carries the tag %r; this section has %s"
@@ -32,7 +32,7 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
     gids: IntArray = np.unique(pairs)
     local: IntArray = np.searchsorted(gids, pairs)
 
-    e_idx = conform.locate_rows(mesh.edges, pairs, who="boundary_mesh", what="edge")
+    e_idx = conform.locate_rows(mesh.edges, pairs, what="edge")
     en: PointArray = np.asarray(mesh.edge_nodes, dtype=float)[e_idx].copy()
     # the parent stores an edge's nodes min->max corner; flip those this loop traverses
     # the other way, so they read along the extracted element's own direction
@@ -44,7 +44,7 @@ def boundary_mesh(mesh: QuadMesh, tag: str | None = None) -> LineMesh:
         elem = Tags.full(pairs.shape[0], tag)
     else:
         elem = Tags.from_dense(
-            named[np.asarray(mesh.quads, dtype=np.int64)[sel[:, 0], sel[:, 1] - 1]])
+            mesh.edge_tags.take_dense(quads[sel[:, 0], sel[:, 1] - 1]))
     return LineMesh(mesh.points[gids], local, en, elem)
 
 

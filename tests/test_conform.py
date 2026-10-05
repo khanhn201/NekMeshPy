@@ -70,7 +70,7 @@ def test_ogrid_round_trip(order):
     # the nodes have to be carried across by identity, not by index.
     want, _, _ = conform.unique_edges(np.asarray(qm.corners, dtype=np.int64), 2)
     perm = conform.locate_rows(np.asarray(qm.edges, dtype=np.int64), want,
-                               who="test_ogrid_round_trip", what="edge")
+                               what="edge")
     rebuilt = quad_from_entities(qm.points, qm.corners,
                                  edge_nodes=np.asarray(qm.edge_nodes)[perm],
                                  interior=qm.interior, order=order)
@@ -143,7 +143,7 @@ def test_edge_nodes_canonical_between_incident_quads(order):
     assert qm.orient.any()
     local = conform.gather_edge_nodes(qm.edge_nodes, qm.quads, qm.orient)
     back = conform.scatter_edge_nodes(local, qm.quads, qm.orient, qm.edges.shape[0],
-                                      conform.entity_tol(qm.points), "test")
+                                      conform.entity_tol(qm.points))
     assert np.allclose(back, qm.edge_nodes, atol=1e-12)
 
 
@@ -160,7 +160,7 @@ def test_non_conforming_edge_nodes_rejected(order):
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order edge"):
         conform.scatter_edge_nodes(local, qm.quads, qm.orient, qm.edges.shape[0],
-                                   conform.entity_tol(qm.points), "QuadMesh.test")
+                                   conform.entity_tol(qm.points))
 
 
 def test_corners_are_single_sourced_so_cannot_disagree():
@@ -495,7 +495,7 @@ def test_non_conforming_hex_face_rejected(order):
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order face"):
         conform.scatter_face_nodes(local, hm.hexes, hm.orient, hm.faces.shape[0],
-                                   conform.entity_tol(hm.points), "HexMesh.test")
+                                   conform.entity_tol(hm.points))
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -505,8 +505,7 @@ def test_non_conforming_hex_edge_rejected(order):
     local[0] += 100.0
     with pytest.raises(ValueError, match="non-conforming high-order edge"):
         conform.scatter_edge_nodes(local, hm._elem_edges, hm._edge_flip,
-                                   hm.edges.shape[0], conform.entity_tol(hm.points),
-                                   "HexMesh.test")
+                                   hm.edges.shape[0], conform.entity_tol(hm.points))
 
 
 @pytest.mark.parametrize("order", [2, 3])
@@ -518,12 +517,12 @@ def test_hex_entity_gather_scatter_round_trip(order):
     e_local = conform.gather_edge_nodes(hm.edge_nodes, hm._elem_edges, hm._edge_flip)
     assert np.allclose(
         conform.scatter_edge_nodes(e_local, hm._elem_edges, hm._edge_flip,
-                                   hm.edges.shape[0], tol, "test"),
+                                   hm.edges.shape[0], tol),
         hm.edge_nodes, atol=1e-12)
     f_local = conform.gather_face_nodes(hm.face_nodes, hm.hexes, hm.orient)
     assert np.allclose(
         conform.scatter_face_nodes(f_local, hm.hexes, hm.orient,
-                                   hm.faces.shape[0], tol, "test"),
+                                   hm.faces.shape[0], tol),
         hm.face_nodes, atol=1e-12)
 
 

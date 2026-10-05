@@ -20,12 +20,12 @@ from ..core import conform, surfaces
 from ..core.fields import gll_nodes, validate_layers
 from ..core.interp import coons_grid, coons_grid_fn
 from ..core.surfaces import SurfaceCurve, SurfaceMap
-from ..core.tags import Tags
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.assemble import loft_fn as line_loft_fn
 from ..linemesh.morph import reverse as line_reverse
 from ..linemesh.shape import line
+from ..tags import Tags
 from ._helpers import Overlay, _check_boundary, _elevate, entities_from_blocks
 from .assemble import loft_fn, merge
 from .lift import from_grid
@@ -43,7 +43,7 @@ def _seg_tags(curve: LineMesh) -> list[str] | None:
     element is untagged (so an untagged curve stays untagged)."""
     if not curve.element_tags:
         return None
-    return [str(x) for x in curve.element_tags.to_dense(curve.n_lines).tolist()]
+    return [str(x) for x in curve.element_tags.to_dense().tolist()]
 
 
 def _ordered_sides(edges: Sequence[LineMesh] | Mapping[str, LineMesh],
@@ -330,7 +330,7 @@ def structured(edges: Sequence[LineMesh] | Mapping[str, LineMesh], *,
         blocks: PointArray = blk.transpose(0, 2, 1, 3).reshape(
             quads.shape[0], (order + 1) ** 2, 3)
         lm, elem_edges, flip, interior = entities_from_blocks(
-            blocks, quads, points, order, "QuadMesh.structured")
+            blocks, quads, points, order)
         # ``quads`` is unchanged, so the rebuilt edge table pairs with the old one
         # through the same (quad, side) rows the tags were authored in
         qm = tag_edges(QuadMesh(lm, elem_edges, flip, interior, qm.element_tags),
@@ -369,7 +369,7 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
     if rad <= 0.0:
         raise ValueError("ogrid: boundary is degenerate (all points coincide)")
     n = n_side // 2
-    radial = validate_layers(radial, "ogrid radial")
+    radial = validate_layers(radial)
     fr = quadrant_seam_fractions(n, radial, quadrant_scale)
     starts = [0, n_side, 2 * n_side, 3 * n_side]
     arcs = [_slice_chain(boundary, a, b)
@@ -399,7 +399,7 @@ def half_ogrid(arc: LineMesh, spine: LineMesh,
     if (na - 1) % 4 != 0:
         raise ValueError("half_ogrid: arc must have 4*Ntheta+1 points (Ntheta >= 1)")
     Nt = (na - 1) // 4
-    radial = validate_layers(radial, "half_ogrid radial")
+    radial = validate_layers(radial)
     Nr = radial.size - 1
 
     # spine is meshed exactly: its points must be sampled monotonically along the
@@ -483,7 +483,7 @@ def quadrant_ogrid(arc: LineMesh, seam1: LineMesh, seam2: LineMesh,
     n = (na - 1) // 2
     if not 0.0 < center_scale < 1.0:
         raise ValueError("quadrant_ogrid needs center_scale in (0, 1)")
-    radial = validate_layers(radial, "quadrant_ogrid radial")
+    radial = validate_layers(radial)
     Nr = radial.size - 1
     st = dict(side_tags or {})
     extra = [s for s in st if s not in _QUADRANT_SEAMS]
@@ -625,7 +625,7 @@ def quadrant_seam_fractions(n_side: int, radial: int | FloatArray,
         raise ValueError("quadrant_seam_fractions needs n_side >= 1, got %d" % ns)
     if not 0.0 < quadrant_scale < 1.0:
         raise ValueError("quadrant_seam_fractions needs quadrant_scale in (0, 1)")
-    rad = validate_layers(radial, "quadrant_seam_fractions radial")
+    rad = validate_layers(radial)
     s_m = quadrant_scale
     fr: FloatArray = np.concatenate([np.linspace(0.0, s_m, ns + 1),
                                      s_m + rad[1:] * (1.0 - s_m)])
@@ -648,7 +648,7 @@ def spine_fractions(n_theta: int, radial: int | FloatArray,
         raise ValueError("spine_fractions needs n_theta >= 1, got %d" % nt)
     if not 0.0 < quadrant_scale < 1.0:
         raise ValueError("spine_fractions needs quadrant_scale in (0, 1)")
-    rad = validate_layers(radial, "spine_fractions radial")
+    rad = validate_layers(radial)
     s_n, s_s = (1.0 - quadrant_scale) / 2, (1.0 + quadrant_scale) / 2
     fr: FloatArray = np.concatenate([((1.0 - rad[1:]) * s_n)[::-1],
                                      np.linspace(s_n, s_s, 2 * nt + 1),
@@ -675,7 +675,7 @@ def spined_ogrid(boundary: LineMesh, radial: int | FloatArray, *,
             "into two 4*Ntheta+1 arcs); got %d" % M)
     nh = M // 2
     Nt = nh // 4
-    radial = validate_layers(radial, "spined_ogrid radial")
+    radial = validate_layers(radial)
 
     # The spine is meshed exactly at the points given -- nothing is resampled here.
     # A caller-supplied spine must already carry the [north caps, center fan, south

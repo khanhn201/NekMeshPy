@@ -57,7 +57,7 @@ def _folded_quad():
     pts = FOLDED[0][corner_indices(2, 2)]
     quads = np.array([[0, 1, 2, 3]], dtype=np.int64)
     lm, elem_edges, flip, interior = entities_from_blocks(
-        FOLDED, quads, pts, 2, "test_quality_order")
+        FOLDED, quads, pts, 2)
     return QuadMesh(lm, elem_edges, flip, interior)
 
 

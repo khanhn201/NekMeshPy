@@ -19,7 +19,6 @@ from .._typing import (
 from ..core import frames, stations
 from ..core.fields import validate_layers
 from ..core.paths import Orientation, Path, UpSpec, resolve_frame, sample_up
-from ..core.tags import Tags
 from ..linemesh.shape import path_fractions
 from ..quadmesh import QuadMesh
 from ..quadmesh.lift import from_grid as quad_from_grid
@@ -30,6 +29,7 @@ from ..quadmesh.morph import transform as quad_transform
 from ..quadmesh.morph import translate
 from ..quadmesh.ports import Port
 from ..quadmesh.query import plane_normal as quad_plane_normal
+from ..tags import Tags
 from .assemble import _loft_evaluated, loft
 from .hexmesh import _GRID_SIDES, _ORIGIN, _Z_AXIS, HexMesh
 
@@ -51,7 +51,7 @@ def extrude(
     block."""
     axis_u: Vec3 = np.asarray(axis, dtype=float)
     axis_u = axis_u / np.linalg.norm(axis_u)
-    offsets = validate_layers(layers, "extrude layers") * float(length)
+    offsets = validate_layers(layers) * float(length)
     # the sweep is a rigid translation, so it *is* the rung-preserving ``translate``:
     # every node -- corners, shared edge-interior, private quad-interior -- rides the
     # same vector (and ``origin`` shifts all three alike), because that map is itself
@@ -73,7 +73,7 @@ def annulus(
 ) -> HexMesh:
     """Shell O-grid filling the region between an inner and an outer closed quad surface
     (e.g. a sphere inside a cubic far-field box)."""
-    radial = validate_layers(radial, "annulus radial")
+    radial = validate_layers(radial)
     A: PointArray = np.asarray(inner.points, dtype=float).reshape(-1, 3)
     B: PointArray = np.asarray(outer.points, dtype=float).reshape(-1, 3)
     if A.shape[0] != B.shape[0]:
@@ -229,9 +229,9 @@ def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
         raise ValueError("adapter: layers must be >= 1, got %d" % layers)
     sec_a = a.section if isinstance(a, Port) else a
     sec_b = b.section if isinstance(b, Port) else b
-    pa, a_stated = _as_port(a, sec_b.points.mean(axis=0), "adapter")
-    pb, b_stated = _as_port(b, sec_a.points.mean(axis=0), "adapter")
-    _check_facing(pa, pb, a_stated and b_stated, "adapter", radius_tol)
+    pa, a_stated = _as_port(a, sec_b.points.mean(axis=0))
+    pb, b_stated = _as_port(b, sec_a.points.mean(axis=0))
+    _check_facing(pa, pb, a_stated and b_stated, radius_tol)
     if axis is None:
         if not a_stated:
             raise ValueError(
@@ -256,7 +256,7 @@ def adapter(a: QuadMesh | Port, b: QuadMesh | Port, *,
                 element_tags=element_tags)
 
 
-def _as_port(x: QuadMesh | Port, toward: Point, who: str) -> tuple[Port, bool]:
+def _as_port(x: QuadMesh | Port, toward: Point) -> tuple[Port, bool]:
     """``(port, was_stated)`` -- promote a bare ``QuadMesh`` by *guessing* its outward
     direction as the one pointing at ``toward``, or take a ``Port``'s stated one."""
     if isinstance(x, Port):
@@ -269,8 +269,7 @@ def _as_port(x: QuadMesh | Port, toward: Point, who: str) -> tuple[Port, bool]:
     return Port(x, n, c, r), False
 
 
-def _check_facing(pa: Port, pb: Port, both_stated: bool, who: str,
-                  radius_tol: float) -> None:
+def _check_facing(pa: Port, pb: Port, both_stated: bool, radius_tol: float) -> None:
     """The two checks a guessed direction cannot make.  Skipped unless *both* sides
     stated theirs -- a guess is derived from the very geometry being checked, so
     checking it would only ever confirm itself."""
@@ -278,19 +277,19 @@ def _check_facing(pa: Port, pb: Port, both_stated: bool, who: str,
         return
     if not pa.faces(pb):
         raise ValueError(
-            "%s: the two ports do not face each other (normals %s and %s, cosine "
+            "the two ports do not face each other (normals %s and %s, cosine "
             "%+.3f). A connector between them would have to fold back through one of "
             "the components; reverse whichever port is stated the wrong way round."
-            % (who, np.array2string(pa.normal, precision=3),
+            % (np.array2string(pa.normal, precision=3),
                np.array2string(pb.normal, precision=3),
                float(pa.normal @ pb.normal)))
     big = max(pa.radius, pb.radius)
     if abs(pa.radius - pb.radius) > radius_tol * big:
         raise ValueError(
-            "%s: the two ports are different sizes (radius %.6g and %.6g, %.1f%% "
+            "the two ports are different sizes (radius %.6g and %.6g, %.1f%% "
             "apart). This joins same-radius sections; blend or loft between them "
             "instead if a taper is what you want."
-            % (who, pa.radius, pb.radius,
+            % (pa.radius, pb.radius,
                100.0 * abs(pa.radius - pb.radius) / big))
 
 
@@ -324,9 +323,9 @@ def bridge(a: QuadMesh | Port, b: QuadMesh | Port, *, layers: int = 4,
         raise ValueError("bridge: blend_layers must be >= 1, got %d" % blend_layers)
     sec_a = a.section if isinstance(a, Port) else a
     sec_b = b.section if isinstance(b, Port) else b
-    pa, a_stated = _as_port(a, sec_b.points.mean(axis=0), "bridge")
-    pb, b_stated = _as_port(b, sec_a.points.mean(axis=0), "bridge")
-    _check_facing(pa, pb, a_stated and b_stated, "bridge", radius_tol)
+    pa, a_stated = _as_port(a, sec_b.points.mean(axis=0))
+    pb, b_stated = _as_port(b, sec_a.points.mean(axis=0))
+    _check_facing(pa, pb, a_stated and b_stated, radius_tol)
     ca, cb = sec_a.points.mean(axis=0), sec_b.points.mean(axis=0)
     length = float(np.linalg.norm(cb - ca))
     stub = min(stub_max, stub_fraction * length)

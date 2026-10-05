@@ -108,7 +108,7 @@ def test_fluid_puts_the_named_region_first(tmp_path):
     """Regardless of storage order (solid first here), the file's elements 1..nelgv
     are exactly the ``"fluid"``-tagged ones."""
     mesh = _cht_pair()
-    regs = mesh.element_tags.to_dense(mesh.n_hexes)
+    regs = mesh.element_tags.to_dense()
     n_fluid = int((regs == "fluid").sum())
     path = str(tmp_path / "cht.re2")
     writer.to_re2(mesh, path, groups={"fluid_wall": "W  "}, fluid="fluid",
@@ -164,7 +164,7 @@ def _named_interface(mesh):
     """The one shared face between the mesh's ``"fluid"`` and ``"solid"`` regions,
     named ``"interface"`` -- the conjugate-wall pattern every CHT mesher in the repo
     uses (``wire_coil.py``, ``rod_bundle.py``)."""
-    regs = mesh.element_tags.to_dense(mesh.n_hexes)
+    regs = mesh.element_tags.to_dense()
     hexes = np.asarray(mesh.hexes)
     owners = np.full((mesh.quad_mesh.n_quads, 2), -1)
     slot = np.zeros(mesh.quad_mesh.n_quads, dtype=int)
@@ -186,7 +186,7 @@ def test_a_name_absent_from_thermal_gets_no_row_and_no_warning(tmp_path):
     mesh = _named_interface(hexmesh.merge([solid, fluid], tol=1e-9))
     # the two regions' *own* remaining boundary, named apart -- "fluid_wall" alone is
     # a valid velocity name, exactly as a real conjugate mesh's would be
-    regs = mesh.element_tags.to_dense(mesh.n_hexes)
+    regs = mesh.element_tags.to_dense()
     bnd = np.flatnonzero(hexmesh.boundary_face_ids(mesh))
     hexes = np.asarray(mesh.hexes)
     face_owner = np.full(mesh.quad_mesh.n_quads, -1)
@@ -227,7 +227,7 @@ def test_periodic_rows_follow_the_reorder(tmp_path):
     fluid = _slab(0.0, "fluid", first_tag="z_lo", last_tag="z_hi")
     solid = _slab(1.0, "solid")
     mesh = hexmesh.merge([solid, fluid], tol=1e-9)     # solid first in storage
-    regs = mesh.element_tags.to_dense(mesh.n_hexes)
+    regs = mesh.element_tags.to_dense()
     n_fluid = int((regs == "fluid").sum())
 
     pairs = hexmesh.periodic_pairs(
@@ -254,7 +254,7 @@ def test_periodic_pairs_may_span_both_regions(tmp_path):
     fluid = _slab(0.0, "fluid", first_tag="f_lo", last_tag="f_hi")
     solid = _slab(1.0, "solid", first_tag="s_lo", last_tag="s_hi")
     mesh = hexmesh.merge([solid, fluid], tol=1e-9)
-    regs = mesh.element_tags.to_dense(mesh.n_hexes)
+    regs = mesh.element_tags.to_dense()
     n_fluid = int((regs == "fluid").sum())
     T = affine.translation([0.0, 0.0, 2.0])
 

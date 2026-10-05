@@ -21,7 +21,7 @@ import logging
 import numpy as np
 
 from nekmeshpy import HexMesh, hexmesh, quadmesh, writer
-from nekmeshpy.core.tags import Tags
+from nekmeshpy.tags import Tags
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 

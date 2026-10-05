@@ -100,27 +100,27 @@ def symmetric_spacing(n: int, ratio: float = 1.0) -> FloatArray:
     return np.concatenate([first[:-1], second])      # 2*m+1 = n+1 fractions
 
 
-def validate_layers(positions: int | FloatArray, who: str) -> FloatArray:
+def validate_layers(positions: int | FloatArray) -> FloatArray:
     """Normalize a layer *specification* to the flattened array of normalized layer
-    positions every sweep / fill factory consumes. ``who`` labels the caller in errors.
+    positions every sweep / fill factory consumes.
     """
     if isinstance(positions, (int, np.integer)) and not isinstance(positions, bool):
         n = int(positions)
         if n < 1:
             raise ValueError(
-                "%s: an int layer count means n uniform layers, so it needs n >= 1; "
+                "an int layer count means n uniform layers, so it needs n >= 1; "
                 "got %d -- pass an explicit position array (e.g. "
-                "geometric_spacing(n, ratio)) for a graded sweep" % (who, n))
+                "geometric_spacing(n, ratio)) for a graded sweep" % n)
         return uniform_spacing(n)
     p = np.asarray(positions, dtype=float).ravel()
     if p.size < 2:
-        raise ValueError("%s: needs at least 2 layer positions" % who)
+        raise ValueError("needs at least 2 layer positions")
     if np.any(p < 0.0) or np.any(p > 1.0):
-        raise ValueError("%s: layer positions must lie in [0, 1]" % who)
+        raise ValueError("layer positions must lie in [0, 1]")
     if np.any(np.diff(p) <= 0.0):
-        raise ValueError("%s: layer positions must be strictly increasing" % who)
+        raise ValueError("layer positions must be strictly increasing")
     if not np.isclose(float(p[-1]), 1.0):
-        raise ValueError("%s: last layer position must be 1.0" % who)
+        raise ValueError("last layer position must be 1.0")
     return p
 
 

@@ -18,13 +18,14 @@ from ..core import conform, stations
 from ..core.conform import entity_tol
 from ..core.fields import gll_nodes
 from ..core.interp import resample_block_at
-from ..core.tags import Tags, mask_for_selection, weld
+from ..core.selection import Selection, mask_for_selection
 from ..pointmesh import PointMesh
+from ..tags import Tags, weld
 from .linemesh import LineMesh
 from .query import boundary_points, element_blocks
 
 
-def _one_tag(tag: str | None, who: str) -> str:
+def _one_tag(tag: str | None, name: str) -> str:
     """A rung-1 tag argument as a plain string: one point carries one name."""
     if tag is None:
         return ""
@@ -32,7 +33,7 @@ def _one_tag(tag: str | None, who: str) -> str:
         raise TypeError(
             "LineMesh.loft: %s must be a single tag string or None -- a slice here is "
             "one point, so there is nothing to tag per element; got %s"
-            % (who, type(tag).__name__))
+            % (name, type(tag).__name__))
     return tag
 
 
@@ -66,19 +67,14 @@ def loft(
         lines = np.column_stack([idx[:-1], idx[1:]])
 
     # ``first`` / ``last`` name the chain's two end **points**, so they are tags on
-    # the rung below -- written into a dense per-point row rather than as two
+    # the rung below -- written onto the points rather than as two
     # (line, side) rows.  On a ``loop`` both name the same point (the seam), and the
     # later write wins: one point cannot carry two names.
     first = _one_tag(first_tag, "first_tag")
     last = _one_tag(last_tag, "last_tag")
-    ptags = Tags.empty()
+    ptags = Tags.empty(n)
     if (first or last) and lines.shape[0]:
-        named = np.full(pts.shape[0], "", dtype=object)
-        if first:
-            named[lines[0, 0]] = first
-        if last:
-            named[lines[-1, 1]] = last
-        ptags = Tags.from_dense(np.asarray(named, dtype=np.str_))
+        ptags = ptags.put([lines[0, 0]], first).put([lines[-1, 1]], last)
 
     if order > 1 and interior is None:
         # straight GLL blend between each line's two endpoints -- the same
@@ -88,7 +84,7 @@ def loft(
         g = gll_nodes(order)[1:order]              # interior GLL nodes only
         interior = a[:, None, :] + g[None, :, None] * (b - a)[:, None, :]
     tag = _one_tag(element_tags, "element_tags")
-    etags = Tags.full(lines.shape[0], tag) if tag else Tags.empty()
+    etags = Tags.full(lines.shape[0], tag)
     return LineMesh(PointMesh(pts, ptags), lines, interior, etags)
 
 
@@ -202,22 +198,19 @@ def merge(meshes: Sequence[LineMesh], *, tol: float = 1e-7) -> LineMesh:
 
     line_list: list[IntArray] = []
     ptag_list: list[Tags] = []
-    etag_list: list[Tags] = []
-    noff = loff = 0
+    noff = 0
     for m, c in zip(meshes, counts):
         line_list.append(point_id[m.lines + noff])   # local -> welded id
-        # ids shift by this block's offset; sides stay local to their element
-        etag_list.append(m.element_tags.shift(loff))
         # a point tag rides its point through the weld -- and two blocks welding on a
         # named end land both names on the one surviving point, which is where the
         # merge's own conflict rule lives
-        ptag_list.append(m.point_tags.renumber(point_id[noff:noff + c]))
+        ptag_list.append(m.point_tags.renumber(point_id[noff:noff + c],
+                                               points.shape[0]))
         noff += c
-        loff += m.n_lines
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
-    etags = Tags.concatenate(etag_list)
-    ptags = weld(ptag_list, "LineMesh.merge")
+    etags = Tags.concatenate([m.element_tags for m in meshes])
+    ptags = weld(ptag_list)
 
     # order-N: welding only touches endpoints (corners, which are re-numbered into
     # the merged points), and every high-order node of a line is *private*, so the
@@ -248,17 +241,17 @@ class Seam(NamedTuple):
     attach_tag: str | None = None
 
 
-def _mesh_index(ref: int | LineMesh, meshes: Sequence[LineMesh], who: str) -> int:
+def _mesh_index(ref: int | LineMesh, meshes: Sequence[LineMesh], name: str) -> int:
     if isinstance(ref, LineMesh):
         for i, m in enumerate(meshes):
             if m is ref:
                 return i
         raise ValueError(
             "attach: %s names a mesh that is not in the meshes list. Pass the mesh "
-            "itself, or its index." % who)
+            "itself, or its index." % name)
     i = int(ref)
     if not 0 <= i < len(meshes):
-        raise ValueError("attach: %s names mesh %d of %d" % (who, i, len(meshes)))
+        raise ValueError("attach: %s names mesh %d of %d" % (name, i, len(meshes)))
     return i
 
 
@@ -315,20 +308,20 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
 
     resolved: list[tuple[int, IntArray, int, IntArray, str, str | None]] = []
     for k, sm in enumerate(seams):
-        who = "seams[%d]" % k
-        ia = _mesh_index(sm.a, meshes, who + ".a")
-        ib = _mesh_index(sm.b, meshes, who + ".b")
+        name = "seams[%d]" % k
+        ia = _mesh_index(sm.a, meshes, name + ".a")
+        ib = _mesh_index(sm.b, meshes, name + ".b")
         if sm.own not in ("a", "b"):
-            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (who, sm.own))
-        pa = _point_group(meshes[ia], sm.tag_a, who + ".tag_a")
-        pb = _point_group(meshes[ib], sm.tag_b, who + ".tag_b")
+            raise ValueError("attach: %s.own must be 'a' or 'b', got %r" % (name, sm.own))
+        pa = _point_group(meshes[ia], sm.tag_a, name + ".tag_a")
+        pb = _point_group(meshes[ib], sm.tag_b, name + ".tag_b")
         if pa.size != pb.size:
             raise ValueError(
                 "attach: %s joins groups of different point counts (%d and %d), so "
-                "they cannot be the same interface." % (who, pa.size, pb.size))
+                "they cannot be the same interface." % (name, pa.size, pb.size))
         if pa.size == 0:
             raise ValueError("attach: %s names empty groups; there is nothing to join"
-                             % who)
+                             % name)
         resolved.append((ia, pa, ib, pb, sm.own, sm.attach_tag))
 
     pair_list: list[IntArray] = []
@@ -370,32 +363,26 @@ def attach(meshes: Sequence[LineMesh], seams: Sequence[Seam]) -> LineMesh:
 
     line_list: list[IntArray] = []
     ptag_list: list[Tags] = []
-    etag_list: list[Tags] = []
-    loff = 0
     for i, m in enumerate(meshes):
         line_list.append(point_id[m.lines + offs[i]])
-        etag_list.append(m.element_tags.shift(loff))
         pt = m.point_tags
         if i in seam_local:
-            pt = pt.compress(~np.isin(pt.ids, np.concatenate(seam_local[i])))
-        ptag_list.append(pt.renumber(point_id[offs[i]:offs[i + 1]]))
-        loff += m.n_lines
+            pt = pt.clear(np.concatenate(seam_local[i]))
+        ptag_list.append(pt.renumber(point_id[offs[i]:offs[i + 1]], points.shape[0]))
 
-    ptags = weld(ptag_list, "linemesh.attach")
+    ptags = weld(ptag_list)
     named = [(point_id[pr[:, 0] + offs[ia]], tag)
              for (ia, _pa, _ib, _pb, _o, tag), pr in zip(resolved, pair_list) if tag]
     if named:
-        dense = np.asarray(ptags.to_dense(points.shape[0]), dtype=object)
         for ids, tag in named:
-            dense[ids] = tag
-        ptags = Tags.from_dense(np.asarray(dense, dtype=np.str_))
+            ptags = ptags.put(ids, tag)
 
     lines = (np.concatenate(line_list, axis=0) if line_list
              else np.zeros((0, 2), np.int64))
     interior: PointArray | None = (np.concatenate([m.interior for m in meshes], axis=0)
                                    if meshes else None)
     return LineMesh(PointMesh(points, ptags), lines,
-                    interior, Tags.concatenate(etag_list))
+                    interior, Tags.concatenate([m.element_tags for m in meshes]))
 
 
 def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
@@ -411,13 +398,13 @@ def _subset(mesh: LineMesh, keep: BoolArray) -> tuple[LineMesh, IntArray]:
     new_point_of: IntArray = np.full(mesh.n_points, -1, dtype=np.int64)
     new_point_of[used] = np.arange(used.shape[0], dtype=np.int64)
     return (LineMesh(PointMesh(mesh.points[used],
-                               mesh.point_tags.renumber(new_point_of)),
+                               mesh.point_tags.renumber(new_point_of, used.shape[0])),
                      new_point_of[lines], mesh.interior[kept],
                      mesh.element_tags.take(kept)),
             new_line_of)
 
 
-def select(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
+def select(mesh: LineMesh, which: Selection
            ) -> LineMesh:
     """The named lines as a curve of their own, renumbered from zero.
 
@@ -425,15 +412,13 @@ def select(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
     array of line ids.  Kept lines hold their relative order and their tags; points no
     kept line touches are dropped.  The inverse of :func:`merge`, and one of the three
     operations that manufacture a numbering."""
-    return _subset(mesh, mask_for_selection(which, mesh.element_tags, mesh.n_lines,
-                                      "linemesh.select"))[0]
+    return _subset(mesh, mask_for_selection(which, mesh.element_tags))[0]
 
 
-def remove(mesh: LineMesh, which: str | BoolArray | IntArray | Sequence[int]
+def remove(mesh: LineMesh, which: Selection
            ) -> LineMesh:
     """The complement of :func:`select`: everything ``which`` does **not** name."""
-    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags, mesh.n_lines,
-                                       "linemesh.remove"))[0]
+    return _subset(mesh, ~mask_for_selection(which, mesh.element_tags))[0]
 
 
 def components(mesh: LineMesh) -> list[LineMesh]:
@@ -487,7 +472,9 @@ def refine(mesh: LineMesh) -> LineMesh:
     # ``tile`` (which tiles a whole block pattern across many copies, the
     # sweep-layer shape of problem, not this one).
     element_tags = mesh.element_tags.take(np.repeat(np.arange(l_count), 2))
-    return LineMesh(PointMesh(points, mesh.point_tags), lines, interior, element_tags)
+    point_tags = mesh.point_tags.renumber(np.arange(n0, dtype=np.int64),
+                                          points.shape[0])
+    return LineMesh(PointMesh(points, point_tags), lines, interior, element_tags)
 
 
 __all__ = [

@@ -126,23 +126,23 @@ class Path(NamedTuple):
     up: Callable[[FloatArray], PointArray] | None = None
 
 
-def _direction(vector: Vec3 | Sequence[float], who: str, name: str) -> Vec3:
+def _direction(vector: Vec3 | Sequence[float], name: str) -> Vec3:
     """Validate and normalize a ``(3,)`` direction."""
     v: Vec3 = np.asarray(vector, dtype=float).reshape(-1)
     if v.shape != (3,):
-        raise ValueError("%s: %s must be a (3,) direction, got %s"
-                         % (who, name, (np.shape(vector),)))
+        raise ValueError("%s must be a (3,) direction, got %s"
+                         % (name, (np.shape(vector),)))
     n = float(np.linalg.norm(v))
     if n == 0.0:
-        raise ValueError("%s: %s must be a non-zero direction" % (who, name))
+        raise ValueError("%s must be a non-zero direction" % name)
     return v / n
 
 
 def _seed_frame(heading: Vec3 | Sequence[float],
                 up: Vec3 | Sequence[float]) -> tuple[Vec3, Vec3]:
     """The walk's starting ``(u, w)``: ``up`` orthonormalized against the heading."""
-    w = _direction(heading, "walk", "heading")
-    U = _direction(up, "walk", "up")
+    w = _direction(heading, "heading")
+    U = _direction(up, "up")
     d = float(U @ w)
     if abs(d) >= 1.0 - PARALLEL_TOL:
         raise ValueError(

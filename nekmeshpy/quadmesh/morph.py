@@ -257,7 +257,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     # which needs no packed key -- and so has no bound on the point count.
     te: IntArray = np.asarray(target.line_mesh.lines, dtype=np.int64)
     se: IntArray = s[np.asarray(structure.line_mesh.lines, dtype=np.int64)]
-    tidx = conform.locate_rows(te, se, who="reindex", what="edge")
+    tidx = conform.locate_rows(te, se, what="edge")
     rev = te[tidx, 0] != se[:, 0]
     new_ei: PointArray = np.asarray(target.line_mesh.interior, dtype=float)[tidx].copy()
     new_ei[rev] = new_ei[rev][:, ::-1]
@@ -270,7 +270,7 @@ def reindex(structure: QuadMesh, target: QuadMesh,
     # two pair however each happens to be wound.
     qidx = conform.locate_rows(np.asarray(target.corners, dtype=np.int64),
                                 s[np.asarray(structure.corners, dtype=np.int64)],
-                                who="reindex", what="quad")
+                                what="quad")
     new_qi: PointArray = np.asarray(target.interior, dtype=float)[qidx]
 
     return QuadMesh(new_lines, structure.quads, structure.orient, new_qi,

@@ -97,10 +97,11 @@ element. The line rung is the exception: no signed measure, so nothing to re-win
 Operations are per-rung, so a call site **names its rung**. Code meant to run at every
 rung pairs each mesh with its package explicitly rather than dispatching on `type()`.
 
-`core/` is rung-agnostic: `paths.py`, `surfaces.py`, `conform.py`, `tags.py`,
+`core/` is rung-agnostic: `paths.py`, `surfaces.py`, `conform.py`, `selection.py`,
 `measure.py` (one quadrature over a node block, behind every rung's measure). `TriMesh`
 is the exception to the free-function rule — small queries stay on the class, the rest
-is `trimesh.ops.*`.
+is `trimesh.ops.*`. `tags/` is the rung-agnostic tag table: `tags.py` (`Tags`), `welding.py`,
+`sweep.py`, sharing string-array helpers in `_arrays.py`.
 
 ## The B-rep ladder *is* the storage
 
@@ -396,7 +397,7 @@ mistake. A caller who knows a real distance divides — `examples/chimera_full.p
 ## Tags
 
 **A rung's side tags *are* the rung below's `element_tags`.** There is one table type,
-`Tags` from `core/tags.py`, and a mesh reads the one under it through a named
+`Tags` from `tags/tags.py`, and a mesh reads the one under it through a named
 property: `HexMesh.face_tags` is `quad_mesh.element_tags`, `QuadMesh.edge_tags` is
 `line_mesh.element_tags`, `LineMesh.point_tags` is `point_mesh.element_tags` on the
 `PointMesh` the ladder bottoms out on. A tag is addressed by **entity id**, never by
@@ -418,8 +419,17 @@ of that, and the two differ. Row order is meaningful,
 because `.re2` writes rows in stored order and `.vtu` gives a node touched by several
 rows the last one's tag.
 
-`element_tags` is sparse (`ids + tags`), so an untagged mesh stores nothing and `len()`
-is the *tagged* count.
+`element_tags` is sparse (`ids + tags`), so an untagged mesh stores no rows and `len()`
+is the *tagged* count. The table also stores `size`, the total element count it is
+over, and refuses a tagged id outside it at construction; each container checks
+`element_tags.size` against its own element count, so a table over the wrong count
+cannot be attached (`Tags.empty(n)` is the untagged table over `n`). `size` is why
+`to_dense()` and `is_uniform()` take no length, and why `take` / `put` / `clear` follow
+NumPy's bounds rule (negative ids wrap, one out of range raises `IndexError`).
+`concatenate` offsets each table by the sizes before it, `tile(reps)` multiplies
+`size`, and `renumber(new_id_of, size)` states the new id space; `weld` needs its
+tables over one `size`. Any operation that changes a rung's element count must hand
+the new table the new count.
 
 **Only the top rung's `element_tags` names a region.** One rung down, an element is a
 piece of some volume's *surface* — and now literally the same object as that volume's
