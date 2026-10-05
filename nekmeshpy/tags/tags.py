@@ -85,17 +85,32 @@ class Tags:
     @overload
     def unique(self) -> list[str]: ...
     @overload
-    def unique(self, return_inverse: Literal[True]) -> tuple[list[str], IntArray]: ...
-    def unique(self, return_inverse: bool = False
-               ) -> list[str] | tuple[list[str], IntArray]:
+    def unique(self, return_inverse: Literal[True], return_counts: Literal[False] = ...
+               ) -> tuple[list[str], IntArray]: ...
+    @overload
+    def unique(self, return_inverse: Literal[False] = ..., *,
+               return_counts: Literal[True]) -> tuple[list[str], IntArray]: ...
+    @overload
+    def unique(self, return_inverse: Literal[True], return_counts: Literal[True]
+               ) -> tuple[list[str], IntArray, IntArray]: ...
+    def unique(self, return_inverse: bool = False, return_counts: bool = False
+               ) -> list[str] | tuple[list[str], IntArray] | tuple[
+                   list[str], IntArray, IntArray]:
         """Sorted unique tags, as ``np.unique``.
 
         With ``return_inverse`` also the index into them of each stored **row**'s tag
-        (aligned with ``ids``), so ``inverse + 1`` is a per-row integer code."""
-        if not return_inverse:
+        (aligned with ``ids``), so ``inverse + 1`` is a per-row integer code. With
+        ``return_counts`` also how many elements carry each name."""
+        if not (return_inverse or return_counts):
             return sorted(set(self.tags.tolist()))
-        names, inverse = np.unique(self.tags, return_inverse=True)
-        return names.tolist(), np.asarray(inverse, dtype=np.int64).reshape(-1)
+        names, inverse, counts = np.unique(self.tags, return_inverse=True,
+                                           return_counts=True)
+        out: list[object] = [names.tolist()]
+        if return_inverse:
+            out.append(np.asarray(inverse, dtype=np.int64).reshape(-1))
+        if return_counts:
+            out.append(np.asarray(counts, dtype=np.int64).reshape(-1))
+        return tuple(out)  # type: ignore[return-value]
 
     def is_uniform(self) -> bool:
         """True when all ``size`` elements carry the same single tag."""
@@ -122,10 +137,24 @@ class Tags:
         ``test_elements``, as ``np.isin``; a single string is one name."""
         return np.asarray(np.isin(self.tags, test_elements), dtype=bool)
 
-    def flatnonzero(self, test_elements: str | Sequence[str] | StrArray) -> IntArray:
+    def flatnonzero(self, test_elements: str | Sequence[str] | StrArray,
+                    strict: bool = False) -> IntArray:
         """Ids of the elements whose tag is one of ``test_elements``, ascending, as
         ``np.flatnonzero(np.isin(dense, test_elements))``; a single string is one
-        name."""
+        name.
+
+        ``strict`` raises ``ValueError`` if any name is carried by no element -- an
+        empty result is otherwise silent, and a mis-spelled name is almost always a
+        typo."""
+        if strict:
+            names = np.unique(np.asarray(test_elements).reshape(-1)).tolist()
+            have = self.unique()
+            unknown = [n for n in names if n not in have]
+            if unknown:
+                raise ValueError(
+                    "no element carries the tag %s; this table has %s"
+                    % (", ".join(repr(u) for u in unknown),
+                       have or "no tagged elements"))
         ids: IntArray = self.ids[self.isin(test_elements)]
         return ids
 
@@ -237,6 +266,24 @@ class Tags:
         if not len(self) or not i.shape[0]:
             return self
         return self.compress(~np.isin(self.ids, i))
+
+    def repeat(self, repeats: int) -> Tags:
+        """Each element repeated ``repeats`` times in place, over ``repeats * size``
+        elements: element ``i*repeats + j`` copies ``i``.
+
+        The sparse form of ``np.repeat(dense, repeats)`` -- a refine's children each
+        inherit their parent's name."""
+        r = int(repeats)
+        if not len(self):
+            return Tags.empty(r * self.size)
+        ids = (self.ids[:, None] * r + np.arange(r, dtype=np.int64)[None, :]).ravel()
+        return Tags(ids, np.repeat(self.tags, r), r * self.size)
+
+    def is_tagged(self) -> BoolArray:
+        """The ``(size,)`` mask of tagged elements."""
+        out: BoolArray = np.zeros(self.size, dtype=bool)
+        out[self.ids] = True
+        return out
 
     def tile(self, reps: int) -> Tags:
         """This table tiled ``reps`` times, over ``reps * size`` elements: element
