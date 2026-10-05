@@ -29,13 +29,7 @@ def mask_for_selection(which: Selection, tags: Tags) -> BoolArray:
     n_elements = tags.size
     ids: IntArray
     if arr.dtype.kind == "U": # if str, check tags
-        unknown = [n for n in np.unique(arr).tolist() if n not in tags.unique()]
-        if unknown:
-            raise ValueError(
-                "no element carries the tag %s; this mesh has %s"
-                % (", ".join(repr(u) for u in unknown),
-                   tags.unique() or "no tagged elements"))
-        ids = tags.flatnonzero(arr)
+        ids = tags.flatnonzero(arr, strict=True)
     elif arr.size == 0:
         ids = np.zeros(0, dtype=np.int64)
     elif arr.dtype == bool:

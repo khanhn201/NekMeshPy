@@ -628,3 +628,20 @@ def test_is_tagged_marks_tagged_elements():
     t = Tags.from_dense(["a", "", "b"])
     assert t.is_tagged().tolist() == [True, False, True]
     assert Tags.empty(2).is_tagged().tolist() == [False, False]
+
+
+def test_flatnonzero_strict_raises_on_any_unknown_name():
+    t = Tags.from_dense(["a", "b", ""])
+    assert t.flatnonzero(["a", "b"], strict=True).tolist() == [0, 1]
+    with pytest.raises(ValueError, match="no element carries the tag 'zzz'"):
+        t.flatnonzero(["a", "zzz"], strict=True)
+    with pytest.raises(ValueError, match="no tagged elements"):
+        Tags.empty(3).flatnonzero("a", strict=True)
+
+
+def test_unique_return_counts_gives_elements_per_name():
+    t = Tags.from_dense(["b", "", "a", "b"])
+    names, counts = t.unique(return_counts=True)
+    assert names == ["a", "b"] and counts.tolist() == [1, 2]
+    names, inverse, counts = t.unique(return_inverse=True, return_counts=True)
+    assert inverse.tolist() == [1, 0, 1] and counts.tolist() == [1, 2]

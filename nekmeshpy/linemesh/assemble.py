@@ -263,14 +263,11 @@ def _point_group(mesh: LineMesh, which: str | IntArray | Sequence[int],
     joining a chain onto the middle of another is a legitimate junction rather than a
     non-manifold mistake."""
     if isinstance(which, str):
-        t = mesh.point_tags
-        ids: IntArray = t.flatnonzero(which)
-        if ids.size == 0:
-            raise ValueError(
-                "attach: %s: no point carries the tag %r; this mesh has %s"
-                % (side, which, sorted(t.unique()) or "no tagged points"))
-        return ids
-    ids = np.asarray(which, dtype=np.int64).reshape(-1)
+        try:
+            return mesh.point_tags.flatnonzero(which, strict=True)
+        except ValueError as err:
+            raise ValueError("attach: %s: %s" % (side, err)) from None
+    ids: IntArray = np.asarray(which, dtype=np.int64).reshape(-1)
     if ids.size and (ids.min() < 0 or ids.max() >= mesh.n_points):
         raise ValueError("attach: %s names point %d, outside this mesh's %d points"
                          % (side, int(ids.max()), mesh.n_points))

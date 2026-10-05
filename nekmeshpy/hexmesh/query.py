@@ -332,8 +332,8 @@ def report(mesh: HexMesh) -> str:
         lines.append(quality.format_solver_metrics(quality.solver_metrics(mesh)))
     else:
         lines.append("solver metrics: not checked (over SCAN_BUDGET)")
-    for name in mesh.face_group_tags:
-        n = mesh.face_tags.count(name)
+    names, counts = mesh.face_tags.unique(return_counts=True)
+    for name, n in zip(names, counts.tolist()):
         lines.append("  %-14s : %d faces" % (name, n))
     tags = tag_report(mesh)
     lines.append("  %-14s : %d faces" % ("untagged bdry", tags.n_untagged_boundary))
@@ -434,12 +434,7 @@ def tagged_faces(mesh: HexMesh, tag: str) -> IntArray:
     A tag that names nothing raises rather than returning an empty group: a mis-spelled
     interface name is otherwise invisible until the solver reads the mesh."""
     t = mesh.face_tags
-    hit: IntArray = t.flatnonzero(tag)
-    if hit.size == 0:
-        raise ValueError(
-            "tagged_faces: no face carries the tag %r; this mesh has %s"
-            % (tag, sorted(t.unique()) or "no tagged faces"))
-    return hit
+    return t.flatnonzero(tag, strict=True)
 
 
 __all__ = [

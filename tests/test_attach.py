@@ -379,9 +379,9 @@ def test_tagged_faces_is_ascending_and_names_the_group():
 
 
 def test_an_unknown_tag_names_what_is_available():
-    with pytest.raises(ValueError, match="no face carries the tag 'nope'"):
+    with pytest.raises(ValueError, match="no element carries the tag 'nope'"):
         hexmesh.tagged_faces(_block(1), "nope")
-    with pytest.raises(ValueError, match="no edge carries the tag 'nope'"):
+    with pytest.raises(ValueError, match="no element carries the tag 'nope'"):
         quadmesh.tagged_edges(_rect(0, 1, 1, {"right": "seam"}), "nope")
 
 
@@ -545,7 +545,7 @@ def test_line_attach_clears_the_joined_point_names():
 
 def test_line_attach_refuses_an_unknown_tag_naming_the_seam():
     a, b, _ = _chain3()
-    with pytest.raises(ValueError, match=r"seams\[0\].tag_a: no point carries"):
+    with pytest.raises(ValueError, match=r"seams\[0\].tag_a: no element carries"):
         linemesh.attach([a, b], [PointSeam(0, "nope", 1, "j1")])
 
 
