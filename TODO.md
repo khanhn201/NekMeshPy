@@ -18,3 +18,4 @@ Local, immediate simple tasks that can be done right away
 - [ ] 21) Move Using a high-order mesh in Nek5000 / NekRS to Getting Started and also guide on cbc/boundaryID
 - [ ] 23) move wirecoil up gallery
 - [ ] 24) Use center node in re2 for order=2
+- [ ] 25) None vs "" in tags?
