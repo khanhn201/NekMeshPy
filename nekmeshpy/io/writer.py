@@ -38,7 +38,7 @@ _VTK_LAGRANGE_HEXAHEDRON = 72
 _log = logging.getLogger("nekmeshpy")
 
 #: What ``bc=`` accepts: a ready ``BoundaryConditions``, a ``{name: code}`` table (each
-#: value a :data:`BCSpec <nekmeshpy.core.boundary_condition.BCSpec>`) standing for its
+#: value a ``BCSpec``) standing for its
 #: velocity field alone, or ``None``.
 BCArg = Union[BoundaryConditions, Mapping[str, BCSpec], None]
 #: What ``to_re2``'s ``periodic=`` accepts: the specs, or a pairing already

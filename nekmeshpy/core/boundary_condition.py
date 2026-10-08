@@ -5,24 +5,24 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import Union
 
-#: What one side of a boundary carries: a ``cbc`` (Nek5000's name for the 3-char
-#: boundary-condition code, ``"W  "``), a ``boundaryID`` (an int), or ``(cbc, boundaryID)``
-#: with either left ``None``. Whatever is not stated takes its default, ``DEFAULT_CBC``
-#: and ``DEFAULT_BOUNDARY_ID`` -- but only if the whole table leaves it out; see
-#: :class:`BoundaryConditions`.
+# What one side of a boundary carries: a ``cbc`` (Nek5000's name for the 3-char
+# boundary-condition code, ``"W  "``), a ``boundaryID`` (an int), or ``(cbc, boundaryID)``
+# with either left ``None``. Whatever is not stated takes its default, ``DEFAULT_CBC``
+# and ``DEFAULT_BOUNDARY_ID`` -- but only if the whole table leaves it out; see
+# :class:`BoundaryConditions`.
 Side = Union[str, int, tuple[Union[str, None], Union[int, None]]]
 
-#: One boundary: a :data:`Side` read the same from every side of the face, or a
-#: ``{region: Side | None}`` mapping read against the ``element_tags`` of the element
-#: each row is written for (``""`` for an untagged one).
-#:
-#: A face is one shared object with one name, so an asymmetric boundary condition
-#: cannot live on the face -- it lives in the *regions* either side of it. A
-#: conjugate interface is a face between a ``"fluid"`` hex and a ``"solid"`` one;
-#: naming it once and giving it ``{"fluid": "W  ", "solid": None}`` writes the
-#: fluid's wall condition and nothing at all on the solid side.  A ``None`` value
-#: emits no row for that region, which is how a face gets a condition from one
-#: side only.
+# One boundary: a ``Side`` read the same from every side of the face, or a
+# ``{region: Side | None}`` mapping read against the ``element_tags`` of the element
+# each row is written for (``""`` for an untagged one).
+#
+# A face is one shared object with one name, so an asymmetric boundary condition
+# cannot live on the face -- it lives in the *regions* either side of it. A
+# conjugate interface is a face between a ``"fluid"`` hex and a ``"solid"`` one;
+# naming it once and giving it ``{"fluid": "W  ", "solid": None}`` writes the
+# fluid's wall condition and nothing at all on the solid side.  A ``None`` value
+# emits no row for that region, which is how a face gets a condition from one
+# side only.
 BCSpec = Union[Side, Mapping[str, Union[Side, None]]]
 
 DEFAULT_CBC = "E  "
@@ -91,9 +91,9 @@ class BoundaryConditions:
     ``velocity`` is the momentum field and is required. ``temperature`` is the second
     field Nek's ``.re2`` carries once a mesh has a solid region (``nelgv < nelgt``);
     it covers every element, and a name left out of it stays conformal (``'E  '``).
-    Each table maps a name to a :data:`BCSpec`.
+    Each table maps a name to a ``BCSpec``.
 
-    Each entry carries a ``cbc`` and a ``boundaryID`` (see :data:`Side`). Within one
+    Each entry carries a ``cbc`` and a ``boundaryID`` (see ``Side``). Within one
     table each is **all-or-none**: state it for every boundary or for none, and a table
     that states none takes the defaults. A table's ``boundaryID`` set is its own --
     velocity's and temperature's are separate -- and runs ``1..k`` without a gap, though
@@ -145,7 +145,7 @@ class BoundaryConditions:
         """``(cbc, boundaryID)`` ``field`` writes for a row of boundary ``name`` owned
         by an element in ``region``; ``None`` means "write no row from this side".
 
-        A name with one :data:`Side` reads the same from everywhere. One with per-region
+        A name with one ``Side`` reads the same from everywhere. One with per-region
         entries must name every region it actually borders, since a missing key is far
         more likely a typo than an intent to drop the face."""
         spec = self._sides[field][name]
