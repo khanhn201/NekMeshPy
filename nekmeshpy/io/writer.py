@@ -13,10 +13,10 @@ import numpy as np
 
 from .._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..core import conform
+from ..core.boundary_condition import BCSpec, BoundaryConditions
 from ..core.fields import gll_nodes, lagrange_matrix, uniform_spacing
 from ..core.interp import hex_face_indices
 from ..core.mesh import Mesh
-from ..core.physical import PhysicalGroup, PhysicalGroups
 from ..core.selection import Selection, mask_for_selection
 from ..hexmesh import HexMesh
 from ..hexmesh.lower import boundary_mesh
@@ -37,13 +37,10 @@ _VTK_LAGRANGE_HEXAHEDRON = 72
 
 _log = logging.getLogger("nekmeshpy")
 
-# accepted types for the ``groups`` export parameter
-#: What ``groups=`` accepts. A value is either one code used from every side, or a
-#: ``{region: code}`` mapping read against the ``element_tags`` of the element each row
-#: is written for -- see :attr:`PhysicalGroup.side_codes
-#: <nekmeshpy.core.physical.PhysicalGroup.side_codes>`.
-GroupSpec = Union[str, Mapping[str, Union[str, None]]]
-GroupsArg = Union[PhysicalGroups, Mapping[str, GroupSpec], None]
+#: What ``bc=`` accepts: a ready ``BoundaryConditions``, a ``{name: code}`` table (each
+#: value a ``BCSpec``) standing for its
+#: velocity field alone, or ``None``.
+BCArg = Union[BoundaryConditions, Mapping[str, BCSpec], None]
 #: What ``to_re2``'s ``periodic=`` accepts: the specs, or a pairing already
 #: resolved by :func:`hexmesh.periodic_pairs
 #: <nekmeshpy.hexmesh.periodic.periodic_pairs>`.
@@ -54,10 +51,10 @@ PeriodicArg = Union[Sequence[Periodic], PeriodicPairs, None]
 FluidArg = Union[Selection, None]
 
 
-def _export_rows(mesh: HexMesh, g: PhysicalGroups,
-                 partners: Mapping[tuple[int, int], tuple[int, int]] | None = None
-                 ) -> list[tuple[int, int, str, str, int, int]]:
-    """``(element, face, name, code, partner element, partner face)`` for every boundary
+def _export_rows(mesh: HexMesh, bc: BoundaryConditions,
+                 partners: Mapping[tuple[int, int], tuple[int, int]] | None = None,
+                 *, viewer: bool = False) -> list[tuple[int, int, str, str, int, int, int]]:
+    """``(element, face, name, cbc, boundaryID, partner element, partner face)`` for every boundary
     row this mesh exports -- the one definition every writer here shares, so a face the
     ``.re2`` omits is not in the ``.vtu``'s cell sets either.
 
@@ -67,57 +64,64 @@ def _export_rows(mesh: HexMesh, g: PhysicalGroups,
     the face has a single name. A region whose code is ``None`` contributes no row,
     which is how a face gets a condition from one side only.
 
+    Over several fields a row exists if any field writes one, and carries the first
+    such side (velocity before temperature) -- a view for the ``.vtu``; a ``.re2`` block
+    is one field's own :func:`_field_rows`.
+
+    ``viewer`` gives a table that states no ``boundaryID`` each name's position in that
+    field's table, so a ``.vtu`` still tells boundaries apart.
+
     ``partners`` is :meth:`PeriodicPairs.partner_of
     <nekmeshpy.hexmesh.periodic.PeriodicPairs.partner_of>`; a row it does not name gets
     ``(-1, -1)``, which every writer but ``.re2`` drops on the floor."""
     rows, names = face_tag_rows(mesh)
     regions = mesh.element_tags.take_dense(rows[:, 0])
-    out: list[tuple[int, int, str, str, int, int]] = []
+    out: list[tuple[int, int, str, str, int, int, int]] = []
     for (elem, face), name, region in zip(rows.tolist(), names.tolist(),
                                           regions.tolist()):
         pe, pf = (partners or {}).get((int(elem), int(face)), (-1, -1))
-        grp = g.get(name)
-        if grp is None:
+        if name not in bc:
             _log.warning("unknown boundary name: %s", name)
-            out.append((int(elem), int(face), name, "   ", pe, pf))
+            out.append((int(elem), int(face), name, "   ", 0, pe, pf))
             continue
-        code = grp.code_for_side(region)
-        if code is None:
+        side = next(((f, x) for f in bc.fields if bc.has(f, name)
+                     if (x := bc.side(f, name, region)) is not None), None)
+        if side is None:
             continue
-        out.append((int(elem), int(face), name, code, pe, pf))
+        field, (cbc, bid) = side
+        if viewer and not bc.numbered(field):
+            bid = bc.tag_of(field, name)
+        out.append((int(elem), int(face), name, cbc, bid, pe, pf))
     return out
 
 
-def _as_groups(mesh: HexMesh, groups: GroupsArg) -> PhysicalGroups:
-    """Normalise the ``groups`` argument to a ``PhysicalGroups``.
+def _as_bc(mesh: HexMesh, bc: BCArg) -> BoundaryConditions:
+    """Normalise the ``bc`` argument to a ``BoundaryConditions``.
 
-    ``None`` enumerates the mesh's own tag vocabulary into integer ids. That is enough
-    for a *viewer* -- ``.vtu`` paints ``bc_id`` by id, and an id carries no physics --
-    but not for ``.re2``, which writes Nek BC **codes**, so :func:`to_re2` requires the
-    mapping rather than inventing one."""
-    if isinstance(groups, PhysicalGroups):
-        return groups
-    if groups is None:
-        names = mesh.face_group_tags
-        return PhysicalGroups(
-            PhysicalGroup(name, i + 1) for i, name in enumerate(names))
-    return PhysicalGroups(
-        PhysicalGroup(name, i + 1, 2, spec) if isinstance(spec, str)
-        else PhysicalGroup(name, i + 1, 2, side_codes=spec)
-        for i, (name, spec) in enumerate(groups.items()))
+    A plain mapping is a velocity table. ``None`` enumerates the mesh's own tag
+    vocabulary. That is enough for a *viewer* -- ``.vtu`` paints ``bc_id`` by id, and an
+    id carries no physics -- but not for ``.re2``, which writes Nek BC **codes**, so
+    :func:`to_re2` requires the mapping rather than inventing one."""
+    if isinstance(bc, BoundaryConditions):
+        return bc
+    if bc is None:
+        return BoundaryConditions({name: "E  " for name in mesh.face_group_tags})
+    return BoundaryConditions(bc)
 
 
 # -- generic mesh view --------------------------------------------------
-def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
+def to_mesh(mesh: HexMesh, bc: BCArg = None) -> Mesh:
     """Return a shared-point ``Mesh``: welded points, ``hexahedron`` cells, and one
     ``quad`` boundary cell per tagged face grouped into named ``cell_sets``."""
     X, HC = mesh.points, mesh.corners
-    g = _as_groups(mesh, groups)
+    g = _as_bc(mesh, bc)
     conn_rows = []           # welded point ids of each boundary face
     name_rows = []           # name of each boundary face
-    for elem, face, name, _code, _pe, _pf in _export_rows(mesh, g):
+    first_id: dict[str, int] = {}   # boundaryID of each name's first row
+    for elem, face, name, _cbc, bid, _pe, _pf in _export_rows(mesh, g, viewer=True):
         conn_rows.append(HC[elem, mesh.FACE_POINTS[face - 1, :]])
         name_rows.append(name)
+        first_id.setdefault(name, bid)
     quad_conn = (np.array(conn_rows, dtype=np.int64) if conn_rows
                  else np.zeros((0, 4), np.int64))
     quad_name = np.array(name_rows, dtype=np.str_)
@@ -129,27 +133,27 @@ def to_mesh(mesh: HexMesh, groups: GroupsArg = None) -> Mesh:
     cell_sets: dict[str, dict[str, IntArray]] = {}
     point_sets: dict[str, IntArray] = {}
     field_data: dict[str, IntArray] = {}
-    for grp in g:
-        sel = np.flatnonzero(quad_name == grp.name)
+    for name in g:
+        sel = np.flatnonzero(quad_name == name)
         if sel.size == 0:
             continue
-        cell_sets[grp.name] = {"quad": sel}
-        point_sets[grp.name] = np.unique(quad_conn[sel].ravel())
-        field_data[grp.name] = np.array([grp.tag, grp.dim], dtype=np.int64)
+        cell_sets[name] = {"quad": sel}
+        point_sets[name] = np.unique(quad_conn[sel].ravel())
+        field_data[name] = np.array([first_id[name], 2], dtype=np.int64)
 
     return Mesh(points=X, cells=cells, point_sets=point_sets,
                 cell_sets=cell_sets, field_data=field_data)
 
 
-def to_meshio(mesh: HexMesh, groups: GroupsArg = None) -> Any:
+def to_meshio(mesh: HexMesh, bc: BCArg = None) -> Any:
     """Return a meshio mesh view (requires ``meshio``)."""
-    return to_mesh(mesh, groups).to_meshio()
+    return to_mesh(mesh, bc).to_meshio()
 
 
 def write(mesh: HexMesh, path: str, file_format: str | None = None,
-          *, groups: GroupsArg = None) -> str:
+          *, bc: BCArg = None) -> str:
     """Write through meshio to any supported format; for native Nek use ``to_re2``."""
-    return to_mesh(mesh, groups).write(path, file_format=file_format)
+    return to_mesh(mesh, bc).write(path, file_format=file_format)
 
 
 # -- native Nek export --------------------------------------------------
@@ -161,7 +165,7 @@ def _str_to_double(s: str) -> float:
 
 
 #: The Nek BC code for a periodic face.  Unlike every other code, it is not a statement
-#: the ``groups`` table can make on its own -- a ``'P'`` row also has to say *which*
+#: the ``bc`` table can make on its own -- a ``'P'`` row also has to say *which*
 #: element and face it is periodic with, which is what ``periodic=`` supplies.
 PERIODIC_CODE = "P  "
 
@@ -203,10 +207,10 @@ def _resolve_periodic(mesh: HexMesh, periodic: PeriodicArg
     return pairs.partner_of(), pairs
 
 
-def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
+def _check_periodic_names(mesh: HexMesh, bc: BoundaryConditions, field: str,
                           partners: Mapping[tuple[int, int], tuple[int, int]],
-                          mask: BoolArray | None, field: str) -> None:
-    """Raise unless a name coded ``'P  '`` in ``g`` and a periodic-paired name whose
+                          mask: BoolArray | None) -> None:
+    """Raise unless a name coded ``'P  '`` in ``field``'s table and a periodic-paired name whose
     element lies in ``mask`` (the mesh's own numbering; ``None`` means every element)
     are the same set.
 
@@ -217,9 +221,7 @@ def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
     pair would write partner element 0, face 0, and a pair with no ``'P  '`` would
     export those faces as something else entirely -- neither shows up until the solver
     runs, so both are refused here."""
-    coded = {grp.name for grp in g if grp.code == PERIODIC_CODE
-             or (grp.side_codes is not None
-                 and PERIODIC_CODE in grp.side_codes.values())}
+    coded = bc.names_with(field, PERIODIC_CODE)
     hexes: IntArray = np.asarray(mesh.hexes, dtype=np.int64)
     pairs = np.array([(elem, face) for elem, face in partners
                       if mask is None or mask[elem]], dtype=np.int64).reshape(-1, 2)
@@ -236,60 +238,71 @@ def _check_periodic_names(mesh: HexMesh, g: PhysicalGroups,
                ", ".join(repr(n) for n in sorted(paired)) or "nothing"))
 
 
-def _field_rows(mesh: HexMesh, g: PhysicalGroups,
+def _field_rows(mesh: HexMesh, bc: BoundaryConditions, field: str,
                 partners: Mapping[tuple[int, int], tuple[int, int]],
-                mask: BoolArray | None, field: str) -> list[tuple[int, int, str, str, int, int]]:
+                mask: BoolArray | None) -> list[tuple[int, int, str, str, int, int, int]]:
     """One field's boundary rows: ``(element, face, name, code, partner element,
     partner face)``, restricted to elements in ``mask`` -- Nek's velocity field reads
     only the fluid region, a thermal one every element (``mask=None``).
 
     Unlike :func:`_export_rows`, a name **absent** from ``g`` produces no row and no
     warning here: once a mesh writes more than one field, a partial vocabulary is the
-    point (a fluid-only ``groups=`` naming nothing solid is correct, not a typo). A name
-    that *is* coded but lands on an element outside ``mask`` is unambiguously a mistake
-    -- the wrong field's table -- and raises rather than corrupting the block."""
+    point (a fluid-only velocity table naming nothing solid is correct, not a typo).
+
+    A row on an element outside ``mask`` is not this field's to write, and is left out
+    without being asked: a conjugate interface is one named face with a hex of each
+    region on its sides, and the velocity block simply does not see the solid one. A
+    name that is stated but has **no** row inside ``mask`` at all is unambiguously a
+    mistake -- the wrong field's table -- and raises rather than writing nothing."""
     rows, names = face_tag_rows(mesh)
     regions = mesh.element_tags.take_dense(rows[:, 0])
-    out: list[tuple[int, int, str, str, int, int]] = []
+    out: list[tuple[int, int, str, str, int, int, int]] = []
+    inside: set[str] = set()
+    outside: dict[str, int] = {}
     for (elem, face), name, region in zip(rows.tolist(), names.tolist(),
                                           regions.tolist()):
-        grp = g.get(name)
-        if grp is None:
-            continue
-        code = grp.code_for_side(region)
-        if code is None:
+        if not bc.has(field, name):
             continue
         if mask is not None and not mask[elem]:
+            outside.setdefault(name, elem)
+            continue
+        inside.add(name)
+        side = bc.side(field, name, region)
+        if side is None:
+            continue
+        pe, pf = partners.get((elem, face), (-1, -1))
+        out.append((elem, face, name, side[0], side[1], pe, pf))
+    for name, elem in outside.items():
+        if name not in inside:
             raise ValueError(
                 "%s: %r names element %d, outside this field's own region -- a "
                 "velocity-field code on a non-fluid element, or vice versa."
                 % (field, name, elem))
-        pe, pf = partners.get((elem, face), (-1, -1))
-        out.append((elem, face, name, code, pe, pf))
     return out
 
 
-def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg,
-           periodic: PeriodicArg = None, fluid: FluidArg = None,
-           thermal: GroupsArg = None) -> HexMesh:
+def to_re2(mesh: HexMesh, filename: str, *, bc: BCArg,
+           periodic: PeriodicArg = None, fluid: FluidArg = None) -> HexMesh:
     """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
     included -- nothing is appended). The mesh is written **linear** at any order: Nek's
     re2 has no high-order format, so only the 8 corners of each hex are emitted.
 
-    ``groups`` is **required**: this is the one writer that emits Nek BC codes, and a
+    ``bc`` is **required**: this is the one writer that emits Nek BC codes, and a
     default would put a code the caller never chose in front of the solver. It is where
     a mesher states what its named surfaces physically *are*, so it belongs in the
-    mesher, visible next to the tags it names.
+    mesher, visible next to the tags it names. A :class:`BoundaryConditions
+    <nekmeshpy.core.boundary_condition.BoundaryConditions>` carries one table per field;
+    a plain ``{name: code}`` mapping is its velocity table alone.
 
     ``periodic`` is a sequence of :class:`Periodic
     <nekmeshpy.hexmesh.periodic.Periodic>` specs (or a ready :class:`PeriodicPairs
     <nekmeshpy.hexmesh.periodic.PeriodicPairs>`), and is the only thing that fills the
     boundary record's ``bc(1)`` / ``bc(2)`` fields -- the partner element and face a
-    ``'P  '`` row is meaningless without.  It is stated separately from ``groups``
+    ``'P  '`` row is meaningless without.  It is stated separately from ``bc``
     because it is not a code but a *correspondence*, and the two must agree: every name
     coded ``'P  '`` is named by a spec and vice versa, or this raises::
 
-        groups={"wall": "W  ", "inlet": "P  ", "outlet": "P  "},
+        bc={"wall": "W  ", "inlet": "P  ", "outlet": "P  "},
         periodic=[hexmesh.Periodic("inlet", "outlet",
                                    affine.translation([0, 0, LENGTH]))]
 
@@ -308,53 +321,48 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg,
     ``.re2`` always carries **one boundary block per solved field** -- ``read_re2_data``
     reads at least two the moment ``nelgt > nelgv``, regardless of what the header
     declares, so a file with only one is truncated from the reader's point of view and
-    ``ierr``s reading the (missing) second block. ``thermal`` is that second field's own
-    name -> code mapping, same shape as ``groups``, and is **required** exactly when
-    ``fluid=`` makes the two counts differ. It covers **every** element, not just the
+    ``ierr``s reading the (missing) second block. ``bc.temperature`` is that second field's own
+    name -> code table, same shape as ``bc.velocity``, and is **required** exactly when
+    ``fluid=`` makes the two counts differ. It may also be given on a mesh that is all
+    fluid, where temperature is transported in the flow: the file then carries both
+    blocks, each over every element. It covers **every** element, not just the
     fluid ones -- a name omitted from it is left conformal (``'E  '``, ordinary
     continuity), which is normally right for a genuinely conjugate interface: velocity
     needs an explicit wall there because the solid side carries no velocity unknowns to
     continue into, but temperature is solved on both sides, so nothing needs stating::
 
-        writer.to_re2(mesh, "wire_coil.re2", groups=GROUPS, periodic=PERIODIC,
-                      fluid="fluid", thermal=THERMAL)
+        writer.to_re2(mesh, "wire_coil.re2", periodic=PERIODIC, fluid="fluid",
+                      bc=BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC))
     """
-    if groups is None:
+    if bc is None:
         raise ValueError(
-            "to_re2 needs groups=: a name -> Nek BC code mapping for %s. The .re2 "
+            "to_re2 needs bc=: a name -> Nek BC code mapping for %s. The .re2 "
             "boundary block is boundary *conditions*, so there is no default that "
             "would not be a guess -- spell the mapping out where the tags are named, "
-            'e.g. groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "}.'
+            'e.g. bc={"wall": "W  ", "inlet": "v  ", "outlet": "O  "}.'
             % (", ".join(repr(n) for n in mesh.face_group_tags) or "no named faces"))
+    bc = _as_bc(mesh, bc)
     order, nelv, fluid_mask = _fluid_first_order(mesh, fluid)
     n_hexes = mesh.n_hexes
     multi_field = nelv < n_hexes
-    if multi_field and thermal is None:
+    has_temperature = "temperature" in bc.fields
+    if multi_field and not has_temperature:
         raise ValueError(
             "to_re2: fluid=%r covers %d of this mesh's %d elements. Nek's .re2 format "
             "always carries a boundary block per field once nelgv < nelgt -- so "
-            "thermal= is required here too: a name -> code mapping for the temperature "
-            "field, covering every element (a name left out of it stays conformal, "
-            "'E  '). A file written with only the velocity block is one the reader "
-            "expects to keep reading and cannot." % (fluid, nelv, n_hexes))
-    if not multi_field and thermal is not None:
-        raise ValueError(
-            "to_re2: thermal= only means something once fluid= actually carves out a "
-            "solid region -- fluid=%r covers all %d elements here, so there is only "
-            "one field's block to write and groups= already names it."
-            % (fluid, n_hexes))
-
+            "bc needs a temperature table too: a name -> code mapping for the "
+            "temperature field, covering every element (a name left out of it stays "
+            "conformal, 'E  '). A file written with only the velocity block is one the "
+            "reader expects to keep reading and cannot." % (fluid, nelv, n_hexes))
     partners, _pairs = _resolve_periodic(mesh, periodic)
-    g_vel = _as_groups(mesh, groups)
-    if not multi_field:
-        _check_periodic_names(mesh, g_vel, partners, None, "groups")
-        blocks = [_export_rows(mesh, g_vel, partners)]
+    if not has_temperature:
+        _check_periodic_names(mesh, bc, "velocity", partners, None)
+        blocks = [_export_rows(mesh, bc, partners)]
     else:
-        _check_periodic_names(mesh, g_vel, partners, fluid_mask, "groups")
-        g_therm = _as_groups(mesh, thermal)
-        _check_periodic_names(mesh, g_therm, partners, None, "thermal")
-        blocks = [_field_rows(mesh, g_vel, partners, fluid_mask, "groups"),
-                 _field_rows(mesh, g_therm, partners, None, "thermal")]
+        _check_periodic_names(mesh, bc, "velocity", partners, fluid_mask)
+        _check_periodic_names(mesh, bc, "temperature", partners, None)
+        blocks = [_field_rows(mesh, bc, "velocity", partners, fluid_mask),
+                  _field_rows(mesh, bc, "temperature", partners, None)]
 
     # ``new_id_of[old]`` is where element ``old`` lands in the written, fluid-first
     # numbering -- the inverse of ``order``, and what every element id in a boundary
@@ -378,7 +386,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg,
         fid.write(struct.pack("<d", 0.0))
         for bnd in blocks:
             fid.write(struct.pack("<d", float(len(bnd))))
-            for elem0, face, _name, code, p_elem0, p_face in bnd:
+            for elem0, face, _name, code, bid, p_elem0, p_face in bnd:
                 buf2: FloatArray = np.zeros(8, dtype="<f8")
                 buf2[0] = float(new_id_of[elem0] + 1)
                 buf2[1] = float(face)
@@ -389,6 +397,7 @@ def to_re2(mesh: HexMesh, filename: str, *, groups: GroupsArg,
                     # as buf2[0].
                     buf2[2] = float(new_id_of[p_elem0] + 1)
                     buf2[3] = float(p_face)
+                buf2[6] = float(bid)                    # bc(5): Nek's boundaryID
                 buf2[7] = _str_to_double(code)
                 fid.write(buf2.tobytes())
     return mesh
@@ -555,7 +564,7 @@ def _to_equispaced(nodes: PointArray, conn_ho: IntArray,
 
 
 def _hex_arrays(mesh: HexMesh,
-                g: PhysicalGroups) -> tuple[PointArray, IntArray, int, IntArray]:
+                g: BoundaryConditions) -> tuple[PointArray, IntArray, int, IntArray]:
     """Hex nodes + ``bc_id``: linear un-welded ``VTK_HEXAHEDRON`` at ``order == 1``, a
     conformal (shared-node) ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per
     cell) above it, whose face nodes inherit the boundary face's tag."""
@@ -564,10 +573,8 @@ def _hex_arrays(mesh: HexMesh,
         N = elements.shape[0]
         X = elements.reshape(N * 8, 3)
         bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
-        for elem, face, name, _code, _pe, _pf in _export_rows(mesh, g):
-            grp = g.get(name)
-            if grp is not None:
-                bc1[elem, mesh.FACE_POINTS[face - 1]] = grp.tag
+        for elem, face, _name, _cbc, bid, _pe, _pf in _export_rows(mesh, g, viewer=True):
+            bc1[elem, mesh.FACE_POINTS[face - 1]] = bid
         return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
     order = mesh.order
     perm = _lagrange_hex_perm(order)
@@ -577,10 +584,8 @@ def _hex_arrays(mesh: HexMesh,
         mesh.quad_mesh.interior, mesh.interior, order)
     bc: IntArray = np.zeros(nodes.shape[0], dtype=np.int64)
     face_idx = {f: hex_face_indices(f, order) for f in range(1, 7)}
-    for elem, face, name, _code, _pe, _pf in _export_rows(mesh, g):
-        grp = g.get(name)
-        if grp is not None:
-            bc[conn_ho[elem, face_idx[face]]] = grp.tag
+    for elem, face, _name, _cbc, bid, _pe, _pf in _export_rows(mesh, g, viewer=True):
+        bc[conn_ho[elem, face_idx[face]]] = bid
     nodes = _to_equispaced(nodes, conn_ho, order, 3)
     return nodes, conn_ho[:, perm], _VTK_LAGRANGE_HEXAHEDRON, bc
 
@@ -716,14 +721,14 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
 
 
 # -- .vtu (XML; VTK Lagrange cells render reliably in ParaView / VisIt) --
-def to_vtu(mesh: HexMesh, fname: str, *, groups: GroupsArg = None,
+def to_vtu(mesh: HexMesh, fname: str, *, bc: BCArg = None,
            binary: bool = True) -> HexMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
     ``bc_id`` tags, and per-cell ``element_tag`` region ids where the mesh carries
     ``element_tags`` (see :func:`element_tag_ids` for the mapping).  ``binary=False``
     writes the arrays as text instead, which is readable and diffable but costs a
     Python format per row."""
-    X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_groups(mesh, groups))
+    X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_bc(mesh, bc))
     _write_vtu(fname, X, conn, cell_type, bc_out=bc_out,
                cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes), binary=binary)
     return mesh

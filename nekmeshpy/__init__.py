@@ -2,9 +2,9 @@
 
 from . import tetmesh, trimesh
 from .core import fields, topology
+from .core.boundary_condition import BoundaryConditions
 from .core.fields import AxisLinearField, ConstantField, DistanceField, Field, MinField
 from .core.mesh import Mesh
-from .core.physical import PhysicalGroup, PhysicalGroups
 from .hexmesh import HexMesh
 from .io import writer
 from .linemesh import LineMesh
@@ -28,7 +28,7 @@ __all__ = [
     "NO_TAG",
     "Tags",
     "Mesh",
-    "PhysicalGroup", "PhysicalGroups",
+    "BoundaryConditions",
     "topology",
     "fields",
     "writer",

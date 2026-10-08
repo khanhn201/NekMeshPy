@@ -369,7 +369,7 @@ def test_per_region_codes_split_the_two_sides_of_one_face(tmp_path):
     assert len(face_rows(mesh)) == 2                    # two hexes carry it
 
     out = str(tmp_path / "m.re2")
-    writer.to_re2(mesh, out, groups={"interface": {"fluid": "W  ", "solid": "I  "}})
+    writer.to_re2(mesh, out, bc={"interface": {"fluid": "W  ", "solid": "I  "}})
     got = read_re2_boundary(out)
     assert got == Counter({(1, 6, "W  "): 1, (2, 5, "I  "): 1})
 
@@ -379,7 +379,7 @@ def test_a_none_side_code_writes_no_row_at_all(tmp_path):
     keeping just the fluid's wall needs."""
     mesh = _two_region_block()
     out = str(tmp_path / "m.re2")
-    writer.to_re2(mesh, out, groups={"interface": {"fluid": "W  ", "solid": None}})
+    writer.to_re2(mesh, out, bc={"interface": {"fluid": "W  ", "solid": None}})
     assert read_re2_boundary(out) == Counter({(1, 6, "W  "): 1})
 
 
@@ -387,7 +387,7 @@ def test_a_region_the_codes_do_not_name_is_an_error(tmp_path):
     mesh = _two_region_block()
     with pytest.raises(ValueError, match="borders an element in region 'solid'"):
         writer.to_re2(mesh, str(tmp_path / "m.re2"),
-                      groups={"interface": {"fluid": "W  "}})
+                      bc={"interface": {"fluid": "W  "}})
 
 
 # -- element_tag in the .vtu -------------------------------------------------
@@ -446,7 +446,7 @@ def test_hex_vtu_carries_element_tag_per_cell(tmp_path):
                            element_tags=_two_region_section().element_tags,
                            first_tag="front", last_tag="back")
     out = str(tmp_path / "block.vtu")
-    writer.to_vtu(mesh, out, groups={"front": "SYM", "back": "SYM"})
+    writer.to_vtu(mesh, out, bc={"front": "SYM", "back": "SYM"})
     got = _vtu_arrays(out)["element_tag"]
     assert got.shape == (mesh.n_hexes,)
     assert np.array_equal(got, writer.element_tag_ids(mesh.element_tags,

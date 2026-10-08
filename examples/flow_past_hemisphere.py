@@ -43,8 +43,8 @@ ORDER = 2                    # polynomial order; 1 = linear.  Both surfaces are
 OUT_NAME = "flow_past_hemisphere"
 
 # boundary name -> Nek BC code, applied only at export
-GROUPS = {"inlet": "v  ", "outlet": "O  ", "hemisphere": "W  ", "ground": "W  ",
-          "top": "SYM", "front": "SYM", "back": "SYM"}
+VEL_BC = {"inlet": ("v  ", 1), "outlet": ("O  ", 2), "hemisphere": ("W  ", 3), "ground": ("W  ", 4),
+          "top": ("SYM", 5), "front": ("SYM", 6), "back": ("SYM", 7)}
 
 # -- two paired surfaces: outer half box (tagged per patch) and inner hemisphere
 # half_box tags each patch with the far-field side it forms; hemisphere reuses the
@@ -63,6 +63,6 @@ mesh = hexmesh.annulus(inner, outer,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 print("groups:", ", ".join(mesh.face_group_tags))

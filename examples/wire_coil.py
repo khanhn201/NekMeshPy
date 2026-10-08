@@ -38,8 +38,8 @@ The export names ``fluid=`` too: Nek's conjugate heat transfer needs the fluid
 statement about the *element order* in the file, not just their tags -- so ``to_re2``
 reorders the written bytes to put every ``"fluid"`` element first.  ``nelgv < nelgt``
 also means Nek's reader expects a **second** boundary block -- one per solved field --
-so ``GROUPS`` (velocity, fluid-only) and ``THERMAL`` (temperature, every element) are
-two separate tables rather than one.
+so ``VEL_BC`` (velocity, fluid-only) and ``TEMP_BC`` (temperature, every element) are
+two tables of one ``BoundaryConditions``.
 
     PYTHONPATH=. python examples/wire_coil.py
 
@@ -47,7 +47,7 @@ Produces ``wire_coil.re2``, ``wire_coil.vtu`` and ``wire_coil.f00000``.
 """
 import numpy as np
 
-from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import affine
 from nekmeshpy.tags import Tags
 
@@ -547,28 +547,28 @@ assert set(np.flatnonzero(_conj)) == _named, \
 
 # --- Nek export.  The two axial ends are a periodic pair under a pure z-shift by
 # LEAD (whole pitches), so inlet/outlet and the solid saw cuts cut_lo/cut_hi all
-# carry 'P  ' rather than an opening.  GROUPS is the velocity field (fluid only):
-# coil/wall are walls on the fluid side and write nothing on the solid side; the
-# fluid ends are periodic.  THERMAL is temperature (every element): the conjugate
+# carry 'P  ' rather than an opening.  VEL_BC is the velocity field (fluid only):
+# coil/wall are walls as the fluid sees them (the solid side is not in this block); the
+# fluid ends are periodic.  TEMP_BC is temperature (every element): the conjugate
 # surfaces stay conformal ('E  ', omitted), the periodic ends carry heat around on
 # both the fluid pair and the solid cut, and only the pipe's outer skin is a real
 # (insulated) boundary.
-GROUPS = {
-    "coil": {"fluid": "v  ", "solid": None},
-    "wall": {"fluid": "W  ", "solid": None},
-    "inlet":  "P  ",
-    "outlet": "P  ",
+VEL_BC = {
+    "coil": ("v  ", 1),
+    "wall": ("W  ", 2),
+    "inlet":  ("P  ", 3),
+    "outlet": ("P  ", 4),
 }
 PERIODIC = [
     hexmesh.Periodic("inlet", "outlet", affine.translation([0.0, 0.0, LEAD])),
     hexmesh.Periodic("cut_lo", "cut_hi", affine.translation([0.0, 0.0, LEAD])),
 ]
-THERMAL = {
-    "inlet":  "P  ",
-    "outlet": "P  ",
-    "cut_lo": "P  ",
-    "cut_hi": "P  ",
-    "outer":  "f  ",
+TEMP_BC = {
+    "inlet":  ("P  ", 1),
+    "outlet": ("P  ", 2),
+    "cut_lo": ("P  ", 3),
+    "cut_hi": ("P  ", 4),
+    "outer":  ("f  ", 5),
 }
 
 print(hexmesh.report(mesh))
@@ -576,7 +576,7 @@ print("regions:", dict(zip(*np.unique(mesh.element_tags.to_dense(),
                                       return_counts=True))))
 print("faces  :", ", ".join(sorted(mesh.face_tags.unique())))
 
-writer.to_re2(mesh, "wire_coil.re2", groups=GROUPS, periodic=PERIODIC,
-              fluid="fluid", thermal=THERMAL)
-writer.to_vtu(mesh, "wire_coil.vtu", groups={**THERMAL, **GROUPS})
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
+writer.to_re2(mesh, "wire_coil.re2", bc=BC, periodic=PERIODIC, fluid="fluid")
+writer.to_vtu(mesh, "wire_coil.vtu", bc=BC)
 writer.to_fld(mesh, "wire_coil.f00000", fluid="fluid")

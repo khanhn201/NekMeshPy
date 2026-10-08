@@ -1,12 +1,12 @@
-"""Tests for the toolkit generalization layer: physical groups, the shared-point
+"""Tests for the toolkit generalization layer: boundary conditions, the shared-point
 Mesh view, quality, and the section-smoothing registry (exercised on the
 mesh the carotid example builds)."""
 
 import numpy as np
+import pytest
 
 from nekmeshpy import (
-    PhysicalGroup,
-    PhysicalGroups,
+    BoundaryConditions,
     hexmesh,
     linemesh,
     quadmesh,
@@ -15,24 +15,72 @@ from nekmeshpy import (
 from nekmeshpy.hexmesh import quality
 
 
-def test_physical_groups_is_a_registry_with_no_presets():
+def test_boundary_conditions_is_a_registry_with_no_presets():
     """The registry stores what a mesher tells it and knows nothing on its own: a
     name-to-code table is a statement about one piece of geometry, so it lives in the
     mesher next to the tags it names."""
-    g = PhysicalGroups([PhysicalGroup("wall", 1, 2, "W  "),
-                        PhysicalGroup("outlet", 4, 2, "O  ")])
-    assert g.code_for(1) == "W  "
-    assert g.name_for(4) == "outlet"
-    assert g.tag_for("wall") == 1
-    assert len(g) == 2
-    assert not [m for m in dir(PhysicalGroups) if m in
+    g = BoundaryConditions({"wall": "W", "outlet": "O  "})
+    assert g.fields == ("velocity",)
+    assert g.side("velocity", "wall", "") == ("W  ", 0)
+    assert len(g) == 2 and "wall" in g and "inlet" not in g
+    assert not [m for m in dir(BoundaryConditions) if m in
                 ("nek_default", "duct", "from_tags")]
 
 
-def test_physical_group_pads_code():
-    g = PhysicalGroups()
-    grp = g.define("inlet", 9, code="v")
-    assert grp.code == "v  "
+def test_cbc_and_boundary_id_default_when_the_table_states_none():
+    side = lambda g, n: g.side("velocity", n, "")   # noqa: E731
+    only_cbc = BoundaryConditions({"a": "W", "b": ("v", None)})
+    assert side(only_cbc, "a") == ("W  ", 0) and side(only_cbc, "b") == ("v  ", 0)
+    only_id = BoundaryConditions({"a": 1, "b": (None, 2)})
+    assert side(only_id, "a") == ("E  ", 1) and side(only_id, "b") == ("E  ", 2)
+    both = BoundaryConditions({"a": ("W", 1), "b": ("v", 1)})   # names may share an id
+    assert side(both, "a") == ("W  ", 1) and side(both, "b") == ("v  ", 1)
+    assert BoundaryConditions({"a": (None, None)}).side("velocity", "a", "") == ("E  ", 0)
+
+
+def test_cbc_and_boundary_id_are_all_or_none_per_table():
+    with pytest.raises(ValueError, match="cbc.*Missing: b"):
+        BoundaryConditions({"a": ("W", 1), "b": (None, 2)})
+    with pytest.raises(ValueError, match="boundaryID.*Missing: b"):
+        BoundaryConditions({"a": ("W", 1), "b": "v"})
+    # the temperature table is judged on its own: it may state none at all
+    BoundaryConditions({"a": ("W", 1)}, temperature={"a": "I"})
+
+
+def test_boundary_ids_run_from_one_without_a_gap_per_field():
+    with pytest.raises(ValueError, match="velocity.*1..k.*\\[2, 3\\]"):
+        BoundaryConditions({"a": 2, "b": 3})
+    with pytest.raises(ValueError, match="temperature.*\\[1, 3\\]"):
+        BoundaryConditions({"a": 1}, temperature={"a": 1, "b": 3})
+    BoundaryConditions({"a": 1, "b": 2}, temperature={"a": 1, "b": 1})   # separate sets
+
+
+def test_a_stated_zero_and_E_clear_the_boundary():
+    g = BoundaryConditions({"a": ("W", 1), "b": ("E", 0), "c": ("E  ", 2)})
+    assert g.side("velocity", "a", "") == ("W  ", 1)
+    assert g.side("velocity", "b", "") == ("E  ", 0)
+    assert g.numbered("velocity")        # b's 0 is stated, so no positional fallback
+    assert not BoundaryConditions({"a": "W"}).numbered("velocity")
+
+
+def test_boundary_condition_per_region_sides():
+    g = BoundaryConditions({"iface": {"fluid": ("W", 1), "solid": None}, "x": ("v", 2)})
+    assert g.side("velocity", "iface", "fluid") == ("W  ", 1)
+    assert g.side("velocity", "iface", "solid") is None
+    assert g.names_with("velocity", "W  ") == {"iface"}
+    with pytest.raises(ValueError, match="region"):
+        g.side("velocity", "iface", "")
+
+
+def test_boundary_conditions_fields_are_separate_tables():
+    g = BoundaryConditions({"inlet": "v", "wall": "W"},
+                           temperature={"wall": ("I", 1), "outer": ("f", 2)})
+    assert g.fields == ("velocity", "temperature")
+    assert list(g) == ["inlet", "wall", "outer"]
+    assert g.has("temperature", "outer") and not g.has("velocity", "outer")
+    assert g.side("temperature", "wall", "") == ("I  ", 1)
+    assert g.side("velocity", "wall", "") == ("W  ", 0)
+    assert g.tag_of("velocity", "wall") == 2 and g.tag_of("temperature", "wall") == 1
 
 
 def test_to_mesh_groups(built_mesh):

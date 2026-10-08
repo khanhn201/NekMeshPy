@@ -184,8 +184,8 @@ def test_high_order_quality_non_degenerate_on_curved_shell(order):
 def test_re2_is_order_invariant(tmp_path):
     lin = _shell(1)
     ho = _shell(4)
-    writer.to_re2(lin, str(tmp_path / "lin.re2"), groups=GROUPS)
-    writer.to_re2(ho, str(tmp_path / "ho.re2"), groups=GROUPS)
+    writer.to_re2(lin, str(tmp_path / "lin.re2"), bc=GROUPS)
+    writer.to_re2(ho, str(tmp_path / "ho.re2"), bc=GROUPS)
     a = open(tmp_path / "lin.re2", "rb").read()
     b = open(tmp_path / "ho.re2", "rb").read()
     assert a == b                                        # curved nodes never reach re2
@@ -212,14 +212,14 @@ def test_lagrange_hex_perm_order2_body_center_last():
 # -- VTU (XML) export ---------------------------------------------------
 def test_vtu_order1_is_plain_hex(tmp_path):
     p = str(tmp_path / "lin.vtu")
-    writer.to_vtu(_shell(1), p, groups=GROUPS)
+    writer.to_vtu(_shell(1), p, bc=GROUPS)
     assert vtu_cell_types(p) == {12}                  # VTK_HEXAHEDRON
     assert 'Name="bc_id"' in open(p).read()
 
 
 def test_vtu_high_order_is_lagrange_hex(tmp_path):
     p = str(tmp_path / "ho.vtu")
-    writer.to_vtu(_shell(3), p, groups=GROUPS)           # 4**3 = 64 nodes/hex
+    writer.to_vtu(_shell(3), p, bc=GROUPS)           # 4**3 = 64 nodes/hex
     assert vtu_cell_types(p) == {72}                  # VTK_LAGRANGE_HEXAHEDRON
     assert 'Name="bc_id"' in open(p).read()
 
@@ -227,7 +227,7 @@ def test_vtu_high_order_is_lagrange_hex(tmp_path):
 def test_vtu_meshio_roundtrip(tmp_path):
     meshio = pytest.importorskip("meshio")
     p = str(tmp_path / "ho.vtu")
-    writer.to_vtu(_shell(3), p, groups=GROUPS)
+    writer.to_vtu(_shell(3), p, bc=GROUPS)
     mm = meshio.read(p)
     assert {c.type for c in mm.cells} == {"VTK_LAGRANGE_HEXAHEDRON"}
     assert "bc_id" in mm.point_data

@@ -177,7 +177,7 @@ def test_re2_writes_the_partner_element_and_face(tmp_path):
     re2 element id is, and the file's own rows are mutually consistent."""
     mesh = _box()
     path = str(tmp_path / "box.re2")
-    writer.to_re2(mesh, path, groups=GROUPS_P, periodic=[_axial()])
+    writer.to_re2(mesh, path, bc=GROUPS_P, periodic=[_axial()])
 
     from_file = read_re2_periodic(path)
     assert len(from_file) == 2 * int(hexmesh.tagged_faces(mesh, "inlet").size)
@@ -196,7 +196,7 @@ def test_a_non_periodic_mesh_leaves_the_partner_fields_zero(tmp_path):
     what keeps the golden regression's boundary block byte-identical."""
     mesh = _box()
     plain = str(tmp_path / "plain.re2")
-    writer.to_re2(mesh, plain, groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "})
+    writer.to_re2(mesh, plain, bc={"wall": "W  ", "inlet": "v  ", "outlet": "O  "})
     assert read_re2_periodic(plain) == {}
     with open(plain, "rb") as f:
         raw = f.read()
@@ -209,20 +209,20 @@ def test_a_non_periodic_mesh_leaves_the_partner_fields_zero(tmp_path):
 def test_a_P_code_without_a_spec_is_refused(tmp_path):
     """It would write partner element 0, face 0 -- a mesh Nek accepts and mis-solves."""
     with pytest.raises(ValueError, match="must be the same set"):
-        writer.to_re2(_box(), str(tmp_path / "x.re2"), groups=GROUPS_P)
+        writer.to_re2(_box(), str(tmp_path / "x.re2"), bc=GROUPS_P)
 
 
 def test_a_spec_without_a_P_code_is_refused(tmp_path):
     with pytest.raises(ValueError, match="must be the same set"):
         writer.to_re2(_box(), str(tmp_path / "x.re2"),
-                      groups={"wall": "W  ", "inlet": "v  ", "outlet": "O  "},
+                      bc={"wall": "W  ", "inlet": "v  ", "outlet": "O  "},
                       periodic=[_axial()])
 
 
 def test_naming_only_one_half_periodic_is_refused(tmp_path):
     with pytest.raises(ValueError, match="must be the same set"):
         writer.to_re2(_box(), str(tmp_path / "x.re2"),
-                      groups={"wall": "W  ", "inlet": "P  ", "outlet": "O  "},
+                      bc={"wall": "W  ", "inlet": "P  ", "outlet": "O  "},
                       periodic=[_axial()])
 
 
@@ -232,8 +232,8 @@ def test_a_resolved_pairing_may_be_passed_straight_in(tmp_path):
     mesh = _box()
     pairs = hexmesh.periodic_pairs(mesh, [_axial()])
     a, b = str(tmp_path / "a.re2"), str(tmp_path / "b.re2")
-    writer.to_re2(mesh, a, groups=GROUPS_P, periodic=[_axial()])
-    writer.to_re2(mesh, b, groups=GROUPS_P, periodic=pairs)
+    writer.to_re2(mesh, a, bc=GROUPS_P, periodic=[_axial()])
+    writer.to_re2(mesh, b, bc=GROUPS_P, periodic=pairs)
     with open(a, "rb") as fa, open(b, "rb") as fb:
         assert fa.read() == fb.read()
 
@@ -242,6 +242,32 @@ def test_vtu_still_paints_a_periodic_group(tmp_path):
     """A periodic name is an ordinary group to the viewer -- ``bc_id`` by id, no code."""
     mesh = _box()
     path = str(tmp_path / "box.vtu")
-    writer.to_vtu(mesh, path, groups=GROUPS_P)
+    writer.to_vtu(mesh, path, bc=GROUPS_P)
     with open(path) as f:
         assert 'Name="bc_id"' in f.read()
+
+
+def test_vtu_bc_id_is_the_boundary_id(tmp_path):
+    """``bc_id`` is the stated ``boundaryID``; a table with none paints each name's position."""
+    import meshio
+    path = str(tmp_path / "ids.vtu")
+    writer.to_vtu(_box(), path, bc={"inlet": ("v", 1), "outlet": ("O", 2), "wall": ("W", 2)})
+    m = meshio.read(path)
+    ids = set(np.unique(m.point_data["bc_id"]).tolist())
+    assert ids == {0, 1, 2}        # 0: untagged nodes; wall shares outlet's id
+
+
+def test_vtu_bc_id_falls_back_to_the_position_in_its_own_table(tmp_path):
+    import meshio
+    path = str(tmp_path / "pos.vtu")
+    writer.to_vtu(_box(), path, bc={"inlet": "v", "outlet": "O", "wall": "W"})
+    ids = set(np.unique(meshio.read(path).point_data["bc_id"]).tolist())
+    assert ids == {0, 1, 2, 3}
+
+
+def test_vtu_paints_a_stated_zero_as_zero(tmp_path):
+    import meshio
+    path = str(tmp_path / "zero.vtu")
+    writer.to_vtu(_box(), path, bc={"inlet": ("v", 1), "outlet": ("E", 0), "wall": ("W", 1)})
+    ids = set(np.unique(meshio.read(path).point_data["bc_id"]).tolist())
+    assert ids == {0, 1}

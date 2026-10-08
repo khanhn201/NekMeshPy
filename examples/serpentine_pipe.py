@@ -131,7 +131,7 @@ if __name__ == "__main__":
     OUT_NAME = "serpentine_pipe"
 
     # boundary name -> Nek BC code, applied only at export
-    GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
+    VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3)}
 
     # -- turtle-walk the move table, in world space -------------------------------
     # paths.walk gives back the vectorized centerline/tangent pair HexMesh.sweep wants
@@ -212,6 +212,6 @@ if __name__ == "__main__":
     print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
     print("build time: %.2f s" % BUILD_SECONDS)
 
-    writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-    writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
+    writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+    writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)  # XML: renders curved cells
     print("groups:", ", ".join(mesh.face_group_tags))

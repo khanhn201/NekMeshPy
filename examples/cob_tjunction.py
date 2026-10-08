@@ -64,7 +64,7 @@ BL = 0.05 * R_MAIN * np.array([0.0, 0.5, 1.0])
 ORDER = 2
 OUT_NAME = "cob_tjunction"
 
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  "}
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3), "branch": ("O  ", 4)}
 
 T_BL = float(BL[-1])
 
@@ -87,5 +87,5 @@ mesh = skin_wall(core, BL)
 print("core %d hexes -> %d skin layers -> %d in all"
       % (core.n_hexes, BL.size - 1, mesh.n_hexes))
 print(hexmesh.report(mesh))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)

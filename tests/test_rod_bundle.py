@@ -21,7 +21,7 @@ import pytest
 from conftest import run_example
 
 from nekmeshpy import hexmesh, quadmesh
-from nekmeshpy.io.writer import _as_groups, _export_rows
+from nekmeshpy.io.writer import _field_rows
 
 REGIONS = ("rod", "fluid", "duct")
 
@@ -198,20 +198,23 @@ def test_no_inverted_elements(bundle):
 
 
 def test_conjugate_interfaces_export_from_the_fluid_side_only(bundle):
-    """Each interface face is carried by two hexes, but ``side_codes`` drops the metal
-    one -- so the rod walls export ``61 * N_CIRC * N_SPAN`` rows, not twice that."""
+    """Each interface face is carried by two hexes, but the velocity block only sees the
+    coolant -- so the rod walls export ``61 * N_CIRC * N_SPAN`` rows, not twice that."""
     mesh = bundle["mesh"]
-    rows = _export_rows(mesh, _as_groups(mesh, bundle["GROUPS"]))
-    n = collections.Counter(name for _, _, name, _, _, _ in rows)
+    bc = bundle["BC"]
+    fluid = np.asarray(mesh.element_tags.to_dense()) == "fluid"
+    count = lambda rows: collections.Counter(r[2] for r in rows)   # noqa: E731
+    vel = count(_field_rows(mesh, bc, "velocity", {}, fluid))
+    temp = count(_field_rows(mesh, bc, "temperature", {}, None))
     span, circ = bundle["N_SPAN"], bundle["N_CIRC"]
 
-    assert n["rod_surface"] == 61 * circ * span
-    assert n["duct_surface"] == n["outer"]
+    assert vel["rod_surface"] == 61 * circ * span
+    assert vel["duct_surface"] == temp["outer"]
 
     section = bundle["section"]
     tags = section.element_tags.to_dense()
-    assert n["inlet"] == n["outlet"] == int((tags == "fluid").sum())
-    assert n["cut"] == 2 * int((tags != "fluid").sum())
+    assert vel["inlet"] == vel["outlet"] == int((tags == "fluid").sum())
+    assert temp["cut"] == 2 * int((tags != "fluid").sum())
 
 
 def test_vtu_carries_the_three_regions_per_cell(bundle, bundle_dir):

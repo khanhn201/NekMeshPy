@@ -185,7 +185,7 @@ FLUX_UPSTREAM, FLUX_DOWNSTREAM = "flux_upstream", "flux_downstream"
 #: and reconstructs to a row for each. Flux through a surface has a direction, so only
 #: the upstream side is written -- the downstream row would be the same measurement
 #: counted backwards. Anything else is one code from every side.
-GROUPS = {
+VEL_BC = {
     "wall": "W  ",
     "trunk_outlet": "v  ",
     "top_outlet_1": "int",
@@ -253,9 +253,9 @@ mesh = hexmesh.attach(blocks, flux_seams + [
 
 print(hexmesh.report(mesh))
 if EXPORT_VTK:
-    writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+    writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 if EXPORT_RE2:
-    writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+    writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
 if EXPORT_FLD:
     # .re2 is corner-only at any order; the field file carries the full GLL block,
     # so this is the export that actually preserves the ORDER = 3 geometry.

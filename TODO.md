@@ -19,3 +19,4 @@ Local, immediate simple tasks that can be done right away
 - [ ] 23) move wirecoil up gallery
 - [ ] 24) Use center node in re2 for order=2
 - [ ] 25) None vs "" in tags?
+- [ ] 26) More than 1 scalar BC

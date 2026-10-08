@@ -10,7 +10,7 @@ Produces ``circular_pipe.re2`` and ``circular_pipe.vtu``.
 
 import logging
 
-from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core.fields import geometric_spacing
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -32,7 +32,9 @@ CENTER = (0.0, 0.0, 0.0)
 OUT_NAME = "circular_pipe"
 
 # boundary name -> Nek BC code, applied only at export
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3)}  # (cbc, boundaryID)
+TEMP_BC = {"wall": ("I  ", 1), "inlet": ("t  ", 2), "outlet": ("O  ", 3)}
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
 
 # -- build the O-grid cross-section, then extrude it along the axis -----------
 # interior filled + repositioned (wall fixed); extrude copies it along the axis
@@ -53,6 +55,6 @@ stats = hexmesh.quality_summary(mesh)
 print("circular pipe: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
 print("scaled Jacobian: min=%.4f mean=%.4f" % (stats.min, stats.mean))
 
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)  # XML: renders curved cells
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=BC)  # XML: renders curved cells
 print("groups:", ", ".join(mesh.face_group_tags))
