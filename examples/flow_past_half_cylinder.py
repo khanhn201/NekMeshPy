@@ -56,8 +56,8 @@ ORDER = 2                    # polynomial order; 1 = linear.  The bottom edge is
 OUT_NAME = "flow_past_half_cylinder"
 
 # boundary name -> Nek BC code, applied only at export
-GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
-          "top": "SYM", "front": "SYM", "back": "SYM"}
+VEL_BC = {"inlet": ("v  ", 1), "outlet": ("O  ", 2), "wall": ("W  ", 3),
+          "top": ("SYM", 4), "front": ("SYM", 5), "back": ("SYM", 6)}
 
 # -- composite bottom edge: ground -> semicircular bump -> ground -------------
 # Each piece is placed exactly where it belongs -- no resampling.  The flat runs are
@@ -110,6 +110,6 @@ mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 print("groups:", ", ".join(mesh.face_group_tags))

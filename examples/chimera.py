@@ -76,7 +76,7 @@ extrusions and not one.
 The two regions are ``element_tags`` -- ``"fluid"`` and ``"solid"``, every element
 carrying exactly one, so ``hexmesh.select(mesh, "solid")`` and its complement
 partition the mesh. That vocabulary is deliberately disjoint from the ``face_tags``
-in ``GROUPS`` (``"wall"`` / ``"inlet"`` / ``"outlet"`` / ``"insulated"``), which are
+in ``VEL_BC`` (``"wall"`` / ``"inlet"`` / ``"outlet"`` / ``"insulated"``), which are
 boundary conditions: the two tables are different slots on the container and a name
 shared between them would only read as if they were the same thing.
 
@@ -115,7 +115,7 @@ import sys
 
 import numpy as np
 
-from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import paths
 from nekmeshpy.hexmesh import Seam
 from nekmeshpy.pointmesh import PointMesh
@@ -218,14 +218,14 @@ FLUID_TAG = "fluid"
 SOLID_TAG = "solid"
 
 #: The jacket's own external faces. A ``face_tags`` name, kept distinct from
-#: :data:`SOLID_TAG` because it is a boundary condition -- it belongs to :data:`GROUPS`
+#: :data:`SOLID_TAG` because it is a boundary condition -- it belongs to :data:`VEL_BC`
 #: alongside ``"wall"`` / ``"inlet"`` / ``"outlet"``, not to the region vocabulary.
 INSULATED_TAG = "insulated"
 
 #: The conjugate interface: the tube wall the jacket welded onto, which is one shared
 #: face between a ``"fluid"`` hex and a ``"solid"`` one. It has to be named apart from
 #: the rest of the wall because its **two sides want different conditions** -- and a
-#: face carries one name, so the asymmetry lives in :data:`GROUPS`, keyed by the region
+#: face carries one name, so the asymmetry lives in :data:`VEL_BC`, keyed by the region
 #: of the element each exported row belongs to.
 INTERFACE_TAG = "interface"
 
@@ -242,12 +242,13 @@ WALL_TAG = "wall"
 N_COPIES = 5                    # number of chimera units chained along z
 
 OUT_NAME = "chimera"
-GROUPS = {
-    "wall": "W  ", "inlet": "v  ", "outlet": "O  ", "insulated": "I  ",
-    # the fluid side keeps the tube's own no-slip wall; the solid side writes nothing,
-    # so the interface exports exactly the rows it did when it was plain "wall"
-    "interface": {"fluid": "W  ", "solid": None},
-}
+# the interface is a no-slip wall to the fluid; the solid is not in the velocity block
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3),
+          "interface": ("W  ", 1)}
+# temperature covers every element: the interface stays conformal, the rest is as stated
+TEMP_BC = {"wall": ("I  ", 1), "inlet": ("t  ", 2), "outlet": ("O  ", 3),
+           "insulated": ("I  ", 1)}
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
 
 # -- the junction, built once ---------------------------------------------------
 # Every junction in the chain is the same block at a different ``z``, so it is built once
@@ -651,7 +652,7 @@ fluid = skin_wall(fluid, BL, wall_tags=(WALL_TAG, INTERFACE_TAG),
 # for bit (see :data:`SOLID_FR`), and a stated seam pairs by bijection and then adopts one
 # side's nodes -- here the fluid's, which is the side whose geometry is the physics.
 # ``attach_tag`` keeps the buried seam **named**, which is the whole point of it: the two
-# sides want different conditions, and :data:`GROUPS` keys them by each row's own region.
+# sides want different conditions, and :data:`VEL_BC` keys them by each row's own region.
 mesh = hexmesh.attach([fluid, hexmesh.merge(solids)],
                       [Seam(0, INTERFACE_TAG, 1, INTERFACE_TAG, own="a",
                             attach_tag=INTERFACE_TAG)])
@@ -659,5 +660,5 @@ mesh = hexmesh.attach([fluid, hexmesh.merge(solids)],
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))
 
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=BC, fluid="fluid")
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=BC)

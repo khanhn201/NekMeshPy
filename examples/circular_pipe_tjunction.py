@@ -52,7 +52,7 @@ ORDER = 4                     # polynomial order; 1 = linear.  The seam arcs and
 OUT_NAME = "circular_pipe_tjunction"
 
 # boundary name -> Nek BC code, applied only at export
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  "}
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3), "branch": ("O  ", 4)}
 
 M = 2 * N_HALF                # points per full cross-section ring
 
@@ -192,5 +192,5 @@ mesh = hexmesh.attach(blocks, [Seam(0, "attach1", 1, "attach1"),
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
 
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)

@@ -7,10 +7,10 @@
    :members:
 ```
 
-## `core.physical`
+## `core.boundary_condition`
 
 ```{eval-rst}
-.. automodule:: nekmeshpy.core.physical
+.. automodule:: nekmeshpy.core.boundary_condition
    :members:
 ```
 

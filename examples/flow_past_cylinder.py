@@ -41,8 +41,8 @@ ORDER = 2                    # polynomial order; 1 = linear. High order bows the
 OUT_NAME = "flow_past_cylinder"
 
 # boundary name -> Nek BC code, applied only at export
-GROUPS = {"inlet": "v  ", "outlet": "O  ", "cylinder": "W  ",
-          "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
+VEL_BC = {"inlet": ("v  ", 1), "outlet": ("O  ", 2), "cylinder": ("W  ", 3),
+          "top": ("SYM", 4), "bottom": ("SYM", 5), "front": ("SYM", 6), "back": ("SYM", 7)}
 
 # -- build the ring section: circle body -> named square far field ------------
 # rotate the circle so its index 0 meets the box's lower-left corner, so the two
@@ -65,6 +65,6 @@ mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 print("groups:", ", ".join(mesh.face_group_tags))

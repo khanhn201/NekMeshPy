@@ -42,7 +42,7 @@ class Mesh:
         for name, block in (cell_sets or {}).items():
             self.cell_sets[name] = {t: np.asarray(ids, dtype=np.int64).ravel()
                                     for t, ids in block.items()}
-        # {name: (tag, dim)} gmsh physical-group metadata
+        # {name: (tag, dim)} gmsh-style group metadata
         self.field_data = dict(field_data or {})
 
     # -- sizes -----------------------------------------------------------

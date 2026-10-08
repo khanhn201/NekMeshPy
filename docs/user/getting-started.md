@@ -25,11 +25,12 @@ print(hexmesh.report(mesh))
 Tag names map to Nek BC codes at export.
 
 ```python
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  "}
-THERMAL = {"wall": "I  ", "inlet": "t  ", "outlet": "O  "}
-writer.to_re2(mesh, "case.re2", groups=GROUPS, thermal=THERMAL) # native Nek5000/NekRS binary mesh
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3)}  # (cbc, boundaryID)
+TEMP_BC = {"wall": ("I  ", 1), "inlet": ("t  ", 2), "outlet": ("O  ", 3)}
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
+writer.to_re2(mesh, "case.re2", bc=BC) # native Nek5000/NekRS binary mesh
 writer.to_fld(mesh, "case.f00000")             # contains high order nodes
-writer.to_vtu(mesh, "case.vtu", groups=GROUPS) # ParaView / VisIt (XML VTK)
+writer.to_vtu(mesh, "case.vtu", bc=VEL_BC) # ParaView / VisIt (XML VTK)
 ```
 
 ## Visualize it
@@ -37,47 +38,11 @@ writer.to_vtu(mesh, "case.vtu", groups=GROUPS) # ParaView / VisIt (XML VTK)
 It is recommended to export and open the `.vtu` file with your favorite visualizer
 (Paraview/Visit) and reload the file as you mesh to the `.vtu` file.
 
-## Use it in Nek5000/NekRS
-### Boundary condition
-Currently, `writer.to_re2` export the 3 characters array `cbc` to `.re2` file.
-
-To convert to `boundaryID`, do it in usrdat2:
-```
-      subroutine usrdat2
-
-      include 'SIZE'
-      include 'TOTAL'
-      integer e,f
-      parameter (lt=lx1*ly1*lz1*lelt)
-
-      n = nx1*ny1*nz1*nelt
-
-      do iel=1,nelt
-      do ifc=1,2*ndim
-         if (cbc(ifc,iel,1) .eq. 'W  ') boundaryID(ifc,iel) = 1
-         if (cbc(ifc,iel,1) .eq. 'v  ') boundaryID(ifc,iel) = 2
-         if (cbc(ifc,iel,1) .eq. 'O  ') boundaryID(ifc,iel) = 3
-      enddo
-      enddo
-
-      do iel=1,nelt
-      do ifc=1,2*ndim
-         if (cbc(ifc,iel,2) .eq. 'I  ') boundaryIDt(ifc,iel) = 1
-         if (cbc(ifc,iel,2) .eq. 't  ') boundaryIDt(ifc,iel) = 2
-         if (cbc(ifc,iel,2) .eq. 'O  ') boundaryIDt(ifc,iel) = 3
-      enddo
-      enddo
-
-      return
-      end
-```
-
-
-### High order nodes
+## Use high order nodes in Nek5000/NekRS
 `.re2` only store the linear mesh. Higher order nodes can be exported through fld file
 
 ```python
-writer.to_re2(mesh, "case.re2", groups=GROUPS)   # topology + BCs, linear
+writer.to_re2(mesh, "case.re2", bc=VEL_BC)   # topology + BCs, linear
 writer.to_fld(mesh, "case.f00000")               # contains high order nodes
 ```
 

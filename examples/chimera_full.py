@@ -112,7 +112,7 @@ import sys
 import numpy as np
 from scipy.spatial import cKDTree
 
-from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core import conform, paths
 from nekmeshpy.linemesh import LineMesh
 from nekmeshpy.pointmesh import PointMesh
@@ -309,13 +309,13 @@ RC_MAIN = R_MAIN - T_BL
 RC_BR = R_BR - T_BL
 
 # == chimera's own names.  The regions are element_tags (every element carries one,
-# manifold included); SOLID_FACE_TAG is a face_tags / GROUPS name, deliberately not
+# manifold included); SOLID_FACE_TAG is a face_tags / VEL_BC name, deliberately not
 # the same string as the "solid" region -- see chimera.py's own note.
 FLUID_TAG = "fluid"
 SOLID_FACE_TAG = "insulated"
 #: chimera's conjugate interface, which arrives with the chain.  Its two sides want
 #: different conditions and a face carries one name, so the asymmetry is keyed by the
-#: region of the element each exported row belongs to -- see GROUPS below.
+#: region of the element each exported row belongs to -- see VEL_BC below.
 INTERFACE_TAG = "interface"
 
 L1 = 2.5 * R_MAIN     # T1 main half-length
@@ -990,11 +990,14 @@ print(_rep_out)
 
 mesh = mesh_out
 OUT_NAME = "chimera_full"
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", SOLID_FACE_TAG: "I  ",
-          INTERFACE_TAG: {"fluid": "W  ", "solid": None}}
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
-writer.to_fld(mesh, OUT_NAME + ".f00000")
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3),
+          INTERFACE_TAG: ("W  ", 1)}
+TEMP_BC = {"wall": ("I  ", 1), "inlet": ("t  ", 2), "outlet": ("O  ", 3),
+           SOLID_FACE_TAG: ("I  ", 1)}
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=BC, fluid="fluid")
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=BC)
+writer.to_fld(mesh, OUT_NAME + ".f00000", fluid="fluid")
 print("groups:", ", ".join(mesh.face_group_tags))
 
 stats = hexmesh.quality_summary(mesh)

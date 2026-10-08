@@ -40,8 +40,8 @@ ORDER = 2                    # polynomial order; 1 = linear. The domain is
 OUT_NAME = "backward_facing_step"
 
 # boundary name -> Nek BC code, applied only at export (span faces = symmetry)
-GROUPS = {"inlet": "v  ", "outlet": "O  ", "wall": "W  ",
-          "front": "SYM", "back": "SYM"}
+VEL_BC = {"inlet": ("v  ", 1), "outlet": ("O  ", 2), "wall": ("W  ", 3),
+          "front": ("SYM", 4), "back": ("SYM", 5)}
 
 
 # -- build the L-shaped section from three structured rectangles --------------
@@ -80,6 +80,6 @@ mesh = hexmesh.extrude(section, axis=(0.0, 0.0, 1.0), length=SPAN,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 print("groups:", ", ".join(mesh.face_group_tags))

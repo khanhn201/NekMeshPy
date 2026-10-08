@@ -20,7 +20,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import HexMesh, hexmesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, HexMesh, hexmesh, quadmesh, writer
 from nekmeshpy.tags import Tags
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -148,7 +148,8 @@ print("u-tube box: %d hexes (%d fluid), order %d, scaled Jacobian min=%.4f mean=
 
 print(hexmesh.report(mesh))
 # the solid has no velocity unknown, so the wall is written from the fluid side only
-GROUPS = {"interface": {"fluid": "W  ", "solid": None}, "inlet": "v  ", "outlet": "O  "}
-THERMAL = {"outer": "f  "}
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS, fluid="fluid", thermal=THERMAL)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups={**THERMAL, **GROUPS})
+VEL_BC = {"interface": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3)}
+TEMP_BC = {"outer": ("f  ", 1)}
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=BC, fluid="fluid")
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=BC)

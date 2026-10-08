@@ -144,7 +144,7 @@ N_BRANCH = 8                 # layers in the branch, footprint -> opening
 ORDER = 3                    # exact at any order; see the module docstring
 
 OUT_NAME = "quadrant_pipe_tjunction"
-GROUPS = {"wall": "W  ", "inlet": "v  ", "outlet": "O  ", "branch": "O  "}
+VEL_BC = {"wall": ("W  ", 1), "inlet": ("v  ", 2), "outlet": ("O  ", 3), "branch": ("O  ", 4)}
 
 # -- the junction itself --------------------------------------------------------
 # PHI_W / CAP_TIP_BIAS / ORIGIN (the bypass edge, the crotch wall-triangle tip bias,
@@ -174,5 +174,5 @@ mesh = hexmesh.attach([core, leg_plus, leg_minus],
 print(hexmesh.report(mesh))
 print(hexmesh.topology_report(mesh))
 
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)

@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from conftest import conformal
 
-from nekmeshpy import hexmesh, linemesh, quadmesh
+from nekmeshpy import BoundaryConditions, hexmesh, linemesh, quadmesh
 from nekmeshpy.io import writer
 
 LAYERS = np.array([0.0, 0.5, 1.0])
@@ -170,8 +170,9 @@ def test_fld_fluid_reorders_to_match_to_re2(tmp_path):
     mesh = _cht_pair()
     re2_path = str(tmp_path / "m.re2")
     fld_path = str(tmp_path / "m0.f00001")
-    writer.to_re2(mesh, re2_path, groups={"fluid_wall": "W  "}, fluid="fluid",
-                  thermal={"fluid_wall": "I  ", "solid_wall": "I  "})
+    writer.to_re2(mesh, re2_path, fluid="fluid",
+                  bc=BoundaryConditions(velocity={"fluid_wall": "W  "},
+                                        temperature={"fluid_wall": "I  ", "solid_wall": "I  "}))
     writer.to_fld(mesh, fld_path, fluid="fluid")
 
     with open(re2_path, "rb") as f:

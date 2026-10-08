@@ -370,19 +370,19 @@ it.** Found by actually running a mesh (`ierr=4` reading `.re2` boundary data): 
 moment `nelgt > nelgv`, and then reads that many boundary blocks back to back —
 regardless of what the header's own field count says, and regardless of whether the case
 even solves heat. A file with only one block reads its first (velocity) fine and then
-tries to read a second block that was never written. `to_re2(..., thermal=)` is that
+tries to read a second block that was never written. `to_re2(..., bc=BoundaryConditions(temperature=))` is that
 second field's own name → code table, over **every** element (not just fluid ones,
-unlike `groups`, which is now the velocity field's own scoped table) — required exactly
+unlike the velocity table, which is scoped to the fluid) — required exactly
 when `fluid=` makes `nelgv < nelgt`, and refused otherwise since there is then only one
-block to write. A name omitted from `thermal=` is left conformal (`'E  '`), which is
+block to write. A name omitted from the temperature table is left conformal (`'E  '`), which is
 normally right for a genuine conjugate interface: velocity needs an explicit wall
 because the solid side carries no velocity unknown to continue into, but temperature is
 solved on both sides, so nothing needs stating. Each field's own periodic-name check
-(`groups`'s `'P  '` names vs. `periodic=`'s pairs) runs **within that field's own
+(the velocity table's `'P  '` names vs. `periodic=`'s pairs) runs **within that field's own
 region** — `wire_coil`'s `inlet`/`outlet` are periodic for both fields, `cut_lo`/`cut_hi`
-(solid) only for temperature, so `groups` (velocity) never mentions them at all. A name
-coded in `groups` that lands on a non-fluid element raises rather than corrupting Nek's
-`nel=nelv` invariant for that block.
+(solid) only for temperature, so the velocity table never mentions them at all. A name
+coded in the velocity table has its rows on non-fluid elements dropped (a conjugate interface needs
+no per-region entry); one with *no* fluid-side face at all raises rather than writing nothing.
 
 **`merge`'s `tol` is a fraction, not a distance** — of `conform.bbox_scale`, the largest
 of the x/y/z ranges over every point handed in, so the radius is `tol * bbox_scale` and
@@ -410,7 +410,7 @@ entity, and a closed sweep's two caps -- the same seam -- cannot be named differ
 
 An **asymmetric** boundary condition therefore cannot live on the face. It lives in the
 regions either side of it: `face_tag_rows` reconstructs one `(element, face)` row per
-hex carrying a named face, and `GROUPS` can key the code by that hex's own region —
+hex carrying a named face, and `VEL_BC` can key the code by that hex's own region —
 `{"fluid": "W  ", "solid": None}`, where `None` writes no row from that side.
 
 **`boundary` is reserved for the topological domain boundary** — what `boundary_faces`

@@ -34,7 +34,7 @@ rides up as ``element_tags``; the caps are named explicitly, because left alone 
 default to the bounding slice's own region names and the bundle would export an
 opening called ``fluid``. Only the coolant has an inlet and an outlet -- the rod and
 duct ends are solid metal, ``cut`` at both. The two interfaces are **conjugate**: one
-face, one name, but a different condition each side, so ``GROUPS`` gives them a
+face, one name, but a different condition each side, so ``VEL_BC`` gives them a
 per-region code and the metal side writes no row at all.
 
     PYTHONPATH=. python examples/rod_bundle.py
@@ -46,7 +46,7 @@ import logging
 
 import numpy as np
 
-from nekmeshpy import hexmesh, linemesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, hexmesh, linemesh, quadmesh, writer
 from nekmeshpy.core.fields import geometric_spacing, gll_nodes
 from nekmeshpy.quadmesh import QuadMesh
 from nekmeshpy.tags import Tags
@@ -84,12 +84,13 @@ ORDER = 2                    # polynomial order; >1 bows the rod walls onto the 
 OUT_NAME = "rod_bundle"
 
 # boundary name -> Nek BC code, applied only at export.  The two interfaces are
-# **conjugate**: one face, one name, but a different condition on each side of it, so
-# they take a per-region mapping instead of a single code -- the coolant sees a wall
-# and the metal writes no row at all.
-GROUPS = {"inlet": "v  ", "outlet": "O  ", "cut": "I  ", "outer": "I  ",
-          "rod_surface": {"fluid": "W  ", "rod": None},
-          "duct_surface": {"fluid": "W  ", "duct": None}}
+# **conjugate**: the coolant sees a wall, and the metal is not in the velocity block at
+# all.  The temperature field covers every element, so it carries the metal's own
+# boundaries too, and leaves the interfaces conformal.
+VEL_BC = {"inlet": ("v  ", 1), "outlet": ("O  ", 2),
+          "rod_surface": ("W  ", 3), "duct_surface": ("W  ", 3)}
+TEMP_BC = {"inlet": ("t  ", 1), "outlet": ("O  ", 2), "cut": ("I  ", 3), "outer": ("I  ", 3)}
+BC = BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC)
 
 # The wire sets the pitch, the way it does in a real bundle -- two conditions, both
 # of which the assertions below used to raise on:
@@ -415,5 +416,5 @@ print("section area %.6f   volume %.6f" % (quadmesh.area(section),
                                            hexmesh.volume(mesh)))
 print("minSJ %.4f   inverted %d   watertight %s"
       % (q.min, q.n_inverted, hexmesh.is_watertight(mesh)))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=BC, fluid="fluid")
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=BC)

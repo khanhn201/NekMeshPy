@@ -1,4 +1,4 @@
-"""``to_re2(..., fluid=, thermal=)`` -- the multi-field boundary blocks a Nek5000
+"""``to_re2(..., fluid=, bc=BoundaryConditions(temperature=))`` -- the multi-field boundary blocks a Nek5000
 conjugate heat transfer run needs.
 
 Nek's ``.re2`` header carries two element counts, ``nelgt`` (total) and ``nelgv``
@@ -10,8 +10,8 @@ The deeper one, found by actually running a mesh through Nek5000 (``ierr=4`` rea
 the boundary block): its reader (``core/reader_re2.f``) *always* reads one boundary
 block per field once ``nelgt > nelgv``, regardless of the header's own field count --
 so a conjugate mesh needs a **second** block (temperature), covering every element,
-which ``groups=`` alone cannot describe since it is scoped to the velocity field only
-once ``fluid=`` is in play. ``thermal=`` supplies that second block.
+which the velocity table alone cannot describe, since it is scoped to the velocity
+field only once ``fluid=`` is in play. ``temperature=`` supplies that second block.
 """
 
 import struct
@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 from conftest import read_re2_periodic
 
-from nekmeshpy import hexmesh, quadmesh, writer
+from nekmeshpy import BoundaryConditions, hexmesh, quadmesh, writer
 from nekmeshpy.core import affine
 from nekmeshpy.hexmesh import Periodic
 
@@ -96,7 +96,7 @@ def test_fluid_none_writes_every_element_as_velocity_mesh(tmp_path):
     """The default: unchanged from before ``fluid=`` existed."""
     mesh = _walled(_cht_pair())
     path = str(tmp_path / "plain.re2")
-    writer.to_re2(mesh, path, groups={"wall": "W  "})
+    writer.to_re2(mesh, path, bc={"wall": "W  "})
     nelgt, nelgv, nbcre2 = _read_header(path)
     assert nelgt == nelgv == mesh.n_hexes
     assert nbcre2 == 1
@@ -111,8 +111,9 @@ def test_fluid_puts_the_named_region_first(tmp_path):
     regs = mesh.element_tags.to_dense()
     n_fluid = int((regs == "fluid").sum())
     path = str(tmp_path / "cht.re2")
-    writer.to_re2(mesh, path, groups={"fluid_wall": "W  "}, fluid="fluid",
-                  thermal={"fluid_wall": "I  ", "solid_wall": "I  "})
+    writer.to_re2(mesh, path, fluid="fluid",
+                  bc=BoundaryConditions(velocity={"fluid_wall": "W  "},
+                                        temperature={"fluid_wall": "I  ", "solid_wall": "I  "}))
 
     nelgt, nelgv, nbcre2 = _read_header(path)
     assert nelgt == mesh.n_hexes
@@ -132,8 +133,8 @@ def test_fluid_that_is_everything_is_the_same_as_none(tmp_path):
     same as leaving ``fluid=`` off, and no second field is required."""
     mesh = _walled(_slab(0.0, "fluid"))
     a, b = str(tmp_path / "a.re2"), str(tmp_path / "b.re2")
-    writer.to_re2(mesh, a, groups={"wall": "W  "})
-    writer.to_re2(mesh, b, groups={"wall": "W  "}, fluid="fluid")
+    writer.to_re2(mesh, a, bc={"wall": "W  "})
+    writer.to_re2(mesh, b, bc={"wall": "W  "}, fluid="fluid")
     with open(a, "rb") as fa, open(b, "rb") as fb:
         assert fa.read() == fb.read()
 
@@ -141,23 +142,44 @@ def test_fluid_that_is_everything_is_the_same_as_none(tmp_path):
 def test_an_unknown_fluid_tag_raises(tmp_path):
     mesh = _cht_pair()
     with pytest.raises(ValueError, match="no element carries the tag"):
-        writer.to_re2(mesh, str(tmp_path / "x.re2"), groups={"fluid_wall": "W  "},
+        writer.to_re2(mesh, str(tmp_path / "x.re2"), bc={"fluid_wall": "W  "},
                       fluid="nope")
 
 
 # -- the second (thermal) field ------------------------------------------
 def test_thermal_is_required_once_fluid_makes_a_solid_region(tmp_path):
     mesh = _cht_pair()
-    with pytest.raises(ValueError, match="thermal= is required"):
-        writer.to_re2(mesh, str(tmp_path / "x.re2"), groups={"fluid_wall": "W  "},
+    with pytest.raises(ValueError, match="needs a temperature table"):
+        writer.to_re2(mesh, str(tmp_path / "x.re2"), bc={"fluid_wall": "W  "},
                       fluid="fluid")
 
 
-def test_thermal_is_rejected_when_there_is_no_solid_region(tmp_path):
+def test_temperature_on_an_all_fluid_mesh_writes_both_blocks(tmp_path):
+    """Heat is transported in the fluid too, so a mesh with no solid still takes a
+    thermal field: both blocks, each over every element."""
     mesh = _walled(_slab(0.0, "fluid"))
-    with pytest.raises(ValueError, match="only one field's block"):
-        writer.to_re2(mesh, str(tmp_path / "x.re2"), groups={"wall": "W  "},
-                      fluid="fluid", thermal={"wall": "I  "})
+    path = str(tmp_path / "all_fluid.re2")
+    writer.to_re2(mesh, path, fluid="fluid",
+                  bc=BoundaryConditions(velocity={"wall": ("W  ", 1)},
+                                        temperature={"wall": ("I  ", 1)}))
+    nelgt, nelgv, nbcre2 = _read_header(path)
+    assert nelgt == nelgv == mesh.n_hexes and nbcre2 == 2
+    vel, therm = _bc_blocks(path, mesh.n_hexes, 2)
+    assert len(vel) == len(therm) > 0
+
+
+def test_boundary_id_is_written_into_bc5_of_each_field(tmp_path):
+    """Nek reads ``boundaryID`` / ``boundaryIDt`` from ``bc(5)`` of the velocity and
+    temperature blocks, so the two fields' ids are separate."""
+    mesh = _cht_pair()
+    path = str(tmp_path / "ids.re2")
+    writer.to_re2(mesh, path, fluid="fluid", bc=BoundaryConditions(
+        velocity={"fluid_wall": ("W  ", 1)},
+        temperature={"fluid_wall": ("I  ", 2), "solid_wall": ("I  ", 1)}))
+    vel, therm = _bc_blocks(path, mesh.n_hexes, 2)
+    assert set(vel[:, 6]) == {1.0}
+    assert set(therm[:, 6]) == {1.0, 2.0}
+
 
 
 def _named_interface(mesh):
@@ -200,10 +222,11 @@ def test_a_name_absent_from_thermal_gets_no_row_and_no_warning(tmp_path):
     mesh = hexmesh.tag_faces(mesh, solid_bnd, "solid_wall")
 
     path = str(tmp_path / "conj.re2")
-    writer.to_re2(mesh, path, groups={"interface": {"fluid": "W  ", "solid": None},
-                                      "fluid_wall": "W  "},
-                  fluid="fluid",
-                  thermal={"fluid_wall": "I  ", "solid_wall": "I  "})  # "interface" omitted
+    writer.to_re2(mesh, path, fluid="fluid",
+                  bc=BoundaryConditions(
+                      velocity={"interface": {"fluid": "W  ", "solid": None},
+                                "fluid_wall": "W  "},
+                      temperature={"fluid_wall": "I  ", "solid_wall": "I  "}))  # "interface" omitted
     _vel, therm = _bc_blocks(path, mesh.n_hexes, 2)
     codes_therm = {struct.pack("<d", r[7]).decode("ascii", "replace").rstrip("\x00 ")
                   for r in therm}
@@ -216,8 +239,10 @@ def test_a_field_wide_code_on_the_wrong_side_raises(tmp_path):
     mesh = _cht_pair()
     with pytest.raises(ValueError, match="outside this field's"):
         writer.to_re2(mesh, str(tmp_path / "x.re2"),
-                      groups={"solid_wall": "W  "},   # solid-only, in the velocity table
-                      fluid="fluid", thermal={"fluid_wall": "I  ", "solid_wall": "I  "})
+                      fluid="fluid",
+                      bc=BoundaryConditions(
+                          velocity={"solid_wall": "W  "},   # solid-only, in velocity
+                          temperature={"fluid_wall": "I  ", "solid_wall": "I  "}))
 
 
 # -- combined with periodic -----------------------------------------------
@@ -233,9 +258,9 @@ def test_periodic_rows_follow_the_reorder(tmp_path):
     pairs = hexmesh.periodic_pairs(
         mesh, [Periodic("z_lo", "z_hi", affine.translation([0.0, 0.0, 2.0]))])
     path = str(tmp_path / "cht_p.re2")
-    writer.to_re2(mesh, path, groups={"z_lo": "P  ", "z_hi": "P  "},
-                  fluid="fluid", thermal={"z_lo": "P  ", "z_hi": "P  "},
-                  periodic=pairs)
+    writer.to_re2(mesh, path, fluid="fluid", periodic=pairs,
+                  bc=BoundaryConditions(velocity={"z_lo": "P  ", "z_hi": "P  "},
+                                        temperature={"z_lo": "P  ", "z_hi": "P  "}))
 
     nelgt, nelgv, _ = _read_header(path)
     assert nelgv == n_fluid
@@ -261,11 +286,12 @@ def test_periodic_pairs_may_span_both_regions(tmp_path):
     pairs = hexmesh.periodic_pairs(
         mesh, [Periodic("f_lo", "f_hi", T), Periodic("s_lo", "s_hi", T)])
     path = str(tmp_path / "both.re2")
-    writer.to_re2(mesh, path, groups={"f_lo": "P  ", "f_hi": "P  "},   # velocity: fluid only
-                  fluid="fluid",
-                  thermal={"f_lo": "P  ", "f_hi": "P  ",
-                          "s_lo": "P  ", "s_hi": "P  "},               # thermal: both
-                  periodic=pairs)
+    writer.to_re2(
+        mesh, path, fluid="fluid", periodic=pairs,
+        bc=BoundaryConditions(
+            velocity={"f_lo": "P  ", "f_hi": "P  "},                    # fluid only
+            temperature={"f_lo": "P  ", "f_hi": "P  ",
+                         "s_lo": "P  ", "s_hi": "P  "}))                # both
 
     vel, therm = _bc_blocks(path, mesh.n_hexes, 2)
     assert len(vel) == 2 * int(hexmesh.tagged_faces(mesh, "f_lo").size)

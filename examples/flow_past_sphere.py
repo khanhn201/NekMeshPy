@@ -37,8 +37,8 @@ ORDER = 2                    # polynomial order; 1 = linear. Both surfaces are
 OUT_NAME = "flow_past_sphere"
 
 # boundary name -> Nek BC code, applied only at export
-GROUPS = {"inlet": "v  ", "outlet": "O  ", "sphere": "W  ",
-          "top": "SYM", "bottom": "SYM", "front": "SYM", "back": "SYM"}
+VEL_BC = {"inlet": ("v  ", 1), "outlet": ("O  ", 2), "sphere": ("W  ", 3),
+          "top": ("SYM", 4), "bottom": ("SYM", 5), "front": ("SYM", 6), "back": ("SYM", 7)}
 
 # -- two closed quad surfaces: outer cube (tagged per face) and inner sphere -
 # QuadMesh.box tags each face with the far-field side it forms; QuadMesh.sphere
@@ -56,6 +56,6 @@ mesh = hexmesh.annulus(sphere, cube,
 
 # -- report + export ---------------------------------------------------------
 print(hexmesh.report(mesh))
-writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
-writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
+writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 print("groups:", ", ".join(mesh.face_group_tags))

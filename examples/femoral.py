@@ -201,7 +201,7 @@ EXPORT_FLD = True
 FLUX_UPSTREAM, FLUX_DOWNSTREAM = "flux_upstream", "flux_downstream"
 # the flux planes are interior surfaces, so they carry Nek's own ``f1``/``f2`` codes
 # rather than a flow condition -- naming a plane is not constraining it
-GROUPS = {
+VEL_BC = {
     "wall": "W  ",
     "inlet": "v  ",
     "outlet": "int",
@@ -1840,9 +1840,9 @@ else:
           % (BRANCH_ANGLE, R_MAIN, R_BRANCH, Z_NAT, R_MAIN))
 
 if EXPORT_VTK:
-    writer.to_vtu(mesh, OUT_NAME + ".vtu", groups=GROUPS)
+    writer.to_vtu(mesh, OUT_NAME + ".vtu", bc=VEL_BC)
 if EXPORT_RE2:
-    writer.to_re2(mesh, OUT_NAME + ".re2", groups=GROUPS)
+    writer.to_re2(mesh, OUT_NAME + ".re2", bc=VEL_BC)
 if EXPORT_FLD:
     writer.to_fld(mesh, OUT_NAME + ".f00000")
 print("femoral: %d hex elements, %d points" % (mesh.n_hexes, mesh.n_points))
