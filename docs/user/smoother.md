@@ -152,8 +152,8 @@ behind an earlier finding that smoothing worsens curvature.
 
 ## Limitations
 
-- **No hex smoothing**, and a smoothed surface is **not carried into a hex mesh** (no propagation, no block-state
-  certificates).
+- **A smoothed surface is not carried into a hex mesh** (no propagation, no block-state certificates). Hexes have
+  their own, experimental smoother: {doc}`hex_smoother`.
 - **The shape metric seeks squares and undoes designed grading**; protect layers with `KeepLayer` (no target-matrix
   metric yet).
 - **Overlapping or folded input is reported, not repaired.** A fold, mostly from projecting onto a curved surface, can

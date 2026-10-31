@@ -1,5 +1,7 @@
 """3-D hex mesh container (``HexMesh``), and its operations."""
 
+from typing import Any
+
 from .assemble import (
     Seam,
     attach,
@@ -127,3 +129,14 @@ __all__ = [
     "transform_fn",
     "translate",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """``hexmesh.smoother`` -- the (experimental) hex smoother lives in ``hexmesh/smoother/`` and is
+    loaded on first use, as ``quadmesh.smoother`` is: it builds on the quad smoother, which imports
+    ``io``, which imports the rungs, so importing it eagerly here would be circular."""
+    if name == "smoother":
+        import importlib
+
+        return importlib.import_module(".smoother", __name__)
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))

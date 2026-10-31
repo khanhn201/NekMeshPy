@@ -1,0 +1,4 @@
+- **The exact metric cannot untangle**: `optimize(delta=0)` has a wall at zero Jacobian and leaves all 12 hexes inverted.
+- **`untangle_schedule` is a preset of `optimize`, not a separate untangler**: 5 `optimize` stages with `delta` shrinking from 1 to 0.01; it clears all 12 inverted hexes (minimum scaled Jacobian 0.98).
+- **On this input Laplace clears them too** (minimum 0.85, 0.02 s): a few displaced vertices in an otherwise clean block are what element averaging repairs best.
+- **`suggest_schedule` adds the preset by itself** when the input has inverted hexes: 27 stages, minimum scaled Jacobian 0.98.

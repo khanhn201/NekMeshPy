@@ -1,0 +1,173 @@
+"""Hex-mesh smoothing (experimental).
+
+The quad smoother's design at the hex rung: this directory is only for code organisation and
+everything public is re-exported here, so callers write
+
+    from nekmeshpy.hexmesh.smoother import resolve, run_schedule, user_schedule, round_report
+
+The modules keep their names and can also be used as namespaces:
+
+* ``constrain``  -- what each vertex may do: targets, constraints, boundary patches, the snap
+* ``smooth``     -- the hex shape metric, objective and gradient, Laplace, the optimizer,
+  the method registry and schedules, quality readings
+* ``report``     -- ``round_report``: the before/after reading of one round
+* ``highorder``  -- ``linearize``: the native smoother is linear
+
+The constraint vocabulary (kinds, targets, ``Frozen`` / ``OnSurface`` / ``OnCurve`` /
+``KeepLayer`` / ``SlideColumns``, ``Resolved``, ``snap``, ``constrain_direction``) is the quad
+smoother's own object, not a copy.  There is no interactive session at this rung yet.
+
+``nekmeshpy.hexmesh`` keeps this package reachable by attribute (``hexmesh.smoother``), loaded on
+first use.
+"""
+
+from . import constrain, highorder, report, smooth
+from .constrain import (
+    CORNER_DEG,
+    FREE,
+    FROZEN,
+    ON_CURVE,
+    ON_SURFACE,
+    TANGENT,
+    TIED,
+    BoundaryPatches,
+    Curve,
+    Frozen,
+    KeepLayer,
+    OnCurve,
+    OnSurface,
+    OnTargetReport,
+    Resolved,
+    SlideColumns,
+    Surface,
+    Tangent,
+    boundary_faces_outward,
+    boundary_patches,
+    circle,
+    constrain_direction,
+    frozen_region,
+    layer_rings,
+    line,
+    on_target_report,
+    plane,
+    resolve,
+    snap,
+    sphere,
+    spline_curve,
+    surface_from_trimesh,
+    vertex_length,
+)
+from .highorder import linearize
+from .report import (
+    THRESHOLDS,
+    HexRoundReport,
+    RegionQuality,
+    TargetHeld,
+    region_quality,
+    round_report,
+    targets_held,
+)
+from .smooth import (
+    DELTA,
+    EPS,
+    KAPPA,
+    CornerMetrics,
+    Method,
+    Quality,
+    Schedule,
+    ShapeStats,
+    StageLog,
+    corner_metrics,
+    corner_vectors,
+    failing_elements,
+    gradient,
+    hex_neighbours,
+    laplace,
+    methods,
+    objective,
+    optimize,
+    quality,
+    register_method,
+    run_schedule,
+    shape_stats,
+    size_ratios,
+    suggest_schedule,
+    untangle_schedule,
+    user_schedule,
+    with_points,
+)
+
+__all__ = [
+    "constrain",
+    "highorder",
+    "report",
+    "smooth",
+    "BoundaryPatches",
+    "CORNER_DEG",
+    "CornerMetrics",
+    "Curve",
+    "DELTA",
+    "EPS",
+    "FREE",
+    "TANGENT",
+    "Tangent",
+    "FROZEN",
+    "Frozen",
+    "HexRoundReport",
+    "KAPPA",
+    "KeepLayer",
+    "Method",
+    "ON_CURVE",
+    "ON_SURFACE",
+    "OnCurve",
+    "OnSurface",
+    "OnTargetReport",
+    "Quality",
+    "RegionQuality",
+    "Resolved",
+    "Schedule",
+    "ShapeStats",
+    "SlideColumns",
+    "StageLog",
+    "Surface",
+    "THRESHOLDS",
+    "TIED",
+    "TargetHeld",
+    "boundary_faces_outward",
+    "boundary_patches",
+    "circle",
+    "constrain_direction",
+    "corner_metrics",
+    "corner_vectors",
+    "failing_elements",
+    "frozen_region",
+    "gradient",
+    "hex_neighbours",
+    "laplace",
+    "layer_rings",
+    "line",
+    "linearize",
+    "methods",
+    "objective",
+    "on_target_report",
+    "optimize",
+    "plane",
+    "quality",
+    "region_quality",
+    "register_method",
+    "resolve",
+    "round_report",
+    "run_schedule",
+    "shape_stats",
+    "size_ratios",
+    "snap",
+    "sphere",
+    "spline_curve",
+    "suggest_schedule",
+    "surface_from_trimesh",
+    "targets_held",
+    "untangle_schedule",
+    "user_schedule",
+    "vertex_length",
+    "with_points",
+]

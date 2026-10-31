@@ -1,0 +1,4 @@
+- **Face vertices stay on their planes** (largest distance 7.8e-16, round-off) **and edge vertices on their lines** (0); the 8 corners do not move (0).
+- **Sliding lets the boundary spacing even out**: minimum scaled Jacobian 1.00 against 0.30 with the boundary frozen.
+- **The constraints come from the mesh**: with no target passed, `resolve` found 6 planar patches, 12 edge lines and 8 frozen corners.
+- **A box is the easy case**: every hex can become a cube, so sliding reaches a perfect grid.

@@ -1,0 +1,3 @@
+- **The cube-seeking metric thickens a designed layer**: unprotected, the first layer grows by 137 % on average and up to 271 %.
+- **`KeepLayer(wall, 1)` keeps it exactly**: 0.0 % change; the 98 kept vertices move by exactly 0.
+- **Protecting a layer moves the problem to its edge**: the largest size jump between face-neighbours is 1.65 with `KeepLayer` against 1.23 unprotected (input 1.37).

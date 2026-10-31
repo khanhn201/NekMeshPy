@@ -35,6 +35,7 @@ writer.to_vtu(mesh, "case.vtu", bc=VEL_BC) # ParaView / VisIt (XML VTK)
 user/getting-started
 user/howto
 user/smoother
+user/hex_smoother
 user/gallery
 ```
 
@@ -43,6 +44,7 @@ user/gallery
 :caption: Deep dives
 
 smoother/index
+hexsmoother/index
 ```
 
 ```{toctree}

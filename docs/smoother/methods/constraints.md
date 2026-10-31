@@ -63,6 +63,7 @@ One dimension below the element: a vertex sits on the boundary of whatever it be
 | quads on a curved 3-D surface | `OnSurface` | the open rim: `OnCurve` | `Frozen` |
 | hexes | free | faces: `OnSurface`; edges where two patches meet: `OnCurve` | `Frozen` |
 
+The hex smoother reuses the same objects: {doc}`../../user/hex_smoother`.
 
 (boundary-settings)=
 ## Boundary settings
