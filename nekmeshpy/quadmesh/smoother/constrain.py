@@ -1,0 +1,670 @@
+"""Smoother constraints (M2): what each vertex may do, and how the target geometry holds it.
+
+A smoother never guesses.  Every vertex gets one *mobility* -- ``FREE``, ``ON_SURFACE``,
+``ON_CURVE`` or ``FROZEN`` -- resolved once from the constraints the caller states, and the
+two operations the smoothing methods share act on it:
+
+* :func:`snap` projects constrained vertices back onto their target (``x += w (P(x) - x)``;
+  ``w = 1`` is the full projection) and restores frozen ones;
+* :func:`constrain_direction` removes from a gradient or a step whatever the target forbids --
+  the component along the surface normal, everything but the tangent on a curve, all of it
+  on a frozen vertex -- using the **target's own** normal, never the mesh's.
+
+Strict geometry mode (the default, as in the user's pebble code) is both, every step.
+Precedence is ``FROZEN > ON_CURVE > ON_SURFACE > FREE``; a vertex claimed by two surfaces,
+or by two curves (a corner), is frozen and listed in the report -- it is never given an
+order-dependent projection implicitly.  Unclaimed *boundary* vertices are frozen by default,
+so a block's seam cannot drift (``boundary="free"`` opens them).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import NamedTuple, Union
+
+import numpy as np
+
+from ..._typing import BoolArray, FloatArray, IntArray, PointArray
+from ..quadmesh import QuadMesh
+from ..query import boundary_points, tagged_edges
+
+__all__ = ["FREE", "ON_SURFACE", "ON_CURVE", "FROZEN", "TIED", "Surface", "Curve", "plane", "sphere",
+           "line", "circle", "Frozen", "OnSurface", "OnCurve", "KeepLayer", "layer_rings", "SlideColumns", "grid_columns", "Resolved", "OnTargetReport",
+           "resolve", "snap", "constrain_direction", "on_target_report", "vertex_length", "surface_from_trimesh",
+           "NormalReport", "surface_normals", "claimed_surfaces"]
+
+FREE, ON_SURFACE, ON_CURVE, FROZEN, TIED = 0, 1, 2, 3, 4
+_KIND = {FREE: "free", ON_SURFACE: "on_surface", ON_CURVE: "on_curve", FROZEN: "frozen", TIED: "slide_column"}
+
+#: Which vertices a constraint names: point ids, a boolean mask, or an edge-tag name
+#: (the points of every edge carrying it -- "this tagged loop lies on this curve").
+Select = Union[str, IntArray, BoolArray]
+
+
+@dataclass(frozen=True)
+class Surface:
+    """A target surface: ``project(P)`` the closest point, ``normal(P)`` the unit normal at
+    that foot point, both ``(N, 3) -> (N, 3)``."""
+
+    project: Callable[[PointArray], PointArray]
+    normal: Callable[[PointArray], PointArray]
+    name: str = "surface"
+
+
+@dataclass(frozen=True)
+class Curve:
+    """A target curve: ``project(P)`` the closest point, ``tangent(P)`` the unit tangent
+    at that foot point."""
+
+    project: Callable[[PointArray], PointArray]
+    tangent: Callable[[PointArray], PointArray]
+    name: str = "curve"
+
+
+def _unit(v: PointArray) -> PointArray:
+    n = np.linalg.norm(v, axis=-1, keepdims=True)
+    return np.asarray(v / np.where(n > 0, n, 1.0))
+
+
+def plane(point: PointArray, normal: PointArray) -> Surface:
+    """The plane through ``point`` with ``normal``."""
+    p0 = np.asarray(point, float)
+    n0 = _unit(np.asarray(normal, float))
+    return Surface(lambda P: P - np.outer((P - p0) @ n0, n0),
+                   lambda P: np.broadcast_to(n0, P.shape).copy(), "plane")
+
+
+def sphere(center: PointArray, radius: float) -> Surface:
+    """The sphere of ``radius`` about ``center``; the normal points outward."""
+    c = np.asarray(center, float)
+    return Surface(lambda P: c + radius * _unit(P - c), lambda P: _unit(P - c), "sphere")
+
+
+def line(point: PointArray, direction: PointArray) -> Curve:
+    """The straight line through ``point`` along ``direction``."""
+    p0 = np.asarray(point, float)
+    t0 = _unit(np.asarray(direction, float))
+    return Curve(lambda P: p0 + np.outer((P - p0) @ t0, t0),
+                 lambda P: np.broadcast_to(t0, P.shape).copy(), "line")
+
+
+def circle(center: PointArray, radius: float, axis: PointArray = (0.0, 0.0, 1.0)) -> Curve:
+    """The circle of ``radius`` about ``center`` in the plane normal to ``axis``; the
+    tangent runs counter-clockwise about ``axis``."""
+    c = np.asarray(center, float)
+    z = _unit(np.asarray(axis, float))
+
+    def radial(P: PointArray) -> PointArray:
+        d = P - c
+        return _unit(d - np.outer(d @ z, z))
+
+    return Curve(lambda P: c + radius * radial(P),
+                 lambda P: _unit(np.cross(z, radial(P))), "circle")
+
+
+@dataclass(frozen=True)
+class Frozen:
+    """Never moves."""
+
+    points: Select
+
+
+@dataclass(frozen=True)
+class OnSurface:
+    """Stays on ``surface``.  ``slide=True`` moves tangentially then re-projects;
+    ``slide=False`` projects once onto the surface and then holds still."""
+
+    points: Select
+    surface: Surface
+    slide: bool = True
+
+
+@dataclass(frozen=True)
+class OnCurve:
+    """Stays on ``curve``, moving along it only when ``slide=True``."""
+
+    points: Select
+    curve: Curve
+    slide: bool = True
+
+
+@dataclass(frozen=True)
+class KeepLayer:
+    """Keep a boundary layer exactly as meshed: every vertex within ``rings`` quad-rings of ``seeds``
+    (the interface or wall vertices, ``seeds`` included) is frozen, so the layer's thickness, its
+    growth ratio and its tangential spacing cannot change.  The layers keep their geometry exactly
+    at the price of not sliding; one ring protects the first row of cells off the seeds, two the
+    first two.  A square-seeking metric will otherwise inflate a thin layer (measured on the case_bz
+    slices: edges next to an interface grew up to 34x)."""
+
+    seeds: Select
+    rings: int = 1
+
+
+@dataclass(frozen=True)
+class SlideColumns:
+    """Rigid columns that slide together along ``direction``: every column is a set of vertices
+    (e.g. the rows across a wall's thickness) with **one** shared degree of freedom, so they all move
+    by the same amount along ``direction`` -- the cells between the rows stay rectangles while the
+    spacing along the wall adapts.  Each column also stays on its own straight line.  If any member of a
+    column ends up frozen (a corner, a vertex that must not leave the boundary), the whole column is
+    frozen: a rigid unit cannot move with one member pinned."""
+
+    columns: Sequence[IntArray]
+    direction: Sequence[float]
+
+
+Constraint = Union[Frozen, OnSurface, OnCurve, KeepLayer, SlideColumns]
+
+
+class Resolved(NamedTuple):
+    """Per-vertex mobility, resolved once.  ``kind[i]`` is ``FREE/ON_SURFACE/ON_CURVE/FROZEN``;
+    ``target[i]`` indexes ``surfaces`` or ``curves`` for the first two; ``anchor`` is where a
+    frozen vertex lives (the input position, or its one-time projection for ``slide=False``)."""
+
+    kind: IntArray
+    target: IntArray
+    anchor: PointArray
+    surfaces: tuple[Surface, ...]
+    curves: tuple[Curve, ...]
+    #: Human-readable notes: every conflict and how it was resolved, never silently.
+    notes: tuple[str, ...]
+    #: ``tie[i]`` is the rigid column vertex ``i`` belongs to (``-1`` none); ``tie_dir[i]`` its slide direction.
+    tie: IntArray
+    tie_dir: PointArray
+
+    def counts(self) -> dict[str, int]:
+        return {name: int((self.kind == k).sum()) for k, name in _KIND.items()}
+
+
+def _ids(mesh: QuadMesh, which: Select) -> IntArray:
+    n = mesh.n_points
+    if isinstance(which, str):
+        e = mesh.edges[tagged_edges(mesh, which)]
+        return np.unique(e) if e.size else np.zeros(0, dtype=np.int64)
+    a = np.asarray(which)
+    if a.dtype == bool:
+        if a.shape != (n,):
+            raise ValueError("a boolean point mask must have %d entries, got %s" % (n, a.shape))
+        return np.flatnonzero(a).astype(np.int64)
+    ids = a.astype(np.int64).reshape(-1)
+    if ids.size and (ids.min() < 0 or ids.max() >= n):
+        raise IndexError("point ids must lie in [0, %d)" % n)
+    return np.unique(ids)
+
+
+def layer_rings(mesh: QuadMesh, seeds: Select, rings: int) -> IntArray:
+    """Sorted ids of every vertex within ``rings`` quad-rings of ``seeds`` (``seeds`` included): ring
+    ``k`` is the set of vertices sharing a quad with ring ``k - 1``."""
+    if rings < 0:
+        raise ValueError("rings must be >= 0, got %r" % (rings,))
+    reach: BoolArray = np.zeros(mesh.n_points, dtype=bool)
+    reach[_ids(mesh, seeds)] = True
+    c = mesh.corners
+    for _ in range(rings):
+        touched = reach[c].any(axis=1)
+        reach[c[touched].ravel()] = True
+    return np.flatnonzero(reach).astype(np.int64)
+
+
+def grid_columns(mesh: QuadMesh, seeds: Select, direction: Sequence[float], *,
+                 depth_in: int | None = None, depth_out: int | None = None,
+                 within: BoolArray | None = None, outside_depth: int = 1,
+                 across: float = 0.5) -> list[IntArray]:
+    """The mesh's own **grid lines across a layer**, found from topology alone.
+
+    From every seed vertex (a vertex on an interface that slides along ``direction``), step along each
+    incident edge that crosses the interface (its angle to ``direction`` is more than ``arccos(across)``
+    -- 60 degrees by default) and keep walking *straight* through regular (valence-4) interior vertices:
+    at such a vertex the straight continuation is the one edge that shares no quad with the edge you
+    arrived on.  A walk ends at a boundary vertex or an irregular vertex (both included) or after its
+    depth limit.  The seed and its two walks form one column; ``depth_in`` / ``depth_out`` bound the
+    walk on the first / second across-edge (``None`` = until it ends; which side is "in" is simply the
+    edge order, so pass the same bound to both sides when it does not matter).
+
+    Nothing here knows a thickness, a wall or an axis: only the connectivity and ``direction``.  It
+    finds columns only where the mesh is structured across the layer; elsewhere a walk ends at once.
+
+    ``within`` (a ``(P,)`` boolean mask, e.g. the vertices of one region) replaces the two depth
+    bounds with a region rule: a walk goes on without limit through vertices that are ``within`` and
+    is allowed ``outside_depth`` further vertices once it has left it -- so the layers of a region
+    ride along with its interface and only the first rows of its neighbour do."""
+    P = np.asarray(mesh.points, float)
+    d = np.asarray(direction, float)
+    d = d / np.linalg.norm(d)
+    nv = mesh.n_points
+    corners = mesh.corners
+    nbr: list[set[int]] = [set() for _ in range(nv)]
+    vq: list[list[int]] = [[] for _ in range(nv)]
+    for qi, q in enumerate(corners):
+        for k in range(4):
+            a, b = int(q[k]), int(q[(k + 1) % 4])
+            nbr[a].add(b)
+            nbr[b].add(a)
+            vq[a].append(qi)
+    bnd: BoolArray = np.zeros(nv, dtype=bool)
+    bnd[boundary_points(mesh)] = True
+
+    def quads_with(a: int, b: int) -> list[int]:
+        return [qi for qi in vq[a] if b in corners[qi]]
+
+    def step(v: int, w: int) -> int | None:
+        """The straight continuation through ``w`` of the edge ``v -> w``, or None."""
+        if bnd[w] or len(nbr[w]) != 4:
+            return None
+        adj: set[int] = {v}
+        for qi in quads_with(v, w):
+            q = [int(x) for x in corners[qi]]
+            k = q.index(w)
+            adj.update((q[(k + 1) % 4], q[(k - 1) % 4]))
+        rest = nbr[w] - adj
+        return next(iter(rest)) if len(rest) == 1 else None
+
+    out: list[IntArray] = []
+    for v in _ids(mesh, seeds):
+        v = int(v)
+        col = [v]
+        sides = []
+        for w in nbr[v]:
+            e = P[w] - P[v]
+            ln = np.linalg.norm(e)
+            if ln > 0 and abs(float(e @ d)) / ln < across:
+                sides.append(w)
+        for side, w in enumerate(sorted(sides)[:2]):
+            limit = depth_in if side == 0 else depth_out
+            prev = v
+            cur: int | None = w
+            n = 0
+            n_out = 0
+            while cur is not None:
+                if within is not None:
+                    if not within[cur]:
+                        n_out += 1
+                        if n_out > outside_depth:
+                            break
+                elif limit is not None and n >= limit:
+                    break
+                col.append(cur)
+                n += 1
+                nxt = step(prev, cur)
+                prev = cur
+                cur = nxt
+        out.append(np.unique(np.asarray(col, dtype=np.int64)))
+    return out
+
+
+def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
+            boundary: str = "frozen") -> Resolved:
+    """Resolve ``constraints`` over ``mesh``'s vertices (see the module docstring for the
+    precedence).  ``boundary="frozen"`` (default) freezes every boundary vertex no constraint
+    names; ``"free"`` leaves them to move."""
+    if boundary not in ("frozen", "free"):
+        raise ValueError("boundary must be 'frozen' or 'free', got %r" % (boundary,))
+    n = mesh.n_points
+    P0 = np.asarray(mesh.points, float)
+    n_surf: IntArray = np.zeros(n, np.int64)
+    n_curve: IntArray = np.zeros(n, np.int64)
+    claim_surf: IntArray = np.full(n, -1, np.int64)
+    claim_curve: IntArray = np.full(n, -1, np.int64)
+    frozen: BoolArray = np.zeros(n, bool)
+    pin_surf: BoolArray = np.zeros(n, bool)          # slide=False: project once, then hold
+    pin_curve: BoolArray = np.zeros(n, bool)
+    tie: IntArray = np.full(n, -1, np.int64)
+    tie_dir: PointArray = np.zeros((n, 3))
+    tie_claims: IntArray = np.zeros(n, np.int64)
+    n_tie = 0
+    surfaces: list[Surface] = []
+    curves: list[Curve] = []
+    for c in constraints:
+        if isinstance(c, SlideColumns):
+            ids: IntArray = np.zeros(0, dtype=np.int64)
+        else:
+            ids = _ids(mesh, c.seeds if isinstance(c, KeepLayer) else c.points)
+        if isinstance(c, Frozen):
+            frozen[ids] = True
+        elif isinstance(c, KeepLayer):
+            frozen[layer_rings(mesh, c.seeds, c.rings)] = True
+        elif isinstance(c, SlideColumns):
+            d_ = np.asarray(c.direction, float)
+            d_ = d_ / np.linalg.norm(d_)
+            for col in c.columns:
+                col = np.unique(np.asarray(col, dtype=np.int64))
+                tie_claims[col] += 1
+                tie[col] = n_tie
+                tie_dir[col] = d_
+                n_tie += 1
+        elif isinstance(c, OnSurface):
+            surfaces.append(c.surface)
+            n_surf[ids] += 1
+            claim_surf[ids] = len(surfaces) - 1
+            pin_surf[ids] |= not c.slide
+        elif isinstance(c, OnCurve):
+            curves.append(c.curve)
+            n_curve[ids] += 1
+            claim_curve[ids] = len(curves) - 1
+            pin_curve[ids] |= not c.slide
+        else:
+            raise TypeError("unknown constraint %r" % (c,))
+
+    notes: list[str] = []
+    multi_s = n_surf > 1
+    multi_c = n_curve > 1
+    if multi_s.any():
+        notes.append("%d vertices on more than one surface -> frozen (default; no order-dependent "
+                     "projection is chosen implicitly)" % int(multi_s.sum()))
+    if multi_c.any():
+        notes.append("%d vertices on more than one curve (corners) -> frozen" % int(multi_c.sum()))
+    both = (n_surf > 0) & (n_curve > 0) & ~multi_c & ~multi_s
+    if both.any():
+        notes.append("%d vertices on a surface and a curve -> the curve wins (stricter)"
+                     % int(both.sum()))
+    multi_t = tie_claims > 1
+    mixed_t = (tie_claims > 0) & ((n_surf > 0) | (n_curve > 0) | frozen)
+    if multi_t.any() or mixed_t.any():
+        notes.append("%d vertices in a rigid column are also claimed by another constraint -> frozen (the column too)"
+                     % int((multi_t | mixed_t).sum()))
+    bdry: BoolArray = np.zeros(n, bool)
+    if boundary == "frozen":
+        bdry[boundary_points(mesh)] = True
+        bdry &= (n_surf == 0) & (n_curve == 0) & (tie_claims == 0) & ~frozen
+        if bdry.any():
+            notes.append("%d unconstrained boundary vertices frozen (boundary='frozen')"
+                         % int(bdry.sum()))
+
+    kind: IntArray = np.zeros(n, np.int64)
+    target: IntArray = np.full(n, -1, np.int64)
+    anchor = P0.copy()
+    on_s = (n_surf == 1) & (tie_claims == 0)
+    on_c = (n_curve == 1) & (tie_claims == 0)
+    kind[on_s] = ON_SURFACE
+    target[on_s] = claim_surf[on_s]
+    kind[on_c] = ON_CURVE
+    target[on_c] = claim_curve[on_c]
+    hold = frozen | multi_s | multi_c | bdry | multi_t | mixed_t
+    # a rigid column with one pinned member is pinned as a whole
+    if (tie >= 0).any():
+        pinned_cols = np.unique(tie[hold & (tie >= 0)])
+        if pinned_cols.size:
+            members = np.isin(tie, pinned_cols) & (tie >= 0)
+            notes.append("%d rigid column(s) frozen because a member is frozen (corner / boundary / other claim)"
+                         % pinned_cols.size)
+            hold = hold | members
+    kind[(tie >= 0) & ~hold] = TIED
+    kind[hold] = FROZEN
+    target[hold] = -1
+    # slide=False: one projection now, then the vertex is held where it landed.
+    for pin, claim, objs in ((pin_surf & on_s & ~on_c & ~hold, claim_surf, surfaces),
+                             (pin_curve & on_c & ~hold, claim_curve, curves)):
+        for t in np.unique(claim[pin]):
+            m = pin & (claim == t)
+            anchor[m] = objs[t].project(P0[m])
+            kind[m] = FROZEN
+            target[m] = -1
+    tie[hold] = -1
+    return Resolved(kind, target, anchor, tuple(surfaces), tuple(curves), tuple(notes), tie, tie_dir)
+
+
+def _targets(r: Resolved) -> list[tuple[int, Sequence[Union[Surface, Curve]]]]:
+    """``(kind, targets)`` for the two kinds that project onto a geometric object."""
+    return [(ON_SURFACE, r.surfaces), (ON_CURVE, r.curves)]
+
+
+def snap(points: PointArray, r: Resolved, weight: float = 1.0) -> PointArray:
+    """``points`` with every constrained vertex moved ``weight`` of the way to its target
+    (``1`` = onto it) and every frozen vertex put back at its anchor.  A new array."""
+    X = np.asarray(points, float).copy()
+    X[r.kind == FROZEN] = r.anchor[r.kind == FROZEN]
+    tied = (r.tie >= 0) & (r.kind == TIED)
+    if tied.any():                               # rigid columns: one shared slide parameter per column
+        s_i = np.einsum("ij,ij->i", X[tied] - r.anchor[tied], r.tie_dir[tied])
+        g = r.tie[tied]
+        mean = np.bincount(g, weights=s_i, minlength=int(r.tie.max()) + 1) / np.maximum(
+            np.bincount(g, minlength=int(r.tie.max()) + 1), 1)
+        X[tied] = r.anchor[tied] + mean[g][:, None] * r.tie_dir[tied]
+    for k, objs in _targets(r):
+        for t, obj in enumerate(objs):
+            m = (r.kind == k) & (r.target == t)
+            if m.any():
+                Y = obj.project(X[m])
+                if not np.isfinite(Y).all():
+                    raise ValueError("target %r returned non-finite coordinates for %d of %d vertices; "
+                                     "refusing to continue with a corrupted mesh"
+                                     % (obj.name, int((~np.isfinite(Y).all(axis=1)).sum()), len(Y)))
+                X[m] += weight * (Y - X[m])
+    return X
+
+
+def constrain_direction(d: PointArray, points: PointArray, r: Resolved) -> PointArray:
+    """``d`` ``(P, 3)`` (a gradient or a step) with the forbidden part removed, using the
+    target's own normal/tangent at each vertex's foot point.  A new array."""
+    out = np.asarray(d, float).copy()
+    out[r.kind == FROZEN] = 0.0
+    for t, s in enumerate(r.surfaces):
+        m = (r.kind == ON_SURFACE) & (r.target == t)
+        if m.any():
+            nrm = s.normal(s.project(points[m]))
+            out[m] -= np.einsum("ij,ij->i", out[m], nrm)[:, None] * nrm
+    for t, c in enumerate(r.curves):
+        m = (r.kind == ON_CURVE) & (r.target == t)
+        if m.any():
+            tan = c.tangent(c.project(points[m]))
+            out[m] = np.einsum("ij,ij->i", out[m], tan)[:, None] * tan
+    tied = (r.tie >= 0) & (r.kind == TIED)
+    if tied.any():                               # a rigid column moves by the mean of its members' slide components
+        s_i = np.einsum("ij,ij->i", out[tied], r.tie_dir[tied])
+        g = r.tie[tied]
+        mean = np.bincount(g, weights=s_i, minlength=int(r.tie.max()) + 1) / np.maximum(
+            np.bincount(g, minlength=int(r.tie.max()) + 1), 1)
+        out[tied] = mean[g][:, None] * r.tie_dir[tied]
+    return out
+
+
+def vertex_length(points: PointArray, corners: IntArray) -> FloatArray:
+    """``(P,)`` the shortest edge at each vertex -- the *length unit* every step, finite
+    difference and tolerance of the optimizer is measured in (notes/06 section 3)."""
+    ell = np.full(points.shape[0], np.inf)
+    for k in range(4):
+        a, b = corners[:, k], corners[:, (k + 1) % 4]
+        e = np.linalg.norm(points[a] - points[b], axis=1)
+        np.minimum.at(ell, a, e)
+        np.minimum.at(ell, b, e)
+    return ell
+
+
+class OnTargetReport(NamedTuple):
+    """The geometry self-check of one state: how far constrained vertices sit from their
+    targets and how far frozen ones moved, in absolute units and in local edge lengths."""
+
+    n_checked: int
+    max_distance: float
+    mean_distance: float
+    max_distance_in_edges: float
+    max_frozen_move: float
+    tol: float
+    passed: bool
+
+    def __str__(self) -> str:
+        return ("on-target: %d constrained, max dist %.3e (%.2e edges), mean %.3e, "
+                "max frozen move %.3e, tol %.1e x edge -> %s"
+                % (self.n_checked, self.max_distance, self.max_distance_in_edges,
+                   self.mean_distance, self.max_frozen_move, self.tol,
+                   "PASS" if self.passed else "FAIL"))
+
+
+def on_target_report(points: PointArray, corners: IntArray, r: Resolved, *,
+                     tol: float = 1e-6) -> OnTargetReport:
+    """Distance of every ``ON_SURFACE``/``ON_CURVE`` vertex to its target, and the largest
+    displacement of a frozen vertex from its anchor; passes when the former is within ``tol``
+    local edge lengths and the latter is exactly ``0`` (to ``tol`` of the edge)."""
+    ell = vertex_length(points, corners)
+    dist = np.zeros(points.shape[0])
+    for k, objs in _targets(r):
+        for t, obj in enumerate(objs):
+            m = (r.kind == k) & (r.target == t)
+            if m.any():
+                dist[m] = np.linalg.norm(obj.project(points[m]) - points[m], axis=1)
+    tied = (r.kind == TIED) & (r.tie >= 0)
+    if tied.any():                               # a tied vertex must stay on anchor + s * direction
+        off = points[tied] - r.anchor[tied]
+        off = off - np.einsum("ij,ij->i", off, r.tie_dir[tied])[:, None] * r.tie_dir[tied]
+        dist[tied] = np.linalg.norm(off, axis=1)
+    cons = (r.kind == ON_SURFACE) | (r.kind == ON_CURVE) | tied
+    fro = r.kind == FROZEN
+    fmove = np.linalg.norm(points[fro] - r.anchor[fro], axis=1)
+    rel = dist[cons] / ell[cons] if cons.any() else np.zeros(0)
+    fmax = float(fmove.max()) if fmove.size else 0.0
+    ok = bool((rel.max() if rel.size else 0.0) <= tol
+              and (fmove / ell[fro]).max(initial=0.0) <= tol)
+    return OnTargetReport(int(cons.sum()), float(dist[cons].max(initial=0.0)),
+                          float(dist[cons].mean()) if cons.any() else 0.0,
+                          float(rel.max(initial=0.0)), fmax, tol, ok)
+
+
+# -- a surface from a triangle mesh (CAD tessellation, scanned wall) -------------------------
+def _closest_on_triangles(p: PointArray, a: PointArray, b: PointArray,
+                          c: PointArray) -> tuple[PointArray, PointArray]:
+    """Closest point of triangle ``abc`` to ``p`` and its barycentric weights, row by row."""
+    n = np.cross(b - a, c - a)
+    nn = np.maximum(np.einsum("ij,ij->i", n, n), 1e-300)
+    wa = np.einsum("ij,ij->i", np.cross(c - b, p - b), n) / nn
+    wb = np.einsum("ij,ij->i", np.cross(a - c, p - c), n) / nn
+    wc = 1.0 - wa - wb
+    inside = (wa >= 0) & (wb >= 0) & (wc >= 0)
+    best_q = wa[:, None] * a + wb[:, None] * b + wc[:, None] * c
+    best_w = np.stack([wa, wb, wc], axis=1)
+    best_d = np.where(inside, np.einsum("ij,ij->i", p - best_q, p - best_q), np.inf)
+    for u, v, iu, iv in ((a, b, 0, 1), (b, c, 1, 2), (c, a, 2, 0)):
+        e = v - u
+        t = np.clip(np.einsum("ij,ij->i", p - u, e) / np.maximum(np.einsum("ij,ij->i", e, e), 1e-300), 0.0, 1.0)
+        q = u + t[:, None] * e
+        d = np.einsum("ij,ij->i", p - q, p - q)
+        w = np.zeros_like(best_w)
+        w[:, iu], w[:, iv] = 1.0 - t, t
+        better = d < best_d
+        best_q = np.where(better[:, None], q, best_q)
+        best_w = np.where(better[:, None], w, best_w)
+        best_d = np.where(better, d, best_d)
+    return best_q, best_w
+
+
+def surface_from_trimesh(points: PointArray, tris: IntArray, *, k: int = 8,
+                         name: str = "trimesh") -> Surface:
+    """A :class:`Surface` read off a triangle mesh -- a CAD tessellation or a scanned wall.
+
+    ``project`` returns the closest point on the ``k`` triangles whose centroids are nearest the
+    query (exact point-triangle distance within that candidate set); ``normal`` blends the area-weighted
+    vertex normals with the barycentric weights of that foot point, so it is continuous across
+    triangles.  It is an **approximation** of the true surface: the triangles' chord error remains,
+    sharp edges are smoothed over by the blended normal, and a ``k`` that is too small on a very
+    graded tessellation can miss the nearest triangle.  Cost: one KD-tree query and ``k`` triangle
+    distances per point."""
+    from scipy.spatial import cKDTree
+
+    V = np.asarray(points, dtype=float)
+    T = np.asarray(tris, dtype=np.int64)
+    fn = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])      # |fn| = 2 * area
+    vn = np.zeros_like(V)
+    for j in range(3):
+        np.add.at(vn, T[:, j], fn)
+    vn = _unit(vn)
+    tree = cKDTree(V[T].mean(axis=1))
+    kk = min(k, T.shape[0])
+
+    def _foot(P: PointArray) -> tuple[PointArray, IntArray, PointArray]:
+        P = np.asarray(P, dtype=float).reshape(-1, 3)
+        _, cand = tree.query(P, k=kk)
+        cand = np.asarray(cand).reshape(P.shape[0], -1)
+        rep = np.repeat(P, cand.shape[1], axis=0)
+        t = T[cand.ravel()]
+        q, w = _closest_on_triangles(rep, V[t[:, 0]], V[t[:, 1]], V[t[:, 2]])
+        d = np.einsum("ij,ij->i", rep - q, rep - q).reshape(P.shape[0], -1)
+        pick = np.argmin(d, axis=1) + np.arange(P.shape[0]) * cand.shape[1]
+        return q[pick], t[pick], w[pick]
+
+    def project(P: PointArray) -> PointArray:
+        return _foot(P)[0]
+
+    def normal(P: PointArray) -> PointArray:
+        _, t, w = _foot(P)
+        return _unit(np.einsum("ik,ikj->ij", w, vn[t]))
+
+    return Surface(project, normal, name)
+
+
+# -- normals for the metric: from the surface the quads sit on, not from the quads ----------
+class NormalReport(NamedTuple):
+    """Where the per-quad normals came from, and whether the mesh's own winding agrees.
+
+    ``cos`` is the cosine between each quad's own (winding) normal and the surface normal that was
+    used; ``n_disagree`` counts quads below ``cos_tol`` -- a folded or reversed quad, or a surface
+    that is not the one the mesh lies on.  ``n_from_surface`` quads took the surface normal; the
+    ``n_fallback`` others had no claimed corner and kept their own."""
+
+    n_quads: int
+    n_from_surface: int
+    n_fallback: int
+    n_disagree: int
+    min_cos: float
+    disagree_ids: IntArray
+    cos_tol: float
+    #: the sign vote of each surface: ``+1`` the surface normal follows the mesh winding, ``-1`` it was flipped
+    flips: tuple[int, ...]
+
+
+def claimed_surfaces(r: Resolved) -> list[tuple[IntArray, Surface]]:
+    """``(vertex ids, surface)`` for every surface that holds vertices in ``r`` -- the groups
+    :func:`surface_normals` reads its normals from."""
+    out = []
+    for t, srf in enumerate(r.surfaces):
+        ids = np.flatnonzero((r.kind == ON_SURFACE) & (r.target == t))
+        if ids.size:
+            out.append((ids, srf))
+    return out
+
+
+def surface_normals(points: PointArray, corners: IntArray,
+                    groups: Sequence[tuple[IntArray, Surface]], *,
+                    check: bool = True, cos_tol: float = 0.5) -> tuple[PointArray, NormalReport]:
+    """``(Q, 3)`` unit normals for the metric from the surface the quads sit on.
+
+    Each group is ``(vertex ids, surface)``; the unit normal of the surface is read at every such
+    vertex and a quad takes the mean of its claimed corners.  A surface normal has no sign of its
+    own, so each surface gets **one** sign, voted against the mesh's winding -- never one per quad,
+    which would quietly forgive a reversed quad.  Quads with no claimed corner keep the normal of
+    their own winding.  ``check=False`` skips the comparison with the winding (and the report's
+    ``n_disagree`` / ``min_cos``); the sign vote is still taken."""
+    P = np.asarray(points, dtype=float)
+    c = np.asarray(corners, dtype=np.int64)
+    a = P[c[:, [1, 2, 3, 0]]] - P[c]
+    b = P[c[:, [3, 0, 1, 2]]] - P[c]
+    own = np.cross(a, b).sum(axis=1)
+    own = own / np.maximum(np.linalg.norm(own, axis=1, keepdims=True), 1e-300)
+    nv = np.zeros_like(P)
+    has = np.zeros(P.shape[0], dtype=bool)
+    flips = []
+    for ids, srf in groups:
+        n = np.asarray(srf.normal(P[ids]), dtype=float)
+        nv_full = np.zeros_like(P)
+        nv_full[ids] = n
+        in_group = np.zeros(P.shape[0], dtype=bool)
+        in_group[ids] = True
+        slots = in_group[c]                                          # (Q, 4) corners of this group
+        vote = float((np.einsum("qkj,qj->qk", nv_full[c], own) * slots).sum())
+        sign = -1.0 if vote < 0 else 1.0
+        flips.append(int(sign))
+        nv[ids] = sign * n
+        has[ids] = True
+    cnt = has[c].sum(axis=1)
+    q = (nv[c] * has[c][:, :, None]).sum(axis=1)
+    from_surface = cnt > 0
+    ln = np.linalg.norm(q, axis=1)
+    from_surface &= ln > 1e-12
+    out = own.copy()
+    out[from_surface] = q[from_surface] / ln[from_surface, None]
+    cos = np.einsum("ij,ij->i", own, out)
+    cos_fs = cos[from_surface]
+    bad = np.flatnonzero(from_surface & (cos < cos_tol)) if check else np.zeros(0, dtype=np.int64)
+    rep = NormalReport(c.shape[0], int(from_surface.sum()), int((~from_surface).sum()), int(bad.size),
+                       float(cos_fs.min(initial=1.0)) if check else float("nan"), bad, cos_tol, tuple(flips))
+    return out, rep

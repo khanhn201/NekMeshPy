@@ -1,0 +1,70 @@
+{
+ "title": "The U-tube hexes: exterior by boundary group, and cuts along the U and across both legs",
+ "camera": {
+  "direction": [
+   0.8,
+   -0.6,
+   0.9
+  ],
+  "viewUp": [
+   0,
+   0,
+   1
+  ]
+ },
+ "variants": [
+  {
+   "label": "as built",
+   "note": "The hexes of examples/u_tube_box.py at order 1 (the corners a .re2 file holds): a solid box around the U, a one-layer solid shell, a one-layer fluid shell and the fluid core. The box faces are switched off at first.",
+   "layers": [
+    {
+     "name": "exterior",
+     "role": "groups",
+     "vtp": "u_tube_hex_as_built_exterior.vtp",
+     "groups": {
+      "1": "inlet",
+      "2": "interface",
+      "3": "outer",
+      "4": "outlet"
+     },
+     "hidden": [
+      "outer"
+     ]
+    },
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Wall surface",
+     "vtp": "u_tube_hex_as_built_wall.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "u_tube_hex_as_built_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "region",
+     "label": "Region",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "fluid | solid"
+    }
+   ]
+  }
+ ]
+}

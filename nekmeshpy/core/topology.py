@@ -388,10 +388,10 @@ def quad_report(points: PointArray, quads: IntArray) -> TopologyReport:
 
 
 def _quad_geometry(X: PointArray, QC: IntArray) -> tuple[
-        PointArray, PointArray, PointArray, PointArray, PointArray]:
+        PointArray, PointArray, PointArray, PointArray, PointArray, PointArray]:
     """Per-quad centroid, bounding-circle radius, the ``(N,4,3)`` edge start points
-    and outward in-plane unit normals, and the ``(N,9,3)`` sample points (4 corners,
-    4 edge midpoints, the centroid).  The plane is each quad's own mean-direction
+    and outward in-plane unit normals, the ``(N,9,3)`` sample points (4 corners,
+    4 edge midpoints, the centroid) and the ``(N,3)`` unit normal of the quad's own plane.  The plane is each quad's own mean-direction
     normal, so a section placed anywhere in space is read in its own plane; the
     outward sign comes from the centroid, not the stored winding."""
     corners = X[QC]                                              # (N,4,3)
@@ -411,32 +411,38 @@ def _quad_geometry(X: PointArray, QC: IntArray) -> tuple[
     length = np.linalg.norm(normal, axis=-1, keepdims=True)
     normal = normal / np.where(length == 0.0, 1.0, length)
     samples = np.concatenate([corners, mid, centroid[:, None, :]], axis=1)
-    return centroid, radius, corners, normal, samples
+    return centroid, radius, corners, normal, samples, plane
 
 
-def _count_overlapping_quad_pairs(X: PointArray, QC: IntArray) -> int:
-    """Pairs of quads whose areas geometrically overlap -- :func:`_count_overlapping_pairs`
+#: How far out of a quad's own plane a point may lie, in units of the quad's bounding radius, and still
+#: count as overlapping it.  Zero for a planar section; a curved surface's overlap is within its sagitta.
+_OVERLAP_PLANE = 0.5
+
+
+def _overlapping_quad_pairs(X: PointArray, QC: IntArray) -> IntArray:
+    """``(K, 2)`` pairs of quads whose areas geometrically overlap -- :func:`_count_overlapping_pairs`
     in 2-D: any of one's corners, edge midpoints or centroid sits strictly inside the
     other, past a half-plane test on all 4 of its edges (each quad is star-convex about
     its own centroid).  Adjacent pairs are not excluded; a shared edge's points sit
     exactly on the boundary, not strictly inside it.  A coincident centroid is a
     duplicate."""
+    none: IntArray = np.zeros((0, 2), dtype=np.int64)
     N = QC.shape[0]
     if N < 2:
-        return 0
-    centroid, radius, vertex, normal, samples = _quad_geometry(X, QC)
+        return none
+    centroid, radius, vertex, normal, samples, plane = _quad_geometry(X, QC)
     scale = conform.bbox_scale(X)
     tol = 1e-6 * (scale if scale > 0.0 else 1.0)
 
     tree = cKDTree(centroid)
     pairs = tree.query_pairs(r=2.0 * float(radius.max()), output_type="ndarray")
     if pairs.size == 0:
-        return 0
+        return none
     d = np.linalg.norm(centroid[pairs[:, 0]] - centroid[pairs[:, 1]], axis=1)
     keep = d < (radius[pairs[:, 0]] + radius[pairs[:, 1]])
     pairs, d = pairs[keep], d[keep]
     if pairs.size == 0:
-        return 0
+        return none
 
     i, j = pairs[:, 0], pairs[:, 1]
     hit = np.zeros(i.size, dtype=bool)
@@ -445,8 +451,23 @@ def _count_overlapping_quad_pairs(X: PointArray, QC: IntArray) -> int:
         for a, b in ((i[sl], j[sl]), (j[sl], i[sl])):
             diff = samples[a][:, :, None, :] - vertex[b][:, None, :, :]   # (k,9,4,3)
             dist = np.einsum("kpfd,kfd->kpf", diff, normal[b])
-            hit[sl] |= np.any(np.all(dist < -tol, axis=2), axis=1)
-    return int(np.count_nonzero(hit | (d < tol)))
+            # ... and close to the other quad's plane: on a surface that wraps back on itself (a coarse pipe wall)
+            # the far side projects into the footprint without touching it
+            off = np.abs(np.einsum("kpd,kd->kp", samples[a] - centroid[b][:, None, :], plane[b]))
+            hit[sl] |= np.any(np.all(dist < -tol, axis=2) & (off <= _OVERLAP_PLANE * radius[b][:, None]), axis=1)
+    return np.asarray(pairs[hit | (d < tol)], dtype=np.int64)
+
+
+def _count_overlapping_quad_pairs(X: PointArray, QC: IntArray) -> int:
+    return int(_overlapping_quad_pairs(X, QC).shape[0])
+
+
+def overlapping_quads(points: PointArray, quads: IntArray) -> IntArray:
+    """Sorted ids of the quads that take part in at least one overlapping pair (see
+    :func:`count_overlapping_quad_pairs`): the *which* behind its count."""
+    pairs = _overlapping_quad_pairs(np.asarray(points, dtype=float),
+                                    np.asarray(quads, dtype=np.int64).reshape(-1, 4))
+    return np.unique(pairs.ravel()).astype(np.int64)
 
 
 def count_overlapping_quad_pairs(points: PointArray, quads: IntArray) -> int:

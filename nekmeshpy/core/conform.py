@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from .._typing import BoolArray, IntArray, PointArray
+from .._typing import BoolArray, FloatArray, IntArray, PointArray
 from .interp import (
     _CORNER_IJK,
     corner_indices,
@@ -213,6 +213,108 @@ def unique_rows(rows: IntArray, *, return_counts: bool = False
     starts = np.flatnonzero(first)
     counts = np.diff(np.concatenate((starts, [m]))).astype(np.int64)
     return uniq, inv, counts
+
+
+#: Corner pairs of a line / quad / hex element (reference corner order), i.e. its edges.
+_CORNER_EDGES: dict[int, list[tuple[int, int]]] = {
+    2: [(0, 1)],
+    4: [(0, 1), (1, 2), (2, 3), (3, 0)],
+    8: [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7)],
+}
+
+
+def corner_length(soup: PointArray) -> FloatArray:
+    """``(E, k)`` local length of every corner of every element: the shortest edge that
+    meets it.  ``soup`` is ``(E, k, 3)`` per-element corner coordinates, ``k`` = 2 / 4 / 8
+    for line / quad / hex.  The length scale of ``gencon_clusters`` (the analogue of gencon's
+    ``set_d2``, which is built from the element's own corner distances)."""
+    E, k, _ = soup.shape
+    if k not in _CORNER_EDGES:
+        raise ValueError("corner_length: an element has 2, 4 or 8 corners, got %d" % k)
+    ell = np.full((E, k), np.inf)
+    for a, b in _CORNER_EDGES[k]:
+        d = np.linalg.norm(soup[:, a] - soup[:, b], axis=1)
+        ell[:, a] = np.minimum(ell[:, a], d)
+        ell[:, b] = np.minimum(ell[:, b], d)
+    return ell
+
+
+def gencon_clusters(X: PointArray, length: FloatArray, connectivity_tol: float = 0.2) -> IntArray:
+    """``(N,)`` cluster id of each point by **gencon's rule** (``Nek5000/tools/gencon``,
+    ``unique_vertex2``): a *local*, relative tolerance.
+
+    Points are sorted one coordinate at a time inside the segments the previous sort left;
+    a new segment starts where the gap in that coordinate exceeds ``connectivity_tol`` times
+    the smaller of the two points' local ``length``; ``ndim`` passes over the ``ndim``
+    coordinates remove false matches (segment cuts are never undone).  Two points are the
+    same vertex when, in every coordinate, they are within ``connectivity_tol`` x the smaller
+    local length -- a box test, local to each point, chaining along the sorted order.  ``0.2``
+    is gencon's default.  O(N log N); ids are arbitrary but dense, in order of the final
+    sort.
+
+    Unlike :func:`coincident_clusters` (one global radius) this welds a thin boundary-layer
+    cell and a coarse cell correctly in the same call -- no single global tolerance can."""
+    n, ndim = X.shape
+    if n == 0:
+        return np.zeros(0, dtype=np.int64)
+    if length.shape != (n,):
+        raise ValueError("gencon_clusters: length must be (%d,), got %s" % (n, length.shape))
+    if connectivity_tol <= 0:
+        raise ValueError("gencon_clusters: connectivity_tol must be positive")
+    d2 = np.asarray(length, dtype=float) ** 2
+    qq = connectivity_tol ** 2
+    order = np.arange(n)
+    ifseg = np.zeros(n, dtype=bool)
+    ifseg[0] = True
+    for _ in range(ndim):
+        for j in range(ndim):
+            seg = np.cumsum(ifseg) - 1
+            order = order[np.lexsort((X[order, j], seg))]
+            x = X[order, j]
+            dd = d2[order]
+            cut = np.zeros(n, dtype=bool)
+            cut[1:] = (x[1:] - x[:-1]) ** 2 > qq * np.minimum(dd[1:], dd[:-1])
+            ifseg |= cut
+    ids: IntArray = np.empty(n, dtype=np.int64)
+    ids[order] = np.cumsum(ifseg) - 1
+    return ids
+
+
+def box_refine_clusters(X: PointArray, length: FloatArray, connectivity_tol: float,
+                        cluster: IntArray, member: IntArray) -> IntArray:
+    """Make gencon's clusters obey its own rule **pairwise**.
+
+    The segment sort of :func:`gencon_clusters` chains one coordinate at a time inside the segments
+    the previous coordinate left, so points can share a final segment through *different* chains in x,
+    y and z without any two of them being within ``connectivity_tol`` x the smaller local length of
+    each other in every coordinate (the reference gencon behaves the same way).  On a symmetric
+    lattice that merges thousands of unrelated vertices -- measured on a valid cube-sphere: 8 false
+    clusters of up to 2269 points.  This re-clusters, with the exact box rule and its transitive
+    closure, only the points of clusters that hold more than one distinct ``member`` id (the only ones
+    a caller acts on); every other point keeps its cluster.  A KD-tree finds the candidate pairs,
+    so the cost is near-linear in the size of those clusters.  Returns dense ids."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    key = np.unique(np.stack([cluster, member], axis=1), axis=0)
+    per = np.bincount(key[:, 0], minlength=int(cluster.max()) + 1 if cluster.size else 0)
+    sub = np.flatnonzero(per[cluster] > 1)
+    if sub.size == 0:
+        return cluster
+    Xs, ls = X[sub], length[sub]
+    pairs = cKDTree(Xs).query_pairs(r=float(np.sqrt(X.shape[1]) * connectivity_tol * ls.max()),
+                                    output_type="ndarray")
+    if pairs.size:
+        near = (np.abs(Xs[pairs[:, 0]] - Xs[pairs[:, 1]])
+                <= connectivity_tol * np.minimum(ls[pairs[:, 0]], ls[pairs[:, 1]])[:, None]).all(axis=1)
+        pairs = pairs[near]
+    graph = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(sub.size, sub.size))
+    _, label = connected_components(graph, directed=False)
+    out = np.asarray(cluster, dtype=np.int64).copy()
+    out[sub] = int(out.max()) + 1 + label
+    return np.asarray(np.unique(out, return_inverse=True)[1], dtype=np.int64).reshape(-1)
 
 
 def bbox_scale(points: PointArray) -> float:
