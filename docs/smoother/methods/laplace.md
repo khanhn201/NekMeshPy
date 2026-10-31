@@ -36,7 +36,7 @@ The last pass is a full snap; a frozen vertex returns to its anchor every pass.
 
 ## Boundary vertices
 
-A boundary vertex has quads on one side only, so a plain average pulls it inward. Three layers keep it on the boundary: **source** (a boundary side is not shrunk across its normal), **movement** (a free vertex keeps only the tangent part of its move) and **constraint** (the snap). One vertex under each setting: {ref}`boundary-settings`. The same rules over a whole disk:
+A boundary vertex has quads on one side only, so a plain average pulls it inward. Three layers keep it on the boundary: **source** (a boundary side is not shrunk across its normal), **movement** (under `Tangent`, the move loses its component normal to the boundary) and **constraint** (the snap). One vertex under each setting: {ref}`boundary-settings`. The same rules over a whole disk:
 
 ```{include} ../_generated/methods_laplace.boundary.inc
 ```
@@ -51,9 +51,9 @@ A boundary vertex has quads on one side only, so a plain average pulls it inward
 ## Limitations
 
 - **No shape objective**: it never reads {math}`\varphi`.
-- **A free boundary is held only approximately**: the tangent rule keeps its area, but a tangent step can leave a
-  curved boundary slightly (figure above); `boundary="slide"` or an attached curve holds the shape.
-- **`free_boundary="chain"` shrinks a free convex boundary**: repeated averaging is diffusion.
+- **`boundary="tangent"` holds a boundary only approximately**: it keeps the area, but a tangent step can leave a
+  curved boundary slightly (figure above); `"slide"` or an attached curve holds the shape.
+- **`boundary="free"` shrinks a convex boundary**: repeated averaging is diffusion.
 - **No repair of folds by design**: nothing in a pass aims at validity, and a fold can stay, as on a concave outline
   ({doc}`winslow`).
 - **It relaxes designed grading** ({doc}`grading`).

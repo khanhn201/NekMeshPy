@@ -36,12 +36,14 @@ from .constrain import (
     CORNER_DEG,
     FREE,
     FROZEN,
+    TANGENT,
     Resolved,
     boundary_adjacency,
+    boundary_corners,
     constrain_direction,
     snap,
-    turning_deg,
     vertex_length,
+    vertex_normals,
 )
 
 __all__ = ["KAPPA", "EPS", "CornerMetrics", "corner_vectors", "reference_normals",
@@ -312,27 +314,6 @@ def _shrunk_corners(P: PointArray, corners: IntArray, bnd: BoolArray, w: float) 
     return np.asarray(out)
 
 
-def _free_boundary_chain(mesh: QuadMesh, resolved: Resolved,
-                         P: PointArray) -> tuple[IntArray, IntArray, IntArray]:
-    """``(ids, nb, corners)`` of the FREE boundary vertices: ``ids`` those with two boundary neighbours ``nb``
-    ``(n, 2)`` and a turn of at most ``CORNER_DEG``; ``corners`` the rest, which have no tangent."""
-    adj = boundary_adjacency(mesh)
-    free_b = np.array([v for v in sorted(adj) if resolved.kind[v] == FREE], dtype=np.int64)
-    two = np.array([len(adj[int(v)]) == 2 for v in free_b], dtype=bool)
-    ids = free_b[two]
-    nb = np.array([adj[int(v)] for v in ids], dtype=np.int64).reshape(-1, 2)
-    corner = turning_deg(P, ids, nb) > CORNER_DEG if ids.size else np.zeros(0, bool)
-    return ids[~corner], nb[~corner], np.r_[ids[corner], free_b[~two]].astype(np.int64)
-
-
-def _slide_free_boundary(P: PointArray, avg: PointArray, ids: IntArray, nb: IntArray) -> None:
-    """Replace the move of the free boundary vertices ``ids`` by its component along the local tangent --
-    the normalised sum of the two unit boundary-edge directions at the vertex -- read from the current ``P``."""
-    x, xp, xn = P[ids], P[nb[:, 0]], P[nb[:, 1]]
-    t = _unit_rows(_unit_rows(x - xp) + _unit_rows(xn - x))
-    avg[ids] = x + np.einsum("ij,ij->i", avg[ids] - x, t)[:, None] * t
-
-
 def _unit_rows(v: PointArray) -> PointArray:
     n = np.linalg.norm(v, axis=-1, keepdims=True)
     return np.asarray(v / np.where(n > 0, n, 1.0))
@@ -340,8 +321,7 @@ def _unit_rows(v: PointArray) -> PointArray:
 
 def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0.97,
             normals: PointArray | None = None, elements: BoolArray | None = None,
-            max_sj_drop: float = 0.05, kappa: float = KAPPA, eps: float = EPS,
-            free_boundary: str = "tangent") -> tuple[QuadMesh, StageLog]:
+            max_sj_drop: float = 0.05, kappa: float = KAPPA, eps: float = EPS) -> tuple[QuadMesh, StageLog]:
     """Element-shrink Laplace smoothing (the user's scheme, ported to quads).
 
     Each pass shrinks every quad toward its own centre by ``w`` (``0.97`` conservative; ``1``
@@ -352,12 +332,11 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
     snap).  ``elements`` (a ``(Q,)`` mask) restricts the update to the vertices of those quads,
     the *local* variant for failing patches.
 
-    ``free_boundary`` is the rule for a boundary vertex that is ``FREE`` (no target, not frozen).
-    ``"tangent"`` (default) keeps only the component of its move along the local boundary tangent, so
-    tangential tension cannot pull a convex boundary in onto its chords; a corner (turn above
-    ``CORNER_DEG``, or not two boundary neighbours) is held still.  ``"chain"`` applies the move as is --
-    the 1-D Laplacian of the boundary polygon, which shrinks a free convex boundary.  Frozen, on-curve,
-    on-surface and tied vertices are unaffected by either.
+    A ``FREE`` boundary vertex (``resolve(..., boundary="free")``) takes the proposed move as is -- the 1-D
+    Laplacian of the boundary polygon, which shrinks a convex boundary.  A ``TANGENT`` one
+    (``boundary="tangent"``) keeps only the component of its move along the tangent of the circle through it
+    and its two boundary neighbours (:func:`~.constrain.circle_tangent`, read from the current positions), so
+    tension cannot pull the boundary in onto its chords; corners are frozen by ``resolve``.
 
     A pass is accepted only if it creates no new inverted quad and does not lower the minimum
     scaled Jacobian by more than ``max_sj_drop`` (a Laplace pass trades a little worst case for
@@ -368,8 +347,6 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
         raise ValueError("laplace: w must be in (0, 1], got %r" % (w,))
     if passes < 1:
         raise ValueError("laplace: passes must be >= 1, got %r" % (passes,))
-    if free_boundary not in ("tangent", "chain"):
-        raise ValueError("laplace: free_boundary must be 'tangent' or 'chain', got %r" % (free_boundary,))
     corners = mesh.corners
     P0 = np.asarray(mesh.points, float)
     nrm = reference_normals(P0, corners) if normals is None else np.asarray(normals, float)
@@ -387,12 +364,7 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
     if elements is not None and not sel.any():
         return mesh, StageLog(method, passes, 0, "no_elements", "no quad selected", before,
                               before, ())
-    slide = held = nbs = None
-    if free_boundary == "tangent":
-        b_ids, b_nb, b_corners = _free_boundary_chain(mesh, resolved, P0)
-        keep = np.ones(b_ids.size, bool) if free is None else free[b_ids]
-        slide, nbs = b_ids[keep], b_nb[keep]
-        held = b_corners if free is None else b_corners[free[b_corners]]
+    tangent = resolved.kind == TANGENT
     P = P0.copy()
     cur = before
     history: list[tuple[int, int, float, float]] = []
@@ -402,10 +374,8 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
         avg = _scatter(mesh.n_points, corners, sh) / mult[:, None]
         if free is not None:
             avg[~free] = P[~free]
-        if slide is not None:
-            if slide.size:
-                _slide_free_boundary(P, avg, slide, nbs)
-            avg[held] = P[held]
+        if tangent.any():                    # a TANGENT vertex keeps only its move along the boundary
+            avg[tangent] = P[tangent] + constrain_direction(avg - P, P, resolved)[tangent]
         cand = snap(avg, resolved, weight=i / passes)
         got = quality(cand, corners, nrm, kappa=kappa, eps=eps)
         if got.n_inverted > cur.n_inverted or got.sj_min < cur.sj_min - max_sj_drop:
@@ -471,6 +441,9 @@ class _Stencil:
         ok = np.array([len(nb[int(i)]) == 2 for i in ids], bool)
         self.chain_ids = ids[ok]                                     # boundary vertices with two boundary neighbours
         self.chain_nb = np.array([nb[int(i)] for i in self.chain_ids], dtype=np.int64).reshape(-1, 2)
+        corner = boundary_corners(np.asarray(mesh.points, float), nb, CORNER_DEG,
+                                  vertex_normals(np.asarray(mesh.points, float), C))
+        self.chain_corner = np.array([int(i) in corner for i in self.chain_ids], dtype=bool)
         self.pinch = ids[~ok]                                        # the others are never moved
         groups: dict[int, list[tuple[int, list[int]]]] = {}
         fallback: list[int] = []                                     # interior vertices whose fan does not close
@@ -518,13 +491,13 @@ class _Stencil:
         return es + ds
 
 
-def _winslow_moves(st: _Stencil, X: PointArray, mask: BoolArray, free_boundary: str) -> PointArray:
+def _winslow_moves(st: _Stencil, X: PointArray, mask: BoolArray) -> PointArray:
     """``(P, 3)`` unconstrained Winslow move ``x* - x`` at the vertices in ``mask`` (zero elsewhere).
 
     Interior vertex: ``x* = x + sum_k w_k (x_k - x) / sum_k w_k`` with ``w_k = alpha W_xixi,k - 2 beta W_xieta,k +
     gamma W_etaeta,k``, ``alpha, beta, gamma`` read from the current positions.  Boundary vertex: the 1-D rule along
-    its chain, ``x* = (x_prev + x_next) / 2``, projected on the chain tangent under ``free_boundary="tangent"``;
-    a corner (turn above ``CORNER_DEG``) is held."""
+    its chain, ``x* = (x_prev + x_next) / 2`` (a ``TANGENT`` vertex has it cut to the boundary tangent by
+    :func:`constrain_direction`); a corner of the input boundary (:func:`boundary_corners`) is held."""
     d = np.zeros_like(X)
     for _, vs, nbr, W in st.groups:
         sel = mask[vs]
@@ -546,14 +519,11 @@ def _winslow_moves(st: _Stencil, X: PointArray, mask: BoolArray, free_boundary: 
     for v in st.fallback[mask[st.fallback]]:
         d[v] = X[list(st.adj[v])].mean(axis=0) - X[v]
     sel = mask[st.chain_ids]
-    ids, nb = st.chain_ids[sel], st.chain_nb[sel]
+    ids, nb, held = st.chain_ids[sel], st.chain_nb[sel], st.chain_corner[sel]
     if ids.size:
         a, b = X[nb[:, 0]], X[nb[:, 1]]
         mv = 0.5 * (a + b) - X[ids]
-        if free_boundary == "tangent":
-            t = _unit_rows(b - a)
-            mv = np.einsum("ij,ij->i", mv, t)[:, None] * t
-        mv[turning_deg(X, ids, nb) > CORNER_DEG] = 0.0
+        mv[held] = 0.0
         d[ids] = mv
     return d
 
@@ -568,7 +538,7 @@ def _vertex_normals(corners: IntArray, nrm: PointArray, n: int) -> PointArray:
 
 def winslow(mesh: QuadMesh, resolved: Resolved, *, sweeps: int = 200, omega: float = 1.0, tol: float = 1e-6,
             normals: PointArray | None = None, elements: BoolArray | None = None,
-            free_boundary: str = "tangent", max_sj_drop: float = 0.05, retries: int = 3,
+            max_sj_drop: float = 0.05, retries: int = 3,
             kappa: float = KAPPA, eps: float = EPS) -> tuple[QuadMesh, StageLog]:
     """Winslow (inverse-Laplace) smoothing: an alternative to :func:`laplace`.
 
@@ -580,8 +550,8 @@ def winslow(mesh: QuadMesh, resolved: Resolved, *, sweeps: int = 200, omega: flo
     The move is relaxed by ``omega`` and then handled exactly as :func:`optimize` handles a step:
     :func:`constrain_direction` (frozen: none, curve: its tangent, surface: its tangent plane; ``FREE`` vertices
     of a non-planar mesh keep the tangent plane of their reference normal), then a full :func:`snap`.
-    ``free_boundary`` is :func:`laplace`'s rule for a ``FREE`` boundary vertex (``"tangent"``: slide along the
-    chain, ``"chain"``: the unprojected chain move); a corner is held either way.  ``elements`` restricts the
+    A ``FREE`` boundary vertex takes the 1-D chain move as is and a ``TANGENT`` one only its part along the
+    boundary tangent (:func:`laplace`); a corner is held either way.  ``elements`` restricts the
     update to the vertices of those quads.
 
     A sweep that creates an inverted quad, or lowers the minimum scaled Jacobian by more than ``max_sj_drop``
@@ -591,8 +561,6 @@ def winslow(mesh: QuadMesh, resolved: Resolved, *, sweeps: int = 200, omega: flo
     catches a slow drift (a closed surface under many sweeps).  The stage also stops once the largest move falls
     below ``tol`` edge lengths.  ``StageLog.passes_done`` counts accepted sweeps.  Returns a **new** mesh and the
     :class:`StageLog`; ``mesh`` is untouched.  Linear meshes only."""
-    if free_boundary not in ("tangent", "chain"):
-        raise ValueError("winslow: free_boundary must be 'tangent' or 'chain', got %r" % (free_boundary,))
     if not 0.0 < omega <= 1.0:
         raise ValueError("winslow: omega must be in (0, 1], got %r" % (omega,))
     if sweeps < 1:
@@ -632,7 +600,7 @@ def winslow(mesh: QuadMesh, resolved: Resolved, *, sweeps: int = 200, omega: flo
             m &= movable
             if not m.any():
                 continue
-            d = _winslow_moves(st, Y, m, free_boundary)
+            d = _winslow_moves(st, Y, m)
             if vn is not None:
                 on = free & m
                 d[on] -= np.einsum("ij,ij->i", d[on], vn[on])[:, None] * vn[on]
@@ -738,6 +706,7 @@ def optimize(mesh: QuadMesh, resolved: Resolved, *, iters: int = 20,
     ws = None if weights is None else np.asarray(weights, float)[use]
     ell = vertex_length(P0, corners)[:, None]
     P = snap(P0, resolved, 1.0) if elements is None else P0.copy()
+    tangent = resolved.kind == TANGENT
     f, ninv = _eval(P, cs, ns, kappa, eps, delta, ws)
     n_used = max(int(use.sum()), 1)
     history: list[tuple[int, int, float, float]] = []
@@ -767,6 +736,8 @@ def optimize(mesh: QuadMesh, resolved: Resolved, *, iters: int = 20,
                 s = -g
         top = float(np.linalg.norm(s, axis=1).max())
         dirx = ell * s / top                             # largest move = 1 local edge per unit alpha
+        if tangent.any():                                # a CG mix of older tangents: re-cut to today's
+            dirx[tangent] = constrain_direction(dirx, P, resolved)[tangent]
 
         def trial(a: float, P: PointArray = P, dirx: PointArray = dirx,
                   ninv: int = ninv) -> tuple[float, int, PointArray]:

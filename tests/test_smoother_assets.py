@@ -167,9 +167,9 @@ def test_methods_pages_assets_committed_small_and_tables_present():
     assert figure.count('class="mm-row"') == 6 and figure.count('class="mm-cell"') == 30 and "disk, wall" not in figure
     assert figure.count('style="--mm-cols:5"') == 6 and "L-shape" in figure
     assert "var(--color" not in figure                                    # theme colours live in custom.css
-    for name, cells in (("laplace.boundary", 4), ("winslow.figure", 3), ("constraints.slide", 3)):
+    for name, rows_, cells in (("laplace.boundary", 1, 4), ("winslow.figure", 1, 3), ("constraints.slide", 2, 8)):
         body = open(os.path.join(gen_dir, "methods_%s.inc" % name)).read()
-        assert body.count('class="mm-row"') == 1 and body.count('class="mm-cell"') == cells, name
+        assert body.count('class="mm-row"') == rows_ and body.count('class="mm-cell"') == cells, name
         assert "var(--color" not in body, name
     assert 'class="fzd"' in open(os.path.join(gen_dir, "methods_constraints.slide.inc")).read()
     steps = open(os.path.join(gen_dir, "methods_laplace.steps.inc")).read()
@@ -191,7 +191,7 @@ def test_methods_pages_assets_committed_small_and_tables_present():
     assert "laptop, running serial" in open(os.path.join(gen_dir, "methods_compare.shows.inc")).read()
     assert "`passes` | `3`" in open(os.path.join(gen_dir, "methods_laplace.params.inc")).read()
     assert "`delta` | `0.01`" in open(os.path.join(gen_dir, "methods_optimizer.params.inc")).read()
-    assert "`free_boundary` | `'tangent'`" in open(os.path.join(gen_dir, "methods_laplace.params.inc")).read()
+    assert "free_boundary" not in open(os.path.join(gen_dir, "methods_laplace.params.inc")).read()
     assert "`sweeps` | `200`" in open(os.path.join(gen_dir, "methods_winslow.params.inc")).read()
     assert "boundary='frozen', corner_deg=30.0" in open(os.path.join(gen_dir, "methods_constraints.params.inc")).read()
     assert "initPhiPlot" in open(os.path.join(gen_dir, "methods_optimizer.plot.inc")).read()

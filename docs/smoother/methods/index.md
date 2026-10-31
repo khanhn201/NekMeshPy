@@ -42,8 +42,9 @@ reflex corner is the point (1, 1).
 
 ## In practice
 
-- **Attach geometry first** ({doc}`constraints`), or use `boundary="slide"` when there is none: a free boundary
-  slides under every method, and the optimizer pushes it out.
+- **Attach geometry first** ({doc}`constraints`), or use `boundary="slide"` when there is none: `"free"` shrinks a
+  convex boundary under Laplace and grows it under the optimizer; `"tangent"` holds it for Laplace and Winslow, but the
+  optimizer can stall there.
 - **Start from `s.suggest()`**: when a quad starts inverted it leads with optimizer passes over a wide-to-narrow `delta`.
 - **Add a Winslow stage by hand** where Laplace fails: a concave outline, a thin curved block ({doc}`winslow`).
 - **Protect designed grading** with `KeepLayer` ({doc}`grading`); Winslow needs it most.

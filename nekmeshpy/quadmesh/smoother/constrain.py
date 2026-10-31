@@ -1,7 +1,7 @@
 """Smoother constraints (M2): what each vertex may do, and how the target geometry holds it.
 
 A smoother never guesses.  Every vertex gets one *mobility* -- ``FREE``, ``ON_SURFACE``,
-``ON_CURVE`` or ``FROZEN`` -- resolved once from the constraints the caller states, and the
+``ON_CURVE``, ``TANGENT`` or ``FROZEN`` -- resolved once from the constraints the caller states, and the
 two operations the smoothing methods share act on it:
 
 * :func:`snap` projects constrained vertices back onto their target (``x += w (P(x) - x)``;
@@ -11,10 +11,10 @@ two operations the smoothing methods share act on it:
   on a frozen vertex -- using the **target's own** normal, never the mesh's.
 
 Strict geometry mode (the default, as in the user's pebble code) is both, every step.
-Precedence is ``FROZEN > ON_CURVE > ON_SURFACE > FREE``; a vertex claimed by two surfaces,
+Precedence is ``FROZEN > ON_CURVE > ON_SURFACE > TANGENT > FREE``; a vertex claimed by two surfaces,
 or by two curves (a corner), is frozen and listed in the report -- it is never given an
 order-dependent projection implicitly.  Unclaimed *boundary* vertices are frozen by default,
-so a block's seam cannot drift (``boundary="free"`` opens them).
+so a block's seam cannot drift (``boundary="free"`` opens them, ``"tangent"`` lets them move along the boundary only).
 """
 
 from __future__ import annotations
@@ -31,18 +31,19 @@ from ..._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..quadmesh import QuadMesh
 from ..query import boundary_edge_ids, boundary_points, tagged_edges
 
-__all__ = ["FREE", "ON_SURFACE", "ON_CURVE", "FROZEN", "TIED", "Surface", "Curve", "plane", "sphere",
-           "line", "circle", "Frozen", "OnSurface", "OnCurve", "KeepLayer", "layer_rings", "SlideColumns", "grid_columns", "Resolved", "OnTargetReport",
+__all__ = ["FREE", "ON_SURFACE", "ON_CURVE", "FROZEN", "TIED", "TANGENT", "circle_tangent", "Surface", "Curve", "plane", "sphere",
+           "line", "circle", "Frozen", "Tangent", "OnSurface", "OnCurve", "KeepLayer", "layer_rings", "SlideColumns", "grid_columns", "Resolved", "OnTargetReport",
            "resolve", "snap", "constrain_direction", "on_target_report", "vertex_length", "surface_from_trimesh",
            "NormalReport", "surface_normals", "claimed_surfaces", "CORNER_DEG", "boundary_adjacency",
-           "turning_deg", "spline_curve"]
+           "turning_deg", "spline_curve", "boundary_corners", "vertex_normals"]
 
-#: Turning angle (degrees) above which a boundary vertex is a corner: held still by the Laplace
-#: tangent rule and frozen, ending its chains, by ``resolve(..., boundary="slide")``.
+#: Turning angle (degrees) above which a boundary vertex is a corner: frozen by ``resolve(...,
+#: boundary="tangent")``, and frozen, ending its chains, by ``boundary="slide"``.
 CORNER_DEG = 30.0
 
-FREE, ON_SURFACE, ON_CURVE, FROZEN, TIED = 0, 1, 2, 3, 4
-_KIND = {FREE: "free", ON_SURFACE: "on_surface", ON_CURVE: "on_curve", FROZEN: "frozen", TIED: "slide_column"}
+FREE, ON_SURFACE, ON_CURVE, FROZEN, TIED, TANGENT = 0, 1, 2, 3, 4, 5
+_KIND = {FREE: "free", ON_SURFACE: "on_surface", ON_CURVE: "on_curve", FROZEN: "frozen", TIED: "slide_column",
+         TANGENT: "tangent"}
 
 #: Which vertices a constraint names: point ids, a boolean mask, or an edge-tag name
 #: (the points of every edge carrying it -- "this tagged loop lies on this curve").
@@ -118,21 +119,35 @@ class Frozen:
 
 
 @dataclass(frozen=True)
-class OnSurface:
-    """Stays on ``surface``.  ``slide=True`` moves tangentially then re-projects;
-    ``slide=False`` projects once onto the surface and then holds still."""
+class Tangent:
+    """Moves only along the boundary: a boundary vertex whose move is cut down to the tangent of the circle
+    through it and its two boundary neighbours (:func:`circle_tangent`, from the current positions).  Nothing
+    pulls it back onto a curve -- that is :class:`OnCurve`.  A corner (see :func:`boundary_corners`) or a vertex
+    without two boundary neighbours is frozen instead; a vertex that is not on the boundary is an error."""
 
     points: Select
-    surface: Surface
+
+
+@dataclass(frozen=True)
+class OnSurface:
+    """Stays on ``surface``.  ``slide=True`` moves tangentially then re-projected;
+    ``slide=False`` projects once onto the surface and then holds still.  Without a ``surface`` it is fitted:
+    the input quads touching these vertices, as a triangle surface (:func:`surface_from_trimesh`)."""
+
+    points: Select
+    surface: Surface | None = None
     slide: bool = True
 
 
 @dataclass(frozen=True)
 class OnCurve:
-    """Stays on ``curve``, moving along it only when ``slide=True``."""
+    """Stays on ``curve``, moving along it only when ``slide=True``.  Without a ``curve`` it is fitted: the
+    boundary chains through these vertices, as meshed, are cut at corners (:func:`boundary_corners`) and at
+    boundary vertices not named here, and each piece gets a spline through it (:func:`spline_curve`, closed
+    for a loop); a corner is frozen."""
 
     points: Select
-    curve: Curve
+    curve: Curve | None = None
     slide: bool = True
 
 
@@ -162,11 +177,11 @@ class SlideColumns:
     direction: Sequence[float]
 
 
-Constraint = Union[Frozen, OnSurface, OnCurve, KeepLayer, SlideColumns]
+Constraint = Union[Frozen, Tangent, OnSurface, OnCurve, KeepLayer, SlideColumns]
 
 
 class Resolved(NamedTuple):
-    """Per-vertex mobility, resolved once.  ``kind[i]`` is ``FREE/ON_SURFACE/ON_CURVE/FROZEN``;
+    """Per-vertex mobility, resolved once.  ``kind[i]`` is ``FREE/ON_SURFACE/ON_CURVE/FROZEN/TANGENT``;
     ``target[i]`` indexes ``surfaces`` or ``curves`` for the first two; ``anchor`` is where a
     frozen vertex lives (the input position, or its one-time projection for ``slide=False``)."""
 
@@ -180,6 +195,11 @@ class Resolved(NamedTuple):
     #: ``tie[i]`` is the rigid column vertex ``i`` belongs to (``-1`` none); ``tie_dir[i]`` its slide direction.
     tie: IntArray
     tie_dir: PointArray
+    #: ``nbr[i]`` the two boundary neighbours of a ``TANGENT`` vertex (``-1`` for every other vertex).
+    nbr: IntArray
+    #: ``(F, 4)`` the outward boundary faces a hex ``TANGENT`` vertex with no ``nbr`` slides in the tangent plane of
+    #: (empty on a quad mesh, whose ``TANGENT`` vertices all have two boundary neighbours).
+    bfaces: IntArray
 
     def counts(self) -> dict[str, int]:
         return {name: int((self.kind == k).sum()) for k, name in _KIND.items()}
@@ -310,12 +330,67 @@ def boundary_adjacency(mesh: QuadMesh) -> dict[int, list[int]]:
     return nb
 
 
-def turning_deg(P: PointArray, ids: IntArray, nb: IntArray) -> FloatArray:
-    """Turning angle (degrees) of the boundary at ``ids``, whose neighbours are ``nb`` ``(n, 2)``."""
+def circle_tangent(xp: PointArray, x: PointArray, xn: PointArray) -> PointArray:
+    """Unit tangent at ``x`` of the circle through ``xp``, ``x``, ``xn`` (rows), oriented ``xp -> xn``.
+
+    With ``a = xp - x`` and ``c = xn - x`` the tangent at the middle point of the circumscribed circle is
+    ``|a|^2 c - |c|^2 a``: perpendicular to the radius, in the plane of the three points, exact on a circle
+    and second-order on uneven spacing.  Collinear points give the edge direction; the degenerate case
+    ``xp == xn`` (no direction at all) returns a zero row."""
+    a, c = xp - x, xn - x
+    t = np.einsum("ij,ij->i", a, a)[:, None] * c - np.einsum("ij,ij->i", c, c)[:, None] * a
+    n = np.linalg.norm(t, axis=-1, keepdims=True)
+    return np.asarray(t / np.where(n > 0, n, 1.0))
+
+
+def vertex_normals(P: PointArray, corners: IntArray) -> PointArray:
+    """``(n, 3)`` unit normal per vertex: the mean of its quads' unit normals (the cross product of the
+    diagonals); a zero row where they cancel."""
+    c = np.asarray(corners, dtype=np.int64)
+    n = np.cross(P[c[:, 2]] - P[c[:, 0]], P[c[:, 3]] - P[c[:, 1]])
+    n = n / np.where(np.linalg.norm(n, axis=1, keepdims=True) > 0, np.linalg.norm(n, axis=1, keepdims=True), 1.0)
+    v = np.zeros((P.shape[0], 3))
+    for k in range(4):
+        np.add.at(v, c[:, k], n)
+    return np.asarray(v / np.where(np.linalg.norm(v, axis=1, keepdims=True) > 0,
+                                   np.linalg.norm(v, axis=1, keepdims=True), 1.0))
+
+
+def turning_deg(P: PointArray, ids: IntArray, nb: IntArray, normals: PointArray | None = None) -> FloatArray:
+    """Turning angle (degrees) of the boundary at ``ids``, whose neighbours are ``nb`` ``(n, 2)``.  With
+    ``normals`` (``(len(P), 3)``, e.g. :func:`vertex_normals`) both edges are first projected onto the tangent
+    plane at the vertex, so the turn is the one *within* the surface and its own bending does not count."""
     u = P[ids] - P[nb[:, 0]]
     v = P[nb[:, 1]] - P[ids]
+    if normals is not None:
+        nn = normals[ids]
+        u = u - np.einsum("ij,ij->i", u, nn)[:, None] * nn
+        v = v - np.einsum("ij,ij->i", v, nn)[:, None] * nn
     c = np.einsum("ij,ij->i", u, v) / np.maximum(np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1), 1e-300)
     return np.asarray(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+
+
+def boundary_corners(P: PointArray, adj: dict[int, list[int]], corner_deg: float = CORNER_DEG,
+                     normals: PointArray | None = None) -> set[int]:
+    """The corners of the boundary graph ``adj`` (vertex -> neighbours along it): a vertex without exactly
+    two neighbours, or one whose turn is a **jump** -- above ``corner_deg`` *and* above three times the mean turn of
+    its two neighbours.  The second test is what separates a corner from a coarsely sampled smooth curve: on
+    a circle of ``N`` points every vertex turns ``360/N``, which can be far above ``corner_deg``, but its
+    neighbours turn about the same (a 3:1 ellipse on 12 points peaks at 2.4), so the ratio is near 1; at a real corner the neighbours (edge interiors) turn
+    little, so the ratio is large.  (A closed loop of only four points is such a circle.)  ``normals``
+    makes the turns geodesic, see :func:`turning_deg`."""
+    two = np.array([v for v in sorted(adj) if len(adj[v]) == 2], dtype=np.int64)
+    out = {v for v in adj if len(adj[v]) != 2}
+    if not two.size:
+        return out
+    turn = dict(zip(two.tolist(), turning_deg(P, two, np.array([adj[int(v)] for v in two], dtype=np.int64),
+                                              normals).tolist()))
+    for v in two.tolist():
+        if turn[v] > corner_deg:
+            around = [turn[w] for w in adj[v] if w in turn]
+            if turn[v] > 3.0 * (sum(around) / len(around) if around else 0.0):
+                out.add(v)
+    return out
 
 
 def spline_curve(X: PointArray, closed: bool, name: str = "boundary") -> Curve:
@@ -363,16 +438,12 @@ def spline_curve(X: PointArray, closed: bool, name: str = "boundary") -> Curve:
 
 
 def _boundary_chains(mesh: QuadMesh, claimed: BoolArray, corner_deg: float) -> tuple[list[list[int]], list[list[int]], IntArray]:
-    """``(open, closed, corners)``: the boundary cut at every break -- a corner (turn > ``corner_deg``), a
+    """``(open, closed, corners)``: the boundary cut at every break -- a corner (:func:`boundary_corners`), a
     vertex without exactly two boundary neighbours, or a ``claimed`` vertex.  Each open chain runs break to
     break (ends included); each closed one is a break-free loop.  ``corners`` are the unclaimed breaks."""
     nb = boundary_adjacency(mesh)
     P = np.asarray(mesh.points, float)
-    brk = {v for v in nb if len(nb[v]) != 2 or claimed[v]}
-    two = np.array([v for v in sorted(nb) if len(nb[v]) == 2], dtype=np.int64)
-    if two.size:
-        turn = turning_deg(P, two, np.array([nb[int(v)] for v in two], dtype=np.int64))
-        brk |= {int(v) for v in two[turn > corner_deg]}
+    brk = {v for v in nb if claimed[v]} | boundary_corners(P, nb, corner_deg, vertex_normals(P, mesh.corners))
     seen: set[tuple[int, int]] = set()
     opened: list[list[int]] = []
     closed: list[list[int]] = []
@@ -402,43 +473,74 @@ def _boundary_chains(mesh: QuadMesh, claimed: BoolArray, corner_deg: float) -> t
     return opened, closed, corners
 
 
-def _slide_constraints(mesh: QuadMesh, claimed: BoolArray, corner_deg: float) -> tuple[list[Constraint], int, int]:
-    """The constraints ``boundary="slide"`` adds: every chain's interior ``OnCurve`` a spline through the
-    chain as meshed, every unclaimed corner ``Frozen``.  Returns them with the corner and chain counts."""
+def _expand(mesh: QuadMesh, constraints: Sequence[Constraint], corner_deg: float) -> list[Constraint]:
+    """``constraints`` with every geometry-less :class:`OnCurve` / :class:`OnSurface` turned into concrete
+    ones fitted to the input mesh (and the corners of a fitted curve into :class:`Frozen`)."""
     P = np.asarray(mesh.points, float)
-    opened, closed, corners = _boundary_chains(mesh, claimed, corner_deg)
-    cons: list[Constraint] = []
-    for ch in opened:
-        if len(ch) > 2:
-            cons.append(OnCurve(np.asarray(ch[1:-1], dtype=np.int64), spline_curve(P[ch], False)))
-    for ch in closed:
-        cons.append(OnCurve(np.asarray(ch, dtype=np.int64), spline_curve(P[ch], True)))
-    if corners.size:
-        cons.append(Frozen(corners))
-    return cons, int(corners.size), len(cons) - int(corners.size > 0)
+    out: list[Constraint] = []
+    for c in constraints:
+        if isinstance(c, OnCurve) and c.curve is None:
+            ids = _ids(mesh, c.points)
+            bnd: BoolArray = np.zeros(mesh.n_points, bool)
+            bnd[boundary_points(mesh)] = True
+            if not bnd[ids].all():
+                raise ValueError("OnCurve without a curve fits the boundary: %d of its vertices are interior"
+                                 % int((~bnd[ids]).sum()))
+            named: BoolArray = np.zeros(mesh.n_points, bool)
+            named[ids] = True
+            opened, closed, corners = _boundary_chains(mesh, bnd & ~named, corner_deg)
+            for ch in opened:
+                if len(ch) > 2:
+                    out.append(OnCurve(np.asarray(ch[1:-1], dtype=np.int64), spline_curve(P[ch], False), c.slide))
+            for ch in closed:
+                out.append(OnCurve(np.asarray(ch, dtype=np.int64), spline_curve(P[ch], True), c.slide))
+            if corners.size:
+                out.append(Frozen(corners))
+        elif isinstance(c, OnSurface) and c.surface is None:
+            ids = _ids(mesh, c.points)
+            hit = np.isin(mesh.corners, ids).any(axis=1)
+            q = mesh.corners[hit]
+            tris = np.concatenate([q[:, [0, 1, 2]], q[:, [0, 2, 3]]])
+            out.append(OnSurface(ids, surface_from_trimesh(P, tris, name="input faces"), c.slide))
+        else:
+            out.append(c)
+    return out
 
 
-def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
+def _count_note(r: Resolved) -> str:
+    return "resolved: " + ", ".join("%d %s" % (n, k) for k, n in r.counts().items() if n)
+
+
+def resolve(mesh: QuadMesh, constraints: Sequence[Constraint], *,
             boundary: str = "frozen", corner_deg: float = CORNER_DEG) -> Resolved:
-    """Resolve ``constraints`` over ``mesh``'s vertices (see the module docstring for the
-    precedence).  ``boundary="frozen"`` (default) freezes every boundary vertex no constraint
-    names; ``"free"`` leaves them to move; ``"slide"`` holds each unclaimed boundary chain on a
-    smooth curve through the input boundary itself (:func:`spline_curve`, 3-D on a surface mesh), so
-    its vertices slide along the boundary but never off it.  Chains end at corners (turning angle
-    above ``corner_deg``, which are frozen), at vertices without two boundary neighbours and at
-    vertices a constraint already claims."""
-    if boundary not in ("frozen", "free", "slide"):
-        raise ValueError("boundary must be 'frozen', 'free' or 'slide', got %r" % (boundary,))
-    if boundary == "slide":
-        first = resolve(mesh, constraints, boundary="free")
-        claimed: BoolArray = np.zeros(mesh.n_points, bool)
-        claimed[boundary_points(mesh)] = True
-        claimed &= first.kind != FREE
-        extra, n_corner, n_chain = _slide_constraints(mesh, claimed, corner_deg)
-        out = resolve(mesh, [*constraints, *extra], boundary="free")
-        note = ("boundary='slide': %d unclaimed boundary chain(s) on their own curve, %d corner(s) frozen "
-                "(turn > %g deg)" % (n_chain, n_corner, corner_deg))
-        return out._replace(notes=(*out.notes, note))
+    """Resolve ``constraints`` over ``mesh``'s vertices (see the module docstring for the precedence).
+
+    ``boundary`` is only a shorthand for what to state about every boundary vertex no constraint names:
+    ``"frozen"`` (default) -> :class:`Frozen`; ``"free"`` -> nothing (it moves as the method proposes, so a
+    convex boundary shrinks under Laplace); ``"tangent"`` -> :class:`Tangent`; ``"slide"`` ->
+    ``OnCurve(ids)`` fitted to the input boundary (3-D on a surface mesh).  Corners (:func:`boundary_corners`,
+    ``corner_deg`` and the local-jump test) are frozen in every mode but ``"free"``, which has no
+    notion of them."""
+    if boundary not in ("frozen", "free", "tangent", "slide"):
+        raise ValueError("boundary must be 'frozen', 'free', 'tangent' or 'slide', got %r" % (boundary,))
+    cons = _expand(mesh, constraints, corner_deg)
+    first = _resolve_core(mesh, cons, corner_deg)
+    if boundary == "free":
+        return first._replace(notes=(*first.notes, _count_note(first)))
+    bnd: BoolArray = np.zeros(mesh.n_points, bool)
+    bnd[boundary_points(mesh)] = True
+    loose = np.flatnonzero(bnd & (first.kind == FREE)).astype(np.int64)
+    shorthand: list[Constraint] = []
+    note = "boundary=%r: %d unnamed boundary vertice(s)" % (boundary, loose.size)
+    if loose.size:
+        shorthand = [Frozen(loose) if boundary == "frozen" else Tangent(loose) if boundary == "tangent"
+                     else OnCurve(loose)]
+    out = _resolve_core(mesh, [*cons, *_expand(mesh, shorthand, corner_deg)], corner_deg)
+    return out._replace(notes=(*out.notes, note, _count_note(out)))
+
+
+def _resolve_core(mesh: QuadMesh, constraints: Sequence[Constraint], corner_deg: float) -> Resolved:
+    """The resolver proper: every constraint concrete, nothing assumed about the boundary."""
     n = mesh.n_points
     P0 = np.asarray(mesh.points, float)
     n_surf: IntArray = np.zeros(n, np.int64)
@@ -451,6 +553,7 @@ def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
     tie: IntArray = np.full(n, -1, np.int64)
     tie_dir: PointArray = np.zeros((n, 3))
     tie_claims: IntArray = np.zeros(n, np.int64)
+    tang: BoolArray = np.zeros(n, bool)
     n_tie = 0
     surfaces: list[Surface] = []
     curves: list[Curve] = []
@@ -472,12 +575,16 @@ def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
                 tie[col] = n_tie
                 tie_dir[col] = d_
                 n_tie += 1
+        elif isinstance(c, Tangent):
+            tang[ids] = True
         elif isinstance(c, OnSurface):
+            assert c.surface is not None
             surfaces.append(c.surface)
             n_surf[ids] += 1
             claim_surf[ids] = len(surfaces) - 1
             pin_surf[ids] |= not c.slide
         elif isinstance(c, OnCurve):
+            assert c.curve is not None
             curves.append(c.curve)
             n_curve[ids] += 1
             claim_curve[ids] = len(curves) - 1
@@ -502,13 +609,23 @@ def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
     if multi_t.any() or mixed_t.any():
         notes.append("%d vertices in a rigid column are also claimed by another constraint -> frozen (the column too)"
                      % int((multi_t | mixed_t).sum()))
-    bdry: BoolArray = np.zeros(n, bool)
-    if boundary == "frozen":
-        bdry[boundary_points(mesh)] = True
-        bdry &= (n_surf == 0) & (n_curve == 0) & (tie_claims == 0) & ~frozen
-        if bdry.any():
-            notes.append("%d unconstrained boundary vertices frozen (boundary='frozen')"
-                         % int(bdry.sum()))
+    nbr: IntArray = np.full((n, 2), -1, np.int64)
+    notes_tang: list[str] = []
+    if tang.any():
+        adj = boundary_adjacency(mesh)
+        if not tang[list(adj)].sum() == tang.sum():
+            raise ValueError("Tangent names %d vertices that are not on the boundary" % int(tang.sum() - tang[list(adj)].sum()))
+        corner = boundary_corners(P0, adj, corner_deg, vertex_normals(P0, mesh.corners))
+        n_corner = 0
+        for v in np.flatnonzero(tang).tolist():
+            if v in corner:
+                tang[v] = False
+                frozen[v] = True
+                n_corner += 1
+            else:
+                nbr[v] = adj[v]
+        if n_corner:
+            notes_tang.append("%d Tangent vertice(s) are corners or lack two boundary neighbours -> frozen" % n_corner)
 
     kind: IntArray = np.zeros(n, np.int64)
     target: IntArray = np.full(n, -1, np.int64)
@@ -519,7 +636,7 @@ def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
     target[on_s] = claim_surf[on_s]
     kind[on_c] = ON_CURVE
     target[on_c] = claim_curve[on_c]
-    hold = frozen | multi_s | multi_c | bdry | multi_t | mixed_t
+    hold = frozen | multi_s | multi_c | multi_t | mixed_t
     # a rigid column with one pinned member is pinned as a whole
     if (tie >= 0).any():
         pinned_cols = np.unique(tie[hold & (tie >= 0)])
@@ -529,6 +646,7 @@ def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
                          % pinned_cols.size)
             hold = hold | members
     kind[(tie >= 0) & ~hold] = TIED
+    kind[tang & ~hold & (kind == FREE)] = TANGENT
     kind[hold] = FROZEN
     target[hold] = -1
     # slide=False: one projection now, then the vertex is held where it landed.
@@ -540,7 +658,12 @@ def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
             kind[m] = FROZEN
             target[m] = -1
     tie[hold] = -1
-    return Resolved(kind, target, anchor, tuple(surfaces), tuple(curves), tuple(notes), tie, tie_dir)
+    notes.extend(notes_tang)
+    nbr[kind != TANGENT] = -1
+    return Resolved(kind, target, anchor, tuple(surfaces), tuple(curves), tuple(notes), tie, tie_dir, nbr,
+                    np.zeros((0, 4), np.int64))
+
+
 
 
 def _targets(r: Resolved) -> list[tuple[int, Sequence[Union[Surface, Curve]]]]:
@@ -588,6 +711,21 @@ def constrain_direction(d: PointArray, points: PointArray, r: Resolved) -> Point
         if m.any():
             tan = c.tangent(c.project(points[m]))
             out[m] = np.einsum("ij,ij->i", out[m], tan)[:, None] * tan
+    tg = (r.kind == TANGENT) & (r.nbr[:, 0] >= 0)
+    if tg.any():                                 # boundary vertex: along the circle through it and its neighbours
+        tan = circle_tangent(points[r.nbr[tg, 0]], points[tg], points[r.nbr[tg, 1]])
+        out[tg] = np.einsum("ij,ij->i", out[tg], tan)[:, None] * tan
+    pl = (r.kind == TANGENT) & (r.nbr[:, 0] < 0)
+    if pl.any():                                 # patch vertex (hex): in the tangent plane of its boundary faces
+        F = r.bfaces
+        nf = np.cross(points[F[:, 2]] - points[F[:, 0]], points[F[:, 3]] - points[F[:, 1]])
+        nf = nf / np.where(np.linalg.norm(nf, axis=1, keepdims=True) > 0, np.linalg.norm(nf, axis=1, keepdims=True), 1.0)
+        N = np.zeros_like(points)
+        for k in range(4):
+            np.add.at(N, F[:, k], nf)
+        nv = N[pl]
+        nv = nv / np.where(np.linalg.norm(nv, axis=1, keepdims=True) > 0, np.linalg.norm(nv, axis=1, keepdims=True), 1.0)
+        out[pl] -= np.einsum("ij,ij->i", out[pl], nv)[:, None] * nv
     tied = (r.tie >= 0) & (r.kind == TIED)
     if tied.any():                               # a rigid column moves by the mean of its members' slide components
         s_i = np.einsum("ij,ij->i", out[tied], r.tie_dir[tied])

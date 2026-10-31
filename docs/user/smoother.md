@@ -36,25 +36,30 @@ quad_to_vtu(s.current, "smoothed.vtu")
 | constraint | what it does | typical use |
 |---|---|---|
 | `Frozen(points)` | never moves | a feature placed by hand |
-| `OnSurface(points, surface, slide=True)` | slides tangentially, snapped back every step; `slide=False`: projected once, then held | a curved wall, a planar face |
-| `OnCurve(points, curve, slide=True)` | the same along a curve | a rim, a box crease |
+| `Tangent(points)` | slides along the boundary, never inward; nothing projects it back | a boundary with no geometry, under Laplace or Winslow |
+| `OnSurface(points, surface=None, slide=True)` | slides tangentially, snapped back every step; no `surface`: fitted to the input faces; `slide=False`: projected once, then held | a curved wall, a planar face |
+| `OnCurve(points, curve=None, slide=True)` | the same along a curve; no `curve`: a spline through the input boundary | a rim, a box crease |
 | `KeepLayer(seeds, rings=1)` | freezes `rings` quad-rings off the seeds | a graded boundary layer |
 | `SlideColumns(columns, direction)` | rigid columns, one shared degree of freedom each; cells between rows stay rectangles; frozen whole if any member is | rows across a wall; found by `constrain.grid_columns(mesh, seeds, direction, within=mask, outside_depth=1)` |
 
 - `points`: ids, a boolean mask, or an **edge-tag name**. Targets: `plane`, `sphere`, `line`, `circle`, or any
   `Surface(project, normal)` / `Curve(project, tangent)`; gradients use the target's normal, never the mesh's.
-- A vertex claimed by two surfaces or curves is frozen (and listed).
+- Precedence: `Frozen > OnCurve > OnSurface > Tangent > Free`; a vertex claimed by two surfaces or curves is frozen (and listed).
 - `weights=w` scales each quad's shape term (`0`: shape irrelevant); the inversion penalty still applies.
 
-A boundary vertex no constraint names is resolved by `resolve(mesh, constraints, boundary=...)` (a `SmoothSession`
-keyword too):
+`boundary=` (in `resolve(mesh, constraints, boundary=...)` and `SmoothSession`) is a shorthand for every boundary vertex
+no constraint names:
 
-| `boundary` | an unclaimed boundary vertex | use for |
-|---|---|---|
-| `"frozen"` (default) | never moves | a boundary placed as meshed |
-| `"free"` | moves; Laplace and Winslow keep only its move along the boundary, the optimizer moves it anywhere | a closed surface; a boundary that may move |
-| `"slide"` | slides on a smooth curve through the input boundary itself; corners (turn above `corner_deg=30`) frozen | a boundary with no known geometry that should keep its shape (surface quads too) |
-| — (`OnCurve` / `OnSurface`) | slides on the exact target | known geometry: always preferred |
+| `boundary` | states | an unclaimed boundary vertex | use for |
+|---|---|---|---|
+| `"frozen"` (default) | `Frozen` | never moves | a boundary placed as meshed |
+| `"free"` | nothing | moves as proposed: Laplace pulls a convex boundary in, the optimizer pushes it out | a boundary whose position does not matter |
+| `"tangent"` | `Tangent` | slides along the boundary, never inward | Laplace, Winslow; no known geometry |
+| `"slide"` | `OnCurve`, fitted | slides on a spline through the input boundary (surface quads too) | no known geometry, any method |
+| — | `OnCurve` / `OnSurface` with a target | slides on the exact target | known geometry: always preferred |
+
+Corners (a turn above `corner_deg=30` that is also a jump against its neighbours') are frozen in every mode but
+`"free"`. Under `"tangent"` the optimizer can stall: when it must move the boundary, use `"slide"`.
 
 ```{warning}
 The shape metric seeks squares, so an unconstrained graded boundary layer gets flattened. Freeze it with `KeepLayer`.
@@ -69,13 +74,11 @@ inverted, `optimize` stages with a wide-to-narrow `delta` come first. A schedule
 
 | stage | what it does | main knobs |
 |---|---|---|
-| `laplace` | moves each vertex toward its neighbours | `passes` 3, shrink `w` 0.97, `free_boundary` |
+| `laplace` | moves each vertex toward its neighbours | `passes` 3, shrink `w` 0.97 |
 | `optimize` | descends the shape metric plus an inversion penalty; with a `delta` continuation (`untangle_schedule()`, a preset of `optimize`, not a separate stage) it pulls folded vertices through | `iters` 20, `kappa`, `eps`, `delta` 0.01 (the preset: 1.0 → 0.01, `iters` 60 each) |
 | `laplace_local` | the failing quads only, lifting the smallest edges | `passes` 5, `w` |
-| `winslow` / `winslow_local` | elliptic smoothing (all quads / the failing ones): an alternative to `laplace` for concave outlines and thin curved blocks; not in the suggested schedules, add it by hand: `("winslow", {"sweeps": 100})` | `sweeps` 200, `omega` 1, `tol` 1e-6, `free_boundary` |
+| `winslow` / `winslow_local` | elliptic smoothing (all quads / the failing ones): an alternative to `laplace` for concave outlines and thin curved blocks; not in the suggested schedules, add it by hand: `("winslow", {"sweeps": 100})` | `sweeps` 200, `omega` 1, `tol` 1e-6 |
 
-- `free_boundary` (`laplace`, `winslow`): `"tangent"` (default) keeps only the move of a free boundary vertex along
-  the boundary; `"chain"` applies it unprojected, which shrinks a convex boundary.
 - Keep graded layers with `KeepLayer` under every stage, Winslow most of all
   ({doc}`../smoother/methods/winslow`).
 - `kappa` (1000) / `eps` (0.05) set the inversion penalty: `("optimize", {"iters": 20, "kappa": 1e4})` can unstall an

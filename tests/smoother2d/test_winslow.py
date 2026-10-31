@@ -47,8 +47,8 @@ def test_winslow_untangles_a_concave_domain_where_laplace_cannot():
 def test_winslow_keeps_a_free_disk_area_with_the_tangent_rule():
     m = _disk()
     r = cn.resolve(m, [], boundary="free")
-    tan, log = smooth.winslow(m, r, sweeps=60)
-    chain, _ = smooth.winslow(m, r, sweeps=60, free_boundary="chain")
+    tan, log = smooth.winslow(m, cn.resolve(m, [], boundary="tangent"), sweeps=60)
+    chain, _ = smooth.winslow(m, r, sweeps=60)
     assert abs(_area(tan) / _area(m) - 1) < 1e-3
     assert _area(chain) / _area(m) - 1 < -0.05
     assert log.after.sj_min > log.before.sj_min
@@ -77,7 +77,7 @@ def test_winslow_with_boundary_slide_keeps_a_free_disk_area():
 def test_winslow_stagelog_contract():
     m = _disk()
     before = m.points.copy()
-    r = cn.resolve(m, [], boundary="free")
+    r = cn.resolve(m, [], boundary="tangent")
     out, log = smooth.winslow(m, r, sweeps=7, tol=0.0)
     np.testing.assert_array_equal(m.points, before)                      # the input is untouched
     assert out.points is not m.points
@@ -141,6 +141,6 @@ def test_winslow_guard_stops_a_closed_surface_drifting_over_many_sweeps():
 def test_winslow_arguments_are_validated():
     m = _disk()
     r = cn.resolve(m, [], boundary="free")
-    for kw in ({"free_boundary": "x"}, {"omega": 0.0}, {"sweeps": 0}, {"elements": np.ones(3, bool)}):
+    for kw in ({"omega": 0.0}, {"sweeps": 0}, {"elements": np.ones(3, bool)}):
         with pytest.raises(ValueError, match="winslow"):
             smooth.winslow(m, r, **kw)

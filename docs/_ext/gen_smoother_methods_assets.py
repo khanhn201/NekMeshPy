@@ -138,8 +138,8 @@ def annulus() -> Input:
 
 
 def disk() -> Input:
-    """An O-grid disk with a jittered interior and a free boundary (a plain mesh, no geometry attached): where
-    the free-boundary rule shows."""
+    """An O-grid disk with a jittered interior and a tangent boundary (a plain mesh, no geometry attached): the
+    boundary moves along itself and nothing pulls it back, which is where the boundary modes differ."""
     radius, wall_n, jitter, seed = 1.0, 24, 0.3, 3
     m0 = quadmesh.ogrid(linemesh.circle(radius, wall_n, element_tag="wall"), 6, 4, wall_tag="wall")
     P = np.array(m0.points, dtype=float)
@@ -148,7 +148,7 @@ def disk() -> Input:
     P[~wall, :2] += np.random.default_rng(seed).uniform(-jitter, jitter, ((~wall).sum(), 2)) * ell[~wall, None]
     mesh = smooth.with_points(m0, P)
     nrm = smooth.reference_normals(m0.points, m0.corners)
-    return Input("disk", "free disk", "planar", mesh, cn.resolve(mesh, [], boundary="free"), nrm)
+    return Input("disk", "free disk", "planar", mesh, cn.resolve(mesh, [], boundary="tangent"), nrm)
 
 
 def tangled() -> Input:
@@ -645,7 +645,8 @@ def valid_keys(rows: list[dict[str, Any]]) -> list[str]:
     return [r["input"].key for r in rows if all(r["runs"][m]["reading"]["inverted"] == 0 for m, _ in METHODS)]
 
 
-UNGRADED = ("annulus", "disk", "sphere")          # valid, ungraded inputs: where Winslow is a stand-in for the optimizer
+UNGRADED = ("annulus", "sphere")                  # valid, ungraded inputs where Winslow stands in for the optimizer (the
+                                                  # tangent-boundary disk is not one: the optimizer stalls there at the frozen result)
 
 
 def winslow_vs_optimizer(rows: list[dict[str, Any]]) -> tuple[float, float]:
@@ -690,15 +691,19 @@ def shows_text(rows: list[dict[str, Any]]) -> str:
         "default `delta` it stops after %d iteration), the combined schedule %d."
         % (rep["laplace"][1], rep["laplace"][0], rep["winslow"][0], rep["optimizer"][0], stall.passes_done,
            rep["combined"][0]),
-        "- **Free boundary.** The disk has `boundary=\"free\"`: nothing snaps its boundary back. Its area changes %s %% "
-        "under Laplace and %s %% under Winslow (`free_boundary=\"tangent\"`: a boundary vertex moves only along the "
-        "boundary), %s %% under Laplace with `free_boundary=\"chain\"` (pulled onto the chords) and %s %% under the "
-        "optimizer, whose scale-free metric lets the rim cells grow. Hold it with `OnCurve` or `boundary=\"slide\"` "
-        "({doc}`constraints`)."
+        "- **Free boundary.** The disk has `boundary=\"tangent\"`: a boundary vertex slides along the boundary and never "
+        "moves inward, so the area is kept (Laplace %s %%, Winslow %s %%, optimizer %s %%). The optimizer stalls there, "
+        "though: it stops after %d iterations at min scaled J %.3f, about a frozen boundary's %.3f, while "
+        "`boundary=\"slide\"` reaches %.3f. With `boundary=\"free\"` Laplace pulls the boundary onto its chords (%s %%) "
+        "and the optimizer lets the rim cells grow (%s %%). When the optimizer must move a boundary, use `\"slide\"` or "
+        "`OnCurve` ({doc}`constraints`)."
         % (fmt("area change (%)", rd("disk", "laplace", "area change (%)")),
            fmt("area change (%)", rd("disk", "winslow", "area change (%)")),
-           fmt("area change (%)", disk_chain_area(rows)),
-           fmt("area change (%)", rd("disk", "optimizer", "area change (%)"))),
+           fmt("area change (%)", rd("disk", "optimizer", "area change (%)")),
+           sum(lg.passes_done for lg in by["disk"]["optimizer"]["logs"]), rd("disk", "optimizer", "min scaled J"),
+           disk_optimizer("frozen")[1], disk_optimizer("slide")[1],
+           fmt("area change (%)", disk_free_area(rows, "laplace")),
+           fmt("area change (%)", disk_free_area(rows, "optimizer"))),
         "- **Grading.** Every method thickens the graded layer: Laplace %+.0f %%, Winslow %+.0f %% (its guard stopped "
         "it after %d sweeps), the optimizer %+.0f %%; see {doc}`grading`."
         % (rd("layer", "laplace", LAYER_KEY), rd("layer", "winslow", LAYER_KEY), wl.passes_done,
@@ -710,10 +715,14 @@ def shows_text(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def disk_chain_area(rows: list[dict[str, Any]]) -> float:
-    """The free disk's area change (%) under the same Laplace stage with ``free_boundary="chain"``."""
+def disk_free_area(rows: list[dict[str, Any]], method: str) -> float:
+    """The free disk's area change (%) under the comparison's Laplace stage or optimizer, with ``boundary="free"``."""
     inp = next(r["input"] for r in rows if r["input"].key == "disk")
-    out, _ = smooth.laplace(inp.mesh, inp.res, normals=inp.nrm, free_boundary="chain", **LAPLACE[0][1])
+    res = cn.resolve(inp.mesh, [], boundary="free")
+    if method == "laplace":
+        out, _ = smooth.laplace(inp.mesh, res, normals=inp.nrm, **LAPLACE[0][1])
+    else:
+        out, _ = smooth.run_schedule(inp.mesh, res, OPTIMIZER, normals=inp.nrm)
     return float(measure(inp, np.asarray(out.points), None)["area change (%)"])
 
 
@@ -823,7 +832,7 @@ def trade_table(rows: list[dict[str, Any]], wruns: list[dict[str, Any]]) -> str:
          "on a closed surface over many sweeps" % wruns[4]["winslow"],
          "%.1f ms a sweep" % (1e3 * st["winslow"]), "Laplace fails: a concave outline, a thin curved block ({doc}`winslow`)"],
         ["Optimizer only", "lowest phi; weights and constraints act inside it", "stalls on a tangle at the default "
-         "`delta`; pushes a free boundary out; undoes grading", "%.1f ms an iteration" % (1e3 * st["optimizer"]),
+         "`delta`; grows a `\"free\"` boundary and can stall on a `\"tangent\"` one (use `\"slide\"`); undoes grading", "%.1f ms an iteration" % (1e3 * st["optimizer"]),
          "a valid input whose shape is the goal"],
         ["Combined", "optimizer passes with a wide-to-narrow `delta` first, then its shape", "the optimizer's cost, grading and boundary "
          "behaviour", "%.2f s a run (mean)" % float(np.mean([r["runs"]["combined"]["seconds"] for r in rows])),
@@ -864,11 +873,10 @@ def check_claims(rows: list[dict[str, Any]]) -> list[str]:
         bad.append("Winslow no longer leaves the fewest inverted quads on the L-shape, only at the reflex corner")
     if not all(rd("lshape", m, "inverted") - rd("lshape", m, REFLEX_KEY) >= 1 for m, _ in METHODS):
         bad.append("a method now repairs the L-shape's reflex-corner quad (the Winslow page says none does)")
-    if not (max(abs(rd("disk", m, "area change (%)")) for m in ("laplace", "winslow")) < 0.1
-            < rd("disk", "optimizer", "area change (%)")):
-        bad.append("Laplace and Winslow (tangent rule) no longer keep / the optimizer no longer grows the free disk")
-    if not disk_chain_area(rows) < -1.0:
-        bad.append("Laplace with free_boundary='chain' no longer shrinks the free disk")
+    if not max(abs(rd("disk", m, "area change (%)")) for m in ("laplace", "winslow", "optimizer")) < 1.0:
+        bad.append("a method no longer keeps the tangent-boundary disk's area")
+    if not (disk_free_area(rows, "laplace") < -1.0 and disk_free_area(rows, "optimizer") > 1.0):
+        bad.append("with boundary='free', Laplace no longer shrinks / the optimizer no longer grows the free disk")
     if not all(rd("layer", m, LAYER_KEY) > 10 for m, _ in METHODS):
         bad.append("an unprotected graded layer no longer thickens under every method")
     if not (rd("layer", "laplace", LAYER_KEY) < min(rd("layer", m, LAYER_KEY) for m in ("optimizer", "combined"))):
@@ -1027,7 +1035,7 @@ def laplace_steps() -> str:
 # ============================================================================================================
 def uneven_disk() -> tuple[Input, Any]:
     """The comparison's free disk with its boundary vertices slid along the circle by up to 0.3 of their spacing (on an
-    evenly spaced circle the chain move has no tangential part, so the rules would not differ).  Returns the input and
+    evenly spaced circle the free move has no tangential part, so the rules would not differ).  Returns the input and
     its boundary vertex ids."""
     inp = disk()
     P = np.array(inp.mesh.points)
@@ -1035,7 +1043,7 @@ def uneven_disk() -> tuple[Input, Any]:
     th = np.arctan2(P[bnd, 1], P[bnd, 0]) + np.random.default_rng(5).uniform(-0.3, 0.3, bnd.size) * 2 * np.pi / bnd.size
     P[bnd, 0], P[bnd, 1] = np.cos(th), np.sin(th)
     mesh = smooth.with_points(inp.mesh, P)
-    return Input("uneven", "free disk, uneven boundary", "planar", mesh, cn.resolve(mesh, [], boundary="free"),
+    return Input("uneven", "free disk, uneven boundary", "planar", mesh, cn.resolve(mesh, [], boundary="tangent"),
                  inp.nrm), bnd
 
 
@@ -1045,8 +1053,7 @@ def laplace_boundary() -> tuple[str, list[str]]:
     inp, bnd = uneven_disk()
     P0 = np.asarray(inp.mesh.points)
     ell = float(cn.vertex_length(P0, inp.mesh.corners)[bnd].mean())
-    runs = {"chain": (inp.res, {"free_boundary": "chain"}), "tangent": (inp.res, {}),
-            "slide": (cn.resolve(inp.mesh, [], boundary="slide"), {})}
+    runs = {b: (cn.resolve(inp.mesh, [], boundary=b), {}) for b in ("free", "tangent", "slide")}
     states = [("input", P0, "min J %.2f" % inp.q0.sj_min)]
     got = {}
     for key, (res, kw) in runs.items():
@@ -1061,46 +1068,88 @@ def laplace_boundary() -> tuple[str, list[str]]:
     fig = raw('<div class="mm-grid">' + legend
               + multiples_row("free disk, uneven boundary", View("planar"), inp.mesh, inp.nrm, states, True) + "</div>")
     cap = ("The comparison's free disk, its boundary vertices slid along the circle by up to 0.3 of their spacing, after "
-           "`%s`. **chain**: `boundary=\"free\"`, `free_boundary=\"chain\"`; **tangent**: `boundary=\"free\"` (the "
-           "default rule); **slide**: `boundary=\"slide\"`. *Off circle*: the largest distance of a boundary vertex from "
+           "`%s`. **free**: `boundary=\"free\"`; **tangent**: `boundary=\"tangent\"`; **slide**: `boundary=\"slide\"`. *Off circle*: the largest distance of a boundary vertex from "
            "the circle, in mean boundary edges h." % call("laplace", LAPLACE[0][1]))
     bad = []
-    if not (got["chain"][0] < -1.0 and abs(got["tangent"][0]) < 1.0 and abs(got["slide"][0]) < 1.0):
-        bad.append("on the uneven disk, chain no longer shrinks or tangent / slide no longer keep the area")
-    if not got["slide"][1] < got["tangent"][1] < 0.1 < got["chain"][1]:
-        bad.append("on the uneven disk, slide no longer stays closer to the circle than tangent, and tangent than chain")
+    if not (got["free"][0] < -1.0 and abs(got["tangent"][0]) < 1.0 and abs(got["slide"][0]) < 1.0):
+        bad.append("on the uneven disk, free no longer shrinks or tangent / slide no longer keep the area")
+    if not (got["slide"][1] < 0.1 and got["tangent"][1] < 0.1 < got["free"][1]):
+        bad.append("on the uneven disk, tangent and slide no longer both stay within 0.1 h of the circle where free does not")
     return fig + "\n" + cap + "\n", bad
 
 
 # ============================================================================================================
 # the constraints page: boundary="slide" against "free"
 # ============================================================================================================
-def slide_figure() -> tuple[str, list[str]]:
-    """The jittered annulus under the comparison's optimizer stage with its boundary ``"free"`` and ``"slide"``; the
-    frozen corners are dotted.  Returns the figure with its caption, and the statements that no longer hold."""
-    inp = annulus()
-    P0 = np.asarray(inp.mesh.points)
-    states = [("input", P0, "min J %.2f" % inp.q0.sj_min)]
-    dots, got, note = {}, {}, ""
-    for i, b in enumerate(("free", "slide"), start=1):
-        res = cn.resolve(inp.mesh, [], boundary=b)
-        out, _ = smooth.run_schedule(inp.mesh, res, OPTIMIZER, normals=inp.nrm)
+_DISK_OPT: dict[str, tuple[Any, float, float, int]] = {}
+
+
+def disk_optimizer(boundary: str) -> tuple[Any, float, float, int]:
+    """The comparison's free disk under the optimizer schedule with ``boundary=...`` and nothing else named: the final
+    points, min scaled J, area change (%) and the optimizer's iterations.  Cached: the figure and the comparison text
+    read the same run."""
+    if boundary not in _DISK_OPT:
+        inp = disk()
+        res = cn.resolve(inp.mesh, [], boundary=boundary)
+        out, logs = smooth.run_schedule(inp.mesh, res, OPTIMIZER, normals=inp.nrm)
         X = np.asarray(out.points)
-        got[b] = measure(inp, X, None)["area change (%)"]
-        states.append(('boundary="%s"' % b, X, "min J %.2f · area %s %%" % (
-            measure(inp, X, None)["min scaled J"], fmt("area change (%)", got[b]))))
-        if b == "slide":
-            dots[i] = np.flatnonzero(res.kind == cn.FROZEN)
-            note = res.notes[-1]
+        r = measure(inp, X, None)
+        _DISK_OPT[boundary] = (X, float(r["min scaled J"]), float(r["area change (%)"]), sum(lg.passes_done for lg in logs))
+    return _DISK_OPT[boundary]
+
+
+def slide_figure() -> tuple[str, list[str]]:
+    """The jittered annulus and the free disk under the comparison's optimizer stage with ``boundary`` ``"free"``,
+    ``"tangent"`` and ``"slide"``; frozen vertices are dotted.  Returns the figure with its caption, and the statements
+    that no longer hold."""
     legend = (LEGEND.replace('<span class="mm-ly"></span><span>outer edge of a designed layer</span>',
                              '<span class="mm-fz"></span><span>frozen corner</span>'))
-    fig = raw('<div class="mm-grid">' + legend + multiples_row("annulus", View("planar"), inp.mesh, inp.nrm, states, True,
-                                                               dots=dots) + "</div>")
-    cap = ("The jittered annulus of the comparison under `%s`, no constraint named. Its `Resolved.notes` under "
-           "`\"slide\"`: *%s*." % (call("optimize", OPTIMIZER[0][1]), note.replace("boundary='slide': ", "")))
+    rows_html, got, froz, counts, iters = [], {}, {}, {}, {}
+    for title, make in (("annulus", annulus), ("free disk", disk)):
+        inp = make()
+        P0 = np.asarray(inp.mesh.points)
+        states = [("input", P0, "min J %.3f" % inp.q0.sj_min)]
+        dots = {}
+        for i, b in enumerate(("free", "tangent", "slide"), start=1):
+            res = cn.resolve(inp.mesh, [], boundary=b)
+            if title == "free disk":
+                X, mj, area, n_it = disk_optimizer(b)
+            else:
+                out, logs = smooth.run_schedule(inp.mesh, res, OPTIMIZER, normals=inp.nrm)
+                X = np.asarray(out.points)
+                r = measure(inp, X, None)
+                mj, area, n_it = float(r["min scaled J"]), float(r["area change (%)"]), sum(lg.passes_done for lg in logs)
+            got[title, b] = (mj, area)
+            iters[title, b] = n_it
+            counts[title, b] = res.counts()
+            froz[title, b] = int((res.kind == cn.FROZEN).sum())
+            if froz[title, b]:
+                dots[i] = np.flatnonzero(res.kind == cn.FROZEN)
+            states.append(('boundary="%s"' % b, X, "min J %.3f · area %s %%" % (mj, fmt("area change (%)", area))))
+        rows_html.append(multiples_row(title, View("planar"), inp.mesh, inp.nrm, states, True, dots=dots))
+    fig = raw('<div class="mm-grid">' + legend + "".join(rows_html) + "</div>")
+    ca, cd = counts["annulus", "slide"], counts["free disk", "slide"]
+    frozen_j = disk_optimizer("frozen")[1]
+    cap = ("Both inputs of the comparison under `%s`, no constraint named. **Annulus**: its %d boundary vertices move along "
+           "the boundary and its %d corners are frozen (dots); the %d interior vertices are free. **Free disk**: a circle "
+           "has no corner, so all %d boundary vertices move. Under `\"tangent\"` the optimizer stops after %d iterations "
+           "at min scaled J %.3f, about the frozen result (%.3f); under `\"slide\"` it reaches %.3f with the area kept."
+           % (call("optimize", OPTIMIZER[0][1]), ca["on_curve"], ca["frozen"], ca["free"], cd["on_curve"],
+              iters["free disk", "tangent"], got["free disk", "tangent"][0], frozen_j, got["free disk", "slide"][0]))
     bad = []
-    if not (abs(got["slide"]) < 0.1 < abs(got["free"]) and len(dots.get(2, [])) == 4):
-        bad.append("boundary='slide' no longer keeps the annulus (and freezes its 4 corners) where 'free' lets it move")
+    for t in ("annulus", "free disk"):
+        if not abs(got[t, "slide"][1]) < 0.1:
+            bad.append("boundary='slide' no longer keeps the %s's area (to 0.1 %%)" % t)
+        if not abs(got[t, "free"][1]) > 1.0:
+            bad.append("boundary='free' no longer changes the %s's area by more than 1 %%" % t)
+    if froz["annulus", "slide"] != 4:
+        bad.append("boundary='slide' no longer freezes exactly the annulus's 4 corners")
+    if froz["free disk", "slide"] or froz["free disk", "tangent"]:
+        bad.append("the free disk now has a frozen vertex under slide or tangent")
+    if not got["free disk", "tangent"][0] < got["free disk", "slide"][0] - 0.1:
+        bad.append("the optimizer no longer stalls on the tangent disk: update the stall wording")
+    if not abs(got["free disk", "tangent"][0] - frozen_j) < 0.05:
+        bad.append("the tangent disk's optimizer result is no longer about the frozen result: update the stall wording")
     return fig + "\n" + cap + "\n", bad
 
 
@@ -1151,7 +1200,7 @@ BM_CSS = (
 def boundary_move_figure() -> tuple[str, list[str]]:
     """One boundary vertex of a tiny annular patch, every ``boundary`` setting from the same start.  The proposed move is
     the Laplace average (``_shrunk_corners`` with the boundary sides kept at +-1, then ``_scatter``); the settings then act
-    with the library's own ``laplace`` rule (frozen, chain, tangent), ``constrain_direction`` + ``snap`` (slide), and
+    with the library's own ``laplace`` rule (frozen, free, tangent), ``constrain_direction`` + ``snap`` (slide), and
     ``resolve`` (corner).  Returns the figure with its legend, and the statements that no longer hold."""
     ang = np.radians(BM_DEG)
     idx = np.arange(len(BM_RADII) * len(ang)).reshape(len(BM_RADII), len(ang))
@@ -1165,32 +1214,32 @@ def boundary_move_figure() -> tuple[str, list[str]]:
     mult = np.bincount(corners.ravel(), minlength=mesh.n_points).astype(float)
     sh = smooth._shrunk_corners(P0, corners, bnd, BM_W)                          # layer 1: sides kept at +-1
     avg = smooth._scatter(mesh.n_points, corners, sh) / mult[:, None]
-    res = {b: cn.resolve(mesh, [], boundary=b) for b in ("frozen", "free", "slide")}
-    b_ids, b_nb, b_corners = smooth._free_boundary_chain(mesh, res["free"], P0)
-    tangent_avg = avg.copy()
-    smooth._slide_free_boundary(P0, tangent_avg, b_ids, b_nb)                    # layer 2
+    res = {b: cn.resolve(mesh, [], boundary=b) for b in ("frozen", "free", "tangent", "slide")}
+    tangent_avg = P0 + np.where((res["tangent"].kind == cn.TANGENT)[:, None],
+                                cn.constrain_direction(avg - P0, P0, res["tangent"]), avg - P0)   # layer 2
     curve = res["slide"].curves[int(res["slide"].target[v])]
     step = cn.constrain_direction(avg - P0, P0, res["slide"])                    # layer 2 for a curve ...
     slid = cn.snap(P0 + step, res["slide"], 1.0)                                 # ... and layer 3
     grad = smooth.gradient(P0, corners, nrm)[cv]                                  # the optimizer's proposal at the corner
     d_corner = -grad / np.linalg.norm(grad) * 0.5 * float(cn.vertex_length(P0, corners)[cv])
-    got: dict[str, Any] = {"frozen": cn.snap(avg, res["frozen"], 1.0), "chain": avg, "tangent": tangent_avg, "slide": slid}
+    got: dict[str, Any] = {"frozen": cn.snap(avg, res["frozen"], 1.0), "free": avg, "tangent": tangent_avg, "slide": slid}
     bad = []
-    for key, rule, r in (("frozen", {}, res["frozen"]), ("chain", {"free_boundary": "chain"}, res["free"]),
-                         ("tangent", {}, res["free"])):
-        ref, log = smooth.laplace(mesh, r, passes=1, w=BM_W, normals=nrm, max_sj_drop=1.0, **rule)
+    for key in ("frozen", "free", "tangent"):
+        ref, log = smooth.laplace(mesh, res[key], passes=1, w=BM_W, normals=nrm, max_sj_drop=1.0)
         if log.passes_done != 1 or np.abs(np.asarray(ref.points)[v] - got[key][v]).max() > 1e-12:
             raise RuntimeError("the boundary-move figure no longer reproduces smooth.laplace(passes=1), %s" % key)
     radius = lambda p: float(np.hypot(p[0], p[1]))                               # noqa: E731  (the patch lies on a circle of 1)
-    off = {k: radius(got[k][v]) - 1.0 for k in ("chain", "tangent", "slide")}
-    if not (off["chain"] < -3 * abs(off["tangent"]) and abs(off["tangent"]) > 5 * abs(off["slide"]) and abs(off["slide"]) < 1e-2):
-        bad.append("on the boundary patch, chain / tangent / slide no longer sit progressively closer to the circle")
+    off = {k: radius(got[k][v]) - 1.0 for k in ("free", "tangent", "slide")}
+    if not (off["free"] < -3 * abs(off["tangent"]) and abs(off["tangent"]) > 5 * abs(off["slide"]) and abs(off["slide"]) < 1e-2):
+        bad.append("on the boundary patch, free / tangent / slide no longer sit progressively closer to the circle")
     on_curve = float(np.abs(curve.project(got["slide"][v][None, :])[0] - got["slide"][v]).max())
     turn = float(cn.turning_deg(P0, np.array([cv]), np.array([[idx[-1, 1], idx[-2, 0]]]))[0])
     if on_curve > 1e-9 or res["slide"].kind[v] != cn.ON_CURVE:
         bad.append("the slid vertex no longer lands exactly on its curve")
-    if not (turn > cn.CORNER_DEG and cv in b_corners and res["slide"].kind[cv] == cn.FROZEN and res["frozen"].kind[cv] == cn.FROZEN):
-        bad.append("the patch corner is no longer held by corner_deg under free and slide")
+    if not (turn > cn.CORNER_DEG and cv in cn.boundary_corners(P0, cn.boundary_adjacency(mesh), cn.CORNER_DEG)
+            and cv in np.flatnonzero(res["tangent"].kind == cn.FROZEN) and res["slide"].kind[cv] == cn.FROZEN
+            and res["frozen"].kind[cv] == cn.FROZEN):
+        bad.append("the patch corner is no longer frozen under tangent, slide and frozen")
     if float(cn.turning_deg(P0, np.array([v]), np.array([[v - 1, v + 1]]))[0]) >= cn.CORNER_DEG:
         bad.append("the followed vertex is itself a corner")
 
@@ -1245,15 +1294,14 @@ def boundary_move_figure() -> tuple[str, list[str]]:
             body += arrow(P0[o], avg[o], "raw")
         elif mode == "frozen":
             body += arrow(P0[o], avg[o], "ghost")
-        elif mode == "chain":
+        elif mode == "free":
             body += arrow(P0[o], avg[o], "ghost") + arrow(P0[o], avg[o], "mv")
         elif mode == "tangent":
-            u = _unit_vec(P0[o] - P0[v - 1]) + _unit_vec(P0[v + 1] - P0[o])
-            tvec = u / np.linalg.norm(u)
+            tvec = cn.circle_tangent(P0[[v - 1]], P0[[o]], P0[[v + 1]])[0]
             body += line(P0[o], tvec, "tan") + arrow(P0[o], avg[o], "ghost")
             body += path([got["tangent"][o], avg[o]], "rm") + arrow(P0[o], got["tangent"][o], "mv")
             x, y = X(avg[o])
-            body += '<text x="%.1f" y="%.1f" text-anchor="end">dropped</text>' % (x - 6, y + 4)
+            body += '<text x="%.1f" y="%.1f" text-anchor="end">normal part</text>' % (x - 6, y + 4)
         elif mode == "slide":
             tvec = curve.tangent(P0[o][None, :])[0]
             body += line(P0[o], tvec, "tan") + arrow(P0[o], avg[o], "ghost")
@@ -1264,7 +1312,7 @@ def boundary_move_figure() -> tuple[str, list[str]]:
         elif mode == "corner":
             body += arrow(P0[o], P0[o] + d_corner, "raw")
         body += dot(P0[o], "st", 5)
-        final = {"frozen": P0[o], "chain": avg[o], "tangent": got["tangent"][o], "slide": got["slide"][o], "corner": P0[o]}
+        final = {"frozen": P0[o], "free": avg[o], "tangent": got["tangent"][o], "slide": got["slide"][o], "corner": P0[o]}
         if mode in final and mode not in ("frozen", "corner"):
             body += dot(final[mode], "fin", 4.2)
         if mode in ("frozen", "corner"):
@@ -1274,24 +1322,27 @@ def boundary_move_figure() -> tuple[str, list[str]]:
         defs = "".join('<marker id="bm%d-%s" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" refX="8" refY="4.5" '
                        'orient="auto"><path class="h-%s" d="M0,0 L9,4.5 L0,9 z"/></marker>' % (k, c, c)
                        for c in ("raw", "mv", "pr"))
-        label = {"proposed": "proposed move", "frozen": "frozen", "chain": "free + chain", "tangent": "free + tangent",
+        label = {"proposed": "proposed move", "frozen": "frozen", "free": "free", "tangent": "tangent",
                  "slide": "slide / OnCurve", "corner": "corner"}[mode]
         return ('<svg viewBox="0 0 %d %d" role="img" aria-label="one boundary vertex, %s">%s%s</svg>' % (W, H, label, "<defs>" + defs + "</defs>", body))
 
     def chips(on: str) -> str:
         return '<span class="bm-chips">%s</span>' % "".join('<i class="%s">%s</i>' % ("on" if c in on else "", c) for c in "123")
 
-    px = {k: float(np.linalg.norm(got[k][v] - P0[v])) for k in ("chain", "tangent", "slide")}
+    px = {k: float(np.linalg.norm(got[k][v] - P0[v])) for k in ("free", "tangent", "slide")}
     edge = 0.5 * float(np.linalg.norm(P0[v + 1] - P0[v]) + np.linalg.norm(P0[v] - P0[v - 1]))        # mean boundary edge at v
+    adj = cn.boundary_adjacency(mesh)
+    cnb = [int(idx[-1, 1]), int(idx[-2, 0])]                                      # the corner's two boundary neighbours
+    nb_turn = float(np.mean([cn.turning_deg(P0, np.array([n]), np.array([adj[n]]))[0] for n in cnb]))
     cells = [
         ("proposed", "<b>a. proposed move</b>%s<br>the average of its quads' shrunk corners (rings), which lie on the chords" % chips("1"), ),
-        ("frozen", "<b>frozen</b>%s<br>`boundary=\"frozen\"`: the move is dropped" % chips(""), ),
-        ("chain", "<b>free, chain</b>%s<br>moves as proposed: %.1f %% of the edge inside the curve"
-         % (chips("1"), 100 * -off["chain"] / edge), ),
-        ("tangent", "<b>free, tangent</b>%s<br>only the part along the tangent; %.1f %% of the move off the curve"
+        ("frozen", "<b>frozen</b>%s<br>boundary=\"frozen\", Frozen: the move is dropped" % chips(""), ),
+        ("free", "<b>free</b>%s<br>boundary=\"free\": moves as proposed, %.1f %% of the edge inside the curve"
+         % (chips("1"), 100 * -off["free"] / edge), ),
+        ("tangent", "<b>tangent</b>%s<br>boundary=\"tangent\", Tangent: the normal part is removed; slides along, %.1f %% of the move off the curve"
          % (chips("12"), 100 * abs(off["tangent"]) / px["tangent"]), ),
-        ("slide", "<b>slide, OnCurve</b>%s<br>tangent, then projected: on the curve" % chips("123"), ),
-        ("corner", "<b>corner</b>%s<br>an optimizer step; turn %.0f&deg; &gt; `corner_deg`: held" % (chips(""), turn), ),
+        ("slide", "<b>slide / OnCurve</b>%s<br>a curve fitted (slide) or given (OnCurve): tangent move, then projected onto it" % chips("123"), ),
+        ("corner", "<b>corner</b>%s<br>turn %.0f&deg;, its neighbours' %.0f&deg;: a jump, frozen except under free" % (chips(""), turn, nb_turn), ),
     ]
     html_cells = []
     for (mode, cap), o in zip(cells, [v] * 5 + [cv]):
@@ -1309,20 +1360,16 @@ def boundary_move_figure() -> tuple[str, list[str]]:
 
     legend = ('<div class="bm-legend">'
               + "".join("<span>%s%s</span>" % (sw(k), t) for k, t in (
-                  ("raw", "proposed move"), ("mv", "move taken"), ("tan", "tangent"), ("pr", "projection"),
+                  ("raw", "proposed move"), ("mv", "move taken"), ("tan", "tangent of the circle through the vertex and its neighbours"), ("pr", "projection"),
                   ("curve", "curve"), ("chord", "chord"), ("st", "start"), ("fin", "final position")))
               + "</div>")
     layers = ('<div class="bm-layers"><span>%s <b>source</b>: a boundary side is not shrunk across its normal</span>'
-              '<span>%s <b>movement</b>: only the tangent part of the move is kept</span>'
+              '<span>%s <b>movement</b>: the move loses its component normal to the boundary</span>'
               '<span>%s <b>constraint</b>: the vertex is projected back onto its curve</span></div>'
               % (chips("1"), chips("2"), chips("3")))
     fig = raw("<style>%s</style>" % BM_CSS + '<div class="bm">' + layers + '<div class="bm-grid">' + "".join(html_cells) + "</div>"
               + legend + "</div>")
     return fig + "\n", bad
-
-
-def _unit_vec(v: Any) -> Any:
-    return np.asarray(v, float) / np.linalg.norm(v)
 
 
 # ============================================================================================================
@@ -1374,17 +1421,19 @@ def constraint_tree() -> str:
             ans("<b>on a surface</b>: <code>OnSurface(points, target)</code><small>on a curve or edge: "
                 "<code>OnCurve(points, target)</code></small>", "#targets")),
         ask("<b>Is it a mesh boundary, with no geometry?</b>",
-            ans("<code>boundary=\"slide\"</code><small>fits curves from the input, corners frozen</small>"
-                "<small>or <code>boundary=\"frozen\"</code>, the default and safest</small>", "#boundary-settings")),
+            ans("<code>boundary=\"slide\"</code><small>OnCurve / OnSurface fitted to the input, corners frozen; any method</small>"
+                "<small><code>\"tangent\"</code>: slides along, never inward; Laplace and Winslow only, the optimizer can "
+                "stall</small>"
+                "<small>or <code>\"frozen\"</code>, the default and safest</small>", "#boundary-settings")),
         ask("<b>Is it inside a designed boundary layer?</b>",
             ans("<code>KeepLayer(seeds, rings)</code><small>a plate that must slide whole: <code>SlideColumns</code></small>",
                 "#layers-and-columns")),
         '<div class="row">%s<div></div></div>' % ans(
-            "<b>Otherwise free</b><small>a free boundary vertex: <code>free_boundary=\"tangent\"</code> keeps it from "
-            "shrinking</small>", "#boundary-settings"),
+            "<b>Otherwise free</b><small>nothing named; on the boundary, <code>boundary=\"free\"</code> lets it move as "
+            "proposed</small>", "#boundary-settings"),
     ]
     note = ('<div class="note">Where claims meet: <a href="#precedence-and-conflicts"><b>Frozen &gt; OnCurve &gt; '
-            'OnSurface &gt; Free</b></a>.</div>')
+            'OnSurface &gt; Tangent &gt; Free</b></a>.</div>')
     return raw("<style>%s</style>" % FLOW_CSS + '<div class="fc" role="group" aria-label="choosing a constraint">'
                + "".join(rows) + note + "</div>")
 
@@ -1533,9 +1582,6 @@ PARAM_DOC = {
                        "and the stage stops on the last accepted pass",
         "kappa": "inversion-penalty weight, used only for the F/quad reading in the log",
         "eps": "inversion-penalty threshold on the scaled J, likewise only for the reading",
-        "free_boundary": "rule for a free boundary vertex (no target, not frozen): `'tangent'` keeps only the move along "
-                         "the local boundary tangent, so the boundary does not shrink; `'chain'` applies the move as is "
-                         "(a convex boundary is pulled in onto its chords)",
     },
     "winslow": {
         "sweeps": "maximum Gauss-Seidel sweeps",
@@ -1543,8 +1589,6 @@ PARAM_DOC = {
         "tol": "stop when the largest move of a sweep is below this many local edge lengths",
         "normals": "reference normals (default: the input's winding; pass the surface's)",
         "elements": "boolean mask of quads: only their vertices move (the local variant)",
-        "free_boundary": "as for `laplace`: `'tangent'` slides a free boundary vertex along the boundary, `'chain'` "
-                         "applies the unprojected chain move; a corner is held either way",
         "max_sj_drop": "a sweep that adds an inverted quad or lowers the minimum scaled J by more than this below the "
                        "best reached is retried with `omega` halved, then refused and the stage stops",
         "retries": "number of `omega` halvings tried on a refused sweep",
@@ -1831,22 +1875,24 @@ def constraint_params() -> str:
     import dataclasses
     doc = {
         "Frozen": "never moves",
-        "OnSurface": "stays on a `Surface`; `slide=True` moves tangentially and is projected back every step, `False` projects "
-                     "once and holds",
-        "OnCurve": "the same along a `Curve`",
+        "Tangent": "moves along the boundary only: the normal part of each move or gradient is removed; nothing projects it "
+                   "back",
+        "OnSurface": "stays on a `Surface` (none: fitted to the input faces); `slide=True` moves tangentially and is "
+                     "projected back every step, `False` projects once and holds",
+        "OnCurve": "the same along a `Curve` (none: a spline through the input boundary)",
         "KeepLayer": "freezes every vertex within `rings` quad-rings of the seeds (seeds included)",
         "SlideColumns": "rigid columns with one shared degree of freedom along `direction`",
     }
     body = []
-    for cls in (cn.Frozen, cn.OnSurface, cn.OnCurve, cn.KeepLayer, cn.SlideColumns):
+    for cls in (cn.Frozen, cn.Tangent, cn.OnSurface, cn.OnCurve, cn.KeepLayer, cn.SlideColumns):
         fields = ", ".join("%s" % f.name + ("" if f.default is dataclasses.MISSING else "=%r" % (f.default,))
                            for f in dataclasses.fields(cls))
         body.append(["`%s(%s)`" % (cls.__name__, fields), doc[cls.__name__]])
     b, cd = default(cn.resolve, "boundary"), default(cn.resolve, "corner_deg")
     body.append(["`resolve(mesh, constraints, boundary=%r, corner_deg=%r)`" % (b, cd),
-                 "resolves the claims once; `'frozen'` freezes every boundary vertex no constraint names, `'free'` leaves "
-                 "them to move, `'slide'` holds each unclaimed boundary chain on a smooth curve through the input boundary "
-                 "itself and freezes its corners (turning angle above `corner_deg`)"])
+                 "resolves the claims once; `boundary` is a shorthand for every boundary vertex no constraint names: "
+                 "`'frozen'` -> `Frozen`, `'free'` -> nothing, `'tangent'` -> `Tangent`, `'slide'` -> `OnCurve` fitted to the "
+                 "input; corners (a turn above `corner_deg` and 3x its neighbours') frozen except under `'free'`"])
     t = default(cn.on_target_report, "tol")
     body.append(["`on_target_report(points, corners, resolved, tol=%r)`" % (t,),
                  "distance of constrained vertices to their targets and the largest move of a frozen one, in local edge lengths"])

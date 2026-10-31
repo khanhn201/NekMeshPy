@@ -12,7 +12,7 @@ curved, high-aspect blocks**. The L-shape of {doc}`index`, one block, its reflex
   physical lengths.
 - **No fold away from a reflex corner**, where two quads must share a 270-degree turn.
 - **Close to the optimizer's shape** on a valid, ungraded input, for less time.
-- **Same boundary handling as Laplace**: `free_boundary`, every constraint, `boundary="slide"` ({doc}`constraints`).
+- **Same boundary handling as Laplace**: every constraint and every `boundary` setting ({doc}`constraints`).
 
 ## The equation
 
@@ -41,7 +41,7 @@ x_v \leftarrow x_v+\omega\,\frac{\sum_k w_k\,(x_k-x_v)}{\sum_k w_k}.
 |---|---|
 | valence 4 | the 9-point stencil, {math}`x_{\xi\xi}=E-2x+W`, {math}`x_{\xi\eta}=\tfrac14(NE-NW+SW-SE)` |
 | valence {math}`n\ne4` | least-squares quadratic fit on {math}`n` congruent rhombi of angle {math}`2\pi/n`; keeps {math}`\sum_k w_k>0` |
-| boundary | {math}`x\leftarrow\tfrac12(x_{\text{prev}}+x_{\text{next}})`, tangential when free; a corner is held |
+| boundary | {math}`x\leftarrow\tfrac12(x_{\text{prev}}+x_{\text{next}})`, tangential under `Tangent`; a corner is held |
 
 **The guard**: a sweep that adds an inverted quad, or drops the minimum scaled Jacobian more than `max_sj_drop` below the
 best reached, is retried with {math}`\omega` halved (`retries`), then refused: the stage stops. It also stops below

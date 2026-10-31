@@ -23,6 +23,7 @@ from .constrain import (
     FROZEN,
     ON_CURVE,
     ON_SURFACE,
+    TANGENT,
     TIED,
     Curve,
     Frozen,
@@ -34,7 +35,10 @@ from .constrain import (
     Resolved,
     SlideColumns,
     Surface,
+    Tangent,
+    boundary_corners,
     circle,
+    circle_tangent,
     claimed_surfaces,
     constrain_direction,
     grid_columns,
@@ -48,6 +52,7 @@ from .constrain import (
     surface_from_trimesh,
     surface_normals,
     vertex_length,
+    vertex_normals,
 )
 from .frames import frames_of, write_frames
 from .highorder import (
@@ -104,6 +109,11 @@ __all__ = [
     "DELTA",
     "EPS",
     "FREE",
+    "TANGENT",
+    "Tangent",
+    "boundary_corners",
+    "vertex_normals",
+    "circle_tangent",
     "FROZEN",
     "Frozen",
     "HighOrderReport",
