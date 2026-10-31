@@ -2,7 +2,7 @@
 
 `SmoothSession` (`nekmeshpy.quadmesh.smoother`) smooths a quad mesh, flat or a surface in 3-D, one reviewed round at a
 time. It moves vertices only (connectivity never changes; high-order nodes are rebuilt afterwards), and every round
-reports what it did and can be undone.
+reports what it did and can be undone. The order of work, step by step, is the {doc}`workflow chart <../smoother/index>`.
 
 ## Quick start
 
@@ -43,30 +43,46 @@ quad_to_vtu(s.current, "smoothed.vtu")
 
 - `points`: ids, a boolean mask, or an **edge-tag name**. Targets: `plane`, `sphere`, `line`, `circle`, or any
   `Surface(project, normal)` / `Curve(project, tangent)`; gradients use the target's normal, never the mesh's.
-- A vertex claimed by two surfaces or curves is frozen (and listed). Unclaimed boundary vertices are frozen unless
-  `boundary="free"`.
+- A vertex claimed by two surfaces or curves is frozen (and listed).
 - `weights=w` scales each quad's shape term (`0`: shape irrelevant); the inversion penalty still applies.
+
+A boundary vertex no constraint names is resolved by `resolve(mesh, constraints, boundary=...)` (a `SmoothSession`
+keyword too):
+
+| `boundary` | an unclaimed boundary vertex | use for |
+|---|---|---|
+| `"frozen"` (default) | never moves | a boundary placed as meshed |
+| `"free"` | moves; Laplace and Winslow keep only its move along the boundary, the optimizer moves it anywhere | a closed surface; a boundary that may move |
+| `"slide"` | slides on a smooth curve through the input boundary itself; corners (turn above `corner_deg=30`) frozen | a boundary with no known geometry that should keep its shape (surface quads too) |
+| — (`OnCurve` / `OnSurface`) | slides on the exact target | known geometry: always preferred |
 
 ```{warning}
 The shape metric seeks squares, so an unconstrained graded boundary layer gets flattened. Freeze it with `KeepLayer`.
 ```
 
+How each piece works: {doc}`../smoother/methods/constraints`.
+
 ## Schedule
 
-`s.suggest()` proposes `10 x [laplace(3) + optimize(20)]` plus two local lifts (`user_schedule()`), preceded by
-untangling when any quad starts inverted. A schedule is a list of `(stage, knobs)`.
+`s.suggest()` proposes `10 x [laplace(3) + optimize(20)]` plus two local lifts (`user_schedule()`); when any quad starts
+inverted, `optimize` stages with a wide-to-narrow `delta` come first. A schedule is a list of `(stage, knobs)`.
 
 | stage | what it does | main knobs |
 |---|---|---|
-| untangling (`untangle_schedule()`) | `optimize` with a shrinking barrier, pulling folded vertices through | `delta` 1.0 → 0.01, `iters` 60 |
-| `laplace` | moves each vertex toward its neighbours | `passes` 3, shrink `w` 0.97 |
-| `optimize` | descends the shape metric plus an inversion penalty | `iters` 20, `kappa`, `eps` |
+| `laplace` | moves each vertex toward its neighbours | `passes` 3, shrink `w` 0.97, `free_boundary` |
+| `optimize` | descends the shape metric plus an inversion penalty; with a `delta` continuation (`untangle_schedule()`, a preset of `optimize`, not a separate stage) it pulls folded vertices through | `iters` 20, `kappa`, `eps`, `delta` 0.01 (the preset: 1.0 → 0.01, `iters` 60 each) |
 | `laplace_local` | the failing quads only, lifting the smallest edges | `passes` 5, `w` |
+| `winslow` / `winslow_local` | elliptic smoothing (all quads / the failing ones): an alternative to `laplace` for concave outlines and thin curved blocks; not in the suggested schedules, add it by hand: `("winslow", {"sweeps": 100})` | `sweeps` 200, `omega` 1, `tol` 1e-6, `free_boundary` |
 
+- `free_boundary` (`laplace`, `winslow`): `"tangent"` (default) keeps only the move of a free boundary vertex along
+  the boundary; `"chain"` applies it unprojected, which shrinks a convex boundary.
+- Keep graded layers with `KeepLayer` under every stage, Winslow most of all
+  ({doc}`../smoother/methods/winslow`).
 - `kappa` (1000) / `eps` (0.05) set the inversion penalty: `("optimize", {"iters": 20, "kappa": 1e4})` can unstall an
   inverted corner for about 10 % more time. A knob to try, not a better default.
 - `adjust_schedule(schedule, "more_aggressive" | "more_conservative" | "same")` changes shrink, passes and iterations,
   never a constraint.
+- Which stage when, measured side by side: {doc}`../smoother/methods/index`.
 
 ## The round report
 
@@ -138,12 +154,12 @@ behind an earlier finding that smoothing worsens curvature.
 - **The shape metric seeks squares and undoes designed grading**; protect layers with `KeepLayer` (no target-matrix
   metric yet).
 - **Overlapping or folded input is reported, not repaired.** A fold, mostly from projecting onto a curved surface, can
-  leave a persistent overlap that, on perturbed capsules, longer schedules, a second pass or untangling first did not
+  leave a persistent overlap that, on perturbed capsules, longer schedules, a second pass or the `delta` continuation first did not
   remove (mechanism partly understood; a volume-preserving Laplacian is future work).
 - **Size does not follow curvature** (the metric aims at uniform size; a size target is being evaluated). With few
   irregular vertices part of the curvature error belongs to the connectivity: angle defects sum to 2 pi times the
   Euler characteristic.
-- **Untangling is not guaranteed**; the round says when an inverted quad remains.
+- **Repairing an inverted quad is not guaranteed**; the round says when one remains.
 
 ```{note}
 Before/after viewers for flat, curved and real meshes, and what carrying a smoothed surface into hexes does, are in

@@ -24,15 +24,22 @@ from dataclasses import dataclass
 from typing import NamedTuple, Union
 
 import numpy as np
+from scipy.interpolate import CubicSpline
+from scipy.spatial import cKDTree
 
 from ..._typing import BoolArray, FloatArray, IntArray, PointArray
 from ..quadmesh import QuadMesh
-from ..query import boundary_points, tagged_edges
+from ..query import boundary_edge_ids, boundary_points, tagged_edges
 
 __all__ = ["FREE", "ON_SURFACE", "ON_CURVE", "FROZEN", "TIED", "Surface", "Curve", "plane", "sphere",
            "line", "circle", "Frozen", "OnSurface", "OnCurve", "KeepLayer", "layer_rings", "SlideColumns", "grid_columns", "Resolved", "OnTargetReport",
            "resolve", "snap", "constrain_direction", "on_target_report", "vertex_length", "surface_from_trimesh",
-           "NormalReport", "surface_normals", "claimed_surfaces"]
+           "NormalReport", "surface_normals", "claimed_surfaces", "CORNER_DEG", "boundary_adjacency",
+           "turning_deg", "spline_curve"]
+
+#: Turning angle (degrees) above which a boundary vertex is a corner: held still by the Laplace
+#: tangent rule and frozen, ending its chains, by ``resolve(..., boundary="slide")``.
+CORNER_DEG = 30.0
 
 FREE, ON_SURFACE, ON_CURVE, FROZEN, TIED = 0, 1, 2, 3, 4
 _KIND = {FREE: "free", ON_SURFACE: "on_surface", ON_CURVE: "on_curve", FROZEN: "frozen", TIED: "slide_column"}
@@ -294,13 +301,144 @@ def grid_columns(mesh: QuadMesh, seeds: Select, direction: Sequence[float], *,
     return out
 
 
+def boundary_adjacency(mesh: QuadMesh) -> dict[int, list[int]]:
+    """Each boundary vertex's neighbours along the boundary edges (two on a manifold boundary)."""
+    nb: dict[int, list[int]] = {}
+    for a, b in np.asarray(mesh.edges)[boundary_edge_ids(mesh)]:
+        nb.setdefault(int(a), []).append(int(b))
+        nb.setdefault(int(b), []).append(int(a))
+    return nb
+
+
+def turning_deg(P: PointArray, ids: IntArray, nb: IntArray) -> FloatArray:
+    """Turning angle (degrees) of the boundary at ``ids``, whose neighbours are ``nb`` ``(n, 2)``."""
+    u = P[ids] - P[nb[:, 0]]
+    v = P[nb[:, 1]] - P[ids]
+    c = np.einsum("ij,ij->i", u, v) / np.maximum(np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1), 1e-300)
+    return np.asarray(np.degrees(np.arccos(np.clip(c, -1.0, 1.0))))
+
+
+def spline_curve(X: PointArray, closed: bool, name: str = "boundary") -> Curve:
+    """A smooth :class:`Curve` through the ordered points ``X`` (2-D or 3-D): a cubic spline in the chord-length
+    parameter, periodic when ``closed`` and not-a-knot otherwise (a straight line for two points).  The foot
+    point is the nearest of a dense sampling refined by a few Newton steps on the spline itself, kept only
+    where it lowers the distance, so a projection never ends farther than the sample it started from."""
+    X = np.asarray(X, float)
+    Y = np.vstack([X, X[:1]]) if closed else X
+    t = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(Y, axis=0), axis=1))]
+    total = float(t[-1])
+    cs = None if len(Y) == 2 else CubicSpline(t, Y, axis=0, bc_type="periodic" if closed else "not-a-knot")
+    p0 = Y[0]
+    d0 = (Y[-1] - Y[0]) / total
+
+    def at(tt: FloatArray, der: int = 0) -> PointArray:
+        if cs is not None:
+            return np.asarray(cs(tt, der))
+        return p0 + tt[:, None] * d0 if der == 0 else np.broadcast_to(d0, (len(tt), 3)).copy()
+
+    ts = np.linspace(0.0, total, 64 * (len(Y) - 1) + 1)
+    tree = cKDTree(at(ts))
+
+    def foot(P: PointArray) -> FloatArray:
+        P = np.asarray(P, float)
+        _, j = tree.query(P)
+        t0 = ts[j]
+        if cs is None:
+            return np.asarray(np.clip((P - p0) @ d0, 0.0, total))
+        tt = t0.copy()
+        for _ in range(8):
+            r = at(tt) - P
+            d1, d2 = at(tt, 1), at(tt, 2)
+            g = np.einsum("ij,ij->i", r, d1)
+            gp = np.einsum("ij,ij->i", d1, d1) + np.einsum("ij,ij->i", r, d2)
+            tt = tt - g / np.where(np.abs(gp) > 1e-300, gp, 1.0)
+            tt = np.mod(tt, total) if closed else np.clip(tt, 0.0, total)
+        worse = np.linalg.norm(at(tt) - P, axis=1) > np.linalg.norm(at(t0) - P, axis=1)
+        return np.asarray(np.where(worse, t0, tt))
+
+    def tangent(P: PointArray) -> PointArray:
+        return _unit(at(foot(P), 1))
+
+    return Curve(lambda P: at(foot(P)), tangent, name)
+
+
+def _boundary_chains(mesh: QuadMesh, claimed: BoolArray, corner_deg: float) -> tuple[list[list[int]], list[list[int]], IntArray]:
+    """``(open, closed, corners)``: the boundary cut at every break -- a corner (turn > ``corner_deg``), a
+    vertex without exactly two boundary neighbours, or a ``claimed`` vertex.  Each open chain runs break to
+    break (ends included); each closed one is a break-free loop.  ``corners`` are the unclaimed breaks."""
+    nb = boundary_adjacency(mesh)
+    P = np.asarray(mesh.points, float)
+    brk = {v for v in nb if len(nb[v]) != 2 or claimed[v]}
+    two = np.array([v for v in sorted(nb) if len(nb[v]) == 2], dtype=np.int64)
+    if two.size:
+        turn = turning_deg(P, two, np.array([nb[int(v)] for v in two], dtype=np.int64))
+        brk |= {int(v) for v in two[turn > corner_deg]}
+    seen: set[tuple[int, int]] = set()
+    opened: list[list[int]] = []
+    closed: list[list[int]] = []
+
+    def walk(a: int, b: int) -> list[int]:
+        chain = [a, b]
+        seen.add((a, b))
+        seen.add((b, a))
+        while chain[-1] not in brk and chain[-1] != chain[0]:
+            n2 = nb[chain[-1]]
+            nxt = n2[0] if n2[0] != chain[-2] else n2[1]
+            seen.add((chain[-1], nxt))
+            seen.add((nxt, chain[-1]))
+            chain.append(nxt)
+        return chain
+
+    for v in sorted(brk):
+        for w in nb[v]:
+            if (v, w) not in seen:
+                opened.append(walk(v, w))
+    for v in sorted(nb):
+        for w in nb[v]:
+            if (v, w) not in seen:
+                loop = walk(v, w)
+                closed.append(loop[:-1])
+    corners = np.array(sorted(v for v in brk if not claimed[v]), dtype=np.int64)
+    return opened, closed, corners
+
+
+def _slide_constraints(mesh: QuadMesh, claimed: BoolArray, corner_deg: float) -> tuple[list[Constraint], int, int]:
+    """The constraints ``boundary="slide"`` adds: every chain's interior ``OnCurve`` a spline through the
+    chain as meshed, every unclaimed corner ``Frozen``.  Returns them with the corner and chain counts."""
+    P = np.asarray(mesh.points, float)
+    opened, closed, corners = _boundary_chains(mesh, claimed, corner_deg)
+    cons: list[Constraint] = []
+    for ch in opened:
+        if len(ch) > 2:
+            cons.append(OnCurve(np.asarray(ch[1:-1], dtype=np.int64), spline_curve(P[ch], False)))
+    for ch in closed:
+        cons.append(OnCurve(np.asarray(ch, dtype=np.int64), spline_curve(P[ch], True)))
+    if corners.size:
+        cons.append(Frozen(corners))
+    return cons, int(corners.size), len(cons) - int(corners.size > 0)
+
+
 def resolve(mesh: QuadMesh, constraints: list[Constraint], *,
-            boundary: str = "frozen") -> Resolved:
+            boundary: str = "frozen", corner_deg: float = CORNER_DEG) -> Resolved:
     """Resolve ``constraints`` over ``mesh``'s vertices (see the module docstring for the
     precedence).  ``boundary="frozen"`` (default) freezes every boundary vertex no constraint
-    names; ``"free"`` leaves them to move."""
-    if boundary not in ("frozen", "free"):
-        raise ValueError("boundary must be 'frozen' or 'free', got %r" % (boundary,))
+    names; ``"free"`` leaves them to move; ``"slide"`` holds each unclaimed boundary chain on a
+    smooth curve through the input boundary itself (:func:`spline_curve`, 3-D on a surface mesh), so
+    its vertices slide along the boundary but never off it.  Chains end at corners (turning angle
+    above ``corner_deg``, which are frozen), at vertices without two boundary neighbours and at
+    vertices a constraint already claims."""
+    if boundary not in ("frozen", "free", "slide"):
+        raise ValueError("boundary must be 'frozen', 'free' or 'slide', got %r" % (boundary,))
+    if boundary == "slide":
+        first = resolve(mesh, constraints, boundary="free")
+        claimed: BoolArray = np.zeros(mesh.n_points, bool)
+        claimed[boundary_points(mesh)] = True
+        claimed &= first.kind != FREE
+        extra, n_corner, n_chain = _slide_constraints(mesh, claimed, corner_deg)
+        out = resolve(mesh, [*constraints, *extra], boundary="free")
+        note = ("boundary='slide': %d unclaimed boundary chain(s) on their own curve, %d corner(s) frozen "
+                "(turn > %g deg)" % (n_chain, n_corner, corner_deg))
+        return out._replace(notes=(*out.notes, note))
     n = mesh.n_points
     P0 = np.asarray(mesh.points, float)
     n_surf: IntArray = np.zeros(n, np.int64)

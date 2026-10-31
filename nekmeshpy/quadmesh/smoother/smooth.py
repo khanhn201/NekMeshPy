@@ -32,11 +32,21 @@ from ...linemesh import LineMesh
 from ...pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from ..query import boundary_edge_ids
-from .constrain import FROZEN, Resolved, constrain_direction, snap, vertex_length
+from .constrain import (
+    CORNER_DEG,
+    FREE,
+    FROZEN,
+    Resolved,
+    boundary_adjacency,
+    constrain_direction,
+    snap,
+    turning_deg,
+    vertex_length,
+)
 
 __all__ = ["KAPPA", "EPS", "CornerMetrics", "corner_vectors", "reference_normals",
            "DELTA", "corner_metrics", "objective", "gradient", "with_points", "Quality", "quality",
-           "failing_elements", "StageLog", "laplace", "optimize", "run_schedule", "user_schedule", "untangle_schedule",
+           "failing_elements", "StageLog", "laplace", "winslow", "optimize", "run_schedule", "user_schedule", "untangle_schedule",
            "suggest_schedule", "ShapeStats", "shape_stats", "quad_neighbours", "size_ratios"]
 
 #: Inversion-penalty weight per corner, on the *sum* objective (see module docstring).
@@ -302,10 +312,36 @@ def _shrunk_corners(P: PointArray, corners: IntArray, bnd: BoolArray, w: float) 
     return np.asarray(out)
 
 
+def _free_boundary_chain(mesh: QuadMesh, resolved: Resolved,
+                         P: PointArray) -> tuple[IntArray, IntArray, IntArray]:
+    """``(ids, nb, corners)`` of the FREE boundary vertices: ``ids`` those with two boundary neighbours ``nb``
+    ``(n, 2)`` and a turn of at most ``CORNER_DEG``; ``corners`` the rest, which have no tangent."""
+    adj = boundary_adjacency(mesh)
+    free_b = np.array([v for v in sorted(adj) if resolved.kind[v] == FREE], dtype=np.int64)
+    two = np.array([len(adj[int(v)]) == 2 for v in free_b], dtype=bool)
+    ids = free_b[two]
+    nb = np.array([adj[int(v)] for v in ids], dtype=np.int64).reshape(-1, 2)
+    corner = turning_deg(P, ids, nb) > CORNER_DEG if ids.size else np.zeros(0, bool)
+    return ids[~corner], nb[~corner], np.r_[ids[corner], free_b[~two]].astype(np.int64)
+
+
+def _slide_free_boundary(P: PointArray, avg: PointArray, ids: IntArray, nb: IntArray) -> None:
+    """Replace the move of the free boundary vertices ``ids`` by its component along the local tangent --
+    the normalised sum of the two unit boundary-edge directions at the vertex -- read from the current ``P``."""
+    x, xp, xn = P[ids], P[nb[:, 0]], P[nb[:, 1]]
+    t = _unit_rows(_unit_rows(x - xp) + _unit_rows(xn - x))
+    avg[ids] = x + np.einsum("ij,ij->i", avg[ids] - x, t)[:, None] * t
+
+
+def _unit_rows(v: PointArray) -> PointArray:
+    n = np.linalg.norm(v, axis=-1, keepdims=True)
+    return np.asarray(v / np.where(n > 0, n, 1.0))
+
+
 def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0.97,
             normals: PointArray | None = None, elements: BoolArray | None = None,
-            max_sj_drop: float = 0.05, kappa: float = KAPPA,
-            eps: float = EPS) -> tuple[QuadMesh, StageLog]:
+            max_sj_drop: float = 0.05, kappa: float = KAPPA, eps: float = EPS,
+            free_boundary: str = "tangent") -> tuple[QuadMesh, StageLog]:
     """Element-shrink Laplace smoothing (the user's scheme, ported to quads).
 
     Each pass shrinks every quad toward its own centre by ``w`` (``0.97`` conservative; ``1``
@@ -316,6 +352,13 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
     snap).  ``elements`` (a ``(Q,)`` mask) restricts the update to the vertices of those quads,
     the *local* variant for failing patches.
 
+    ``free_boundary`` is the rule for a boundary vertex that is ``FREE`` (no target, not frozen).
+    ``"tangent"`` (default) keeps only the component of its move along the local boundary tangent, so
+    tangential tension cannot pull a convex boundary in onto its chords; a corner (turn above
+    ``CORNER_DEG``, or not two boundary neighbours) is held still.  ``"chain"`` applies the move as is --
+    the 1-D Laplacian of the boundary polygon, which shrinks a free convex boundary.  Frozen, on-curve,
+    on-surface and tied vertices are unaffected by either.
+
     A pass is accepted only if it creates no new inverted quad and does not lower the minimum
     scaled Jacobian by more than ``max_sj_drop`` (a Laplace pass trades a little worst case for
     evenness; a larger loss is refused); the first refused pass rolls back to the last accepted
@@ -325,6 +368,8 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
         raise ValueError("laplace: w must be in (0, 1], got %r" % (w,))
     if passes < 1:
         raise ValueError("laplace: passes must be >= 1, got %r" % (passes,))
+    if free_boundary not in ("tangent", "chain"):
+        raise ValueError("laplace: free_boundary must be 'tangent' or 'chain', got %r" % (free_boundary,))
     corners = mesh.corners
     P0 = np.asarray(mesh.points, float)
     nrm = reference_normals(P0, corners) if normals is None else np.asarray(normals, float)
@@ -342,6 +387,12 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
     if elements is not None and not sel.any():
         return mesh, StageLog(method, passes, 0, "no_elements", "no quad selected", before,
                               before, ())
+    slide = held = nbs = None
+    if free_boundary == "tangent":
+        b_ids, b_nb, b_corners = _free_boundary_chain(mesh, resolved, P0)
+        keep = np.ones(b_ids.size, bool) if free is None else free[b_ids]
+        slide, nbs = b_ids[keep], b_nb[keep]
+        held = b_corners if free is None else b_corners[free[b_corners]]
     P = P0.copy()
     cur = before
     history: list[tuple[int, int, float, float]] = []
@@ -351,6 +402,10 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
         avg = _scatter(mesh.n_points, corners, sh) / mult[:, None]
         if free is not None:
             avg[~free] = P[~free]
+        if slide is not None:
+            if slide.size:
+                _slide_free_boundary(P, avg, slide, nbs)
+            avg[held] = P[held]
         cand = snap(avg, resolved, weight=i / passes)
         got = quality(cand, corners, nrm, kappa=kappa, eps=eps)
         if got.n_inverted > cur.n_inverted or got.sj_min < cur.sj_min - max_sj_drop:
@@ -369,6 +424,246 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
             reason += "; the closing full snap added inverted quads (%d)" % cur.n_inverted
     return with_points(mesh, P), StageLog(method, passes, done, stopped, reason, before, cur,
                                           tuple(history))
+
+
+def _chart(n: int) -> FloatArray:
+    """``(2n, 2)`` logical positions of ``[e_0..e_{n-1}, d_0..d_{n-1}]`` in the rhombus chart of valence ``n``:
+    the ``n`` incident quads are congruent rhombi of angle ``2 pi / n`` at the vertex (``n = 4`` is the unit grid)."""
+    th = 2.0 * np.pi * np.arange(n) / n
+    e = np.stack([np.cos(th), np.sin(th)], axis=1)
+    return np.asarray(np.concatenate([e, e + np.roll(e, -1, axis=0)]))
+
+
+def _ls_weights(n: int) -> FloatArray:
+    """``(5, 2n)``: rows ``x_xi, x_eta, x_xixi, x_xieta, x_etaeta`` as linear functionals of ``x_k - x_v``, the
+    least-squares quadratic Taylor fit over the chart of valence ``n``."""
+    p = _chart(n)
+    A = np.stack([p[:, 0], p[:, 1], 0.5 * p[:, 0] ** 2, p[:, 0] * p[:, 1], 0.5 * p[:, 1] ** 2], axis=1)
+    return np.asarray(np.linalg.pinv(A))
+
+
+def _ninepoint_weights() -> FloatArray:
+    """The standard 9-point stencil on ``[E, N, W, S, NE, NW, SW, SE]`` (differences from the vertex)."""
+    W = np.zeros((5, 8))
+    W[0, 0], W[0, 2] = 0.5, -0.5
+    W[1, 1], W[1, 3] = 0.5, -0.5
+    W[2, 0] = W[2, 2] = 1.0
+    W[3, 4:] = [0.25, -0.25, 0.25, -0.25]
+    W[4, 1] = W[4, 3] = 1.0
+    return W
+
+
+class _Stencil:
+    """The rings of one mesh, read once: interior vertices grouped by valence with their ordered one-ring, the
+    boundary chains, and a colouring of the "shares a quad" graph for Gauss-Seidel."""
+
+    def __init__(self, mesh: QuadMesh) -> None:
+        C = np.asarray(mesh.corners, dtype=np.int64)
+        n = self.n = int(mesh.n_points)
+        inc: list[list[tuple[int, int]]] = [[] for _ in range(n)]
+        for q in range(C.shape[0]):
+            for k in range(4):
+                inc[int(C[q, k])].append((q, k))
+        nb = boundary_adjacency(mesh)
+        self.bnd: BoolArray = np.zeros(n, bool)
+        self.bnd[list(nb)] = True
+        ids = np.array(sorted(nb), dtype=np.int64)
+        ok = np.array([len(nb[int(i)]) == 2 for i in ids], bool)
+        self.chain_ids = ids[ok]                                     # boundary vertices with two boundary neighbours
+        self.chain_nb = np.array([nb[int(i)] for i in self.chain_ids], dtype=np.int64).reshape(-1, 2)
+        self.pinch = ids[~ok]                                        # the others are never moved
+        groups: dict[int, list[tuple[int, list[int]]]] = {}
+        fallback: list[int] = []                                     # interior vertices whose fan does not close
+        for v in range(n):
+            if self.bnd[v] or not inc[v]:
+                continue
+            ring = self._ring(inc[v], C)
+            if ring is None or len(inc[v]) < 3:
+                fallback.append(v)
+            else:
+                groups.setdefault(len(inc[v]), []).append((v, ring))
+        self.groups = [(val, np.array([g[0] for g in gs], np.int64), np.array([g[1] for g in gs], np.int64),
+                        _ninepoint_weights() if val == 4 else _ls_weights(val)) for val, gs in sorted(groups.items())]
+        self.fallback = np.array(fallback, np.int64)
+        adj: list[set[int]] = [set() for _ in range(n)]
+        for q in C:
+            for a in q:
+                adj[int(a)].update(int(b) for b in q if b != a)
+        self.adj = adj
+        col: IntArray = -np.ones(n, np.int64)
+        for v in np.argsort(-np.array([len(a) for a in adj]), kind="stable"):
+            used = {col[u] for u in adj[v] if col[u] >= 0}
+            c = 0
+            while c in used:
+                c += 1
+            col[v] = c
+        self.colours = [np.flatnonzero(col == c) for c in range(int(col.max()) + 1)]
+
+    @staticmethod
+    def _ring(inc: list[tuple[int, int]], C: IntArray) -> list[int] | None:
+        """``[e_0..e_{n-1}, d_0..d_{n-1}]`` (edge neighbours, then the opposite corners) CCW around the vertex, or
+        None if the fan of quads does not close."""
+        nxt = {int(C[q, (k + 1) % 4]): (q, k) for q, k in inc}
+        q, k = inc[0]
+        es, ds = [], []
+        for _ in range(len(inc)):
+            es.append(int(C[q, (k + 1) % 4]))
+            ds.append(int(C[q, (k + 2) % 4]))
+            prv = int(C[q, (k - 1) % 4])
+            if prv not in nxt:
+                return None
+            q, k = nxt[prv]
+        if (q, k) != inc[0] or len(set(es)) != len(es):
+            return None
+        return es + ds
+
+
+def _winslow_moves(st: _Stencil, X: PointArray, mask: BoolArray, free_boundary: str) -> PointArray:
+    """``(P, 3)`` unconstrained Winslow move ``x* - x`` at the vertices in ``mask`` (zero elsewhere).
+
+    Interior vertex: ``x* = x + sum_k w_k (x_k - x) / sum_k w_k`` with ``w_k = alpha W_xixi,k - 2 beta W_xieta,k +
+    gamma W_etaeta,k``, ``alpha, beta, gamma`` read from the current positions.  Boundary vertex: the 1-D rule along
+    its chain, ``x* = (x_prev + x_next) / 2``, projected on the chain tangent under ``free_boundary="tangent"``;
+    a corner (turn above ``CORNER_DEG``) is held."""
+    d = np.zeros_like(X)
+    for _, vs, nbr, W in st.groups:
+        sel = mask[vs]
+        if not sel.any():
+            continue
+        vs, nbr = vs[sel], nbr[sel]
+        D = X[nbr] - X[vs][:, None, :]                               # (m, 2n, 3)
+        G = np.einsum("jk,mkc->mjc", W[:2], D)
+        xi, eta = G[:, 0], G[:, 1]
+        al = np.einsum("mc,mc->m", eta, eta)
+        be = np.einsum("mc,mc->m", xi, eta)
+        ga = np.einsum("mc,mc->m", xi, xi)
+        w = al[:, None] * W[2] - 2.0 * be[:, None] * W[3] + ga[:, None] * W[4]
+        den = w.sum(axis=1)
+        good = den > 1e-12 * (al + ga + 1e-300)
+        mv = np.einsum("mk,mkc->mc", w, D) / np.where(good, den, 1.0)[:, None]
+        mv[~good] = D[~good, :nbr.shape[1] // 2].mean(axis=1)        # a collapsed ring: the plain neighbour mean
+        d[vs] = mv
+    for v in st.fallback[mask[st.fallback]]:
+        d[v] = X[list(st.adj[v])].mean(axis=0) - X[v]
+    sel = mask[st.chain_ids]
+    ids, nb = st.chain_ids[sel], st.chain_nb[sel]
+    if ids.size:
+        a, b = X[nb[:, 0]], X[nb[:, 1]]
+        mv = 0.5 * (a + b) - X[ids]
+        if free_boundary == "tangent":
+            t = _unit_rows(b - a)
+            mv = np.einsum("ij,ij->i", mv, t)[:, None] * t
+        mv[turning_deg(X, ids, nb) > CORNER_DEG] = 0.0
+        d[ids] = mv
+    return d
+
+
+def _vertex_normals(corners: IntArray, nrm: PointArray, n: int) -> PointArray:
+    """Unit normal per vertex: the mean of its quads' reference normals."""
+    v = np.zeros((n, 3))
+    for k in range(4):
+        np.add.at(v, corners[:, k], nrm)
+    return _unit_rows(v)
+
+
+def winslow(mesh: QuadMesh, resolved: Resolved, *, sweeps: int = 200, omega: float = 1.0, tol: float = 1e-6,
+            normals: PointArray | None = None, elements: BoolArray | None = None,
+            free_boundary: str = "tangent", max_sj_drop: float = 0.05, retries: int = 3,
+            kappa: float = KAPPA, eps: float = EPS) -> tuple[QuadMesh, StageLog]:
+    """Winslow (inverse-Laplace) smoothing: an alternative to :func:`laplace`.
+
+    Asks the logical coordinates to be harmonic in physical space, i.e. per Cartesian component
+    ``alpha x_xixi - 2 beta x_xieta + gamma x_etaeta = 0`` with ``alpha = |x_eta|^2``, ``beta = x_xi . x_eta``,
+    ``gamma = |x_xi|^2``.  Each sweep is one multicolour Gauss-Seidel pass of the per-vertex update (Picard:
+    ``alpha, beta, gamma`` from the current positions): the 9-point stencil at a valence-4 vertex, a least-squares
+    stencil on a local rhombus chart at any other valence, the 1-D rule along the chain at a boundary vertex.
+    The move is relaxed by ``omega`` and then handled exactly as :func:`optimize` handles a step:
+    :func:`constrain_direction` (frozen: none, curve: its tangent, surface: its tangent plane; ``FREE`` vertices
+    of a non-planar mesh keep the tangent plane of their reference normal), then a full :func:`snap`.
+    ``free_boundary`` is :func:`laplace`'s rule for a ``FREE`` boundary vertex (``"tangent"``: slide along the
+    chain, ``"chain"``: the unprojected chain move); a corner is held either way.  ``elements`` restricts the
+    update to the vertices of those quads.
+
+    A sweep that creates an inverted quad, or lowers the minimum scaled Jacobian by more than ``max_sj_drop``
+    **below the best any accepted sweep reached** (below the last accepted one while the mesh still has
+    an inverted quad, whose minimum is not a level to defend), is retried with ``omega`` halved up to ``retries`` times, then
+    refused: the stage stops at the last accepted iterate.  Measuring against the best, not the last, is what
+    catches a slow drift (a closed surface under many sweeps).  The stage also stops once the largest move falls
+    below ``tol`` edge lengths.  ``StageLog.passes_done`` counts accepted sweeps.  Returns a **new** mesh and the
+    :class:`StageLog`; ``mesh`` is untouched.  Linear meshes only."""
+    if free_boundary not in ("tangent", "chain"):
+        raise ValueError("winslow: free_boundary must be 'tangent' or 'chain', got %r" % (free_boundary,))
+    if not 0.0 < omega <= 1.0:
+        raise ValueError("winslow: omega must be in (0, 1], got %r" % (omega,))
+    if sweeps < 1:
+        raise ValueError("winslow: sweeps must be >= 1, got %r" % (sweeps,))
+    corners = np.asarray(mesh.corners, dtype=np.int64)
+    P0 = np.asarray(mesh.points, float)
+    nrm = reference_normals(P0, corners) if normals is None else np.asarray(normals, float)
+    method = "winslow" if elements is None else "winslow_local"
+    before = quality(P0, corners, nrm, kappa=kappa, eps=eps)
+    movable = resolved.kind != FROZEN
+    if elements is not None:
+        sel = np.asarray(elements, bool)
+        if sel.shape != (mesh.n_quads,):
+            raise ValueError("winslow: elements must be a (%d,) mask" % mesh.n_quads)
+        if not sel.any():
+            return mesh, StageLog(method, sweeps, 0, "no_elements", "no quad selected", before, before, ())
+        in_sel: BoolArray = np.zeros(mesh.n_points, bool)
+        in_sel[corners[sel].ravel()] = True
+        movable = movable & in_sel
+    st = _Stencil(mesh)
+    movable[st.pinch] = False
+    free = resolved.kind == FREE
+    vn = None if np.allclose(nrm, nrm[0], atol=1e-9) else _vertex_normals(corners, nrm, mesh.n_points)
+    X = snap(P0, resolved, 1.0)
+    cur = quality(X, corners, nrm, kappa=kappa, eps=eps)
+    best = cur.sj_min
+    history: list[tuple[int, int, float, float]] = []
+    stopped, reason, done = "completed", "all %d sweeps accepted" % sweeps, 0
+
+    def sweep(X: PointArray, om: float) -> tuple[PointArray, float]:
+        ell = vertex_length(X, corners)
+        Y = X.copy()
+        r = 0.0
+        for cl in st.colours:
+            m: BoolArray = np.zeros(mesh.n_points, bool)
+            m[cl] = True
+            m &= movable
+            if not m.any():
+                continue
+            d = _winslow_moves(st, Y, m, free_boundary)
+            if vn is not None:
+                on = free & m
+                d[on] -= np.einsum("ij,ij->i", d[on], vn[on])[:, None] * vn[on]
+            d = constrain_direction(d, Y, resolved)
+            d[~m] = 0.0
+            r = max(r, float((np.linalg.norm(d[m], axis=1) / ell[m]).max()))
+            Y = snap(Y + om * d, resolved, 1.0)
+        return Y, r
+
+    for i in range(1, sweeps + 1):
+        om = omega
+        for _ in range(retries + 1):
+            Y, r = sweep(X, om)
+            got = quality(Y, corners, nrm, kappa=kappa, eps=eps)
+            floor = (best if cur.n_inverted == 0 else cur.sj_min) - max_sj_drop
+            if got.n_inverted <= cur.n_inverted and got.sj_min >= floor:
+                break
+            om *= 0.5
+        else:
+            stopped = "rolled_back"
+            reason = ("sweep %d refused after %d omega halvings: inverted %d -> %d, min scaled J %.4f -> %.4f "
+                      "(allowed floor %.4f)" % (i, retries, cur.n_inverted, got.n_inverted, cur.sj_min,
+                                                  got.sj_min, floor))
+            break
+        X, cur, done = Y, got, i
+        best = max(best, cur.sj_min)
+        history.append((i, cur.n_inverted, cur.sj_min, cur.objective_mean))
+        if r < tol:
+            stopped, reason = "completed", "converged: largest move %.1e edge lengths (tol %.0e)" % (r, tol)
+            break
+    return with_points(mesh, X), StageLog(method, sweeps, done, stopped, reason, before, cur, tuple(history))
 
 
 def _eval(P: PointArray, corners: IntArray, normals: PointArray, kappa: float,
@@ -572,6 +867,8 @@ def run_schedule(mesh: QuadMesh, resolved: Resolved, schedule: Schedule, *,
             kw["elements"] = failing_elements(cur.points, cur.corners, nrm, sj_target=sj_target)
         if method in ("laplace", "laplace_local"):
             cur, log = laplace(cur, resolved, normals=nrm, **kw)
+        elif method in ("winslow", "winslow_local"):
+            cur, log = winslow(cur, resolved, normals=nrm, **kw)
         elif method in ("optimize", "optimize_local"):
             cur, log = optimize(cur, resolved, normals=nrm, weights=weights, **kw)
         else:

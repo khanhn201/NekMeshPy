@@ -1,19 +1,28 @@
-# Smoothing
+# Quad smoothing
 
 Deep dives are the in-depth companion to the {doc}`gallery <../user/gallery>`: the gallery shows meshes, a deep dive
 explains one topic. More topics (topology, mesh metrics) will follow.
 
 `nekmeshpy.quadmesh.smoother` moves a quad mesh's vertices, never its connectivity, under constraints, and reports what
-it did ({doc}`user guide <../user/smoother>`). Each page below has a viewer (input left, the stage you pick right,
-coloured by scaled Jacobian) with a histogram and history of the per-quad scaled Jacobian.
+it did ({doc}`user guide <../user/smoother>`). Two ways in:
+
+- **Methods** explains how the smoother works and when to use which part: Laplace smoothing, Winslow smoothing, the
+  optimizer, constraints and projection, boundary layers.
+- **Case studies** shows it on real meshes; each page has a viewer (input left, the stage you pick right, coloured by
+  scaled Jacobian) with a histogram and history of the per-quad scaled Jacobian.
 
 ```{toctree}
 :maxdepth: 1
 
-simple_geometries
-carotid_wall
-wire_coil_surface
-u_tube_interface
+Methods <methods/index>
+Case studies <cases>
+```
+
+## Workflow
+
+Each box links to the page that explains it.
+
+```{include} _generated/smoothing_workflow.inc
 ```
 
 ## Key points
@@ -28,7 +37,7 @@ u_tube_interface
 <details>
 <summary>Regenerating the pages</summary>
 
-- Every page is a run of a script in `examples/smoother/`. The pages are static Markdown that include fragments from
+- Every case page is a run of a script in `examples/smoother/`; the Methods pages run the smoother on their own inputs. The pages are static Markdown that include fragments from
   `docs/smoother/_generated/` and load `docs/_static/smoother/*_frames.json`; the docs build only reads them, and no
   number is typed.
 - After the smoother or an example changes, regenerate and commit:
@@ -37,6 +46,7 @@ u_tube_interface
 python docs/_ext/gen_smoother_assets.py                    # every page, about a minute
 python docs/_ext/gen_smoother_assets.py 01_basics          # the frames of one script
 python docs/_ext/gen_smoother_hex_assets.py                # the hex views (carotid, U-tube, wire coil), about two minutes
+python docs/_ext/gen_smoother_methods_assets.py            # the Methods pages: comparison runs, tables, parameter tables
 ```
 
 </details>

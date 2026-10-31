@@ -52,7 +52,8 @@ def test_committed_pages_name_committed_assets():
             assert os.path.isfile(path) and os.path.getsize(path) <= gen.json_budget(g.frames), g.frames
         for name in re.findall(r"_static/(\S+?\.js)\"", viewer):
             assert os.path.isfile(os.path.join(DOCS, "_static", name)), name
-    committed = {f for f in os.listdir(os.path.join(DOCS, "_static", "smoother")) if f.endswith(".json") and "manifest" not in f}
+    committed = {f for f in os.listdir(os.path.join(DOCS, "_static", "smoother")) if f.endswith(".json") and "manifest" not in f
+                 and not f.startswith("methods_")}      # the Methods pages' frames are checked below
     assert committed == {g.frames for gs in gen.PAGES.values() for g in gs}      # nothing unused is left behind
 
 
@@ -121,3 +122,95 @@ def test_carotid_cost_table_has_the_stages_and_shares_sum_to_about_100():
     assert "python examples/smoother/cs_carotid_hex.py" in page and "single run" in page
     machine = open(os.path.join(PAGES, "_generated", "carotid_cost.machine.inc")).read()
     assert "laptop, running serial" in machine
+
+
+#: local paths and private working folders that must never reach the docs (spelled split, so this file holds none)
+PRIVATE = ("wk_" + "claude", "/Disk" + "_K", "/ho" + "me/", "rep" + "orts/", "pl" + "ans/", "no" + "tes/")
+
+
+def test_methods_pages_assets_committed_small_and_tables_present():
+    """The Methods pages (``gen_smoother_methods_assets.py``): every include a page names is committed and every committed
+    fragment is used, the figures are inline theme-aware SVG (no viewer, no frames files), and the generated tables carry
+    the four methods, their budgets and the parameter defaults read from the code."""
+    import inspect
+
+    import gen_smoother_methods_assets as gm
+
+    from nekmeshpy.quadmesh.smoother import smooth
+
+    methods, gen_dir = os.path.join(PAGES, "methods"), os.path.join(PAGES, "_generated")
+    static = os.path.join(DOCS, "_static", "smoother")
+    pages = ("index", "laplace", "winslow", "optimizer", "constraints", "grading")
+    assert {p + ".md" for p in pages} <= set(os.listdir(methods))
+    used = set()
+    for page in pages:
+        text = open(os.path.join(methods, page + ".md")).read()
+        incs = re.findall(r"\{include\} \.\./_generated/(\S+)", text)
+        assert incs, page
+        for inc in incs:
+            assert os.path.isfile(os.path.join(gen_dir, inc)), inc
+        used |= set(incs)
+        assert "$" not in text, page                                        # math via {math} only
+        for name in PRIVATE + ("initSmootherPage",):
+            assert name not in text, (page, name)
+        if page != "grading":
+            assert "## References" in text, page
+    committed = {f for f in os.listdir(gen_dir) if f.startswith("methods_")}
+    assert committed == used == {"methods_%s.inc" % f for f in gm.FRAGMENTS}      # nothing stale is left behind
+    for fn in committed:
+        body = open(os.path.join(gen_dir, fn)).read()
+        for name in PRIVATE + ("frames.json", "initSmootherPage", "kno" + "ck"):
+            assert name not in body, (fn, name)
+    assert not [f for f in os.listdir(static) if f.startswith("methods_")]          # the Methods pages load no frames
+    assert not os.path.exists(os.path.join(DOCS, "_static", "smoother_methods.js"))
+    figure = open(os.path.join(gen_dir, "methods_compare.figure.inc")).read()
+    assert figure.count('class="mm-row"') == 6 and figure.count('class="mm-cell"') == 30 and "disk, wall" not in figure
+    assert figure.count('style="--mm-cols:5"') == 6 and "L-shape" in figure
+    assert "var(--color" not in figure                                    # theme colours live in custom.css
+    for name, cells in (("laplace.boundary", 4), ("winslow.figure", 3), ("constraints.slide", 3)):
+        body = open(os.path.join(gen_dir, "methods_%s.inc" % name)).read()
+        assert body.count('class="mm-row"') == 1 and body.count('class="mm-cell"') == cells, name
+        assert "var(--color" not in body, name
+    assert 'class="fzd"' in open(os.path.join(gen_dir, "methods_constraints.slide.inc")).read()
+    steps = open(os.path.join(gen_dir, "methods_laplace.steps.inc")).read()
+    assert steps.count('class="lp-fig"') == 3 and "identical" in steps
+    assert open(os.path.join(gen_dir, "methods_optimizer.history.inc")).read().count('class="hc-fig"') == 2
+    css = open(os.path.join(DOCS, "_static", "custom.css")).read()
+    assert ".mm-mesh" in css and ".lp-fig" in css and ".hc-fig" in css and "--mm-cols" in css and ".fzd" in css
+    three = open(os.path.join(gen_dir, "methods_compare.methods.inc")).read()
+    assert "`laplace(passes=%d, w=%g)`" % (gm.LAPLACE_PASSES, gm.LAPLACE_W) in three
+    assert gm.LAPLACE_PASSES == 100 and gm.LAPLACE_W == 0.95 and "`optimize(iters=200)`" in three
+    assert gm.WINSLOW_SWEEPS == inspect.signature(smooth.winslow).parameters["sweeps"].default
+    assert "`winslow(sweeps=%d)`" % gm.WINSLOW_SWEEPS in three
+    assert "`delta=%g`" % inspect.signature(smooth.optimize).parameters["delta"].default in three
+    assert gm.compress(smooth.user_schedule()) in three and gm.compress(smooth.untangle_schedule()) in three
+    score = open(os.path.join(gen_dir, "methods_compare.score.inc")).read()
+    for word in ("Laplace only", "Winslow only", "Optimizer only", "Combined schedule", "min scaled J", "mean phi",
+                 "tangled squares", "L-shape", "free disk", "seconds"):
+        assert word in score, word
+    assert "laptop, running serial" in open(os.path.join(gen_dir, "methods_compare.shows.inc")).read()
+    assert "`passes` | `3`" in open(os.path.join(gen_dir, "methods_laplace.params.inc")).read()
+    assert "`delta` | `0.01`" in open(os.path.join(gen_dir, "methods_optimizer.params.inc")).read()
+    assert "`free_boundary` | `'tangent'`" in open(os.path.join(gen_dir, "methods_laplace.params.inc")).read()
+    assert "`sweeps` | `200`" in open(os.path.join(gen_dir, "methods_winslow.params.inc")).read()
+    assert "boundary='frozen', corner_deg=30.0" in open(os.path.join(gen_dir, "methods_constraints.params.inc")).read()
+    assert "initPhiPlot" in open(os.path.join(gen_dir, "methods_optimizer.plot.inc")).read()
+    boundary = open(os.path.join(gen_dir, "methods_constraints.boundary.inc")).read()
+    assert boundary.count('class="bm-cell"') == 6 and boundary.count("<svg") >= 6 and "corner" in boundary
+    tree = open(os.path.join(gen_dir, "methods_constraints.tree.inc")).read()
+    assert "Frozen &gt; OnCurve" in tree and "#boundary-settings" in tree
+    index = open(os.path.join(PAGES, "index.md")).read()                   # the Smoothing index page carries the workflow chart
+    assert "_generated/" + gm.WORKFLOW in index and os.path.isfile(os.path.join(gen_dir, gm.WORKFLOW))
+    for name in PRIVATE:
+        assert name not in open(os.path.join(gen_dir, gm.WORKFLOW)).read(), name
+
+
+def test_methods_schedule_compression_reads_back():
+    """``compress`` writes a schedule down without losing a stage: the repeated block and the delta run."""
+    import gen_smoother_methods_assets as gm
+
+    from nekmeshpy.quadmesh.smoother import smooth
+
+    assert gm.compress(smooth.user_schedule(outer=2, n_lap=4, n_opt=7, final_local=False)) == \
+        "2 × [laplace(passes=4, w=0.97) + optimize(iters=7)]"
+    assert gm.compress(smooth.untangle_schedule(deltas=(1.0, 0.1), iters=5)) == "optimize(iters=5, delta=v) for v in 1, 0.1"

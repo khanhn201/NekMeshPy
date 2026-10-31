@@ -86,6 +86,7 @@ from .smooth import (
     suggest_schedule,
     untangle_schedule,
     user_schedule,
+    winslow,
     with_points,
 )
 
@@ -157,5 +158,6 @@ __all__ = [
     "untangle_schedule",
     "user_schedule",
     "vertex_length",
+    "winslow",
     "with_points",
 ]
