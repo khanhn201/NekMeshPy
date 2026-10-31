@@ -66,7 +66,7 @@ article details > ul { padding-left: 1.2rem; }
 .phi-plot canvas { width: 100%; max-width: 640px; aspect-ratio: 560 / 340; height: auto; display: block; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-primary); }
 .phi-plot .pp-controls output { font-variant-numeric: tabular-nums; }
 
-/* Methods pages (gen_smoother_methods_assets.py): inline SVG figures, styled here so they follow the theme */
+/* Methods pages (gen_smoother_quad_methods_assets.py): inline SVG figures, styled here so they follow the theme */
 /* small multiples: one row per input, input | method results, quads filled by worst-corner scaled J */
 .mm-grid { margin: 1rem 0 1.4rem; }
 .mm-row { display: grid; grid-template-columns: repeat(var(--mm-cols, 4), minmax(0, 1fr)); gap: 0.3rem 0.6rem; margin-bottom: 0.9rem; }

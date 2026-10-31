@@ -1,6 +1,6 @@
 # Smoothing a hex mesh (experimental)
 
-`nekmeshpy.hexmesh.smoother` is the {doc}`quad smoother <smoother>` one rung up: the same constraint vocabulary, the
+`nekmeshpy.hexmesh.smoother` is the {doc}`quad smoother <quad_smoother>` one rung up: the same constraint vocabulary, the
 same element-shrink Laplace and shape optimizer, the same schedules, on the corners of a linear `HexMesh`. It moves
 vertices only; connectivity, element tags and face tags never change.
 
@@ -64,13 +64,13 @@ which the exact metric cannot. The gradient is analytic and checked against fini
 3. **Corners.** A vertex where three or more patches meet, or where an edge turns by a jump (more than `corner_deg`
    and three times its neighbours' turn), is frozen.
 
-The `boundary` shorthand, for Laplace and the optimizer alike ({doc}`../smoother/methods/constraints`):
+The `boundary` shorthand, for Laplace and the optimizer alike ({doc}`../smoother/quad/methods/constraints`):
 
 | `boundary` | an unclaimed boundary vertex |
 |---|---|
 | `"frozen"` (default) | holds still |
 | `"free"` | moves as proposed: Laplace shrinks a convex boundary |
-| `"tangent"` | a face vertex moves in its patch's tangent plane, an edge vertex along the edge's tangent; corners frozen. No target: the volume is kept, the wall can drift ({doc}`../hexsmoother/free_boundary`) |
+| `"tangent"` | a face vertex moves in its patch's tangent plane, an edge vertex along the edge's tangent; corners frozen. No target: the volume is kept, the wall can drift ({doc}`../smoother/hex/free_boundary`) |
 | `"slide"` | the three layers above: fitted `OnSurface` per patch, fitted `OnCurve` per patch edge, corners frozen |
 
 In the Laplace pass a boundary face is never shrunk across its own normal, the 3-D form of the quad rule. Each pass

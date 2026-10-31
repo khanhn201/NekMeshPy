@@ -37,8 +37,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 
 from ..._typing import BoolArray, FloatArray, IntArray, PointArray
-from ...quadmesh.smoother import constrain as _qc
-from ...quadmesh.smoother.constrain import (
+from ...core.smoother.constraints import (
     FREE,
     FROZEN,
     ON_CURVE,
@@ -65,7 +64,9 @@ from ...quadmesh.smoother.constrain import (
     sphere,
     spline_curve,
     surface_from_trimesh,
+    unit_rows,
 )
+from ...quadmesh.smoother import constrain as _qc
 from ..hexmesh import HexMesh
 from ..query import boundary_points, tagged_faces
 
@@ -152,7 +153,7 @@ def boundary_faces_outward(mesh: HexMesh) -> IntArray:
 def _face_normals(P: PointArray, F: IntArray) -> PointArray:
     """Unit normal of each quad ``F`` ``(B, 4)``: the cross product of its diagonals."""
     n = np.cross(P[F[:, 2]] - P[F[:, 0]], P[F[:, 3]] - P[F[:, 1]])
-    return _qc._unit(n)
+    return unit_rows(n)
 
 
 class BoundaryPatches(NamedTuple):

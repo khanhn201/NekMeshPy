@@ -85,3 +85,42 @@
 .. automodule:: nekmeshpy.core.selection
    :members:
 ```
+
+## `core.smoother`
+
+The rung-agnostic smoother engine behind `quadmesh.smoother` and `hexmesh.smoother`.
+
+### `core.smoother.constraints`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.constraints
+   :members:
+```
+
+### `core.smoother.metric`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.metric
+   :members:
+```
+
+### `core.smoother.quality`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.quality
+   :members:
+```
+
+### `core.smoother.schedule`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.schedule
+   :members:
+```
+
+### `core.smoother.descent`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.descent
+   :members:
+```

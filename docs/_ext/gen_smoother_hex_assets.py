@@ -1,30 +1,22 @@
-"""Generate the assets of the hex views on the smoothing pages (``docs/smoother/``).
+"""Generate the assets of the hex smoothing deep-dive pages (``docs/smoother/hex/``).
 
-Not part of the ``nekmeshpy`` package -- doc-build tooling like ``gen_smoother_assets.py``; run it by hand after the
-smoother or one of the scripts below changes, and commit what it writes (about two minutes):
+Not part of the ``nekmeshpy`` package -- doc-build tooling like ``gen_smoother_quad_hexviews_assets.py``; run it by hand after
+the hex smoother or one of the example scripts changes, and commit what it writes (a few seconds):
 
-    python docs/_ext/gen_smoother_hex_assets.py [carotid | u_tube | wire_coil ...]
+    python docs/_ext/gen_smoother_hex_assets.py [methods slide_box free_boundary thin_layer untangle]
 
-Three pages carry a hex view, each fed by one script of ``examples/smoother/`` that is executed with ``runpy`` (cwd in a
-scratch directory, stdout captured) and whose public namespace is read:
+With no argument every key is built.  Each key runs one script of ``examples/smoother/hex/`` with ``runpy`` (cwd in a
+scratch directory, stdout captured) and reads its public namespace (``rows``, ``meshes``, ``sj`` ...).  It writes, under
+``docs/_static/smoother/hex/``,
 
-* ``carotid``    ``cs_carotid_hex.py`` -- the carotid recipe re-run on the smoothed wall (variants ``original`` and
-  ``smoothed (held)``, the same four layers);
-* ``u_tube``     ``cs_u_tube_hex.py`` -- the as-built U-tube hexes, and the smoothed interface carried into them;
-* ``wire_coil``  ``cs_wire_coil_hex.py`` -- the same for the wire surface.
+* ``<key>_<variant>_shell.vtp``    every boundary face of the variant's mesh as quads;
+* ``<key>_<variant>_section.vtp``  the hex cross-section: polygons where two planes cut the hexes, with the per-hex
+  worst-corner scaled Jacobian ``sj`` (and ``layer`` / ``inv`` where the script has such a flag);
+* ``<key>_manifest.json``          what ``smoother_hex_viewer.js`` reads (no ``groups`` layer: the view opens on the
+  cross-section);
 
-For every mesh shown it writes, under ``docs/_static/smoother/``,
-
-* ``<prefix>_<variant>_exterior.vtp``  the gallery's exterior view: every named face of the mesh as quads (order-1 corners
-  only, none dropped) with a per-quad ``bc_id``; the group names travel in the manifest;
-* ``<prefix>_<variant>_wall.vtp``      the wall / interface surface (translucent in the cross-section view);
-* ``<prefix>_<variant>_section.vtp``   the hex cross-section: polygons where two planes cut the hexes, with ``sj`` (scaled
-  Jacobian, order-``SAMPLE_ORDER`` lattice) and a per-case second field (``bl`` or ``region``);
-* ``<prefix>_manifest.json``           what ``smoother_hex_viewer.js`` reads;
-
-and under ``docs/smoother/_generated/`` the viewer block and the tables and prose numbers of each page, every figure
-read from the run.  A carried mesh that is not valid (inverted hexes, other boundary names) is **not** shown: the page
-states the numbers instead.  The binary ``.vtp`` files are small (Float32 / Int32, UInt64 block headers), the section ones too.
+and under ``docs/smoother/hex/_generated/``, per key, ``<key>.viewer.inc``, ``<key>.svg.inc`` (a theme-aware bar chart),
+``<key>.table.inc`` and ``<key>.keypoints.inc``, every number read from the run.
 """
 
 from __future__ import annotations
@@ -34,6 +26,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import runpy
 import sys
 import tempfile
@@ -43,24 +36,24 @@ import numpy as np
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DOCS = os.path.dirname(_HERE)
 _REPO = os.path.dirname(_DOCS)
-GENERATED = os.path.join(_DOCS, "smoother", "_generated")
-STATIC = os.path.join(_DOCS, "_static", "smoother")
-_EX = os.path.join(_REPO, "examples", "smoother")
+GENERATED = os.path.join(_DOCS, "smoother", "hex", "_generated")
+STATIC = os.path.join(_DOCS, "_static", "smoother", "hex")
+_EX = os.path.join(_REPO, "examples", "smoother", "hex")
 MAX_VTP_BYTES = 400_000
 MAX_TOTAL_BYTES = 4_000_000
+CAMERA = {"direction": [1.0, -1.4, 1.1], "viewUp": [0, 0, 1]}
 sys.path.insert(0, _REPO)
 
 
+# -- small helpers (copies of the ones in gen_smoother_quad_hexviews_assets.py) -------------------------------------------------
 def b64(a):
-    """One binary ``DataArray`` payload as ``boundary_to_vtp`` writes it: the byte count (UInt64) then the bytes, base64'd as
-    a single blob (separately encoded blocks leave padding mid-string, which vtk.js does not read)."""
+    """One binary ``DataArray`` payload: the byte count (UInt64) then the bytes, base64'd as a single blob."""
     raw = np.ascontiguousarray(a).tobytes()
     return base64.b64encode(np.array([len(raw)], dtype="<u8").tobytes() + raw).decode()
 
 
 def write_vtp(path, points, conn, offsets, cell_data):
-    """Binary PolyData: ``points`` (n,3), ``conn`` the flat vertex ids, ``offsets`` the end of each polygon,
-    ``cell_data`` {name: (values, "Float32" | "Int32")}."""
+    """Binary PolyData; ``cell_data`` is {name: (values, "Float32" | "Int32")}."""
     points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     offsets = np.asarray(offsets, dtype=np.int32)
     out = [
@@ -84,21 +77,16 @@ def write_vtp(path, points, conn, offsets, cell_data):
     return os.path.getsize(path)
 
 
-def exterior_vtp(hexmesh, quadmesh, m, path):
-    """Every named face of ``m`` as quads on its order-1 corners, ``bc_id`` per quad (ids over the sorted names, as the
-    gallery's ``boundary_to_vtp``); returns ``(bytes, {id: name})``."""
-    surf = quadmesh.select(m.quad_mesh, m.face_tags.ids)
-    names = np.asarray(surf.element_tags.to_dense())
-    uniq = sorted(set(names.tolist()) - {""})
-    ids = np.array([uniq.index(n) + 1 if n else 0 for n in names.tolist()])
-    q = np.asarray(surf.corners)
-    size = write_vtp(path, surf.points, q.ravel(), np.arange(4, 4 * len(q) + 1, 4), {"bc_id": (ids, "Int32")})
-    return size, {str(i + 1): n for i, n in enumerate(uniq)}
+def shell_vtp(m, path):
+    """Every boundary face of ``m`` as a quad, wound outward, no cell data."""
+    from nekmeshpy.hexmesh import smoother as hs
+
+    q = hs.boundary_faces_outward(m)
+    return write_vtp(path, m.points, q.ravel(), np.arange(4, 4 * len(q) + 1, 4), {})
 
 
 def cut(m, sj, extra, origin, normal, edges):
-    """Polygons where a plane cuts the hexes of ``m``: ``(polygons, sj, {name: values})`` per cut hex.  ``extra`` is
-    {name: per-hex values}; ``edges`` the 12 hex edges as corner pairs."""
+    """Polygons where a plane cuts the hexes of ``m``: ``(polygons, sj, {name: values})`` per cut hex."""
     X = m.points[m.corners]
     normal = np.asarray(normal, float)
     d = (X - np.asarray(origin, float)) @ normal
@@ -123,8 +111,11 @@ def cut(m, sj, extra, origin, normal, edges):
     return polys, np.array(s), {k: np.array(v_) for k, v_ in ex.items()}
 
 
-def section_vtp(m, sj, extra, planes, edges, path):
-    """The cuts of every ``(origin, normal)`` in ``planes`` as one PolyData with ``sj``, ``plane`` and the ``extra`` fields."""
+def section_vtp(m, sj, extra, planes, path):
+    """The cuts of every ``(origin, normal)`` in ``planes`` as one PolyData with ``sj``, ``plane`` and ``extra``."""
+    from nekmeshpy.core import conform
+
+    edges = conform._LOCAL_EDGES[3]
     pts, conn, off = [], [], []
     cd = {"sj": [], "plane": []}
     cd.update({k: [] for k in extra})
@@ -143,328 +134,391 @@ def section_vtp(m, sj, extra, planes, edges, path):
     return write_vtp(path, pts, conn, off, data)
 
 
-def wall_vtp(quadmesh, hexmesh, m, tag, path):
-    """One quad per physical face of the tagged wall (an interior interface comes back once per side)."""
-    w = hexmesh.boundary_mesh(m, tag)
-    c = np.asarray(w.corners)
-    _, first = np.unique(np.sort(c, axis=1), axis=0, return_index=True)
-    c = c[np.sort(first)]
-    return write_vtp(path, w.points, c.ravel(), np.arange(4, 4 * len(c) + 1, 4), {})
-
-
 def run_script(path):
     cwd = os.getcwd()
     with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
         os.chdir(tmp)
         try:
-            return runpy.run_path(path, run_name="gen_hex")
+            return runpy.run_path(path, run_name="gen_smoother_hex")
         finally:
             os.chdir(cwd)
 
 
-def fmt(x, n=4):
-    return ("%." + str(n) + "f") % x
+# -- number formats -------------------------------------------------------------------------------------------------
+def f4(x):
+    return "%.4f" % x
 
 
-def verdict(a, b):
-    if abs(b - a) < 5e-5:
-        return "unchanged"
-    return "rose" if b > a else "fell"
+def fdist(x):
+    return "0" if x == 0 else "%.1e" % x
 
 
-def viewer_inc(div, manifest):
-    return (
-        '```{raw} html\n<script src="../_static/smoother_hex_viewer.js"></script>\n<div id="%s"></div>\n'
-        '<script>window.initSmootherHex("%s", "../_static/smoother/%s");</script>\n```\n' % (div, div, manifest)
-    )
+def fpct(x, n=2):
+    return "%+.*f" % (n, x)
 
 
-def write_variant(prefix, key, label, note, ns, m, sj, extra, extra_field, planes, tag, hidden, static):
-    """Write the three .vtp of one mesh; return ``(manifest variant, {file: bytes})``."""
-    from nekmeshpy import hexmesh, quadmesh
-    from nekmeshpy.core import conform
-
-    edges = conform._LOCAL_EDGES[3]
-    files = {"%s_%s_exterior.vtp" % (prefix, key): None, "%s_%s_wall.vtp" % (prefix, key): None,
-             "%s_%s_section.vtp" % (prefix, key): None}
-    epath, wpath, spath = files
-    sizes = {}
-    sizes[epath], groups = exterior_vtp(hexmesh, quadmesh, m, os.path.join(static, epath))
-    sizes[wpath] = wall_vtp(quadmesh, hexmesh, m, tag, os.path.join(static, wpath))
-    sizes[spath] = section_vtp(m, sj, extra, planes, edges, os.path.join(static, spath))
-    variant = {
-        "label": label,
-        "note": note,
-        "layers": [
-            {"name": "exterior", "role": "groups", "vtp": epath, "groups": groups, "hidden": hidden},
-            {"name": "wall", "role": "surface", "label": "Wall surface", "vtp": wpath},
-            {"name": "section", "role": "section", "label": "Hex cross-section", "vtp": spath},
-        ],
-        "fields": [{"name": "sj", "label": "Scaled Jacobian", "kind": "sj", "range": [0, 1]}, extra_field],
-    }
-    return variant, sizes
+def ftime(x):
+    return "%.2f" % x
 
 
-def finish(prefix, manifest, sizes, static):
-    big = {k: v for k, v in sizes.items() if v > MAX_VTP_BYTES}
-    assert not big and sum(sizes.values()) < MAX_TOTAL_BYTES, (big, sum(sizes.values()))
-    with open(os.path.join(static, prefix + "_manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=1)
+def fint(x):
+    return "%d" % x
 
 
-# -- carotid -------------------------------------------------------------------------------------------------------
-CAROTID = [
-    ("original", "original", "original",
-     "The hexes of the carotid recipe, order-1 corners (what a .re2 file holds)."),
-    ("rebuilt", "smoothed wall, rebuilt (same 4 layers)", "smoothed (held)",
-     "The carotid recipe re-run on the smoothed wall: the same four layers, the shared seam ring held fixed."),
-]
+DASH = "—"
 
 
-def build_carotid(generated, static):
-    ns = run_script(os.path.join(_EX, "cs_carotid_hex.py"))
-    variants, layers = ns["variants"], ns["layers"]
-    planes = list(ns["planes_for"](ns["rings_orig"]).values())
-    (o1, n1), (o2, n2) = planes
-    prefix = "carotid_hex"
-    mv, sizes = [], {}
-    for key, label, vkey, note in CAROTID:
-        m = variants[vkey][0]
-        bl = np.zeros(m.n_hexes)
-        bl[layers[vkey]["wall_hex"]] = 1.0
-        field = {"name": "bl", "label": "Wall layer (hexes touching the wall)", "kind": "cat", "range": [0, 1],
-                 "legend": "wall layer | other"}
-        v, sz = write_variant(prefix, key, label, note, ns, m, ns["fine_sj"](m), {"bl": bl}, field, planes, "wall", [], static)
-        mv.append(v)
-        sizes.update(sz)
-    n2 = n2 / np.linalg.norm(n2)
-    direction = n2 + 0.55 * n1 / np.linalg.norm(n1)
-    manifest = {
-        "title": "The carotid hexes: exterior by boundary group, and cuts through a leg and through the trifurcation",
-        "camera": {"direction": [round(float(x), 4) for x in direction], "viewUp": [0, 0, 1]},
-        "variants": mv,
-    }
-    finish(prefix, manifest, sizes, static)
-    carotid_includes(ns, generated)
-    cost_includes(ns, generated)
-    return sizes
+# -- bar chart, table ----------------------------------------------------------------------------------------------
+def bars_svg(items, fmt, metric, aria):
+    """A theme-aware horizontal bar chart: ``items`` is ``[(label, value)]``; a bar labelled ``input`` is the reference
+    (muted).  Colours only
+    through furo's CSS variables, so it follows light / dark.  Bars grow from the zero line, negatives to the left."""
+    vals = [v for _, v in items]
+    lo, hi = min(0.0, min(vals)), max(0.0, max(vals))
+    if hi == lo:
+        hi = lo + 1.0
+    label_w, plot_w, row_h, pad_l, pad_r = 140.0, 220.0, 24.0, 6.0, 64.0
+    left = 64.0 if lo < 0 else 0.0
+    x0 = label_w + pad_l + left
+    scale = plot_w / (hi - lo)
+    zero = x0 + (-lo) * scale
+    width = x0 + plot_w + pad_r
+    height = row_h * len(items) + 12
+    txt = "fill: var(--color-foreground-primary); font: 12px sans-serif"
+    muted = "fill: var(--color-foreground-muted); font: 12px sans-serif"
+    out = ['<figure class="hx-bars" style="margin: 1rem 0; max-width: 34rem">',
+           '<svg viewBox="0 0 %.0f %.0f" width="100%%" role="img" aria-label="%s">' % (width, height, aria)]
+    for i, (lab, v) in enumerate(items):
+        y = 6 + i * row_h
+        w = abs(v) * scale
+        x = zero if v >= 0 else zero - w
+        fill = "var(--color-foreground-muted)" if lab == "input" else "var(--color-brand-primary)"
+        out.append('<text x="%.1f" y="%.1f" text-anchor="end" style="%s">%s</text>'
+                   % (label_w, y + 14, txt, lab))
+        out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="2" style="fill: %s"/>'
+                   % (x, y + 3, max(w, 1.0), row_h - 9, fill))
+        tx, anchor = (zero + w + 4, "start") if v >= 0 else (zero - w - 4, "end")
+        out.append('<text x="%.1f" y="%.1f" text-anchor="%s" style="%s">%s</text>'
+                   % (tx, y + 14, anchor, muted, fmt(v)))
+    out.append('<line x1="%.1f" y1="2" x2="%.1f" y2="%.1f" style="stroke: var(--color-background-border); stroke-width: 1"/>'
+               % (zero, zero, height - 4))
+    out.append("</svg>")
+    out.append("<figcaption>%s</figcaption>" % metric)
+    out.append("</figure>")
+    return "```{raw} html\n%s\n```\n" % "\n".join(out)
 
 
-def carotid_includes(ns, generated):
-    layers, readings, so = ns["layers"], ns["readings"], ns["SAMPLE_ORDER"]
-    names = [
-        ("original", "original (carotid recipe)"),
-        ("smoothed (free)", "smoothed wall, seam ring free"),
-        ("smoothed (held)", "**rebuilt on the smoothed wall** (seam ring held)"),
+BOLD_NOTE = ("**Bold**: the best value in each column among the results (highest scaled Jacobian; lowest count, "
+             "objective, time, change or distance); the input row is for reference.")
+
+
+def table_md(headers, input_cells, runs, rules, with_time):
+    """Markdown table: the input row first, then the runs; the best value of each column among the runs in bold (ties all
+    bold, compared as formatted)."""
+    cols = len(headers)
+    best = {}
+    for c in range(1, cols):
+        if rules[c] is None:
+            continue
+        nums = [float(r[c]) for r in runs if r[c] != DASH]
+        if not nums:
+            continue
+        if rules[c] == "absmin":       # |x| < 1e-12 is round-off: tied with an exact 0
+            nums = [0.0 if abs(x) < 1e-12 else x for x in nums]
+        key = {"max": max(nums), "min": min(nums), "absmin": min(nums, key=abs)}[rules[c]]
+        best[c] = key
+    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] + ["---:"] * (cols - 1)) + "|",
+             "| " + " | ".join(input_cells) + " |"]
+    for r in runs:
+        cells = [r[0]]
+        for c in range(1, cols):
+            s = r[c]
+            v = float(s) if s != DASH else 0.0
+            if rules[c] == "absmin" and abs(v) < 1e-12:
+                v = 0.0
+            if c in best and s != DASH and v == best[c]:
+                s = "**%s**" % s
+            cells.append(s)
+        lines.append("| " + " | ".join(cells) + " |")
+    tail = ["", BOLD_NOTE]
+    if with_time:
+        tail.append("")
+        tail.append("Times: a laptop, running serial.")
+    return "\n".join(lines + tail) + "\n"
+
+
+def note_of(q):
+    return "min scaled J %.2f, %d inverted, F/hex %.3f" % (q.sj_min, q.n_inverted, q.objective_mean)
+
+
+# -- per-key specifications ------------------------------------------------------------------------------------------
+def sector_planes(h_z, theta_off=0.3, z=None, dth=np.pi / 16):
+    """z plane and the vertical plane through the axis at 45 degrees (offset off the 11.25-degree vertex layers)."""
+    th = np.pi / 4 + theta_off * dth
+    return [((0, 0, z), (0, 0, 1)), ((0, 0, 0), (-np.sin(th), np.cos(th), 0))]
+
+
+def spec_methods(ns):
+    zc = 0.25 + 0.3 * 0.125
+    rows = ns["rows"]
+    q = {k: rows[k]["q"] for k in rows}
+    t = {k: rows[k]["seconds"] for k in rows}
+    inp, lap, opt, sch = q["input"], q["laplace"], q["optimizer"], q["schedule"]
+    variants = [("input", "input"), ("laplace", "Laplace"), ("optimizer", "optimizer"), ("schedule", "schedule")]
+    headers = ["method", "inverted", "min SJ", "mean SJ", "worst 5 % SJ", "F/hex", "time (s)"]
+
+    def row(k, label, ref=False):
+        x = q[k]
+        return [label, fint(x.n_inverted), f4(x.sj_min), f4(x.sj_mean), f4(x.sj_q05), f4(x.objective_mean),
+                DASH if ref else ftime(t[k])]
+    table = table_md(headers, row("input", "input", True), [row(k, l) for k, l in variants[1:]],
+                     [None, "min", "max", "max", "max", "min", "min"], True)
+    beats = sch.objective_mean < 0.999 * opt.objective_mean
+    kp = [
+        "**Laplace is the cheap one**: %.0fx faster than the optimizer here; it lifts the minimum scaled Jacobian from "
+        "%.2f to %.2f but leaves F/hex at %.3f." % (t["optimizer"] / t["laplace"], inp.sj_min, lap.sj_min, lap.objective_mean),
+        "**The optimizer reaches the lowest objective**: F/hex %.3f, minimum scaled Jacobian %.2f."
+        % (opt.objective_mean, opt.sj_min),
+        "**The suggested schedule %s the optimizer** (F/hex %.4f against %.4f) in %d stages: %s"
+        % ("beats" if beats else "matches", sch.objective_mean, opt.objective_mean, rows["schedule"]["stages"],
+           "see its `suggest_schedule` list." if beats else
+           "its value is robustness on harder starts, not a better optimum."),
+        "**The optimum is not all cubes**: on a curved sector the objective stays above zero (F/hex %.3f), which is "
+        "why the methods can be told apart." % opt.objective_mean,
     ]
-    rows = [
-        "| mesh | hexes | min scaled J | mean | worst 5 %% | inverted | order-%d sampling: min / inverted |" % so,
-        "| --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    for key, label in names:
-        r = readings[key]
-        c, f = r["corner"], r["fine"]
-        rows.append("| %s | %d | %s | %s | %s | %d | %s / %d |"
-                    % (label, r["n"], fmt(c["min"]), fmt(c["mean"]), fmt(c["q05"]), c["n_inv"], fmt(f["min"]), f["n_inv"]))
-    same = all(abs(readings[k]["corner"][s] - readings[k]["fine"][s]) < 5e-4 for k, _ in names for s in ("min", "mean", "q05"))
-    quality = (
-        "\n".join(rows) + "\n\n"
-        "Scaled Jacobian of the order-1 hexes, read at their 8 corners (the straight-sided hex a `.re2` file holds). The last column "
-        "re-reads the same trilinear map on an %d^3 lattice, the solver's order: %s.\n"
-        % (so + 1, "it agrees with the corner reading to 3 decimals in every row" if same
-           else "it differs from the corner reading in some row, see the table")
-    )
-    rad = ns["RADIAL"]
-    rel0, rel1 = layers["original"]["rel"], layers["smoothed (held)"]["rel"]
-    lrows = [
-        "| mesh | layers | first layer, fraction of the core-to-wall gap | first layer / local radius: min | median | max |",
-        "| --- | --- | --- | --- | --- |  --- |",
-    ]
-    for label, rel in (("original wall", rel0), ("smoothed wall, rebuilt", rel1)):
-        lrows.append("| %s | %d | %s | %s | %s | %s |"
-                     % (label, len(rad) - 1, fmt(rad[-1] - rad[-2], 3), fmt(rel.min()), fmt(np.median(rel)), fmt(rel.max())))
-    layers_inc = (
-        "`RADIAL` (constants at the top of `examples/smoother/cs_carotid_hex.py`) is the original's: `%s`, %d layers between the "
-        "core square and the wall, the wall layer %s of the gap. The rebuild keeps exactly this layering.\n\n"
-        % (np.round(rad, 3).tolist(), len(rad) - 1, fmt(rad[-1] - rad[-2], 2))
-        + "\n".join(lrows) + "\n\n"
-        "The first layer is measured as each wall hex's edge into the volume, against the mean radius of its station's wall ring "
-        "(%d wall hexes in both). Its thickness over the local radius is essentially unchanged, so the smoothed wall leaves the "
-        "original boundary layer intact: the layering is a property of the construction, not of the surface.\n"
-        % layers["original"]["n"]
-    )
-    a, b = readings["original"]["corner"], readings["smoothed (held)"]["corner"]
-    fa, fb = readings["original"]["fine"], readings["smoothed (held)"]["fine"]
-    fr = readings["smoothed (free)"]["corner"]
-    w0, w1 = ns["wall_of"]["original"], ns["wall_of"]["smoothed (held)"]
-    vol = 100 * (readings["smoothed (held)"]["volume"] / readings["original"]["volume"] - 1)
-    text = (
-        "With the same layers, the rebuild on the smoothed wall moved the hexes' worst corner reading from %s to %s, the mean "
-        "from %s to %s and the worst 5 %% from %s to %s; %d hexes are inverted at the corners before and %d after (order-%d "
-        "sampling: %d and %d). The wall faces themselves improve more than the hexes do: wall scaled J (against the "
-        "tessellation) min %s → %s, worst 5 %% %s → %s, largest neighbour size ratio %s → %s, overlapping wall quads %d → %d. "
-        "The enclosed volume changes by %s %%.\n\n"
-        "Smoothing leaves the first layer as it was: first layer over local radius, median %s → %s, min %s → %s, max %s → %s.\n\n"
-        "With the shared seam ring left free, the same rebuild inverts %d hexes (min %s).\n\n"
-        "The worst hex %s (min %s → %s) while the mean %s and the worst 5 %% %s: read the minimum first.\n"
-        % (fmt(a["min"]), fmt(b["min"]), fmt(a["mean"]), fmt(b["mean"]), fmt(a["q05"]), fmt(b["q05"]), a["n_inv"], b["n_inv"], so,
-           fa["n_inv"], fb["n_inv"], fmt(w0["q"].sj_min, 3), fmt(w1["q"].sj_min, 3), fmt(w0["q"].sj_q05, 3),
-           fmt(w1["q"].sj_q05, 3), fmt(w0["size_max"], 2), fmt(w1["size_max"], 2), w0["ov"], w1["ov"], "%+.3f" % vol,
-           fmt(np.median(rel0)), fmt(np.median(rel1)), fmt(rel0.min()), fmt(rel1.min()), fmt(rel0.max()), fmt(rel1.max()),
-           fr["n_inv"], fmt(fr["min"], 3), verdict(a["min"], b["min"]) + " in quality", fmt(a["min"]), fmt(b["min"]),
-           verdict(a["mean"], b["mean"]), verdict(a["q05"], b["q05"]))
-    )
-    for part, body in (("quality", quality), ("layers", layers_inc), ("text", text)):
-        with open(os.path.join(generated, "carotid_hex.%s.inc" % part), "w") as f:
-            f.write(body)
-    with open(os.path.join(generated, "carotid_hex.viewer.inc"), "w") as f:
-        f.write(viewer_inc("sm-carotid-hex", "carotid_hex_manifest.json"))
+    return dict(
+        title="Three methods on one perturbed curved block: cuts at mid-height and through the axis at 45 degrees",
+        planes=sector_planes(0.125, z=zc), variants=variants, extra={},
+        bars=([(l, q[k].sj_min) for k, l in variants], lambda v: "%.2f" % v, "Minimum scaled Jacobian (higher is better)",
+              "Minimum scaled Jacobian of the input and of the three methods"),
+        table=table, keypoints=kp, fields=[])
 
 
-def cost_includes(ns, generated):
-    """The carotid page's Cost subsection, read from the ONE run of ``cs_carotid_hex.py`` above (its ``TIMING_ROWS``): the
-    table, a horizontal bar per stage (HTML/CSS, theme variables, no image) and a paragraph that reads them with no typed number."""
-    rows, total, extras = ns["TIMING_ROWS"], ns["TIMING_TOTAL"], ns["TIMING_EXTRAS"]
-    secs = dict(rows)
-    table = ["| stage | seconds | share of the total |", "| --- | --- | --- |"]
-    for name, sec in rows:
-        table.append("| %s | %.2f | %.1f %% |" % (name.replace("|", "/"), sec, 100 * sec / total))
-    table.append("| **total of the stages above** | **%.2f** | **100 %%** |" % total)
-    table.append("")
-    table.append("Smoothing (7) vs building the original hexes (4) and rebuilding them (8): **%.2f s** vs **%.2f s** and **%.2f s**." % (
-        ns["T_SMOOTH"], secs[ns["S4"]], secs[ns["S8"]]))
-    table.append("")
-    bars = ['```{raw} html', '<div class="sm-cost-bars" style="margin:0.5rem 0 1rem">']
-    top = max(sec for _, sec in rows)
-    for name, sec in rows:
-        w = max(0.4, 100 * sec / top)
-        bars.append(
-            '<div style="display:flex;align-items:center;gap:0.6rem;font-size:0.8em;margin:2px 0">'
-            '<span style="flex:0 0 19rem;color:var(--color-foreground-secondary)">%s</span>'
-            '<span style="flex:1 1 auto;background:var(--color-background-secondary);border-radius:2px">'
-            '<span style="display:block;height:0.9em;width:%.1f%%;background:var(--color-brand-primary);border-radius:2px"></span></span>'
-            '<span style="flex:0 0 3.2rem;text-align:right;color:var(--color-foreground-primary)">%.1f %%</span></div>'
-            % (name, w, 100 * sec / total))
-    bars += ["</div>", "```", ""]
-    big = max(rows, key=lambda r: r[1])
-    t_smooth, t_build, t_rebuild = ns["T_SMOOTH"], secs[ns["S4"]], secs[ns["S8"]]
-    if t_smooth < t_build and t_smooth < t_rebuild:
-        verdict_ = "cheaper than either building the hexes or rebuilding them"
-    elif t_smooth > t_build and t_smooth > t_rebuild:
-        verdict_ = "more expensive than either building the hexes or rebuilding them"
+def spec_slide_box(ns):
+    rows = ns["rows"]
+    q = {k: rows[k]["q"] for k in rows}
+    variants = [("input", "input"), ("frozen", "frozen"), ("slide", "slide")]
+    headers = ["boundary", "inverted", "min SJ", "mean SJ", "worst 5 % SJ", "face off-plane", "edge off-line",
+               "corner move"]
+
+    def row(k, ref=False):
+        x = q[k]
+        d = [DASH] * 3 if ref else [fdist(rows[k]["off_plane"]), fdist(rows[k]["off_line"]), fdist(rows[k]["corner_move"])]
+        return [k, fint(x.n_inverted), f4(x.sj_min), f4(x.sj_mean), f4(x.sj_q05)] + d
+    table = table_md(headers, row("input", True), [row("frozen"), row("slide")],
+                     [None, "min", "max", "max", "max", "absmin", "absmin", "absmin"], False)
+    s = rows["slide"]
+    notes = " ".join(s["notes"])
+    patches = int(re.search(r"(\d+) patch", notes).group(1))
+    curves = int(re.search(r"(\d+) edge curve", notes).group(1))
+    kp = [
+        "**Face vertices stay on their planes** (largest distance %s, round-off) **and edge vertices on their lines** "
+        "(%s); the 8 corners do not move (%s)." % (fdist(s["off_plane"]), fdist(s["off_line"]), fdist(s["corner_move"])),
+        "**Sliding lets the boundary spacing even out**: minimum scaled Jacobian %.2f against %.2f with the boundary "
+        "frozen." % (s["q"].sj_min, rows["frozen"]["q"].sj_min),
+        "**The constraints come from the mesh**: with no target passed, `resolve` found %d planar patches, %d edge lines "
+        "and %d frozen corners." % (patches, curves, s["counts"]["frozen"]),
+        "**A box is the easy case**: every hex can become a cube, so sliding reaches %s."
+        % ("a perfect grid" if s["q"].sj_min > 0.9999 else "min scaled Jacobian %.4f" % s["q"].sj_min),
+    ]
+    return dict(
+        title="A box with a sliding boundary: cuts at mid-height and mid-depth",
+        planes=[((0, 0, 0.3 + 0.3 * 0.15), (0, 0, 1)), ((0, 0.5, 0), (0, 1, 0))], variants=variants, extra={},
+        bars=([(l, q[k].sj_min) for k, l in variants], lambda v: "%.2f" % v, "Minimum scaled Jacobian (higher is better)",
+              "Minimum scaled Jacobian of the input, the frozen run and the sliding run"),
+        table=table, keypoints=kp, fields=[])
+
+
+def spec_free_boundary(ns):
+    rows, sag = ns["rows"], ns["sagitta"]
+    q = {k: rows[k]["q"] for k in rows}
+    variants = [("input", "input"), ("free", "free"), ("tangent", "tangent"), ("slide", "slide"),
+                ("exact", "exact wall")]
+    headers = ["variant", "volume change (%)", "off cylinder", "off input facets (wall)", "cap off-plane", "inverted",
+               "min SJ", "mean SJ"]
+
+    def row(k, label, ref=False):
+        x, d = q[k], rows[k]
+        c = [DASH] * 4 if ref else [fpct(d["volume_change_pct"]), fdist(d["wall_dist"]), fdist(d["facet"]),
+                                    fdist(d["cap_off_plane"])]
+        return [label] + c + [fint(x.n_inverted), f4(x.sj_min), f4(x.sj_mean)]
+    table = table_md(headers, row("input", "input", True), [row(k, l) for k, l in variants[1:]],
+                     [None, "absmin", "absmin", "absmin", "absmin", "min", "max", "max"], False)
+    ch, tg, sl, ex = rows["free"], rows["tangent"], rows["slide"], rows["exact"]
+    kp = [
+        "**`free` shrinks a convex wall**: the volume falls by %.1f %% and wall vertices leave the cylinder by up to %.1e."
+        % (abs(ch["volume_change_pct"]), ch["wall_dist"]),
+        "**`tangent` keeps the volume** (%+.2f %%) but follows no target: wall vertices drift %.1e off the cylinder and "
+        "rim vertices %.1e off the cap planes." % (tg["volume_change_pct"], tg["wall_dist"], tg["cap_off_plane"]),
+        "**`slide` holds the boundary as meshed**: caps exactly planar, wall vertices on the input's faceted wall (%.0e) "
+        "and rim vertices on a spline through the input rim (%.1e off its chords); %.1e off the true cylinder is the "
+        "facet chord error (sagitta %.1e)." % (sl["facet"], sl["facet_rim"], sl["wall_dist"], sag),
+        "**An exact `Surface` holds the true wall**: with a cylinder target the wall vertices sit %.0e off it."
+        % ex["wall_dist"],
+    ]
+    return dict(
+        title="A cylinder with a free wall: cuts at mid-height and near the axis",
+        planes=[((0, 0, 0.5 + 0.3 * 0.25), (0, 0, 1)), ((0.02, 0, 0), (1, 0, 0))], variants=variants, extra={},
+        bars=([(l, rows[k]["volume_change_pct"]) for k, l in variants[1:]], lambda v: "%+.2f %%" % v,
+              "Volume change against the input, in % (closer to zero is better)",
+              "Volume change of the free, tangent, slide and exact wall runs"),
+        table=table, keypoints=kp, fields=[])
+
+
+def spec_thin_layer(ns):
+    rows = ns["rows"]
+    q = {k: rows[k]["q"] for k in rows}
+    variants = [("input", "input"), ("unprotected", "unprotected"), ("protected", "KeepLayer")]
+    headers = ["variant", "first layer, mean change (%)", "max change (%)", "kept vertices, max move",
+               "size ratio max", "inverted", "min SJ", "mean SJ"]
+
+    def row(k, label, ref=False):
+        x, d = q[k], rows[k]
+        kept = fdist(d["keep_move"]) if k == "protected" else DASH      # nothing is kept in the unprotected run
+        c = [DASH] * 3 if ref else [fpct(d["thick_mean_pct"], 1), fpct(d["thick_max_pct"], 1), kept]
+        return [label] + c + ["%.2f" % d["shape"].size_ratio_max, fint(x.n_inverted), f4(x.sj_min), f4(x.sj_mean)]
+    table = table_md(headers, row("input", "input", True), [row(k, l) for k, l in variants[1:]],
+                     [None, "absmin", "absmin", "absmin", "min", "min", "max", "max"], False)
+    un, pr, inp = rows["unprotected"], rows["protected"], rows["input"]
+    move = "by exactly 0" if pr["keep_move"] == 0 else "by up to %.1e" % pr["keep_move"]
+    kp = [
+        "**The cube-seeking metric thickens a designed layer**: unprotected, the first layer grows by %.0f %% on average "
+        "and up to %.0f %%." % (un["thick_mean_pct"], un["thick_max_pct"]),
+        "**`KeepLayer(wall, 1)` keeps it exactly**: %.1f %% change; the %d kept vertices move %s."
+        % (pr["thick_mean_pct"], pr["keep_n"], move),
+        "**Protecting a layer moves the problem to its edge**: the largest size jump between face-neighbours is %.2f with "
+        "`KeepLayer` against %.2f unprotected (input %.2f)."
+        % (pr["shape"].size_ratio_max, un["shape"].size_ratio_max, inp["shape"].size_ratio_max),
+    ]
+    return dict(
+        title="A thin designed layer, unprotected and protected: cuts through the middle of the box",
+        planes=[((0, 0.5 + 0.3 / 6, 0), (0, 1, 0)), ((0.5 + 0.3 / 6, 0, 0), (1, 0, 0))], variants=variants,
+        extra={"layer": ns["first_layer"].astype(float)},
+        bars=([(l, rows[k]["thick_mean_pct"]) for k, l in variants[1:]], lambda v: "%+.1f %%" % v,
+              "First-layer mean thickness change, in % (zero keeps the design)",
+              "First-layer mean thickness change of the unprotected and KeepLayer runs"),
+        table=table, keypoints=kp,
+        fields=[{"name": "layer", "label": "First layer", "kind": "cat", "range": [0, 1],
+                 "legend": "first layer | other"}])
+
+
+def spec_untangle(ns):
+    from nekmeshpy.hexmesh import smoother as hs
+
+    rows = ns["rows"]
+    q = {k: rows[k]["q"] for k in rows}
+    variants = [("input", "input"), ("laplace", "Laplace"), ("optimize0", "optimize δ=0"),
+                ("untangle", "untangle preset"), ("suggested", "suggested")]
+    headers = ["method", "stages", "inverted", "min SJ", "mean SJ", "time (s)"]
+
+    def row(k, label, ref=False):
+        x, d = q[k], rows[k]
+        return [label, DASH if ref else fint(d["stages"]), fint(x.n_inverted), f4(x.sj_min), f4(x.sj_mean),
+                DASH if ref else ftime(d["seconds"])]
+    table = table_md(headers, row("input", "input", True), [row(k, l) for k, l in variants[1:]],
+                     [None, "min", "min", "max", "max", "min"], True)
+    sched = hs.untangle_schedule()
+    in_inv = q["input"].n_inverted
+    lap, o0, un, sg = q["laplace"], q["optimize0"], q["untangle"], q["suggested"]
+    kp = [
+        "**The exact metric cannot untangle**: `optimize(delta=0)` has a wall at zero Jacobian and leaves %s hexes "
+        "inverted." % ("all %d" % in_inv if o0.n_inverted == in_inv else "%d of %d" % (o0.n_inverted, in_inv)),
+        "**`untangle_schedule` is a preset of `optimize`, not a separate untangler**: %d `optimize` stages with `delta` "
+        "shrinking from %g to %g; it %s (minimum scaled Jacobian %.2f)."
+        % (len(sched), sched[0][1]["delta"], sched[-1][1]["delta"],
+           "clears all %d inverted hexes" % in_inv if un.n_inverted == 0 else
+           "leaves %d of %d inverted" % (un.n_inverted, in_inv), un.sj_min),
+    ]
+    if lap.n_inverted == 0:
+        kp.append("**On this input Laplace clears them too** (minimum %.2f, %.2f s): a few displaced vertices in an "
+                  "otherwise clean block are what element averaging repairs best."
+                  % (lap.sj_min, rows["laplace"]["seconds"]))
     else:
-        verdict_ = "between the cost of building the hexes and of rebuilding them"
-    text = (
-        "The stage that takes the most time is **%s** (%.0f %% of the stages listed). Smoothing the wall (7) takes %.0f %% of "
-        "them, which is %s: it costs %.1f times the original build (4) and %.1f times the rebuild (8). One run, serial, a rough "
-        "estimate; the same script on another machine, or again on this one, gives other seconds and other shares. The work "
-        "outside the table (other smoothing variants, the perturbed input and their readings, the figure: %.1f s here) is what "
-        "makes the script's own total longer than the table's.\n"
-        % (big[0][2:].strip(), 100 * big[1] / total, 100 * t_smooth / total, verdict_, t_smooth / t_build, t_smooth / t_rebuild,
-           extras)
-    )
-    machine = ("Measured on a laptop, running serial (one process, no parallelism); numbers vary by machine and run.\n")
-    for part, body in (("table", "\n".join(table)), ("bar", "\n".join(bars)), ("text", text), ("machine", machine)):
-        with open(os.path.join(generated, "carotid_cost.%s.inc" % part), "w") as f:
-            f.write(body)
+        kp.append("**Laplace leaves %d inverted**: its guard refuses any pass that adds an inverted hex." % lap.n_inverted)
+    kp.append("**`suggest_schedule` adds the preset by itself** when the input has inverted hexes: %d stages, minimum "
+              "scaled Jacobian %.2f." % (rows["suggested"]["stages"], sg.sj_min))
+    P = ns["before"].points
+    h = ns["inverted_in_input"]
+    zs = P[ns["pushed"], 2]
+    zplane = float(np.mean(zs)) + 0.05 * 0.125
+    return dict(
+        title="Folded hexes and the methods that repair them: cuts through the pushed vertices and the axis plane",
+        planes=sector_planes(0.125, z=zplane), variants=variants, extra={"inv": h.astype(float)},
+        bars=([(l, float(q[k].n_inverted)) for k, l in variants], lambda v: "%d" % v,
+              "Inverted hexes (fewer is better)", "Inverted hexes of the input and of each method"),
+        table=table, keypoints=kp,
+        fields=[{"name": "inv", "label": "Inverted in the input", "kind": "cat", "range": [0, 1],
+                 "legend": "inverted in the input | other"}])
 
 
-# -- U-tube and wire coil: as built, and the smoothed surface carried in ----------------------------------------------
-CASES = {
-    "u_tube": dict(
-        script="cs_u_tube_hex.py", prefix="u_tube_hex", tag="interface", what="interface", hidden=["outer"],
-        carried="smoothed wall carried in", layers="the solid shell and the fluid shell, one hex layer each",
-        title="The U-tube hexes: exterior by boundary group, and cuts along the U and across both legs",
-        camera=[0.8, -0.6, 0.9],
-        built_note="The hexes of examples/u_tube_box.py at order 1 (the corners a .re2 file holds): a solid box around the U, "
-                   "a one-layer solid shell, a one-layer fluid shell and the fluid core. The box faces are switched off at first.",
-    ),
-    "wire_coil": dict(
-        script="cs_wire_coil_hex.py", prefix="wire_coil_hex", tag="coil", what="wire surface", hidden=["outer", "wall"],
-        carried="smoothed surface carried in", layers="one hex layer on each side of the surface",
-        title="The wire-coil hexes: exterior by boundary group, and cuts across and along the pipe",
-        camera=[0.4, -1.0, 0.5],
-        built_note="The hexes of examples/wire_coil.py at order 1 (the corners a .re2 file holds): fluid around a helical wire. "
-                   "The pipe's outer surface and its wall are switched off at first, so the wire's own surface shows.",
-    ),
+KEYS = {
+    "methods": ("01_methods.py", spec_methods),
+    "slide_box": ("02_slide_box.py", spec_slide_box),
+    "free_boundary": ("03_free_boundary.py", spec_free_boundary),
+    "thin_layer": ("04_thin_layer.py", spec_thin_layer),
+    "untangle": ("05_untangle.py", spec_untangle),
 }
 
 
-def build_case(name, generated, static):
-    c = CASES[name]
-    ns = run_script(os.path.join(_EX, c["script"]))
-    variants, readings, sj_fine, valid = ns["variants"], ns["readings"], ns["sj_fine"], ns["valid"]
-    region = (np.asarray(ns["built"].element_tags.to_dense()) == ns["FLUID"]).astype(float)
-    field = {"name": "region", "label": "Region", "kind": "cat", "range": [0, 1], "legend": "fluid | solid"}
-    planes = [(o, n) for _, o, n in ns["planes"]]
-    keys = [("as_built", "as built", "as built", c["built_note"])]
-    if valid:
-        keys.append(("carried", "smoothed %s carried in" % c["what"], c["carried"],
-                     "The smoothed %s put in place of the old one, nothing else moved." % c["what"]))
-    mv, sizes = [], {}
-    for key, label, vkey, note in keys:
-        v, sz = write_variant(c["prefix"], key, label, note, ns, variants[vkey], sj_fine[vkey], {"region": region}, field,
-                              planes, c["tag"], c["hidden"], static)
-        mv.append(v)
-        sizes.update(sz)
-    d = np.asarray(c["camera"], float)
-    manifest = {"title": c["title"], "camera": {"direction": d.tolist(), "viewUp": [0, 0, 1]}, "variants": mv}
-    finish(c["prefix"], manifest, sizes, static)
-    case_includes(c, ns, readings, valid, generated)
-    return sizes
+def viewer_inc(key):
+    return ('```{raw} html\n<script src="../../_static/smoother_hex_viewer.js"></script>\n<div id="hx-%s"></div>\n'
+            '<script>window.initSmootherHex("hx-%s", "../../_static/smoother/hex/%s_manifest.json");</script>\n```\n'
+            % (key, key, key))
 
 
-def case_includes(c, ns, readings, valid, generated):
-    so, w, prefix = ns["SAMPLE_ORDER"], ns["where"], c["prefix"]
-    rows = ["| mesh | hexes | min scaled J | mean | worst 5 %% | inverted | order-%d sampling: min / inverted | conforming, watertight |" % so,
-            "| --- | --- | --- | --- | --- | --- | --- | --- |"]
-    for k, r in readings.items():
-        cr, f = r["corner"], r["fine"]
-        rows.append("| %s | %d | %s | %s | %s | %d | %s / %d | %s |"
-                    % (k, r["n"], fmt(cr["min"]), fmt(cr["mean"]), fmt(cr["q05"]), cr["n_inv"], fmt(f["min"]), f["n_inv"],
-                       "yes" if r["conforming"] else "NO"))
-    a, b = readings["as built"], readings[c["carried"]]
-    n_wall = ns["unsmoothed"].n_points
-    table = ("\n".join(rows) + "\n\nScaled Jacobian of the order-1 hexes read at their 8 corners (what a `.re2` file holds), and the same "
-             "trilinear map re-read on an %d^3 lattice (order %d, the solver's)." % (so + 1, so))
-    text = (
-        "Carrying the smoothed %s into the hexes replaces its %d vertices by the smoothed ones (it moved %.2f local edges on average, "
-        "largest %.2f) and leaves every other vertex where the example put it. At the corners that makes %d of %d hexes inverted "
-        "(min scaled J %s → %s, mean %s → %s) and, re-read at order %d, %d inverted (min %s → %s). %d of the %d inverted hexes "
-        "are in the solid region and %d in the fluid region; %d of them touch the %s. The %d hexes that touch the %s read min "
-        "%s → %s at the corners (%s); the remaining %d hexes are unchanged (min %s → %s)."
-        % (c["what"], n_wall, w["mean_move"], w["max_move"], b["corner"]["n_inv"], b["n"], fmt(a["corner"]["min"]),
-           fmt(b["corner"]["min"]), fmt(a["corner"]["mean"]), fmt(b["corner"]["mean"]), so, b["fine"]["n_inv"],
-           fmt(a["fine"]["min"]), fmt(b["fine"]["min"]), w["bad_solid"], w["n_bad"], w["bad_fluid"], w["bad_touch"], c["what"],
-           w["n_touch"], c["what"], fmt(w["touch_min_built"]), fmt(w["touch_min_carried"]), c["layers"], a["n"] - w["n_touch"],
-           fmt(w["off_min_built"]), fmt(w["off_min_carried"]))
-    )
-    if valid:
-        text += ("\n\nThis carried mesh has no inverted hex at the corners or at order %d, conforms, and has the same boundary names; "
-                 "the view offers it next to the mesh as built." % so)
-    else:
-        text += ("\n\n**The smoothed %s cannot be carried into the volume for this case.** The carried mesh is not valid, so the "
-                 "view below shows only the mesh as built (all toggles stay). %s"
-                 % (c["what"], "Every inverted hex touches the %s: it is a layer between the moved surface and the vertices beyond "
-                    "it, which did not move." % c["what"] if w["bad_touch"] == w["n_bad"]
-                    else "Not every inverted hex touches the %s, see the counts above." % c["what"]))
-    for part, body in (("table", table), ("text", text + "\n")):
-        with open(os.path.join(generated, "%s.%s.inc" % (prefix, part)), "w") as f:
-            f.write(body + ("\n" if part == "table" else ""))
-    with open(os.path.join(generated, prefix + ".viewer.inc"), "w") as f:
-        f.write(viewer_inc("sm-" + prefix.replace("_", "-"), prefix + "_manifest.json"))
-
-
-def build(which=None, generated=GENERATED, static=STATIC):
-    os.makedirs(generated, exist_ok=True)
-    os.makedirs(static, exist_ok=True)
+def build(key):
+    script, spec_fn = KEYS[key]
+    ns = run_script(os.path.join(_EX, script))
+    sp = spec_fn(ns)
+    rows = ns["rows"]
     sizes = {}
-    for name in which or ["carotid", "u_tube", "wire_coil"]:
-        print("building %s ..." % name, flush=True)
-        sizes.update(build_carotid(generated, static) if name == "carotid" else build_case(name, generated, static))
-    return sizes
+    variants = []
+    for vk, label in sp["variants"]:
+        m, sj = ns["meshes"][vk], ns["sj"][vk]
+        shell, section = "%s_%s_shell.vtp" % (key, vk), "%s_%s_section.vtp" % (key, vk)
+        sizes[shell] = shell_vtp(m, os.path.join(STATIC, shell))
+        sizes[section] = section_vtp(m, sj, sp["extra"], sp["planes"], os.path.join(STATIC, section))
+        variants.append({
+            "label": label, "note": note_of(rows[vk]["q"]),
+            "layers": [{"name": "wall", "role": "surface", "label": "Boundary shell", "vtp": shell},
+                       {"name": "section", "role": "section", "label": "Hex cross-section", "vtp": section}],
+            "fields": [{"name": "sj", "label": "Scaled Jacobian (worst corner)", "kind": "sj", "range": [0, 1]}]
+            + sp["fields"],
+        })
+    big = {k: v for k, v in sizes.items() if v > MAX_VTP_BYTES}
+    assert not big, big
+    manifest = {"title": sp["title"], "camera": CAMERA, "variants": variants}
+    with open(os.path.join(STATIC, key + "_manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=1)
+    items, fmt, metric, aria = sp["bars"]
+    inc = {
+        "viewer": viewer_inc(key),
+        "svg": bars_svg(items, fmt, metric, aria),
+        "table": sp["table"],
+        "keypoints": "".join("- %s\n" % k for k in sp["keypoints"]),
+    }
+    for name, text in inc.items():
+        with open(os.path.join(GENERATED, "%s.%s.inc" % (key, name)), "w") as f:
+            f.write(text)
+    total = sum(sizes.values()) + os.path.getsize(os.path.join(STATIC, key + "_manifest.json")) + sum(map(len, inc.values()))
+    return sizes, total
+
+
+def main(argv):
+    keys = argv or list(KEYS)
+    unknown = [k for k in keys if k not in KEYS]
+    if unknown:
+        raise SystemExit("unknown key(s) %s; choose from %s" % (unknown, list(KEYS)))
+    os.makedirs(STATIC, exist_ok=True)
+    os.makedirs(GENERATED, exist_ok=True)
+    grand = 0
+    for k in keys:
+        sizes, total = build(k)
+        grand += total
+        print("%-14s %2d vtp files, largest %6d B, %7d B written" % (k, len(sizes), max(sizes.values()), total))
+    assert grand < MAX_TOTAL_BYTES * len(keys), grand
+    print("total written: %d bytes" % grand)
 
 
 if __name__ == "__main__":
-    out = build(sys.argv[1:] or None)
-    print("wrote %s; total %d kB" % (", ".join("%s %d kB" % (k, v // 1000) for k, v in sorted(out.items())), sum(out.values()) // 1000))
+    main(sys.argv[1:])

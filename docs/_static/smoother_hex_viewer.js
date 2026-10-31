@@ -1,9 +1,9 @@
 // Generic 3-D hex viewer with toggles (vtk.js, loaded site-wide and deferred by conf.py; this file waits for window.vtk).
 //
 // Usage on a page (the generated include does this):
-//   <script src="../_static/smoother_hex_viewer.js"></script>
+//   <script src="../../_static/smoother_hex_viewer.js"></script>
 //   <div id="sm-hex"></div>
-//   <script>window.initSmootherHex("sm-hex", "../_static/smoother/some_manifest.json");</script>
+//   <script>window.initSmootherHex("sm-hex", "../../_static/smoother/quad/some_manifest.json");</script>
 //
 // MANIFEST (a small JSON next to the .vtp files; every "vtp" is relative to the manifest):
 //   {

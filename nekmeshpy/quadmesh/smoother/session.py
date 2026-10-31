@@ -20,6 +20,7 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from ..._typing import PointArray
+from ...core.smoother.constraints import targets
 from ...io import writer
 from ..quadmesh import QuadMesh
 from ..query import ConnectivityReport, check_connectivity, overlapping_quads
@@ -411,7 +412,7 @@ class SmoothSession:
         for tag, M in (("before", cur), ("after", cand)):
             m = smooth.corner_metrics(M.points, M.corners, self.normals)
             dist = np.zeros(M.n_points)
-            for k, objs in cn._targets(res):
+            for k, objs in targets(res):
                 for t, o in enumerate(objs):
                     sel = (res.kind == k) & (res.target == t)
                     if sel.any():

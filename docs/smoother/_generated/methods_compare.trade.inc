@@ -1,6 +1,0 @@
-| method | good at | weak at | cost | use when |
-| --- | --- | --- | --- | --- |
-| Laplace only | cheap; never adds an inverted quad; best min scaled J on simple planar patches; repaired every tangled square here | blind to phi; folds stay on a concave outline (6 left on the L-shape); relaxes grading | 0.4 ms a pass | a cheap first pass, or a valid result is enough |
-| Winslow only | a concave outline: only the reflex-corner quad stays folded (1 left on the L-shape); the optimizer's shape on valid, ungraded input in 45 % of its time; repaired every tangled square | erases grading once its guard lets it run (+778 % with `max_sj_drop=1`; pair with `KeepLayer`); can drift on a closed surface over many sweeps | 0.9 ms a sweep | Laplace fails: a concave outline, a thin curved block ({doc}`winslow`) |
-| Optimizer only | lowest phi; weights and constraints act inside it | stalls on a tangle at the default `delta`; grows a `"free"` boundary and can stall on a `"tangent"` one (use `"slide"`); undoes grading | 4.3 ms an iteration | a valid input whose shape is the goal |
-| Combined | optimizer passes with a wide-to-narrow `delta` first, then its shape | the optimizer's cost, grading and boundary behaviour | 0.46 s a run (mean) | the default; any damaged or unknown input |

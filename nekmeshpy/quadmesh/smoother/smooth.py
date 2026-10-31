@@ -22,12 +22,24 @@ Linear only: these read corners, never high-order nodes.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any, NamedTuple
+from collections.abc import Callable
+from typing import NamedTuple
 
 import numpy as np
 
 from ..._typing import BoolArray, FloatArray, IntArray, PointArray
+from ...core.smoother import descent, metric
+from ...core.smoother import quality as _quality
+from ...core.smoother.metric import DELTA, EPS, KAPPA, CornerMetrics
+from ...core.smoother.quality import ShapeStats
+from ...core.smoother.schedule import (
+    Registry,
+    Schedule,
+    StageLog,
+    suggest_schedule,
+    untangle_schedule,
+    user_schedule,
+)
 from ...linemesh import LineMesh
 from ...pointmesh import PointMesh
 from ..quadmesh import QuadMesh
@@ -49,41 +61,8 @@ from .constrain import (
 __all__ = ["KAPPA", "EPS", "CornerMetrics", "corner_vectors", "reference_normals",
            "DELTA", "corner_metrics", "objective", "gradient", "with_points", "Quality", "quality",
            "failing_elements", "StageLog", "laplace", "winslow", "optimize", "run_schedule", "user_schedule", "untangle_schedule",
-           "suggest_schedule", "ShapeStats", "shape_stats", "quad_neighbours", "size_ratios"]
-
-#: Inversion-penalty weight per corner, on the *sum* objective (see module docstring).
-KAPPA = 1000.0
-#: Scaled-Jacobian threshold below which a corner is penalised -- the user's minimum
-#: scaled-Jacobian target; the paper's own ``1e-3`` is on ``J / J_max``, a different scale.
-EPS = 0.05
-#: Floor on ``|a x b|^2 / (|a|^2 |b|^2)`` (the squared sine of the corner angle) that keeps a
-#: collapsed corner finite instead of ``inf``/``nan``; far below any reading that matters.
-_SIN2_FLOOR = 1e-14
-
-
-#: Barrier-removal width (in units of the signed sine ``s``) the optimizer uses to untangle:
-#: ``phi`` blows up as a corner's Jacobian goes through zero, so a plain ``phi`` is a *wall*
-#: between an inverted corner and a valid one that no line search crosses.  Knupp's remedy
-#: replaces ``s`` by ``s_d = (s + sqrt(s^2 + 4 d^2)) / 2``, positive and finite for every ``s``
-#: and decreasing smoothly through zero.  ``delta = 0`` is the exact metric.
-DELTA = 0.01
-
-
-def _regularised(s: FloatArray, delta: float) -> tuple[FloatArray, float, FloatArray]:
-    """``(s_d, c, ds_d/ds)``: the barrier-free sine, the constant ``s_d(1)^2`` that makes a
-    perfect corner score exactly 1, and the derivative of ``s_d`` with respect to ``s``."""
-    root = np.sqrt(s * s + 4.0 * delta * delta)
-    one = 0.5 * (1.0 + np.sqrt(1.0 + 4.0 * delta * delta))
-    return 0.5 * (s + root), float(one * one), 0.5 * (1.0 + s / root)
-
-
-class CornerMetrics(NamedTuple):
-    """Per-corner readings, each ``(Q, 4)`` in the quad's own CCW corner order."""
-
-    #: ``phi >= 1``, ``1`` at a square corner; blind to orientation.
-    phi: FloatArray
-    #: Signed scaled Jacobian in ``[-1, 1]``; ``<= 0`` is inverted or degenerate.
-    sj: FloatArray
+           "suggest_schedule", "ShapeStats", "shape_stats", "quad_neighbours", "size_ratios", "Schedule",
+           "register_method", "methods", "REGISTRY"]
 
 
 def corner_vectors(points: PointArray, corners: IntArray) -> tuple[PointArray, PointArray]:
@@ -104,37 +83,12 @@ def reference_normals(points: PointArray, corners: IntArray) -> PointArray:
     return np.asarray(n / np.where(length > 0, length, 1.0))
 
 
-def _terms(points: PointArray, corners: IntArray, normals: PointArray) -> tuple[
-        PointArray, PointArray, PointArray, FloatArray, FloatArray, FloatArray,
-        FloatArray, FloatArray]:
-    """The shared per-corner pieces: ``a, b, cross, A, B, C, g, sqrt(AB)``."""
-    a, b = corner_vectors(points, corners)
-    c = np.cross(a, b)
-    A = np.einsum("qkj,qkj->qk", a, a)
-    B = np.einsum("qkj,qkj->qk", b, b)
-    C = np.einsum("qkj,qkj->qk", c, c)
-    C = np.maximum(C, _SIN2_FLOOR * A * B)
-    g = np.einsum("qkj,qj->qk", c, normals)
-    return a, b, c, A, B, C, g, np.sqrt(A * B)
-
-
 def corner_metrics(points: PointArray, corners: IntArray, normals: PointArray, *,
                    delta: float = 0.0) -> CornerMetrics:
     """``phi`` and the signed scaled Jacobian at every corner of every quad.  ``delta > 0``
     returns the barrier-free ``phi_d = K c / s_d^2`` (``K = (A+B)^2 / 4AB``) the optimizer
     descends on; the default is the exact metric the report prints."""
-    _, _, _, A, B, C, g, ab = _terms(points, corners, normals)
-    # a corner with a zero-length edge (a collapsed edge, a quad naming a vertex twice) has no
-    # direction: its signed Jacobian is 0 -- counted as inverted, never NaN, so the gates see it --
-    # and its exact phi is infinite
-    sj = np.where(ab > 0.0, g / np.where(ab > 0.0, ab, 1.0), 0.0)
-    if delta > 0.0:
-        sd, c, _ = _regularised(sj, delta)
-        K = (A + B) ** 2 / (4.0 * np.maximum(A * B, 1e-300))
-        return CornerMetrics(phi=K * c / sd ** 2, sj=sj)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        phi = (A + B) ** 2 / (4.0 * C)
-    return CornerMetrics(phi=np.where(np.isnan(phi), np.inf, phi), sj=sj)
+    return metric.corner_metrics(corner_vectors(points, corners), normals, delta=delta)
 
 
 def objective(points: PointArray, corners: IntArray, normals: PointArray, *,
@@ -145,66 +99,19 @@ def objective(points: PointArray, corners: IntArray, normals: PointArray, *,
     ``0`` makes a quad's shape irrelevant (a region whose size is only a constraint on its neighbour)
     while the inversion penalty still protects it.  Divide by the quad count for the mean the report shows."""
     m = corner_metrics(points, corners, normals, delta=delta)
-    w = 1.0 if weights is None else np.asarray(weights, float)[:, None]
-    return float(0.25 * (w * (m.phi - 1.0) + kappa * np.maximum(0.0, eps - m.sj)).sum())
-
-
-def _scatter(n: int, index: IntArray, values: PointArray) -> PointArray:
-    """Sum ``values (Q, 4, 3)`` onto ``n`` vertices by ``index (Q, 4)`` -- the vertex
-    assembly (``gs_qqt``) a shared-id mesh needs no gather-scatter library for."""
-    flat = index.reshape(-1)
-    return np.stack([np.bincount(flat, weights=values[..., k].reshape(-1), minlength=n)
-                     for k in range(3)], axis=1)
+    return metric.objective_value(m, 2, kappa=kappa, eps=eps, weights=weights)
 
 
 def gradient(points: PointArray, corners: IntArray, normals: PointArray, *,
              kappa: float = KAPPA, eps: float = EPS, delta: float = 0.0,
              weights: FloatArray | None = None) -> PointArray:
-    """Analytic ``dF/dx`` ``(P, 3)`` with the reference normals held fixed.
-
-    Per corner, with ``A=|a|^2, B=|b|^2, d=a.b, C=|a x b|^2 = AB - d^2, g=(a x b).n``::
-
-        dphi/da = (A+B) a / C - (A+B)^2 (B a - d b) / (2 C^2)      (b: swap a<->b, A<->B)
-        ds/da   = (b x n) / sqrt(AB) - g a / (A sqrt(AB))
-        ds/db   = (n x a) / sqrt(AB) - g b / (B sqrt(AB))
-
-    and the corner's vertex receives ``-(da + db)``, its next vertex ``da``, its previous
-    ``db``.  The penalty branch is on only where ``s < eps``.  With ``delta > 0`` (the
-    barrier-free metric, see :data:`DELTA`) ``phi_d = K c / s_d^2`` and::
-
-        dphi_d/da = c [ dK/da / s_d^2 - 2 K s_d' ds/da / s_d^3 ],   dK/da = K (2/(A+B) - 1/A) 2a
-    """
-    a, b, _, A, B, C, g, ab = _terms(points, corners, normals)
-    d = np.einsum("qkj,qkj->qk", a, b)
-    n = normals[:, None, :]
-    ab3 = ab[..., None]
-    ds_a = np.cross(b, n) / ab3 - g[..., None] * a / (A[..., None] * ab3)
-    ds_b = np.cross(n, a) / ab3 - g[..., None] * b / (B[..., None] * ab3)
-    sv = g / ab
-    if delta > 0.0:
-        sd, c, dsd = _regularised(sv, delta)
-        AB = np.maximum(A * B, 1e-300)
-        K = (A + B) ** 2 / (4.0 * AB)
-        S2 = (sd ** 2)[..., None]
-        S3 = (sd ** 3)[..., None]
-        Kc = K[..., None]
-        dphi_a = c * (Kc * (2.0 / (A + B) - 1.0 / A)[..., None] * 2.0 * a / S2
-                      - 2.0 * Kc * dsd[..., None] * ds_a / S3)
-        dphi_b = c * (Kc * (2.0 / (A + B) - 1.0 / B)[..., None] * 2.0 * b / S2
-                      - 2.0 * Kc * dsd[..., None] * ds_b / S3)
-    else:
-        S = (A + B)[..., None]
-        Cc = C[..., None]
-        dphi_a = S * a / Cc - S ** 2 * (B[..., None] * a - d[..., None] * b) / (2.0 * Cc ** 2)
-        dphi_b = S * b / Cc - S ** 2 * (A[..., None] * b - d[..., None] * a) / (2.0 * Cc ** 2)
-    on = (sv < eps)[..., None]
-    w = 1.0 if weights is None else np.asarray(weights, float)[:, None, None]
-    ga = 0.25 * (w * dphi_a - kappa * on * ds_a)
-    gb = 0.25 * (w * dphi_b - kappa * on * ds_b)
-    nv = points.shape[0]
-    return (_scatter(nv, np.roll(corners, -1, axis=1), ga)
-            + _scatter(nv, np.roll(corners, 1, axis=1), gb)
-            - _scatter(nv, corners, ga + gb))
+    """Analytic ``dF/dx`` ``(P, 3)`` with the reference normals held fixed (the maths is in
+    :mod:`nekmeshpy.core.smoother.metric`).  A corner's vertex receives ``-(da + db)``, its next
+    vertex ``da``, its previous ``db``."""
+    a, b = corner_vectors(points, corners)
+    ga, gb = metric.corner_gradient((a, b), normals, kappa=kappa, eps=eps, delta=delta, weights=weights)
+    return metric.assemble_gradient(points.shape[0], corners,
+                                    (np.roll(corners, -1, axis=1), np.roll(corners, 1, axis=1)), (ga, gb))
 
 
 def with_points(mesh: QuadMesh, points: PointArray) -> QuadMesh:
@@ -254,40 +161,16 @@ def quality(points: PointArray, corners: IntArray, normals: PointArray, *,
             kappa: float = KAPPA, eps: float = EPS) -> Quality:
     """:class:`Quality` of the linear mesh ``(points, corners)`` against ``normals``."""
     m = corner_metrics(points, corners, normals)
-    sj = m.sj.min(axis=1)
-    phi = m.phi.max(axis=1)
-    q = np.asarray(np.quantile(sj, [0.01, 0.05, 0.10])) if sj.size else np.zeros(3)
-    return Quality(int(sj.size), int((sj <= 0).sum()), float(sj.min(initial=np.inf)),
-                   float(sj.mean()) if sj.size else 0.0, float(np.median(sj)) if sj.size else 0.0,
-                   float(q[0]), float(q[1]), float(q[2]),
-                   float(phi.mean()) if phi.size else 0.0, float(phi.max(initial=0.0)),
-                   objective(points, corners, normals, kappa=kappa, eps=eps) / max(sj.size, 1))
+    return Quality(*_quality.reduce_corners(m, objective(points, corners, normals, kappa=kappa, eps=eps)))
 
 
 def failing_elements(points: PointArray, corners: IntArray, normals: PointArray, *,
                      sj_target: float = EPS, short_edge: float = 0.1) -> BoolArray:
     """``(Q,)`` quads the local stages should work on: a corner with signed scaled Jacobian
     below ``sj_target``, or an edge shorter than ``short_edge`` times the median edge."""
-    sj = corner_metrics(points, corners, normals).sj.min(axis=1)
     a, _ = corner_vectors(points, corners)
-    edge = np.linalg.norm(a, axis=2)
-    return np.asarray((sj < sj_target) | (edge.min(axis=1) < short_edge * np.median(edge)))
-
-
-class StageLog(NamedTuple):
-    """What one smoothing stage did -- the part of the round report this stage owns."""
-
-    method: str
-    passes_requested: int
-    passes_done: int
-    stopped: str               # "completed" | "rolled_back" | "no_elements"
-    reason: str
-    before: Quality
-    after: Quality
-    #: Per pass ``(pass, n_inverted, sj_min, objective_mean)`` of the *accepted* iterates.
-    history: tuple[tuple[int, int, float, float], ...]
-    #: The vertex positions after this stage, only when ``run_schedule(..., record=True)`` asked for them.
-    points: PointArray | None = None
+    return _quality.failing_mask(corner_metrics(points, corners, normals), np.linalg.norm(a, axis=2),
+                                 sj_target=sj_target, short_edge=short_edge)
 
 
 # Reference corner coordinates of the CCW bilinear quad, and the edge k -> (axis, side) map:
@@ -371,7 +254,7 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
     stopped, reason, done = "completed", "all %d passes accepted" % passes, 0
     for i in range(1, passes + 1):
         sh = _shrunk_corners(P, corners, bnd, w)
-        avg = _scatter(mesh.n_points, corners, sh) / mult[:, None]
+        avg = metric.scatter(mesh.n_points, corners, sh) / mult[:, None]
         if free is not None:
             avg[~free] = P[~free]
         if tangent.any():                    # a TANGENT vertex keeps only its move along the boundary
@@ -639,9 +522,7 @@ def _eval(P: PointArray, corners: IntArray, normals: PointArray, kappa: float,
           weights: FloatArray | None = None) -> tuple[float, int]:
     """``(F, n_inverted)`` over the given quads in one pass over the corner metrics."""
     m = corner_metrics(P, corners, normals, delta=delta)
-    w = 1.0 if weights is None else np.asarray(weights, float)[:, None]
-    f = float(0.25 * (w * (m.phi - 1.0) + kappa * np.maximum(0.0, eps - m.sj)).sum())
-    return f, int((m.sj.min(axis=1) <= 0).sum())
+    return metric.evaluate(m, 2, kappa=kappa, eps=eps, weights=weights)
 
 
 def optimize(mesh: QuadMesh, resolved: Resolved, *, iters: int = 20,
@@ -706,90 +587,14 @@ def optimize(mesh: QuadMesh, resolved: Resolved, *, iters: int = 20,
     ws = None if weights is None else np.asarray(weights, float)[use]
     ell = vertex_length(P0, corners)[:, None]
     P = snap(P0, resolved, 1.0) if elements is None else P0.copy()
-    tangent = resolved.kind == TANGENT
-    f, ninv = _eval(P, cs, ns, kappa, eps, delta, ws)
-    n_used = max(int(use.sum()), 1)
-    history: list[tuple[int, int, float, float]] = []
-    g_old = s = None
-    alpha_prev = 0.1
-    stopped, reason, done = "completed", "all %d iterations accepted" % iters, 0
-    for it in range(1, iters + 1):
-        if f / n_used < 1e-10:
-            stopped, reason = "converged", "mean excess below 1e-10 (already ideal)"
-            break
-        gx = gradient(P, cs, ns, kappa=kappa, eps=eps, delta=delta, weights=ws)
-        gx = constrain_direction(gx, P, resolved)
-        gx[~movable] = 0.0
-        g = ell * gx                                     # gradient in u = dx / l
-        gg = float((g * g).sum())
-        if gg == 0.0:
-            stopped, reason = "converged", "projected gradient is zero"
-            break
-        if s is None or g_old is None:
-            s = -g
-        else:
-            beta = gg / float((g_old * g_old).sum())
-            if restart == "halve" and it % 2 == 0:
-                beta *= 0.5
-            s = -g + beta * s
-            if float((g * s).sum()) >= 0.0:              # lost descent: restart on steepest descent
-                s = -g
-        top = float(np.linalg.norm(s, axis=1).max())
-        dirx = ell * s / top                             # largest move = 1 local edge per unit alpha
-        if tangent.any():                                # a CG mix of older tangents: re-cut to today's
-            dirx[tangent] = constrain_direction(dirx, P, resolved)[tangent]
-
-        def trial(a: float, P: PointArray = P, dirx: PointArray = dirx,
-                  ninv: int = ninv) -> tuple[float, int, PointArray]:
-            Q = snap(P + a * dirx, resolved, 1.0)
-            ff, nn = _eval(Q, cs, ns, kappa, eps, delta, ws)
-            return (ff if nn <= ninv else np.inf), nn, Q
-
-        # bracket by doubling from the last accepted step, then refine by golden section
-        a = min(alpha_prev * 2.0, alpha_max)
-        pts = [(0.0, f)]
-        while True:
-            fa = trial(a)[0]
-            pts.append((a, fa))
-            if (fa > pts[-2][1] and len(pts) > 2) or a >= alpha_max or not np.isfinite(fa) and len(pts) > 2:
-                break
-            if fa > f and len(pts) == 2:                 # first trial already worse: shrink
-                a *= 0.25
-                pts = [(0.0, f)]
-                if a < tol_step * 0.1:
-                    break
-                continue
-            a = min(a * 2.0, alpha_max)
-        best = min(pts, key=lambda t: t[1])
-        i = pts.index(best)
-        lo = pts[max(i - 1, 0)][0]
-        hi = pts[min(i + 1, len(pts) - 1)][0]
-        phi = 0.5 * (np.sqrt(5.0) - 1.0)
-        for _ in range(12):
-            if hi - lo < 1e-3 * max(hi, 1e-12):
-                break
-            x1, x2 = hi - phi * (hi - lo), lo + phi * (hi - lo)
-            if trial(x1)[0] < trial(x2)[0]:
-                hi = x2
-            else:
-                lo = x1
-        cand = [(trial(x)[0], x) for x in (best[0], 0.5 * (lo + hi))]
-        f_new, a_best = min(cand)
-        if not np.isfinite(f_new) or a_best <= 0.0 or f_new >= f:
-            stopped, reason = "converged", "no step lowers the objective (stalled at %.3e)" % f
-            break
-        _, ninv_new, Pn = trial(a_best)
-        rel = (f - f_new) / max(abs(f), 1e-300)
-        P, f, ninv = Pn, f_new, ninv_new
-        g_old, alpha_prev, done = g, max(a_best, 1e-3), it
-        q = quality(P, corners, nrm, kappa=kappa, eps=eps)
-        history.append((it, q.n_inverted, q.sj_min, q.objective_mean))
-        if a_best < tol_step:
-            stopped, reason = "converged", "step %.2e edge lengths below %.0e" % (a_best, tol_step)
-            break
-        if rel < tol_rel:
-            stopped, reason = "converged", "relative drop %.1e below %.0e" % (rel, tol_rel)
-            break
+    res = descent.minimize(
+        P, evaluate=lambda Q: _eval(Q, cs, ns, kappa, eps, delta, ws),
+        gradient=lambda X: gradient(X, cs, ns, kappa=kappa, eps=eps, delta=delta, weights=ws),
+        project=lambda d, X: constrain_direction(d, X, resolved), snap=lambda X: snap(X, resolved, 1.0),
+        summary=lambda X: _quality.history_row(quality(X, corners, nrm, kappa=kappa, eps=eps)),
+        ell=ell, movable=movable, tangent=resolved.kind == TANGENT, n_used=max(int(use.sum()), 1),
+        iters=iters, alpha_max=alpha_max, restart=restart, tol_step=tol_step, tol_rel=tol_rel)
+    P, stopped, reason, done, history = res.P, res.stopped, res.reason, res.done, res.history
     P = snap(P, resolved, 1.0)
     after = quality(P, corners, nrm, kappa=kappa, eps=eps)
     if after.n_inverted > before.n_inverted:
@@ -801,22 +606,27 @@ def optimize(mesh: QuadMesh, resolved: Resolved, *, iters: int = 20,
                                           tuple(history))
 
 
-#: A schedule is an ordered list of ``(method, knobs)``; the methods are the four below.
-Schedule = Sequence[tuple[str, dict[str, Any]]]
+# -- schedules and the method registry ------------------------------------------------------------
+#: The stage names :func:`run_schedule` knows; :func:`register_method` adds one.
+REGISTRY = Registry()
+for _name, _fn, _local, _w in (("laplace", laplace, False, False), ("laplace_local", laplace, True, False),
+                               ("winslow", winslow, False, False), ("winslow_local", winslow, True, False),
+                               ("optimize", optimize, False, True), ("optimize_local", optimize, True, True)):
+    REGISTRY.register(_name, _fn, local=_local, weights=_w)
 
 
-def user_schedule(outer: int = 10, n_lap: int = 3, n_opt: int = 20, *, w: float = 0.97,
-                  final_local: bool = True) -> list[tuple[str, dict[str, Any]]]:
-    """The user's tuned shape -- *loops of loops*: ``outer`` times ``laplace(n_lap)`` then
-    ``optimize(n_opt)``, closed by two local Laplace passes that lift the smallest edges.
-    Only a starting suggestion; the interactive layer proposes and the user edits it."""
-    sched: list[tuple[str, dict[str, Any]]] = []
-    for _ in range(outer):
-        sched.append(("laplace", {"passes": n_lap, "w": w}))
-        sched.append(("optimize", {"iters": n_opt}))
-    if final_local:
-        sched += [("laplace_local", {"passes": 5, "w": w})] * 2
-    return sched
+def register_method(name: str, fn: Callable[..., tuple[QuadMesh, StageLog]], *, local: bool = False,
+                    weights: bool = False, replace: bool = False) -> None:
+    """Make ``fn`` available to :func:`run_schedule` as the stage ``name`` -- the hook another backend plugs
+    in by.  ``fn(mesh, resolved, normals=..., **knobs)`` must return a **new** mesh and a :class:`StageLog`,
+    leave ``mesh`` untouched and honour ``resolved``; ``local=True`` hands it ``elements=`` (the failing quads),
+    ``weights=True`` the schedule's ``weights=``.  An existing name is refused unless ``replace=True``."""
+    REGISTRY.register(name, fn, local=local, weights=weights, replace=replace)
+
+
+def methods() -> list[str]:
+    """The stage names :func:`run_schedule` knows, sorted."""
+    return REGISTRY.names()
 
 
 def run_schedule(mesh: QuadMesh, resolved: Resolved, schedule: Schedule, *,
@@ -826,64 +636,17 @@ def run_schedule(mesh: QuadMesh, resolved: Resolved, schedule: Schedule, *,
     """Run the stages in order, each on the previous stage's result, with the reference
     normals read once from the *input* (or ``normals``) so orientation is never re-guessed.
     ``*_local`` stages pick their quads with :func:`failing_elements` at the moment they run.
+    A stage is any name in the registry (:func:`methods`).
     Returns the final mesh and one :class:`StageLog` per stage; ``mesh`` is untouched.  ``record=True``
     keeps a copy of the vertex positions after every stage in ``StageLog.points`` (frame ``0`` is the input
     itself), which is what :func:`nekmeshpy.quadmesh.smoother.frames.write_frames` plays back."""
     nrm = reference_normals(mesh.points, mesh.corners) if normals is None else normals
-    logs: list[StageLog] = []
-    cur = mesh
-    for method, knobs in schedule:
-        kw = dict(knobs)
-        if method.endswith("_local"):
-            kw["elements"] = failing_elements(cur.points, cur.corners, nrm, sj_target=sj_target)
-        if method in ("laplace", "laplace_local"):
-            cur, log = laplace(cur, resolved, normals=nrm, **kw)
-        elif method in ("winslow", "winslow_local"):
-            cur, log = winslow(cur, resolved, normals=nrm, **kw)
-        elif method in ("optimize", "optimize_local"):
-            cur, log = optimize(cur, resolved, normals=nrm, weights=weights, **kw)
-        else:
-            raise ValueError("unknown smoothing method %r" % (method,))
-        logs.append(log._replace(points=np.array(cur.points, copy=True)) if record else log)
-    return cur, logs
+    return REGISTRY.run(mesh, resolved, schedule,
+                        failing=lambda m: failing_elements(m.points, m.corners, nrm, sj_target=sj_target),
+                        weights=weights, common={"normals": nrm}, record=record)
 
 
-def untangle_schedule(deltas: Sequence[float] = (1.0, 0.3, 0.1, 0.03, 0.01),
-                      iters: int = 60) -> list[tuple[str, dict[str, Any]]]:
-    """Optimizer stages with a shrinking barrier width: a wide ``delta`` first smooths the
-    landscape enough for a folded vertex to be pulled through, then each narrower one
-    sharpens it back toward the exact metric.  On random tangled meshes (three vertices
-    dragged up to 1.6 cells) it untangles more cases than the plain user schedule
-    (``tests/smoother2d/test_long_schedule.py`` asserts it)."""
-    return [("optimize", {"iters": iters, "delta": d}) for d in deltas]
-
-
-def suggest_schedule(start: Quality, *, outer: int = 10) -> list[tuple[str, dict[str, Any]]]:
-    """The schedule to *propose* for a mesh in the state ``start``: the user's tuned shape,
-    preceded by the untangling continuation when any quad starts inverted -- a Laplace pass
-    on a tangled mesh has nothing to repair it with.  A suggestion, never silently run."""
-    base = user_schedule(outer=outer)
-    return (untangle_schedule() + base) if start.n_inverted > 0 else base
-
-
-class ShapeStats(NamedTuple):
-    """Edge- and size-based readings that complement :class:`Quality`: aspect ratio (longest over
-    shortest edge of a quad), node spacing (the shortest and longest edge anywhere), corner angles, and
-    the **size jump between neighbouring quads** (``size_ratio_*``: the larger over the smaller of the
-    two characteristic sizes ``sqrt(area)`` of every pair of quads sharing an edge, so ``1`` is a
-    perfectly graded mesh).  The scaled Jacobian does not see that last one at all."""
-
-    aspect_max: float
-    aspect_p95: float
-    spacing_min: float
-    spacing_max: float
-    angle_min_deg: float
-    angle_max_deg: float
-    size_ratio_max: float
-    size_ratio_p95: float
-    size_ratio_mean: float
-
-
+# -- shape readings ---------------------------------------------------------------------------
 def quad_neighbours(corners: IntArray) -> IntArray:
     """``(M, 2)`` pairs of quads that share an edge (an edge borne by more than two quads yields the
     consecutive pairs)."""
@@ -903,24 +666,11 @@ def size_ratios(points: PointArray, corners: IntArray) -> FloatArray:
     Q = P[corners]
     area = 0.5 * np.linalg.norm(np.cross(Q[:, 2] - Q[:, 0], Q[:, 3] - Q[:, 1]), axis=1)
     length = np.sqrt(np.maximum(area, 1e-300))
-    pr = quad_neighbours(corners)
-    if pr.size == 0:
-        return np.ones(0)
-    ra = length[pr[:, 0]] / length[pr[:, 1]]
-    return np.asarray(np.maximum(ra, 1.0 / ra))
+    return _quality.pair_ratios(length, quad_neighbours(corners))
 
 
 def shape_stats(points: PointArray, corners: IntArray) -> ShapeStats:
     """:class:`ShapeStats` of the linear mesh ``(points, corners)``."""
     a, b = corner_vectors(points, corners)
     edge = np.linalg.norm(a, axis=2)                                   # (Q, 4) edge k -> k+1
-    aspect = edge.max(axis=1) / np.maximum(edge.min(axis=1), 1e-300)
-    cosang = np.einsum("qkj,qkj->qk", a, b) / np.maximum(
-        np.linalg.norm(a, axis=2) * np.linalg.norm(b, axis=2), 1e-300)
-    ang = np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
-    sr = size_ratios(points, corners)
-    return ShapeStats(float(aspect.max(initial=1.0)), float(np.quantile(aspect, 0.95)) if aspect.size else 1.0,
-                      float(edge.min(initial=np.inf)), float(edge.max(initial=0.0)),
-                      float(ang.min(initial=180.0)), float(ang.max(initial=0.0)),
-                      float(sr.max(initial=1.0)), float(np.quantile(sr, 0.95)) if sr.size else 1.0,
-                      float(sr.mean()) if sr.size else 1.0)
+    return _quality.shape_stats(edge, _quality.corner_angles(a, b), size_ratios(points, corners))
