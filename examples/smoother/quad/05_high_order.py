@@ -80,7 +80,7 @@ def per_quad_sj(m):
 
 
 # -- linear smoothing through the session --------------------------------------
-session = SmoothSession(perturbed, [cn.OnCurve("wall", circle)])
+session = SmoothSession(perturbed, [cn.OnCurve("wall", circle)], keep_curved=False)
 nrm = session.normals
 before = session.current
 q0 = session.quality()

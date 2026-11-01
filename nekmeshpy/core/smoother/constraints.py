@@ -156,8 +156,8 @@ class KeepLayer:
     (the interface or wall vertices, ``seeds`` included) is frozen, so the layer's thickness, its
     growth ratio and its tangential spacing cannot change.  The layers keep their geometry exactly
     at the price of not sliding; one ring protects the first row of cells off the seeds, two the
-    first two.  A square-seeking metric will otherwise inflate a thin layer (measured on the case_bz
-    slices: edges next to an interface grew up to 34x)."""
+    first two.  A square-seeking metric will otherwise inflate a thin layer (measured on a
+    blanket-module section: edges next to an interface grew up to 34x)."""
 
     seeds: Select
     rings: int = 1

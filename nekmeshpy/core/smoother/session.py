@@ -10,7 +10,7 @@ nothing.  ``review="print"`` / ``"auto"`` in :meth:`~SmoothSession.run` are the 
 an answer.
 
 Everything that depends on the mesh type sits behind a :class:`RungAdapter` -- how a mesh is linearised and its
-curved nodes rebuilt, how constraints resolve, which input checks run, how quality is read, how a round's files
+curved nodes rebuilt (a curved mesh stays curved through a round: see the rung's ``run_schedule``), how constraints resolve, which input checks run, how quality is read, how a round's files
 are written, and which stages exist (the rung's own registry, so a stage registered there -- including a third
 party's -- runs through the session with no change here).  The session itself is only the state stack, the round
 counter and the verdict.  ``core/`` imports no rung, so the adapter is the only door to one.
@@ -184,7 +184,7 @@ class RungAdapter:
         """Refuse or warn about the *input* mesh (a gap gate, a curved mesh the rung cannot take).  Raises."""
 
     def linearize(self, mesh: Any) -> Any:
-        """The straight-sided order-1 shadow of a curved ``mesh`` (called only when ``mesh.order > 1``)."""
+        """The straight-sided order-1 shadow of a curved ``mesh`` (what the linear stages of a schedule run on)."""
         raise NotImplementedError("linearize")
 
     def resolve(self, mesh: Any, constraints: list[Any], boundary: str) -> Any:
@@ -328,11 +328,12 @@ class _State(NamedTuple):
 
 class SmoothSession:
     """One smoothing job on one mesh, through a :class:`RungAdapter`.  A rung's session subclasses this with its
-    own constructor (the options its adapter takes) and binds the adapter; see the module docstring for the flow."""
+    own constructor (the options its adapter takes) and binds the adapter; see the module docstring for the flow.
+    A curved mesh stays curved (``keep_curved``); pass ``keep_curved=False`` to smooth its straight-sided shadow."""
 
     def __init__(self, mesh: Any, constraints: list[Any], adapter: RungAdapter, *, boundary: str = "frozen",
                  sj_target: float = EPS, geom_tol: float = 1e-6, weights: Any = None,
-                 out_dir: str | None = None, name: str = "smooth") -> None:
+                 out_dir: str | None = None, name: str = "smooth", keep_curved: bool = True) -> None:
         self.adapter = adapter
         self.constraints = constraints
         self.boundary = boundary
@@ -341,12 +342,15 @@ class SmoothSession:
         self.weights = weights
         self.out_dir = out_dir
         self.name = name
-        # The high-order input, kept when a curved mesh is given: smoothing runs on its straight-sided shadow.
+        # The high-order input, kept when a curved mesh is given.  By default the session smooths the curved mesh
+        # itself: the rung's schedule runs ``tmop`` on it and carries its nodes through the linear stages.
+        # ``keep_curved=False`` smooths its straight-sided shadow instead (``rebuild_high_order`` lifts it back).
         self.original: Any = None
         adapter.preflight(mesh)
         if mesh.order > 1:
             self.original = mesh
-            mesh = adapter.linearize(mesh)
+            if not keep_curved:
+                mesh = adapter.linearize(mesh)
         res = adapter.resolve(mesh, constraints, boundary)
         adapter.prepare(mesh, res)
         self._states: list[_State] = [_State(mesh, list(constraints), res, None, None)]

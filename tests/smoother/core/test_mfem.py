@@ -267,10 +267,10 @@ def test_inverted_input_is_refused_before_mfem_and_313_untangles_it():
     assert M.min_det(Pn, H) > 0 and SJ(Pn, H).min() > 0.0 and log.stopped == "converged"
 
 
-def test_bad_knobs_and_high_order_are_refused_clearly():
+def test_bad_knobs_and_a_curved_order_here_are_refused_clearly():
     P, H = block_arrays(2, 0.2)
     r = hs.resolve(hexmesh.HexMesh.from_corners(P, H), [], boundary="slide")
-    with pytest.raises(NotImplementedError, match="order 1"):
+    with pytest.raises(ValueError, match="tmop_blocks"):
         M.tmop(P, H, r, order=3)
     with pytest.raises(ValueError, match="target"):
         M.tmop(P, H, r, target="cube")

@@ -132,6 +132,15 @@ The rung-agnostic smoother engine behind `quadmesh.smoother` and `hexmesh.smooth
    :members:
 ```
 
+### `core.smoother.blocks`
+
+Per-element node blocks of a curved mesh: how a native stage carries the curved nodes, and how they reach TMOP.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.blocks
+   :members:
+```
+
 ### `core.smoother.mfem`
 
 The optional MFEM / TMOP bridge, shared by both rungs' `("tmop", {...})` stage.  It needs

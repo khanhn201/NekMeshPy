@@ -34,10 +34,12 @@ from ...core import quality as _core
 from ...core.quality import OrderScan
 from ...core.smoother import session as _session
 from ...core.smoother.constraints import targets
+from ...core.smoother.quality import with_scaled_jacobian
 from ...core.smoother.schedule import Schedule, StageLog
 from ...io import writer
 from ..hexmesh import HexMesh
-from ..quality import linear_order_scan, order_scan
+from ..quality import corner_scaled_jacobian, linear_order_scan, order_scan, scaled_jacobian
+from ..query import element_blocks
 from . import constrain as cn
 from . import highorder
 from . import smooth as sm
@@ -149,6 +151,21 @@ class HexRoundReport(_session.RoundReport):
         return self.data["curved_before"]  # type: ignore[no-any-return]
 
     @property
+    def curved_after(self) -> OrderScan | None:
+        """The result's own curved map at ``sample_order`` (``None`` for a linear result)."""
+        return self.data["curved_after"]  # type: ignore[no-any-return]
+
+    @property
+    def corners_before(self) -> tuple[int, float]:
+        """``(inverted, min scaled J)`` of the straight-sided hexes through the 8 corners alone -- what ``.re2``
+        writes -- of a curved input (``(0, nan)`` for a linear one: the ordinary reading is already that)."""
+        return self.data["corners_before"]  # type: ignore[no-any-return]
+
+    @property
+    def corners_after(self) -> tuple[int, float]:
+        return self.data["corners_after"]  # type: ignore[no-any-return]
+
+    @property
     def targets(self) -> tuple[TargetHeld, ...]:
         return tuple(self.data["targets"])
 
@@ -168,8 +185,9 @@ class HexAdapter(_session.RungAdapter):
     ``original`` is the high-order mesh the linear input is the shadow of, when there is one (its curved map is
     sampled too); ``sample_order`` defaults to :data:`SCAN_ORDER <nekmeshpy.core.quality.SCAN_ORDER>` (the
     solver's); a mesh above the scan budget is declined there and reported ``not checked`` -- unchecked, not
-    clean.  There is no input gate: a hex mesh is conforming by construction, and a curved one is refused by the
-    session, not linearised, until the rebuild exists."""
+    clean.  There is no input gate: a hex mesh is conforming by construction.  A curved mesh stays curved through a
+    round and is read on the nodes it stores (and, in the audit, on the ``sample_order`` lattice and at the corners
+    ``.re2`` writes)."""
 
     report_type = HexRoundReport
     no_rebuild = ("hexmesh.smoother cannot rebuild the curved nodes of a smoothed mesh yet: the result of "
@@ -180,12 +198,7 @@ class HexAdapter(_session.RungAdapter):
         self.thresholds = tuple(float(t) for t in thresholds)
         self.sample_order = sample_order
         self.original = original
-
-    def preflight(self, mesh: HexMesh) -> None:
-        if mesh.order > 1:
-            raise ValueError("hexmesh.smoother.SmoothSession smooths a linear mesh; this one is order %d.  Pass "
-                             "hexmesh.smoother.linearize(mesh) (the straight-sided shadow with the same corners "
-                             "and tags): the curved nodes are not rebuilt afterwards yet." % mesh.order)
+        self.curved = 0                # the order of a curved input the session is smoothing (0: linear)
 
     def linearize(self, mesh: HexMesh) -> HexMesh:
         return highorder.linearize(mesh)
@@ -194,7 +207,10 @@ class HexAdapter(_session.RungAdapter):
         return cn.resolve(mesh, constraints, boundary=boundary)
 
     def quality(self, mesh: HexMesh) -> sm.Quality:
-        return sm.quality(mesh.points, mesh.corners)
+        q = sm.quality(mesh.points, mesh.corners)
+        if mesh.order > 1:             # a curved mesh is read on the nodes it stores, not on its corners alone
+            q = with_scaled_jacobian(q, scaled_jacobian(mesh, mesh.order))
+        return q
 
     def shape_stats(self, mesh: HexMesh) -> sm.ShapeStats:
         return sm.shape_stats(mesh.points, mesh.corners)
@@ -206,6 +222,9 @@ class HexAdapter(_session.RungAdapter):
         c = resolved.counts()
         lines = ["vertices: %s" % ", ".join("%d %s" % (v, k.replace("_", "-")) for k, v in c.items()),
                  "targets: %d surface(s), %d curve(s)" % (len(resolved.surfaces), len(resolved.curves))]
+        if self.curved:
+            lines.append("curved mesh (order %d): tmop optimises every node; the linear stages move the vertices and "
+                         "the nodes follow; edge and face nodes of a held vertex are held" % self.curved)
         return "\n".join(lines + ["note: " + n for n in resolved.notes])
 
     def audit(self, before: HexMesh, after: HexMesh, resolved: cn.Resolved) -> _session.Audit:
@@ -213,7 +232,15 @@ class HexAdapter(_session.RungAdapter):
         th = self.thresholds
         sb, sa = linear_order_scan(before, (n,)), linear_order_scan(after, (n,))
         orig = self.original
-        cb = order_scan(orig, (max(n, orig.order),)) if orig is not None and orig.order > 1 else None
+        if before.order > 1:
+            cb: OrderScan | None = order_scan(before, (max(n, before.order),))
+        else:
+            cb = order_scan(orig, (max(n, orig.order),)) if orig is not None and orig.order > 1 else None
+        ca = order_scan(after, (max(n, after.order),)) if after.order > 1 else None
+        kb = ka = (0, float("nan"))
+        if before.order > 1:           # .re2 has no curved format: what it writes is the corners alone
+            csb, csa = corner_scaled_jacobian(before.points, before.corners), corner_scaled_jacobian(after.points, after.corners)
+            kb, ka = (int((csb <= 0).sum()), float(csb.min())), (int((csa <= 0).sum()), float(csa.min()))
         rb, ra = region_quality(before, th), region_quality(after, th)
         tg = targets_held(np.asarray(after.points, float), resolved)
         fro = resolved.kind == cn.FROZEN
@@ -227,6 +254,12 @@ class HexAdapter(_session.RungAdapter):
                          % (sa.n_inverted[0], n, sa.min_sj[0]))
         if sa.skipped:
             warns.append("sampled reading at order %d declined by the scan budget: unchecked" % n)
+        if ca is not None and ca.orders and not ca.clean:
+            warns.append("%d hex(es) fold in the curved map sampled at order %d (min %.4f)"
+                         % (ca.n_inverted[0], n, ca.min_sj[0]))
+        if ka[0] > kb[0]:
+            warns.append("%d hex(es) invert at the corners alone (%d before): .re2 writes the corners only"
+                         % (ka[0], kb[0]))
         d3 = ["per region (hexes, inverted, min scaled J, below %s):" % "/".join("%g" % t for t in th)]
         for x, y in zip(rb, ra):
             d3.append("%-16s %5d  inv %d -> %d  min %.4f -> %.4f  below %s -> %s"
@@ -234,14 +267,19 @@ class HexAdapter(_session.RungAdapter):
                          "/".join(map(str, x.below)), "/".join(map(str, y.below))))
         d3.append("sampled at order %d (.re2 trilinear map): before %s" % (n, _scan_text(sb)))
         d3.append("%s after  %s" % (" " * 38, _scan_text(sa)))
-        if cb is not None:
+        if cb is not None and before.order > 1:
+            d3.append("curved map at order %d: before %s" % (n, _scan_text(cb)))
+            d3.append("%s after  %s" % (" " * 24, _scan_text(ca)))
+            d3.append(".re2 corners alone: min scaled J %.4f -> %.4f, inverted %d -> %d" % (kb[1], ka[1], kb[0], ka[0]))
+        elif cb is not None:
             d3.append("high-order input, its curved map at order %d: %s (the result is linear)"
                       % (n, _scan_text(cb)))
         d4 = ["%-8s %-10s %5d vertices, max distance %.2e" % (t.kind, t.name, t.n_vertices, t.max_distance)
               for t in tg]
         d4.append("frozen: %d vertices, %d not bit-identical" % (int(fro.sum()), moved))
         data = {"thresholds": th, "regions_before": rb, "regions_after": ra, "sample_order": n,
-                "sampled_before": sb, "sampled_after": sa, "curved_before": cb, "targets": tg,
+                "sampled_before": sb, "sampled_after": sa, "curved_before": cb, "curved_after": ca,
+                "corners_before": kb, "corners_after": ka, "targets": tg,
                 "n_frozen": int(fro.sum()), "n_frozen_moved": moved}
         return _session.Audit(tuple(warns), tuple(fails), data, tuple(d3), tuple(d4))
 
@@ -253,6 +291,14 @@ class HexAdapter(_session.RungAdapter):
         files = {}
         for tag, M in (("before", before), ("after", after)):
             m = sm.corner_metrics(M.points, M.corners)
+            if M.order > 1:            # a curved mesh has more nodes than points: per-element data only
+                move = np.abs(element_blocks(M) - element_blocks(before)).max(axis=(1, 2)) if before.order == M.order \
+                    else np.zeros(M.n_hexes)
+                path = os.path.join(directory, tag + ".vtu")
+                writer.to_vtu(M, path, cell_data={"sj_min": scaled_jacobian(M, M.order), "sj_corner_min": m.sj.min(1),
+                                                  "node_move_max": move})
+                files[tag] = path
+                continue
             dist = np.zeros(M.n_points)
             for k, objs in targets(resolved):
                 for t, o in enumerate(objs):

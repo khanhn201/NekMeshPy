@@ -7,7 +7,7 @@ from hexblocks import block
 
 from nekmeshpy import hexmesh, linemesh, quadmesh
 from nekmeshpy.core.smoother.schedule import StageLog
-from nekmeshpy.hexmesh.smoother import SmoothSession, linearize, smooth
+from nekmeshpy.hexmesh.smoother import SmoothSession, smooth
 from nekmeshpy.hexmesh.smoother import constrain as cn
 
 SCHED = [("laplace", {"passes": 2}), ("optimize", {"iters": 5})]
@@ -84,11 +84,13 @@ def test_report_per_region_and_files_per_round(tmp_path):
     assert hexmesh.smoother.report.round_report(s.current, prop.mesh, s.resolved, sample_order=2).passed
 
 
-def test_a_high_order_input_is_refused_with_the_way_out():
+def test_a_high_order_input_stays_curved_through_a_round():
     cyl = hexmesh.extrude(quadmesh.ogrid(linemesh.circle(1.0, 8, order=2), 2, 1), 1.0, 1)
-    with pytest.raises(ValueError, match="linearize"):
-        SmoothSession(cyl, [])
-    s = SmoothSession(linearize(cyl), [], sample_order=2)
+    s = SmoothSession(cyl, [], sample_order=4)
+    assert s.current is cyl and s.original is cyl
+    rep = s.run(1, schedule=[("laplace", {"passes": 2})])[0]
+    assert rep.passed and s.current.order == 2 and np.array_equal(s.current.corners, cyl.corners)
+    assert rep.curved_before is not None and rep.curved_after is not None and "curved map" in str(rep)
     with pytest.raises(NotImplementedError, match="cannot rebuild"):
         s.rebuild_high_order()
 

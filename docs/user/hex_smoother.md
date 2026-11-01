@@ -1,8 +1,8 @@
 # Smoothing a hex mesh (experimental)
 
 `nekmeshpy.hexmesh.smoother` is the {doc}`quad smoother <quad_smoother>` one rung up: the same constraint vocabulary, the
-same element-shrink Laplace and shape optimizer, the same schedules, on the corners of a linear `HexMesh`. It moves
-vertices only; connectivity, element tags and face tags never change.
+same element-shrink Laplace and shape optimizer, the same schedules, on the corners of a `HexMesh`. It moves vertices
+only (on a curved mesh the curved nodes follow); connectivity, element tags and face tags never change.
 
 ```{warning}
 Experimental. It has been tested on small blocks only (a few hundred hexes) and is pure NumPy: expect it to be slow
@@ -90,7 +90,9 @@ rolled back.
 holds the mesh, its constraints and a stack of accepted states. `propose(schedule)` runs on a copy and returns a `Proposal` (candidate mesh, report, schedule);
 `accept` pushes it (refused if the round failed or is stale), `undo(n)` pops, and `run(n, review="print" | "auto")` is the
 no-wait path. With `out_dir=` each round writes `round_NN/before.vtu` and `after.vtu` with per-hex `sj_min` and per-point
-displacement. It takes a linear mesh (a curved one is refused with a pointer to `linearize`).
+displacement (for a curved mesh, per-hex `sj_min`, `sj_corner_min` and `node_move_max`). It takes a linear or a curved
+mesh and keeps its order: on a curved one the native stages carry the curved nodes and a `tmop` stage moves them all
+(`keep_curved=False` smooths the straight-sided shadow instead).
 
 ```python
 sess = hs.SmoothSession(mesh, [], boundary="frozen", sample_order=2, out_dir="rounds")
@@ -113,7 +115,7 @@ sections except 5, "propagate", which does not arise at the top rung. It gives:
 - every corner metric before → after;
 - one row per region (`element_tags`), with counts below `THRESHOLDS = (0.1, 0.2, 0.3)`;
 - the **sampled** reading: the `.re2` trilinear map read on the GLL lattice of `sample_order` (default `SCAN_ORDER`,
-  the solver's), plus the curved map of a high-order `original=`;
+  the solver's); for a curved mesh also its curved map at `sample_order` and the corners alone, before → after;
 - the distance of every target's vertices (planes that held show 0);
 - whether every frozen vertex (kept layers, frozen regions, corners) is bit-identical.
 
@@ -121,14 +123,14 @@ A moved frozen vertex, a vertex off its target or more inverted hexes fail the r
 
 ## Limits
 
-- **Linear only.** A high-order mesh is refused with a message: smooth its straight-sided shadow,
-  `hs.linearize(mesh)`. Its curved nodes are not rebuilt afterwards (no hex `rebuild_high_order` yet), and there is
-  no native curved optimization. `round_report(..., original=mesh)` still reads the input's curved map.
+- **Curved meshes: only TMOP smooths them as curved.** A `tmop` stage moves every node and keeps the order; the
+  native stages move the vertices and carry the curved nodes along, without projecting them back onto a curved wall
+  ({doc}`../smoother/mfem/backend`, {doc}`demo <../smoother/mfem/bent_pipe>`). There is no native curved
+  optimization and no hex `rebuild_high_order` yet.
 - **Slow and lightly tested.** Small blocks only so far; larger meshes will be tested step by step.
 - **A curved wall is approximated by its input faces**: a vertex sliding on it lands on the faceted surface, so pass
   your own `Surface` for an exact wall.
 - **The metric seeks cubes** and flattens designed grading: freeze layers with `KeepLayer` or `frozen_region`, or
   run the optional {doc}`TMOP stage <../smoother/mfem/backend>` with `target="input"`, which keeps them
   ({doc}`demo <../smoother/mfem/thin_layer>`).
-- **The session takes a linear mesh** (a curved one is refused with a pointer to `linearize`) and has no input gate:
-  a hex mesh is conforming by construction.
+- **The session has no input gate**: a hex mesh is conforming by construction.

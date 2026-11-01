@@ -17,7 +17,9 @@ of ``(phi - 1) + penalty``; a vertex's gradient involves only its incident quads
 does not depend on the element count (the paper's ``tau = 1000 E`` on a mean objective is
 exactly ``kappa = 1000`` on this sum).
 
-Linear only: these read corners, never high-order nodes.
+The native stages are linear: they read corners, never high-order nodes.  A curved mesh given to
+:func:`run_schedule` has them run on its straight-sided shadow and the curved nodes follow the vertices
+(:func:`~nekmeshpy.quadmesh.smoother.highorder.carry`); the ``tmop`` stage runs on the curved mesh itself.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from ...core.smoother.schedule import (
     Registry,
     Schedule,
     StageLog,
+    run_carried,
     suggest_schedule,
     untangle_schedule,
     user_schedule,
@@ -43,7 +46,8 @@ from ...core.smoother.schedule import (
 from ...linemesh import LineMesh
 from ...pointmesh import PointMesh
 from ..quadmesh import QuadMesh
-from ..query import boundary_edge_ids
+from ..query import boundary_edge_ids, element_blocks
+from . import highorder
 from .constrain import (
     CORNER_DEG,
     FREE,
@@ -120,8 +124,8 @@ def with_points(mesh: QuadMesh, points: PointArray) -> QuadMesh:
     ``mesh`` is untouched (smoothing never writes through ``mesh.points``)."""
     if mesh.order != 1:
         raise ValueError("smoothing moves vertices only; got an order-%d mesh -- smooth the "
-                         "linear mesh and rebuild the high-order nodes afterwards"
-                         % mesh.order)
+                         "linear mesh and rebuild the high-order nodes afterwards, or give the curved mesh to "
+                         "run_schedule / a SmoothSession, which carry its nodes along" % mesh.order)
     pts = np.asarray(points, dtype=float)
     if pts.shape != mesh.points.shape:
         raise ValueError("with_points: expected %s points, got %s"
@@ -613,11 +617,20 @@ def tmop(mesh: QuadMesh, resolved: Resolved, *, normals: PointArray | None = Non
     components (frozen: all; axis-aligned lines: slide; anything curved: held), the element tags as
     attributes -- ``designed`` names the tags (or a ``(Q,)`` mask) of elements that keep their own shape --
     and ``knobs`` its ``target`` / ``metric`` / ``solver`` / ``iters`` / ... .  Needs PyMFEM, imported only when
-    this runs.  Returns a **new** linear mesh and the :class:`StageLog`; ``mesh`` is untouched."""
+    this runs.  Returns a **new** mesh and the :class:`StageLog`; ``mesh`` is untouched.
+
+    A **curved** planar mesh is optimised as a curved mesh: every node is a degree of freedom
+    (:func:`nekmeshpy.core.smoother.mfem.tmop_blocks`), the nodes on a held vertex's edges are held with it, and the
+    mesh comes back at the same order with its connectivity, tags and conformality intact."""
     from ...core.smoother import mfem as _mfem
 
     corners = mesh.corners
     P0 = np.asarray(mesh.points, float)
+    if mesh.order > 1:
+        attr, dmask = _mfem.regions(mesh.element_tags.to_dense(), designed)
+        B, log = _mfem.tmop_blocks(element_blocks(mesh), corners, resolved, order=mesh.order, attributes=attr,
+                                   designed=dmask, **knobs)
+        return highorder.with_blocks(mesh, B), log
     nrm = reference_normals(P0, corners) if normals is None else np.asarray(normals, float)
     attr, dmask = _mfem.regions(mesh.element_tags.to_dense(), designed)
     P, log = _mfem.tmop(P0, corners, resolved, attributes=attr, designed=dmask,
@@ -633,6 +646,8 @@ for _name, _fn, _local, _w in (("laplace", laplace, False, False), ("laplace_loc
                                ("optimize", optimize, False, True), ("optimize_local", optimize, True, True)):
     REGISTRY.register(_name, _fn, local=_local, weights=_w)
 REGISTRY.register("tmop", tmop)               # needs PyMFEM, imported when the stage runs
+#: The stages that run on a curved mesh as it is; every other stage is linear and runs on the shadow.
+CURVED_STAGES = frozenset({"tmop"})
 
 
 def register_method(name: str, fn: Callable[..., tuple[QuadMesh, StageLog]], *, local: bool = False,
@@ -661,9 +676,16 @@ def run_schedule(mesh: QuadMesh, resolved: Resolved, schedule: Schedule, *,
     keeps a copy of the vertex positions after every stage in ``StageLog.points`` (frame ``0`` is the input
     itself), which is what :func:`nekmeshpy.quadmesh.smoother.frames.write_frames` plays back."""
     nrm = reference_normals(mesh.points, mesh.corners) if normals is None else normals
-    return REGISTRY.run(mesh, resolved, schedule,
-                        failing=lambda m: failing_elements(m.points, m.corners, nrm, sj_target=sj_target),
-                        weights=weights, common={"normals": nrm}, record=record)
+
+    def failing(m: QuadMesh) -> BoolArray:
+        return failing_elements(m.points, m.corners, nrm, sj_target=sj_target)
+
+    if mesh.order > 1:             # tmop on the curved mesh; the linear stages on its shadow, the nodes carried
+        return run_carried(REGISTRY, mesh, resolved, schedule, curved=CURVED_STAGES, linearize=highorder.linearize,
+                           carry=highorder.carry, failing=failing, weights=weights, common={"normals": nrm},
+                           record=record)
+    return REGISTRY.run(mesh, resolved, schedule, failing=failing, weights=weights, common={"normals": nrm},
+                        record=record)
 
 
 # -- shape readings ---------------------------------------------------------------------------

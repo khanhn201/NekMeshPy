@@ -52,7 +52,16 @@ What it does, in order:
   integrator: ``target="ideal"``).
 * **Solver**: ``"newton"`` (MINRES, l1-Jacobi) or ``"lbfgs"``.
 
-Order 1 only (the vertices are the nodes); higher-order MFEM meshes are not wired in yet.
+**Orders.**  :func:`tmop` is the order-1 entry (the vertices are the nodes).  :func:`tmop_blocks` is the curved one:
+a mesh of order ``N`` goes in as per-element node blocks, an MFEM mesh with an ``H1`` Gauss-Lobatto nodal space of
+order ``N`` is built over the order-1 cells, every node is a degree of freedom, and the optimised blocks come back at
+the same order.  Before optimising it reads the geometry back from MFEM's own element map and compares it with the
+blocks (``1e-12`` of the extent), so a disagreement between the two libraries' node orders is an error, not a bad
+mesh.  A vertex is held as at order 1 (at its input coordinates), the nodes on an edge or face inherit the hold of
+the vertices of that entity, interior nodes are free.  Targets are built from each element's corner extents, the
+quadrature order defaults to ``2N + 2`` (Gauss-Lobatto, so it contains the nodes), and the log carries a
+:class:`BlockReading`: minimum determinant at the quadrature points, scaled Jacobian at the nodes and on the finer
+``sample_order`` lattice.  Not available at order ``N``: sliding along a curved target (held fixed, as at order 1).
 """
 
 from __future__ import annotations
@@ -64,12 +73,17 @@ from typing import Any, NamedTuple
 import numpy as np
 
 from ..._typing import BoolArray, FloatArray, IntArray, PointArray
+from .. import interp
+from ..fields import gll_nodes, lagrange_matrix
+from ..quality import SCAN_ORDER
+from .blocks import min_det_blocks, node_fixed
 from .constraints import FROZEN, ON_CURVE, ON_SURFACE, TANGENT, TIED, Resolved, snap
 from .quality import history_row
 from .schedule import StageLog
 
 __all__ = ["available", "NEK_TO_MFEM", "DEFAULT_METRIC", "Frame", "plane_frame", "FixedMap", "fixed_components",
-           "element_extents", "regions", "to_mfem_mesh", "from_mfem_mesh", "min_det", "TmopEnergy", "tmop"]
+           "element_extents", "regions", "to_mfem_mesh", "from_mfem_mesh", "min_det", "TmopEnergy", "tmop",
+           "BlockReading", "tmop_blocks"]
 
 #: The MFEM vertex order of a quad (``SQUARE``) and a hex (``CUBE``), as nekmeshpy's own corner indices:
 #: ``mfem_vertex[k] = corner[NEK_TO_MFEM[dim][k]]``.  It is the identity today (a quad runs 0-1-2-3 cyclic, a
@@ -235,9 +249,9 @@ def fixed_components(points: PointArray, r: Resolved, basis: FloatArray | None =
     if counts["line"]:
         notes.append("%d slide on axis-aligned lines" % counts["line"])
     if counts["held_curved"]:
-        notes.append("%d on a curved or non-axis-aligned target held fixed (curved targets not supported yet)" % counts["held_curved"])
+        notes.append("%d on a curved or non-axis-aligned target held fixed (sliding along a curved target is not supported yet)" % counts["held_curved"])
     if counts["held_other"]:
-        notes.append("%d tangent / slide-column held fixed (not supported yet)" % counts["held_other"])
+        notes.append("%d tangent / slide-column held fixed (sliding is not supported for these yet)" % counts["held_other"])
     return FixedMap(P, fixed, tuple(notes), counts)
 
 
@@ -433,90 +447,45 @@ def _make_metric(mfem: Any, metric: int, weight: float, dim: int, mind: Any) -> 
     return cls(weight) if metric in _WEIGHTED else cls()
 
 
-def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes: IntArray | None = None,
-         designed: BoolArray | Sequence[int] | None = None, target: str = "input", metric: int | None = None,
-         metric_weight: float = 0.5, solver: str = "newton", iters: int = 50, rtol: float = 1e-8,
-         sweeps: int = 5, sweep_weight: float = 0.5, quad_order: int = 4, order: int = 1,
-         quality: Callable[[PointArray], Any] | None = None, verbose: bool = False
-         ) -> tuple[PointArray, StageLog]:
-    """One TMOP run on the order-1 mesh ``(points, cells)`` under ``resolved``: the new vertex positions
-    ``(N, 3)`` and a :class:`~nekmeshpy.core.smoother.schedule.StageLog` (its ``reason`` carries the energy
-    before and after, the Newton / L-BFGS iterations and what was fixed).  The rules are in the module docstring.
-
-    ``attributes`` ``(C,)`` ints label the elements (regions); ``designed`` selects the elements that keep their own
-    input shape as target: a boolean ``(C,)`` mask, or integer attribute values (needs ``attributes``).  ``target``
-    is ``"input"``, ``"input_smoothed"`` (``sweeps`` relaxations of weight ``sweep_weight`` on the target edge
-    lengths) or ``"ideal"``.  ``metric`` defaults to ``DEFAULT_METRIC``; ``metric_weight`` is the weight
-    of the combined metrics 80 and 333.  ``solver`` is ``"newton"`` or ``"lbfgs"``, stopping at ``iters`` or a
-    relative residual ``rtol``.  ``quad_order`` is the Gauss-Lobatto quadrature order (4 includes the corners, so
-    the determinant check of the line search covers the geometry a ``.re2`` file keeps).  ``quality(points)``,
-    when given, reads the rung's own ``Quality`` for the log (and enables the rollback: a run that ends with
-    more inverted elements than it began with is refused and the input returned).
-
-    Raises :class:`ImportError` without PyMFEM, :class:`ValueError` for a non-planar quad mesh, an inverted input
-    (except metric 313) or a bad knob, :class:`NotImplementedError` for ``order > 1``."""
-    if order != 1:
-        raise NotImplementedError("tmop: only order 1 is wired in (got order=%r); smooth the linear mesh and "
-                                  "rebuild the high-order nodes afterwards" % (order,))
-    if target not in _TARGETS:
-        raise ValueError("tmop: target must be one of %s, got %r" % (_TARGETS, target))
-    if solver not in _SOLVERS:
-        raise ValueError("tmop: solver must be one of %s, got %r" % (_SOLVERS, solver))
-    if iters < 1:
-        raise ValueError("tmop: iters must be >= 1, got %r" % (iters,))
-    P0 = np.asarray(points, float)
-    C = np.asarray(cells, dtype=np.int64)
-    dim = _dim_of(C)
-    nP, nC = P0.shape[0], C.shape[0]
-    metric_id = DEFAULT_METRIC[dim] if metric is None else int(metric)
-    untangle = metric_id == _UNTANGLE
-    mfem = _mfem()
-    t = mfem.tmop
-
-    frame = plane_frame(P0, C)
-    U0 = (P0 - frame.origin) @ frame.basis
-    fm = fixed_components(P0, resolved, frame.basis)
-    Us = (fm.points - frame.origin) @ frame.basis
-    if not untangle:
-        md = min_det(Us, C)
-        if not md > 0.0:
-            raise ValueError(
-                "tmop: the input has an inverted element (smallest Jacobian determinant %.3e): TMOP's shape metrics "
-                "are undefined there and MFEM aborts the process.  Untangle first (the barrier optimizer, "
-                "`untangle_schedule`) or use metric=313" % md)
-    if untangle and target != "ideal":
-        raise ValueError("tmop: metric 313 untangles toward the ideal unit-size element: use target='ideal'")
-    fixed = fm.fixed
-    inactive = fixed.all(axis=1)[C].all(axis=1)                          # every vertex fully fixed: nothing to move
+def _designed_mask(designed: BoolArray | Sequence[int] | None, attributes: IntArray | None, nC: int) -> BoolArray:
+    """``(C,)`` the designed elements: ``None`` none, a boolean mask as is, integer attribute values through ``attributes``."""
     if designed is None:
-        dmask: BoolArray = np.zeros(nC, bool)
-    else:
-        d = np.asarray(designed)
-        if d.dtype == bool:
-            if d.shape != (nC,):
-                raise ValueError("tmop: a boolean `designed` must be (%d,), got %s" % (nC, d.shape))
-            dmask = d
-        else:
-            if attributes is None:
-                raise ValueError("tmop: `designed` given as attribute values needs `attributes`")
-            dmask = np.isin(np.asarray(attributes), d.astype(np.int64))
-    if untangle and dmask.any():
-        raise ValueError("tmop: metric 313 is a single integrator; `designed` cannot be combined with it")
-    role = np.where(inactive, 3, np.where(dmask, 2, 1)).astype(np.int64)
-    n_active = int((role < 3).sum())
-    if n_active == 0:
-        q0 = quality(P0) if quality is not None else TmopEnergy(0.0)
-        return P0.copy(), StageLog("tmop", iters, 0, "no_elements", "every element is fully constrained", q0, q0, ())
+        return np.zeros(nC, bool)
+    d = np.asarray(designed)
+    if d.dtype == bool:
+        if d.shape != (nC,):
+            raise ValueError("tmop: a boolean `designed` must be (%d,), got %s" % (nC, d.shape))
+        return d
+    if attributes is None:
+        raise ValueError("tmop: `designed` given as attribute values needs `attributes`")
+    return np.isin(np.asarray(attributes), d.astype(np.int64))
 
-    mesh = to_mfem_mesh(Us, C, role)
-    fec = mfem.H1_FECollection(1, dim)
+
+# -- one TMOP solve (any order) ----------------------------------------------------------------------
+class _Bind(NamedTuple):
+    """What a finite-element order adds to a run: the essential vdofs, and how to read the solution back."""
+
+    vdofs: list[int]
+    read: Callable[[], Any]
+
+
+def _solve(mfem: Any, U: PointArray, C: IntArray, role: IntArray, ext: FloatArray | None, *, dim: int, order: int,
+           bind: Callable[[Any, Any, Any], _Bind], metric_id: int, metric_weight: float, target: str, solver: str,
+           iters: int, rtol: float, quad_order: int, untangle: bool, md0: float, verbose: bool
+           ) -> tuple[Any, float, float, int, bool]:
+    """The MFEM side of a run, written once for every order: build the order-``order`` nodal space over the mesh
+    of vertices ``U`` ``(nV, dim)`` and order-1 cells ``C``, hand ``bind`` the space and the nodal grid function
+    (it places the nodes, answers with the essential vdofs and the reader), run Newton / L-BFGS, and return
+    ``(read(), energy before, energy after, iterations, converged)``.  ``role`` is ``1`` active, ``2`` designed,
+    ``3`` inactive per element; ``ext`` ``(C, dim)`` are the target edge lengths (``None`` for ``"ideal"``)."""
+    t = mfem.tmop
+    mesh = to_mfem_mesh(U, C, role)
+    fec = mfem.H1_FECollection(order, dim) if order == 1 else mfem.H1_FECollection(order, dim, mfem.BasisType.GaussLobatto)
     fes = mfem.FiniteElementSpace(mesh, fec, dim, mfem.Ordering.byNODES)
     mesh.SetNodalFESpace(fes)
     x = mfem.GridFunction(fes)
     mesh.SetNodalGridFunction(x)
-    got = np.array(x.GetDataArray(), copy=True).reshape(dim, nP).T
-    if float(np.abs(got - Us).max(initial=0.0)) != 0.0:
-        raise RuntimeError("tmop: MFEM renumbered the vertices on construction; the bridge cannot continue")
+    bound = bind(mfem, fes, x)
     x0 = mfem.GridFunction(fes)
     x0.Assign(x)
 
@@ -526,7 +495,6 @@ def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes:
     mind = None
     if untangle:                    # the shifted barrier updates one shared minimum determinant: a double* in MFEM
         from mfem._ser.cpointers import doublep
-        md0 = min_det(Us, C)
         mind = doublep()
         mind.assign(md0 - 0.01 * abs(md0) if md0 < 0 else 0.0)
         keep.append(mind)
@@ -548,9 +516,7 @@ def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes:
             tc.SetNodes(x0)
             its.append(integrator(_make_metric(mfem, metric_id, metric_weight, dim, mind), tc, [1.0, 0.0, 0.0]))
         else:
-            ext = element_extents(U0, C)
-            if target == "input_smoothed":
-                ext = _smooth_extents(ext, C, role == 1, sweeps, sweep_weight)
+            assert ext is not None
             V = ext.prod(axis=1)
             if dim == 3:
                 rho = (ext / np.cbrt(V)[:, None]) ** 1.5                  # three aspect-ratio fields, product 1
@@ -589,9 +555,8 @@ def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes:
     if untangle:
         its[0].EnableFiniteDifferences(x)                        # 313 has no analytic EvalP in MFEM 4.8
     keep.append(form)
-    vd = sorted(int(fes.DofToVDof(int(v), int(c))) for v, c in zip(*np.nonzero(fixed)))
-    if vd:
-        form.SetEssentialVDofs(mfem.intArray(vd))
+    if bound.vdofs:
+        form.SetEssentialVDofs(mfem.intArray(bound.vdofs))
     e0 = float(form.GetGridFunctionEnergy(x))
 
     ir = irules.Get(fes.GetFE(0).GetGeomType(), quad_order)
@@ -621,11 +586,94 @@ def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes:
     e1 = float(form.GetGridFunctionEnergy(x))
     done = int(sol.GetNumIterations())
     converged = bool(sol.GetConverged())
-    Un = np.array(x.GetDataArray(), copy=True).reshape(dim, nP).T
-    Un[fixed] = Us[fixed]                                        # fixed components: the bits we were given
-    Pn = fm.points + (Un - Us) @ frame.basis.T
+    result = bound.read()
     while keep:                                                  # release in reverse order of creation
         keep.pop()
+    return result, e0, e1, done, converged
+
+
+def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes: IntArray | None = None,
+         designed: BoolArray | Sequence[int] | None = None, target: str = "input", metric: int | None = None,
+         metric_weight: float = 0.5, solver: str = "newton", iters: int = 50, rtol: float = 1e-8,
+         sweeps: int = 5, sweep_weight: float = 0.5, quad_order: int = 4, order: int = 1,
+         quality: Callable[[PointArray], Any] | None = None, verbose: bool = False
+         ) -> tuple[PointArray, StageLog]:
+    """One TMOP run on the order-1 mesh ``(points, cells)`` under ``resolved``: the new vertex positions
+    ``(N, 3)`` and a :class:`~nekmeshpy.core.smoother.schedule.StageLog` (its ``reason`` carries the energy
+    before and after, the Newton / L-BFGS iterations and what was fixed).  The rules are in the module docstring.
+
+    ``attributes`` ``(C,)`` ints label the elements (regions); ``designed`` selects the elements that keep their own
+    input shape as target: a boolean ``(C,)`` mask, or integer attribute values (needs ``attributes``).  ``target``
+    is ``"input"``, ``"input_smoothed"`` (``sweeps`` relaxations of weight ``sweep_weight`` on the target edge
+    lengths) or ``"ideal"``.  ``metric`` defaults to ``DEFAULT_METRIC``; ``metric_weight`` is the weight
+    of the combined metrics 80 and 333.  ``solver`` is ``"newton"`` or ``"lbfgs"``, stopping at ``iters`` or a
+    relative residual ``rtol``.  ``quad_order`` is the Gauss-Lobatto quadrature order (4 includes the corners, so
+    the determinant check of the line search covers the geometry a ``.re2`` file keeps).  ``quality(points)``,
+    when given, reads the rung's own ``Quality`` for the log (and enables the rollback: a run that ends with
+    more inverted elements than it began with is refused and the input returned).
+
+    Raises :class:`ImportError` without PyMFEM, :class:`ValueError` for a non-planar quad mesh, an inverted input
+    (except metric 313) or a bad knob, or ``order != 1`` (:func:`tmop_blocks` is the curved entry)."""
+    if order != 1:
+        raise ValueError("tmop: this entry point takes the order-1 mesh (got order=%r); a curved mesh's node blocks go "
+                         "through tmop_blocks" % (order,))
+    if target not in _TARGETS:
+        raise ValueError("tmop: target must be one of %s, got %r" % (_TARGETS, target))
+    if solver not in _SOLVERS:
+        raise ValueError("tmop: solver must be one of %s, got %r" % (_SOLVERS, solver))
+    if iters < 1:
+        raise ValueError("tmop: iters must be >= 1, got %r" % (iters,))
+    P0 = np.asarray(points, float)
+    C = np.asarray(cells, dtype=np.int64)
+    dim = _dim_of(C)
+    nP, nC = P0.shape[0], C.shape[0]
+    metric_id = DEFAULT_METRIC[dim] if metric is None else int(metric)
+    untangle = metric_id == _UNTANGLE
+    mfem = _mfem()
+
+    frame = plane_frame(P0, C)
+    U0 = (P0 - frame.origin) @ frame.basis
+    fm = fixed_components(P0, resolved, frame.basis)
+    Us = (fm.points - frame.origin) @ frame.basis
+    if not untangle:
+        md = min_det(Us, C)
+        if not md > 0.0:
+            raise ValueError(
+                "tmop: the input has an inverted element (smallest Jacobian determinant %.3e): TMOP's shape metrics "
+                "are undefined there and MFEM aborts the process.  Untangle first (the barrier optimizer, "
+                "`untangle_schedule`) or use metric=313" % md)
+    if untangle and target != "ideal":
+        raise ValueError("tmop: metric 313 untangles toward the ideal unit-size element: use target='ideal'")
+    fixed = fm.fixed
+    inactive = fixed.all(axis=1)[C].all(axis=1)                          # every vertex fully fixed: nothing to move
+    dmask = _designed_mask(designed, attributes, nC)
+    if untangle and dmask.any():
+        raise ValueError("tmop: metric 313 is a single integrator; `designed` cannot be combined with it")
+    role = np.where(inactive, 3, np.where(dmask, 2, 1)).astype(np.int64)
+    n_active = int((role < 3).sum())
+    if n_active == 0:
+        q0 = quality(P0) if quality is not None else TmopEnergy(0.0)
+        return P0.copy(), StageLog("tmop", iters, 0, "no_elements", "every element is fully constrained", q0, q0, ())
+
+    ext = None
+    if (role == 1).any() and target != "ideal":
+        ext = element_extents(U0, C)
+        if target == "input_smoothed":
+            ext = _smooth_extents(ext, C, role == 1, sweeps, sweep_weight)
+
+    def bind(mfem: Any, fes: Any, x: Any) -> _Bind:
+        got = np.array(x.GetDataArray(), copy=True).reshape(dim, nP).T
+        if float(np.abs(got - Us).max(initial=0.0)) != 0.0:
+            raise RuntimeError("tmop: MFEM renumbered the vertices on construction; the bridge cannot continue")
+        vd = sorted(int(fes.DofToVDof(int(v), int(c))) for v, c in zip(*np.nonzero(fixed)))
+        return _Bind(vd, lambda: np.array(x.GetDataArray(), copy=True).reshape(dim, nP).T)
+
+    Un, e0, e1, done, converged = _solve(
+        mfem, Us, C, role, ext, dim=dim, order=1, bind=bind, metric_id=metric_id, metric_weight=metric_weight,
+        target=target, solver=solver, iters=iters, rtol=rtol, quad_order=quad_order, untangle=untangle,
+        md0=min_det(Us, C) if untangle else 0.0, verbose=verbose)
+    Un[fixed] = Us[fixed]                                        # fixed components: the bits we were given
+    Pn = fm.points + (Un - Us) @ frame.basis.T
 
     q0 = quality(fm.points) if quality is not None else TmopEnergy(e0)
     q1 = quality(Pn) if quality is not None else TmopEnergy(e1)
@@ -645,3 +693,215 @@ def tmop(points: PointArray, cells: IntArray, resolved: Resolved, *, attributes:
         "converged" if converged else "stopped at the iteration limit", done, energies, detail)
     hist = ((0, *history_row(q0)), (done, *history_row(q1)))
     return Pn, StageLog("tmop", iters, done, "converged" if converged else "completed", reason, q0, q1, hist)
+
+
+# -- the curved run: order N ---------------------------------------------------------------------------
+class BlockReading(NamedTuple):
+    """The reading a curved stage logs, taken on the node blocks.  ``det_min`` / ``n_inverted`` are at the TMOP
+    quadrature points (the Jacobian the line search guards), ``sj_min`` at the stored nodes and ``sj_sampled`` on
+    the ``sample_order`` lattice -- the order the solver will run at, which is the one that can see a fold between
+    the nodes."""
+
+    energy: float
+    n_inverted: int
+    sj_min: float
+    objective_mean: float
+    det_min: float
+    sj_sampled: float
+    sample_order: int
+
+    def __str__(self) -> str:
+        return ("TMOP energy %.6e; min det %.4e at the quadrature points; min scaled J %.4f at the nodes, %.4f at "
+                "order %d; %d inverted" % (self.energy, self.det_min, self.sj_min, self.sj_sampled, self.sample_order,
+                                           self.n_inverted))
+
+
+def _native_to_lex(mfem: Any, fes: Any, order: int, dim: int) -> IntArray:
+    """``dm`` with ``dm[lex] = native``: the MFEM-native local index of the node at lexicographic index ``lex``
+    (axis 0 fastest) of the Gauss-Lobatto lattice, read off the reference positions MFEM reports for its nodes."""
+    nodes = fes.GetFE(0).GetNodes()
+    ref = np.array([[getattr(nodes.IntPoint(i), a) for a in "xyz"[:dim]] for i in range(nodes.GetNPoints())])
+    g = gll_nodes(order)
+    idx = np.abs(ref[:, :, None] - g[None, None, :]).argmin(axis=2)
+    if float(np.abs(ref - g[idx]).max()) > 1e-12:
+        raise RuntimeError("tmop: MFEM's H1 nodes of order %d are not the Gauss-Lobatto lattice" % order)
+    lex = sum(idx[:, a] * (order + 1) ** a for a in range(dim))
+    dm: IntArray = np.empty(len(lex), dtype=np.int64)
+    dm[lex] = np.arange(len(lex))
+    return dm
+
+
+def _transform_error(mfem: Any, mesh: Any, U: FloatArray, order: int, dim: int, n_elements: int = 400) -> float:
+    """The largest distance between MFEM's own element map and the Lagrange interpolant of the blocks ``U``
+    ``(E, M, dim)``, over a few reference points of up to ``n_elements`` elements -- the geometry-reproduction check:
+    it reads the geometry MFEM will optimise, not just the array the nodes were written to."""
+    pts = np.array([[0.5] * dim, [0.13, 0.71, 0.37][:dim], [0.88, 0.22, 0.64][:dim], [0.31, 0.93, 0.08][:dim]])
+    A = [lagrange_matrix(gll_nodes(order), pts[:, a]) for a in range(dim)]          # (q, order+1) per axis
+    sel = np.unique(np.linspace(0, U.shape[0] - 1, min(U.shape[0], n_elements)).astype(np.int64))
+    row = order + 1
+    b = U[sel].reshape((len(sel),) + (row,) * dim + (dim,))
+    ref = (np.einsum("qj,qi,ejic->eqc", A[1], A[0], b) if dim == 2
+           else np.einsum("qk,qj,qi,ekjic->eqc", A[2], A[1], A[0], b))
+    worst = 0.0
+    for n, e in enumerate(sel):
+        T = mesh.GetElementTransformation(int(e))
+        for q in range(len(pts)):
+            ip = mfem.IntegrationPoint()
+            (ip.Set2 if dim == 2 else ip.Set3)(*[float(v) for v in pts[q]])
+            T.SetIntPoint(ip)
+            worst = max(worst, float(np.abs(np.asarray(T.Transform(ip))[:dim] - ref[n, q]).max()))
+    return worst
+
+
+def tmop_blocks(blocks: FloatArray, cells: IntArray, resolved: Resolved, *, order: int,
+                attributes: IntArray | None = None, designed: BoolArray | Sequence[int] | None = None,
+                target: str = "input", metric: int | None = None, metric_weight: float = 0.5,
+                solver: str = "newton", iters: int = 50, rtol: float = 1e-8, sweeps: int = 5,
+                sweep_weight: float = 0.5, quad_order: int | None = None, sample_order: int | None = None,
+                verbose: bool = False) -> tuple[FloatArray, StageLog]:
+    """One TMOP run on a **curved** mesh given as node blocks: every Gauss-Lobatto node is a degree of freedom, and
+    the new blocks come back at the same order.
+
+    ``blocks`` ``(E, (order+1)**dim, 3)`` are the elements' nodes in nekmeshpy's lexicographic order (a rung's
+    ``element_blocks``); ``cells`` ``(E, 2**dim)`` the corner ids into ``resolved`` (the order-1 topology).  Shared
+    nodes must agree between the elements that share them -- checked, by reading the blocks back from MFEM before
+    anything is optimised (to ``1e-12`` of the mesh extent), which also catches any mismatch between the two
+    libraries' node orders.
+
+    *What moves.*  Every node except the held ones.  A vertex is held as at order 1 (:func:`fixed_components`:
+    frozen in every component, an axis-aligned plane in its normal, an axis-aligned line in the two others, anything
+    curved or tangent in all of them), at its **input** coordinates -- vertices are not re-snapped onto their
+    targets here.  The nodes on an edge or face inherit the hold of their entity's vertices
+    (:func:`~nekmeshpy.core.smoother.blocks.node_fixed`: held in a component when every vertex of the entity holds
+    it), so a frozen wall keeps its curved edge and face nodes bit for bit and a plane keeps its nodes on the plane;
+    interior nodes are free.  Sliding along a curved target is not available, the vertices and entities on one are
+    held.
+
+    *Targets, metric, solver* as :func:`tmop`; the targets are built from each element's **corner** extents (one
+    target per element, read at every quadrature point).  ``quad_order`` is the Gauss-Lobatto quadrature order
+    (default ``2*order + 2``, which includes the nodes and grows with the order); ``sample_order`` (default
+    ``max(order, SCAN_ORDER)``) is the lattice the logged scaled Jacobian is also read on.  The log carries a
+    :class:`BlockReading` before and after, and a run that raises the number of elements with a non-positive
+    determinant at the quadrature points, or does not lower the energy, is refused and the input returned."""
+    if target not in _TARGETS:
+        raise ValueError("tmop: target must be one of %s, got %r" % (_TARGETS, target))
+    if solver not in _SOLVERS:
+        raise ValueError("tmop: solver must be one of %s, got %r" % (_SOLVERS, solver))
+    if iters < 1:
+        raise ValueError("tmop: iters must be >= 1, got %r" % (iters,))
+    if order < 2:
+        raise ValueError("tmop_blocks: order must be >= 2 (order 1 is tmop), got %r" % (order,))
+    B0 = np.asarray(blocks, float)
+    C = np.asarray(cells, dtype=np.int64)
+    dim = _dim_of(C)
+    nE, M = C.shape[0], (order + 1) ** dim
+    if B0.shape != (nE, M, 3):
+        raise ValueError("tmop_blocks: blocks must be (%d, %d, 3) for order %d, got %s" % (nE, M, order, B0.shape))
+    nP = int(resolved.kind.shape[0])
+    qo = 2 * order + 2 if quad_order is None else int(quad_order)
+    so = max(order, SCAN_ORDER) if sample_order is None else int(sample_order)
+    metric_id = DEFAULT_METRIC[dim] if metric is None else int(metric)
+    untangle = metric_id == _UNTANGLE
+    mfem = _mfem()
+
+    corner = interp.corner_indices(order, dim)
+    P0 = np.zeros((nP, 3))
+    P0[C.reshape(-1)] = B0[:, corner, :].reshape(-1, 3)
+    ext_all = float(np.ptp(B0.reshape(-1, 3), axis=0).max())
+    if float(np.abs(P0[C] - B0[:, corner, :]).max(initial=0.0)) > 1e-12 * ext_all:
+        raise ValueError("tmop_blocks: the corner nodes of the blocks disagree between the elements sharing a vertex")
+    frame = plane_frame(P0, C)
+    if dim == 2:                                                   # a curved quad stays in its plane, or TMOP cannot run
+        off = (B0 - frame.origin) - ((B0 - frame.origin) @ frame.basis) @ frame.basis.T
+        if float(np.ptp(off.reshape(-1, 3), axis=0).max()) > 1e-9 * ext_all:
+            raise ValueError("tmop: the quad mesh is not planar at its curved nodes (they sit up to %.2e off the "
+                             "plane of its vertices): TMOP needs element dimension == space dimension"
+                             % float(np.ptp(off.reshape(-1, 3), axis=0).max()))
+    Ub = (B0 - frame.origin) @ frame.basis                         # (E, M, dim) in the working frame
+    U0 = (P0 - frame.origin) @ frame.basis
+    fm = fixed_components(P0, resolved, frame.basis)
+    held = node_fixed(fm.fixed, C, order, dim)                     # (E, M, dim)
+    geom = mfem.Geometry.SQUARE if dim == 2 else mfem.Geometry.CUBE
+    rules = mfem.IntegrationRules(0, mfem.Quadrature1D.GaussLobatto)
+    npts = int(rules.Get(geom, qo).GetNPoints())
+    nq = int(round(npts ** (1.0 / dim)))
+    det0 = min_det_blocks(Ub, order, dim, nq)
+    if not untangle and not float(det0.min()) > 0.0:
+        raise ValueError(
+            "tmop: the input has an inverted element (smallest Jacobian determinant %.3e at the quadrature points): "
+            "TMOP's shape metrics are undefined there and MFEM aborts the process.  Untangle first or use "
+            "metric=313" % float(det0.min()))
+    if untangle and target != "ideal":
+        raise ValueError("tmop: metric 313 untangles toward the ideal unit-size element: use target='ideal'")
+    dmask = _designed_mask(designed, attributes, nE)
+    if untangle and dmask.any():
+        raise ValueError("tmop: metric 313 is a single integrator; `designed` cannot be combined with it")
+    inactive = held.all(axis=(1, 2))                               # every node held: nothing to move
+    role = np.where(inactive, 3, np.where(dmask, 2, 1)).astype(np.int64)
+    n_active = int((role < 3).sum())
+
+    def reading(B: FloatArray, U: FloatArray, energy: float) -> BlockReading:
+        det = min_det_blocks(U, order, dim, nq)
+        sj = interp.scaled_jacobian(B, order, dim)
+        sjs = interp.sampled_scaled_jacobian(B, order, so, dim) if so > order else sj
+        return BlockReading(energy, int((det <= 0.0).sum()), float(sj.min()), energy / max(n_active, 1),
+                            float(det.min()), float(sjs.min()), so)
+
+    if n_active == 0:
+        q0 = reading(B0, Ub, 0.0)
+        return B0.copy(), StageLog("tmop", iters, 0, "no_elements", "every node is held", q0, q0, ())
+    ext = None
+    if (role == 1).any() and target != "ideal":
+        ext = element_extents(U0, C)
+        if target == "input_smoothed":
+            ext = _smooth_extents(ext, C, role == 1, sweeps, sweep_weight)
+
+    def bind(mfem: Any, fes: Any, x: Any) -> _Bind:
+        ndof = int(fes.GetNDofs())
+        edofs = np.array([list(fes.GetElementDofs(e)) for e in range(nE)], dtype=np.int64)    # (E, M) native order
+        dofs = edofs[:, _native_to_lex(mfem, fes, order, dim)]                                # (E, M) lexicographic
+        data = np.asarray(x.GetDataArray()).reshape(dim, ndof)       # a view of the nodal data, byNODES
+        for c in range(dim):
+            data[c, dofs.reshape(-1)] = Ub[:, :, c].reshape(-1)
+
+        def read() -> FloatArray:
+            return np.array(np.asarray(x.GetDataArray()).reshape(dim, ndof)[:, dofs].transpose(1, 2, 0))
+
+        err = float(np.abs(read() - Ub).max())
+        if err > 1e-12 * ext_all:
+            raise RuntimeError("tmop: the node blocks read back from MFEM differ from the input by %.2e (shared nodes "
+                               "disagree): refusing to optimise" % err)
+        err = _transform_error(mfem, fes.GetMesh(), Ub, order, dim)
+        if err > 1e-10 * ext_all:
+            raise RuntimeError("tmop: MFEM's own element map differs from the input blocks by %.2e (the two libraries' "
+                               "node orders disagree): refusing to optimise" % err)
+        hd: BoolArray = np.zeros((ndof, dim), bool)
+        hd[dofs.reshape(-1)] = held.reshape(-1, dim)
+        vd = sorted(int(c * ndof + d) for d, c in zip(*np.nonzero(hd)))
+        return _Bind(vd, read)
+
+    Un, e0, e1, done, converged = _solve(
+        mfem, U0, C, role, ext, dim=dim, order=order, bind=bind, metric_id=metric_id, metric_weight=metric_weight,
+        target=target, solver=solver, iters=iters, rtol=rtol, quad_order=qo, untangle=untangle,
+        md0=float(det0.min()), verbose=verbose)
+    Un[held] = Ub[held]                                            # held components: the bits we were given
+    Bn = B0 + (Un - Ub) @ frame.basis.T
+    q0 = reading(B0, Ub, e0)
+    q1 = reading(Bn, (Bn - frame.origin) @ frame.basis, e1)
+    detail = ("metric %d, target %s, %s, order %d, quadrature %d: %d of %d elements active%s; fixed: %s%s"
+              % (metric_id, target, solver, order, qo, n_active, nE,
+                 ", %d designed" % int(dmask.sum()) if dmask.any() else "", ", ".join(fm.notes) or "nothing",
+                 " (edge and face nodes follow their vertices)" if fm.fixed.any() else ""))
+    if not np.isfinite(Bn).all() or not np.isfinite(e1) or (not untangle and e1 > e0 * (1 + 1e-9) + 1e-300):
+        return B0.copy(), StageLog("tmop", iters, 0, "rolled_back", "TMOP energy %.6e -> %.6e (not a descent); stage "
+                                   "refused (%s)" % (e0, e1, detail), q0, q0, ())
+    if q1.n_inverted > q0.n_inverted:
+        return B0.copy(), StageLog("tmop", iters, 0, "rolled_back",
+                                   "ended with %d inverted elements vs %d at the start; stage refused (%s)"
+                                   % (q1.n_inverted, q0.n_inverted, detail), q0, q0, ())
+    energies = ("the 313 barrier energy is shifted as it goes and is not comparable" if untangle
+                else "TMOP energy %.6e -> %.6e" % (e0, e1))
+    reason = "%s in %d iterations; %s (%s)" % (
+        "converged" if converged else "stopped at the iteration limit", done, energies, detail)
+    hist = ((0, *history_row(q0)), (done, *history_row(q1)))
+    return Bn, StageLog("tmop", iters, done, "converged" if converged else "completed", reason, q0, q1, hist)

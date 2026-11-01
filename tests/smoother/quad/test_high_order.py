@@ -128,11 +128,11 @@ def test_bad_arguments_are_refused():
         ho.rebuild_high_order(sec, sec.points[:-1])
 
 
-def test_a_session_on_a_curved_mesh_smooths_the_straight_shadow_and_rebuilds_on_request():
+def test_a_session_on_a_curved_mesh_can_smooth_the_straight_shadow_and_rebuild_on_request():
     sec = _disk(4)
     jitter = np.random.default_rng(3).normal(size=sec.points.shape) * [0.03, 0.03, 0]
     sec_j = smooth.with_points(ho.linearize(sec), sec.points + jitter)          # a jittered linear start
-    s = SmoothSession(sec, [cn.OnCurve("wall", cn.circle([0, 0, 0], 1.0))])
+    s = SmoothSession(sec, [cn.OnCurve("wall", cn.circle([0, 0, 0], 1.0))], keep_curved=False)
     assert s.original is sec and s.current.order == 1
     assert s.original is not None and sec_j.order == 1
     p = s.propose()

@@ -1,0 +1,5 @@
+- **TMOP smooths the curved mesh as curved.** The order stays 3 and every node moves: the minimum scaled Jacobian rises from 0.24 to 0.57 on the order-7 lattice and from 0.68 to 0.85 at the corners, with no hex inverted, in 9 Newton iterations.
+- **The wall is held, the caps slide.** No wall node moves, and the cap nodes stay in their planes to 2e-16. Between its nodes the wall stays as close to the torus as the input's order-3 wall: 0.020 % of R.
+- **The order-1 route loses the wall.** Its result is straight-sided: off the torus by up to 9.3 % of R, and 10.5 % short in volume. Its scaled Jacobian reads highest, but it is the reading of a different, faceted geometry.
+- **Moving vertices cannot repair curved nodes.** The native optimizer raises the corners from 0.68 to 0.81, but the perturbation of the curved nodes rides along: 0.47 on the order-7 lattice against 0.57 for TMOP, and a mean of 0.79 at the nodes against 0.90. Its wall vertices slide on the faceted input wall and the carried nodes are not projected back, so the wall drifts to 0.022 % of R.
+- **Every result is conformal and watertight.**

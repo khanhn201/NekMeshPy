@@ -1,14 +1,14 @@
 # Hex smoothing
 
-`nekmeshpy.hexmesh.smoother` moves the vertices of a linear hex mesh, never its connectivity, under the same
+`nekmeshpy.hexmesh.smoother` moves the vertices of a hex mesh, never its connectivity, under the same
 constraints, Laplace smoothing and shape optimizer as the {doc}`quad smoother <../../user/quad_smoother>`
 ({doc}`user guide <../../user/hex_smoother>`). The pages call the stages directly; in practice the same stages run
 as reviewed rounds of a `SmoothSession` (`propose`, then `accept` or `undo`).
 
 ```{warning}
-Experimental. The hex smoother is native (pure NumPy), works on **linear meshes only**, and has been tested on small
-meshes (a few hundred hexes). High-order support is planned; MFEM's TMOP is an optional stage
-({doc}`../mfem/index`).
+Experimental. The hex smoother is native (pure NumPy), moves **vertices only** (on a curved mesh the curved nodes
+follow), and has been tested on small meshes (a few hundred hexes). MFEM's TMOP, an optional stage, smooths a curved
+mesh as curved ({doc}`../mfem/index`).
 ```
 
 Each page below is one small example that shows one behaviour. Every page has a 3-D viewer: the input and each result
@@ -35,4 +35,5 @@ untangle
 
 Every number on these pages is computed by the example script named on the page and written into the page by
 `python docs/_ext/gen_smoother_hex_assets.py`; none is typed. The same
-thin layer under MFEM's TMOP has a page of its own: {doc}`../mfem/thin_layer`.
+thin layer under MFEM's TMOP has a page of its own: {doc}`../mfem/thin_layer`, and a curved bent pipe:
+{doc}`../mfem/bent_pipe`.

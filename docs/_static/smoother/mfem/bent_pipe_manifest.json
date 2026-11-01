@@ -1,0 +1,205 @@
+{
+ "title": "A bent pipe, order 3: shell and two face layers (mid-bend, symmetry plane)",
+ "camera": {
+  "direction": [
+   0.5,
+   -1.4,
+   0.6
+  ],
+  "viewUp": [
+   0,
+   0,
+   1
+  ]
+ },
+ "variants": [
+  {
+   "label": "input",
+   "note": "order 3 | min scaled J: 0.24 at order 7, 0.68 at the corners | 0 inverted",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "bent_pipe_input_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Face layers",
+     "vtp": "bent_pipe_input_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj7",
+     "label": "Scaled Jacobian (order 7, worst point)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_nodes",
+     "label": "Scaled Jacobian (stored nodes)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_corner",
+     "label": "Scaled Jacobian (corners, the .re2 geometry)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "label": "order-1 route",
+   "note": "order 1 | min scaled J: 0.85 at order 7, 0.85 at the corners | 0 inverted",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "bent_pipe_order1_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Face layers",
+     "vtp": "bent_pipe_order1_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj7",
+     "label": "Scaled Jacobian (order 7, worst point)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_nodes",
+     "label": "Scaled Jacobian (stored nodes)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_corner",
+     "label": "Scaled Jacobian (corners, the .re2 geometry)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "label": "native optimizer",
+   "note": "order 3 | min scaled J: 0.47 at order 7, 0.81 at the corners | 0 inverted",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "bent_pipe_native_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Face layers",
+     "vtp": "bent_pipe_native_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj7",
+     "label": "Scaled Jacobian (order 7, worst point)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_nodes",
+     "label": "Scaled Jacobian (stored nodes)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_corner",
+     "label": "Scaled Jacobian (corners, the .re2 geometry)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "label": "TMOP, curved",
+   "note": "order 3 | min scaled J: 0.57 at order 7, 0.85 at the corners | 0 inverted",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "bent_pipe_tmop_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Face layers",
+     "vtp": "bent_pipe_tmop_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj7",
+     "label": "Scaled Jacobian (order 7, worst point)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_nodes",
+     "label": "Scaled Jacobian (stored nodes)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "sj_corner",
+     "label": "Scaled Jacobian (corners, the .re2 geometry)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  }
+ ]
+}

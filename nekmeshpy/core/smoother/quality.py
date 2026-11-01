@@ -15,7 +15,7 @@ import numpy as np
 from ..._typing import BoolArray, FloatArray, IntArray
 from .metric import EPS, CornerMetrics
 
-__all__ = ["ShapeStats", "history_row", "reduce_corners", "failing_mask", "corner_angles", "pair_ratios", "shape_stats"]
+__all__ = ["ShapeStats", "history_row", "with_scaled_jacobian", "reduce_corners", "failing_mask", "corner_angles", "pair_ratios", "shape_stats"]
 
 
 def reduce_corners(m: CornerMetrics, objective: float) -> tuple[
@@ -32,6 +32,17 @@ def reduce_corners(m: CornerMetrics, objective: float) -> tuple[
             float(q[0]), float(q[1]), float(q[2]),
             float(phi.mean()) if phi.size else 0.0, float(phi.max(initial=0.0)),
             objective / max(sj.size, 1))
+
+
+def with_scaled_jacobian(q: Any, sj: FloatArray) -> Any:
+    """A rung's ``Quality`` ``q`` (a corner reading) with its scaled-Jacobian fields -- inverted count, min, mean, median
+    and the 1% / 5% / 10% quantiles -- replaced by those of the per-element values ``sj`` ``(n,)``: how a curved mesh is
+    read on the nodes it stores.  The shape metric ``phi`` and the objective stay the corner reading (the metric is
+    defined on corners)."""
+    qs = np.asarray(np.quantile(sj, [0.01, 0.05, 0.10])) if sj.size else np.zeros(3)
+    return q._replace(n_inverted=int((sj <= 0).sum()), sj_min=float(sj.min(initial=np.inf)),
+                      sj_mean=float(sj.mean()) if sj.size else 0.0, sj_median=float(np.median(sj)) if sj.size else 0.0,
+                      sj_q01=float(qs[0]), sj_q05=float(qs[1]), sj_q10=float(qs[2]))
 
 
 def history_row(q: Any) -> tuple[int, float, float]:

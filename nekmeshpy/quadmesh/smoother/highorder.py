@@ -33,6 +33,7 @@ import numpy as np
 
 from ..._typing import BoolArray, FloatArray, IntArray, PointArray
 from ...core import conform, interp
+from ...core.smoother.blocks import carry_blocks, scatter_blocks
 from ...linemesh import LineMesh
 from ...pointmesh import PointMesh
 from .._helpers import entities_from_blocks
@@ -40,7 +41,7 @@ from ..quadmesh import QuadMesh
 from ..query import element_blocks, scaled_jacobian
 from . import constrain as cn
 
-__all__ = ["HighOrderReport", "linearize", "rebuild_high_order"]
+__all__ = ["HighOrderReport", "linearize", "rebuild_high_order", "node_ids", "with_blocks", "carry"]
 
 
 def linearize(mesh: QuadMesh) -> QuadMesh:
@@ -214,3 +215,50 @@ def out_blocks_move(out: QuadMesh, mesh: QuadMesh, untouched: BoolArray, order: 
     if order > mesh.order:
         b_in = interp.resample_block(b_in, mesh.order, order, 2)
     return np.asarray(b_out[untouched] - b_in[untouched])
+
+
+def _shadow(mesh: QuadMesh, flat: FloatArray) -> QuadMesh:
+    """``mesh`` with its stored nodes -- points, then edge interiors, then quad interiors, in that order --
+    replaced by the rows of ``flat`` ``(n, 3)``; the incidence, orientation and tags are the mesh's own."""
+    lm = mesh.line_mesh
+    nP, nE = lm.points.shape[0], lm.interior.shape[0] * lm.interior.shape[1]
+    pts = np.array(flat[:nP])
+    edge = np.array(flat[nP:nP + nE]).reshape(lm.interior.shape)
+    inner = np.array(flat[nP + nE:]).reshape(mesh.interior.shape)
+    new_lm = LineMesh(PointMesh(pts, lm.point_mesh.element_tags), lm.lines, edge if mesh.order > 1 else None,
+                      lm.element_tags)
+    return QuadMesh(new_lm, mesh.quads, mesh.orient, inner if mesh.order > 1 else None, mesh.element_tags)
+
+
+def _flat(mesh: QuadMesh) -> FloatArray:
+    lm = mesh.line_mesh
+    return np.concatenate([lm.points, lm.interior.reshape(-1, 3), mesh.interior.reshape(-1, 3)])
+
+
+def node_ids(mesh: QuadMesh) -> IntArray:
+    """``(Q, (order+1)**2)`` the index of every block node in the flat table ``points, edge interiors, quad
+    interiors`` -- read by running :func:`~nekmeshpy.quadmesh.query.element_blocks` on the ids themselves, so the
+    storage's own orientation conventions are used and none re-derived."""
+    flat = _flat(mesh)
+    ids = np.zeros_like(flat)
+    ids[:, 0] = np.arange(flat.shape[0])
+    return np.rint(element_blocks(_shadow(mesh, ids))[:, :, 0]).astype(np.int64)
+
+
+def with_blocks(mesh: QuadMesh, blocks: FloatArray, points: PointArray | None = None) -> QuadMesh:
+    """A **new** mesh of the same order, connectivity and tags whose node blocks are ``blocks``
+    ``(Q, (order+1)**2, 3)``.  Each shared node is stored once -- an element's own value, the blocks of a
+    conformal mesh agreeing -- so conformality stays structural; ``points`` (when given) are the vertices exactly."""
+    flat = scatter_blocks(node_ids(mesh), np.asarray(blocks, float), _flat(mesh))
+    if points is not None:
+        flat[:mesh.n_points] = points
+    return _shadow(mesh, flat)
+
+
+def carry(mesh: QuadMesh, moved: QuadMesh) -> QuadMesh:
+    """``mesh`` (curved) with its nodes carried to the vertices of ``moved`` (a mesh of the same connectivity, e.g.
+    the linear shadow a native stage smoothed): each node follows the displacement of its element's corners,
+    interpolated bilinearly (:func:`~nekmeshpy.core.smoother.blocks.carry_blocks`) -- no projection onto a target."""
+    d = np.asarray(moved.points, float) - np.asarray(mesh.points, float)
+    new = carry_blocks(element_blocks(mesh), d[mesh.corners], mesh.order, 2)
+    return with_blocks(mesh, new, np.asarray(moved.points, float))

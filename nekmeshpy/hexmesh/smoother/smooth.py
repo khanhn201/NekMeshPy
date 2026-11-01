@@ -28,9 +28,10 @@ and it no longer reduces to the quad metric; ``eta^3`` keeps the two smoothers o
 The objective is the **sum** over hexes of the corner mean (``1/8``) of
 ``w (phi - 1) + kappa max(0, eps - s)``; a vertex's gradient involves only its incident hexes.
 
-Linear only: these read corners, never high-order nodes.  A curved mesh is smoothed as its
-straight-sided shadow (:func:`nekmeshpy.hexmesh.smoother.highorder.linearize`); rebuilding its
-curved nodes afterwards is not available yet.
+The native stages are linear: they read corners, never high-order nodes.  A curved mesh given to
+:func:`run_schedule` has them run on its straight-sided shadow
+(:func:`nekmeshpy.hexmesh.smoother.highorder.linearize`) and the curved nodes follow the vertices
+(:func:`~nekmeshpy.hexmesh.smoother.highorder.carry`); the ``tmop`` stage runs on the curved mesh itself.
 """
 
 from __future__ import annotations
@@ -50,13 +51,15 @@ from ...core.smoother.schedule import (
     Registry,
     Schedule,
     StageLog,
+    run_carried,
     suggest_schedule,
     untangle_schedule,
     user_schedule,
 )
 from ...quadmesh.smoother import smooth as _qs
 from ..hexmesh import HexMesh
-from ..query import boundary_face_ids
+from ..query import boundary_face_ids, element_blocks
+from . import highorder
 from .constrain import (
     FROZEN,
     TANGENT,
@@ -120,11 +123,12 @@ def gradient(points: PointArray, hexes: IntArray, *, kappa: float = KAPPA, eps: 
 
 
 def _require_linear(mesh: HexMesh) -> None:
-    """Refuse a curved mesh, naming the route: the native smoother is linear."""
+    """Refuse a curved mesh, naming the routes: the native stage functions are linear."""
     if mesh.order != 1:
         raise ValueError("the native hex smoother moves vertices only and works on linear meshes; got "
-                         "an order-%d mesh -- smooth its straight-sided shadow (smoother.linearize(mesh)); "
-                         "its curved nodes are not rebuilt afterwards" % mesh.order)
+                         "an order-%d mesh -- smooth its straight-sided shadow (smoother.linearize(mesh)), or "
+                         "give it to run_schedule / a SmoothSession, which carry the curved nodes along"
+                         % mesh.order)
 
 
 def with_points(mesh: HexMesh, points: PointArray) -> HexMesh:
@@ -361,12 +365,20 @@ def tmop(mesh: HexMesh, resolved: Resolved, *, designed: Any = None, **knobs: An
     axis-aligned planes and lines: slide in them; anything curved: held), the element tags are the attributes --
     ``designed`` names the tags (or an ``(E,)`` mask) of elements that keep their own shape, e.g. a boundary
     layer -- and ``knobs`` are its ``target`` / ``metric`` / ``solver`` / ``iters`` / ... .  Needs PyMFEM,
-    imported only when this runs.  Returns a **new** linear mesh and the :class:`StageLog`; ``mesh`` is untouched."""
+    imported only when this runs.  Returns a **new** mesh and the :class:`StageLog`; ``mesh`` is untouched.
+
+    A **curved** mesh is optimised as a curved mesh: every node is a degree of freedom
+    (:func:`nekmeshpy.core.smoother.mfem.tmop_blocks`), the nodes on a held vertex's edges and faces are held with it,
+    and the mesh comes back at the same order with its connectivity, tags and conformality intact."""
     from ...core.smoother import mfem as _mfem
 
     hexes = mesh.corners
     P0 = np.asarray(mesh.points, float)
     attr, dmask = _mfem.regions(mesh.element_tags.to_dense(), designed)
+    if mesh.order > 1:
+        B, log = _mfem.tmop_blocks(element_blocks(mesh), hexes, resolved, order=mesh.order, attributes=attr,
+                                   designed=dmask, **knobs)
+        return highorder.with_blocks(mesh, B), log
     P, log = _mfem.tmop(P0, hexes, resolved, attributes=attr, designed=dmask,
                         quality=lambda X: quality(X, hexes, kappa=KAPPA, eps=EPS), **knobs)
     return with_points(mesh, P), log
@@ -380,6 +392,8 @@ for _name, _fn, _local, _w in (("laplace", laplace, False, False), ("laplace_loc
                                ("optimize", optimize, False, True), ("optimize_local", optimize, True, True)):
     REGISTRY.register(_name, _fn, local=_local, weights=_w)
 REGISTRY.register("tmop", tmop)               # needs PyMFEM, imported when the stage runs
+#: The stages that run on a curved mesh as it is; every other stage is linear and runs on the shadow.
+CURVED_STAGES = frozenset({"tmop"})
 
 
 def register_method(name: str, fn: Callable[..., tuple[HexMesh, StageLog]], *, local: bool = False,
@@ -403,12 +417,16 @@ def run_schedule(mesh: HexMesh, resolved: Resolved, schedule: Schedule, *, sj_ta
     registry (:func:`methods`; :func:`register_method` adds one); *local* stages pick their hexes
     with :func:`failing_elements` at the moment they run.  Returns the final mesh and one
     :class:`StageLog` per stage; ``mesh`` is untouched.  ``record=True`` keeps a copy of the vertex
-    positions after every stage in ``StageLog.points``.  Linear meshes only: a curved mesh is
-    refused with the route to take (:func:`~nekmeshpy.hexmesh.smoother.highorder.linearize`)."""
-    _require_linear(mesh)
-    return REGISTRY.run(mesh, resolved, schedule,
-                        failing=lambda m: failing_elements(m.points, m.corners, sj_target=sj_target),
-                        weights=weights, record=record)
+    positions after every stage in ``StageLog.points``.  A curved mesh keeps its order: ``tmop`` stages run on it,
+    the linear stages run on its straight-sided shadow and carry the curved nodes along
+    (:func:`nekmeshpy.core.smoother.schedule.run_carried`)."""
+    def failing(m: HexMesh) -> BoolArray:
+        return failing_elements(m.points, m.corners, sj_target=sj_target)
+
+    if mesh.order > 1:
+        return run_carried(REGISTRY, mesh, resolved, schedule, curved=CURVED_STAGES, linearize=highorder.linearize,
+                           carry=highorder.carry, failing=failing, weights=weights, record=record)
+    return REGISTRY.run(mesh, resolved, schedule, failing=failing, weights=weights, record=record)
 
 
 # -- shape readings ---------------------------------------------------------------------------

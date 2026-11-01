@@ -12,7 +12,8 @@ The modules keep their names and can also be used as namespaces:
   the method registry and schedules, quality readings
 * ``report``     -- ``round_report``: the before/after reading of one round, and the hex adapter
 * ``session``    -- ``SmoothSession``: reviewed rounds, undo (the shared session on the hex adapter)
-* ``highorder``  -- ``linearize``: the native smoother is linear
+* ``highorder``  -- ``linearize`` and the curved-node helpers (``carry``, ``with_blocks``): native stages move
+  the vertices and carry the curved nodes; ``tmop`` smooths a curved mesh as curved
 
 The constraint vocabulary (kinds, targets, ``Frozen`` / ``OnSurface`` / ``OnCurve`` /
 ``KeepLayer`` / ``SlideColumns``, ``Resolved``, ``snap``, ``constrain_direction``) is the quad

@@ -8,14 +8,15 @@ ordered list of ``(method, knobs)``.  Each rung owns one :class:`Registry` -- th
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
 
 from ..._typing import BoolArray, FloatArray, PointArray
 
-__all__ = ["StageLog", "Schedule", "Method", "Registry", "user_schedule", "untangle_schedule", "suggest_schedule"]
+__all__ = ["StageLog", "Schedule", "Method", "Registry", "run_carried", "user_schedule", "untangle_schedule",
+           "suggest_schedule"]
 
 
 class StageLog(NamedTuple):
@@ -97,6 +98,39 @@ class Registry:
             cur, log = m.fn(cur, resolved, **kw)
             logs.append(log._replace(points=np.array(cur.points, copy=True)) if record else log)
         return cur, logs
+
+
+def run_carried(registry: Registry, mesh: Any, resolved: Any, schedule: Schedule, *, curved: Collection[str],
+                linearize: Callable[[Any], Any], carry: Callable[[Any, Any], Any],
+                failing: Callable[[Any], BoolArray], weights: FloatArray | None = None,
+                common: dict[str, Any] | None = None, record: bool = False) -> tuple[Any, list[StageLog]]:
+    """:meth:`Registry.run` for a **curved** mesh.  A stage named in ``curved`` (``tmop``) runs on the curved mesh
+    and returns one; every other stage is linear: each maximal run of them is handed the straight-sided
+    ``linearize(mesh)`` and the curved nodes follow the result through ``carry(curved, moved)``.  Carrying is
+    additive (a node keeps its offset from the straight-sided element), so one carry per run of linear stages equals
+    one per stage.  ``mesh`` is untouched."""
+    unknown = [m for m, _ in schedule if m not in registry.entries]
+    if unknown:
+        raise ValueError("unknown smoothing method(s) %s; registered: %s" % (unknown, registry.names()))
+    cur = mesh
+    logs: list[StageLog] = []
+    i = 0
+    while i < len(schedule):
+        j = i + 1
+        if schedule[i][0] not in curved:
+            while j < len(schedule) and schedule[j][0] not in curved:
+                j += 1
+        group = schedule[i:j]
+        if schedule[i][0] in curved:
+            cur, lg = registry.run(cur, resolved, group, failing=failing, weights=weights, common=common,
+                                   record=record)
+        else:
+            moved, lg = registry.run(linearize(cur), resolved, group, failing=failing, weights=weights,
+                                     common=common, record=record)
+            cur = carry(cur, moved)
+        logs += lg
+        i = j
+    return cur, logs
 
 
 def user_schedule(outer: int = 10, n_lap: int = 3, n_opt: int = 20, *, w: float = 0.97,

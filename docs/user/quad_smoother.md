@@ -1,7 +1,7 @@
 # Smoothing a quad mesh
 
 `SmoothSession` (`nekmeshpy.quadmesh.smoother`) smooths a quad mesh, flat or a surface in 3-D, one reviewed round at a
-time. It moves vertices only (connectivity never changes; high-order nodes are rebuilt afterwards), and every round
+time. It moves vertices, never connectivity (a curved mesh stays curved: [High order](#high-order)), and every round
 reports what it did and can be undone. The order of work, step by step, is the {doc}`workflow chart <../smoother/quad/index>`.
 
 ## Quick start
@@ -80,7 +80,7 @@ inverted, `optimize` stages with a wide-to-narrow `delta` come first. A schedule
 | `optimize` | descends the shape metric plus an inversion penalty; with a `delta` continuation (`untangle_schedule()`, a preset of `optimize`, not a separate stage) it pulls folded vertices through | `iters` 20, `kappa`, `eps`, `delta` 0.01 (the preset: 1.0 → 0.01, `iters` 60 each) |
 | `laplace_local` | the failing quads only, lifting the smallest edges | `passes` 5, `w` |
 | `winslow` / `winslow_local` | elliptic smoothing (all quads / the failing ones): an alternative to `laplace` for concave outlines and thin curved blocks; not in the suggested schedules, add it by hand: `("winslow", {"sweeps": 100})` | `sweeps` 200, `omega` 1, `tol` 1e-6 |
-| `tmop` | MFEM's target-matrix optimizer, planar meshes only; optional, needs PyMFEM: {doc}`../smoother/mfem/backend` | `target` `"input"`, `designed` |
+| `tmop` | MFEM's target-matrix optimizer, planar meshes, any order; optional, needs PyMFEM: {doc}`../smoother/mfem/backend` | `target` `"input"`, `designed` |
 
 - Keep graded layers with `KeepLayer` under every stage, Winslow most of all
   ({doc}`../smoother/quad/methods/winslow`).
@@ -146,9 +146,13 @@ behind an earlier finding that smoothing worsens curvature.
 (high-order)=
 ## High order
 
-- A curved input is smoothed as its straight-sided shadow (`highorder.linearize`).
-- `s.rebuild_high_order(order=None)` returns the curved mesh of the accepted vertices: nodes keep their offset from the
-  straight element and are projected back onto their targets; `order=N` lifts a linear mesh.
+- A curved input stays curved: the native stages move the vertices of its straight-sided shadow and the curved nodes
+  follow the vertex displacement; a `tmop` stage moves every node of a planar mesh
+  ({doc}`../smoother/mfem/backend`). `SmoothSession(..., keep_curved=False)` smooths the shadow alone
+  (`highorder.linearize`).
+- `s.rebuild_high_order(order=None)` rebuilds the curved nodes of the accepted vertices from the *input's* curved
+  nodes: each keeps its offset from the straight element and is projected back onto its target, which a carried node
+  is not; `order=N` lifts a linear mesh. It discards a `tmop` round's node moves.
 - Its `HighOrderReport` samples the scaled Jacobian at order 8 and the target distance before/after projection.
 - Limits: radial projection is not exactly Gauss-Lobatto arc spacing; curved validity is reported, not guaranteed;
   quads only.
@@ -158,7 +162,7 @@ behind an earlier finding that smoothing worsens curvature.
 - **A smoothed surface is not carried into a hex mesh** (no propagation, no block-state certificates). Hexes have
   their own, experimental smoother: {doc}`hex_smoother`.
 - **The shape metric seeks squares and undoes designed grading**; protect layers with `KeepLayer`. A target-matrix
-  metric that keeps the grading exists for planar meshes only, through the optional {doc}`TMOP stage <../smoother/mfem/backend>`.
+  metric that keeps the grading exists for planar meshes, at any order, through the optional {doc}`TMOP stage <../smoother/mfem/backend>`.
 - **Overlapping or folded input is reported, not repaired.** A fold, mostly from projecting onto a curved surface, can
   leave a persistent overlap that, on perturbed capsules, longer schedules, a second pass or the `delta` continuation first did not
   remove (mechanism partly understood; a volume-preserving Laplacian is future work).

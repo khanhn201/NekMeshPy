@@ -1,5 +1,5 @@
-"""The MFEM/TMOP demo in ``examples/smoother/mfem/`` runs, leaves a valid linear ``mesh``, and the headline claims
-it makes hold (asserted with margin, on the numbers the demo itself computed).  Skipped without PyMFEM."""
+"""The MFEM/TMOP demos in ``examples/smoother/mfem/`` run, leave a valid ``mesh`` (linear for 01, curved for 02), and
+the headline claims they make hold (asserted with margin, on the numbers the demo itself computed).  Skipped without PyMFEM."""
 
 import os
 
@@ -35,3 +35,46 @@ def test_01_thin_layer(thin_layer):
     assert all(r["q"].n_inverted == 0 for r in rows.values())
     assert side["input_plain"]["max_point_diff"] < 1e-6
     assert abs(side["ideal_designed"]["thick_mean_pct"]) < 0.5 * rows["ideal"]["thick_mean_pct"]
+
+
+@pytest.fixture(scope="module")
+def bent_pipe(tmp_path_factory):
+    return run_example(os.path.join("smoother", "mfem", "02_bent_pipe.py"), tmp_path_factory.mktemp("02_bent_pipe"))
+
+
+def test_02_bent_pipe(bent_pipe):
+    """C1-C5 of the page, with the margins ``claims_curved`` in docs/_ext/gen_smoother_mfem_assets.py asserts."""
+    ns = bent_pipe
+    mesh = ns["mesh"]
+    assert isinstance(mesh, HexMesh) and mesh.n_hexes == ns["N_HEX"] and mesh.order == ns["ORDER"]
+    rows, checks = ns["rows"], ns["checks"]
+    inp, o1, nat, tm = rows["input"], rows["order1"], rows["native"], rows["tmop"]
+    # C1: curved TMOP repairs the mesh and keeps its order
+    assert tm["order"] == ns["ORDER"] and tm["n_inv7"] == 0 and tm["n_inv_corner"] == 0
+    assert tm["sj7_min"] > inp["sj7_min"] + 0.1 and tm["sj_nodes_min"] > inp["sj_nodes_min"] + 0.1
+    assert tm["sj_corner_min"] > inp["sj_corner_min"] + 0.05     # backend.md: on the demo TMOP improves both readings
+    # C2: the wall is held, the caps slide
+    assert checks["wall_max_move"] == 0.0 and checks["cap_max_off"] < 1e-12
+    assert tm["wall_dev_pct"] == inp["wall_dev_pct"]
+    # C3: the order-1 route loses the wall
+    assert o1["order"] == 1 and o1["wall_dev_pct"] > 100 * max(tm["wall_dev_pct"], 1e-4) and o1["vol_err_pct"] < -1
+    # C4: vertex-only smoothing leaves the curved nodes' defect
+    assert nat["order"] == ns["ORDER"] and nat["sj_corner_min"] > inp["sj_corner_min"] + 0.05
+    assert tm["sj7_min"] > nat["sj7_min"] + 0.05 and tm["sj_nodes_mean"] > nat["sj_nodes_mean"] + 0.05
+    assert nat["wall_dev_pct"] > tm["wall_dev_pct"]
+    # C5: every result is conformal
+    assert all(checks["conforming"].values())
+    # the order-1 route reads highest (straight-sided)
+    assert o1["sj7_min"] > max(tm["sj7_min"], nat["sj7_min"])
+
+
+def test_02_bent_pipe_doc_excerpts():
+    """The blocks the docs include from the script (``literalinclude`` between markers) are all there."""
+    import sys
+
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    sys.path.insert(0, os.path.join(root, "docs", "_ext"))
+    from gen_smoother_mfem_assets import check_excerpts
+
+    check_excerpts(os.path.join(root, "examples", "smoother", "mfem", "02_bent_pipe.py"))
+

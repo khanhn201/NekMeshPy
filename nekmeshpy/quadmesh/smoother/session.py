@@ -14,12 +14,20 @@ from typing import Any
 import numpy as np
 
 from ..._typing import PointArray
+from ...core.quality import SCAN_ORDER
 from ...core.smoother import session as _core
 from ...core.smoother.constraints import targets
+from ...core.smoother.quality import with_scaled_jacobian
 from ...core.smoother.schedule import Schedule, StageLog
 from ...io import writer
 from ..quadmesh import QuadMesh
-from ..query import ConnectivityReport, check_connectivity, overlapping_quads
+from ..query import (
+    ConnectivityReport,
+    check_connectivity,
+    element_blocks,
+    overlapping_quads,
+    scaled_jacobian,
+)
 from . import constrain as cn
 from . import smooth
 from .highorder import HighOrderReport, linearize, rebuild_high_order
@@ -65,7 +73,8 @@ class QuadAdapter(_core.RungAdapter):
     propagate = "not applicable: quad-only (no hex provenance recorded yet)"
 
     def __init__(self, *, normals: PointArray | None, surface: cn.Surface | None, check_normals: bool,
-                 check_overlaps: bool, normal_cos_tol: float, connectivity_tol: float, allow_gaps: bool) -> None:
+                 check_overlaps: bool, normal_cos_tol: float, connectivity_tol: float, allow_gaps: bool,
+                 sample_order: int | None = None) -> None:
         self.normals = normals
         self.surface = surface
         self.check_normals = check_normals
@@ -73,6 +82,8 @@ class QuadAdapter(_core.RungAdapter):
         self.normal_cos_tol = normal_cos_tol
         self.connectivity_tol = connectivity_tol
         self.allow_gaps = allow_gaps
+        self.sample_order = sample_order
+        self.curved = 0                # the order of a curved input the session is smoothing (0: linear)
         self.connectivity: ConnectivityReport | None = None
         self.normal_report: cn.NormalReport | None = None
         self.input_overlaps = -1
@@ -120,7 +131,30 @@ class QuadAdapter(_core.RungAdapter):
 
     def quality(self, mesh: QuadMesh) -> smooth.Quality:
         assert self.normals is not None
-        return smooth.quality(mesh.points, mesh.corners, self.normals)
+        q = smooth.quality(mesh.points, mesh.corners, self.normals)
+        if mesh.order > 1:             # a curved mesh is read on the nodes it stores, not on its corners alone
+            q = with_scaled_jacobian(q, scaled_jacobian(mesh))
+        return q
+
+    def audit(self, before: QuadMesh, after: QuadMesh, resolved: cn.Resolved) -> _core.Audit:
+        if before.order == 1 and after.order == 1:
+            return _core.Audit()
+        n = max(SCAN_ORDER if self.sample_order is None else int(self.sample_order), before.order)
+        sj_b, sj_a = scaled_jacobian(before, order=n), scaled_jacobian(after, order=n)
+        cb = smooth.corner_metrics(before.points, before.corners, self.normals).sj.min(1)
+        ca = smooth.corner_metrics(after.points, after.corners, self.normals).sj.min(1)
+        warns = []
+        if (sj_a <= 0).any():
+            warns.append("%d quad(s) fold in the curved map sampled at order %d (min %.4f)"
+                         % (int((sj_a <= 0).sum()), n, float(sj_a.min())))
+        if (ca <= 0).sum() > (cb <= 0).sum():
+            warns.append("%d quad(s) invert at the corners alone (%d before): .re2 writes the corners only"
+                         % (int((ca <= 0).sum()), int((cb <= 0).sum())))
+        d3 = ["curved map sampled at order %d: min scaled J %.4f -> %.4f, inverted %d -> %d"
+              % (n, float(sj_b.min()), float(sj_a.min()), int((sj_b <= 0).sum()), int((sj_a <= 0).sum())),
+              ".re2 corners alone: min scaled J %.4f -> %.4f, inverted %d -> %d"
+              % (float(cb.min()), float(ca.min()), int((cb <= 0).sum()), int((ca <= 0).sum()))]
+        return _core.Audit(tuple(warns), (), {"sample_order": n}, tuple(d3))
 
     def shape_stats(self, mesh: QuadMesh) -> smooth.ShapeStats:
         return smooth.shape_stats(mesh.points, mesh.corners)
@@ -141,6 +175,9 @@ class QuadAdapter(_core.RungAdapter):
                  % (len(resolved.surfaces), len(resolved.curves)),
                  "limits: scaled-J target %.3g (penalty eps), on-target tol %.0e x local edge, connectivity tol %.2f"
                  % (sj_target, geom_tol, self.connectivity_tol)]
+        if self.curved:
+            lines.append("curved mesh (order %d): tmop optimises every node; the linear stages move the vertices and "
+                         "the nodes follow; edge nodes of a held vertex are held" % self.curved)
         lines += ["note: " + n for n in resolved.notes]
         assert self.connectivity is not None
         if not self.connectivity.passed:
@@ -160,6 +197,14 @@ class QuadAdapter(_core.RungAdapter):
         assert self.normals is not None
         for tag, M in (("before", before), ("after", after)):
             m = smooth.corner_metrics(M.points, M.corners, self.normals)
+            if M.order > 1:            # a curved mesh has more nodes than points: per-element data only
+                move = np.abs(element_blocks(M) - element_blocks(before)).max(axis=(1, 2)) \
+                    if before.order == M.order else np.zeros(M.n_quads)
+                path = os.path.join(directory, tag + ".vtu")
+                writer.quad_to_vtu(M, path, cell_data={"sj_min": scaled_jacobian(M), "sj_corner_min": m.sj.min(1),
+                                                       "node_move_max": move})
+                files[tag] = path
+                continue
             dist = np.zeros(M.n_points)
             for k, objs in targets(resolved):
                 for t, o in enumerate(objs):
@@ -179,23 +224,27 @@ class QuadAdapter(_core.RungAdapter):
 
 
 class SmoothSession(_core.SmoothSession):
-    """One smoothing job on one quad mesh (a curved one is smoothed as its straight-sided shadow).  The shared
+    """One smoothing job on one quad mesh (a curved one keeps its order: ``tmop`` optimises its nodes, the linear stages
+    run on its straight-sided shadow and the nodes follow the vertices; readings are on the stored nodes).  The shared
     session's flow -- :meth:`propose`, :meth:`accept`, :meth:`undo`, :meth:`run` -- with the quad options:
     ``surface`` (the surface the quads sit on, for the metric's normals), ``normals`` (explicit, overriding it),
     ``check_normals``, ``check_overlaps`` (count overlapping quads each round), ``allow_gaps`` (override the gap
-    gate; ``connectivity_tol`` its tolerance)."""
+    gate; ``connectivity_tol`` its tolerance), ``sample_order`` (the lattice a curved mesh's audit samples at;
+    default the solver's, :data:`~nekmeshpy.core.quality.SCAN_ORDER`), ``keep_curved=False`` (smooth a curved input's
+    straight-sided shadow instead; ``rebuild_high_order`` lifts the result back)."""
 
     def __init__(self, mesh: QuadMesh, constraints: list[cn.Constraint], boundary: str = "frozen",
                  normals: PointArray | None = None, surface: cn.Surface | None = None,
                  check_normals: bool = True, check_overlaps: bool = True, normal_cos_tol: float = 0.5,
                  sj_target: float = smooth.EPS, geom_tol: float = 1e-6, connectivity_tol: float = 0.2,
                  allow_gaps: bool = False, weights: PointArray | None = None, out_dir: str | None = None,
-                 name: str = "smooth") -> None:
+                 name: str = "smooth", *, sample_order: int | None = None, keep_curved: bool = True) -> None:
         self._quad = QuadAdapter(normals=normals, surface=surface, check_normals=check_normals,
                                  check_overlaps=check_overlaps, normal_cos_tol=normal_cos_tol,
-                                 connectivity_tol=connectivity_tol, allow_gaps=allow_gaps)
+                                 connectivity_tol=connectivity_tol, allow_gaps=allow_gaps, sample_order=sample_order)
+        self._quad.curved = mesh.order if mesh.order > 1 and keep_curved else 0
         super().__init__(mesh, constraints, self._quad, boundary=boundary, sj_target=sj_target,
-                         geom_tol=geom_tol, weights=weights, out_dir=out_dir, name=name)
+                         geom_tol=geom_tol, weights=weights, out_dir=out_dir, name=name, keep_curved=keep_curved)
 
     @property
     def connectivity(self) -> ConnectivityReport:
