@@ -22,14 +22,19 @@ P = mesh.points.copy()
 P[inner] += np.random.default_rng(0).normal(scale=0.03, size=(inner.size, 3))
 mesh = hs.with_points(mesh, P)                # a perturbed interior
 
-r = hs.resolve(mesh, [], boundary="slide")    # walls slide on themselves, rims along the rims
-out, logs = hs.run_schedule(mesh, r, hs.suggest_schedule(hs.quality(mesh.points, mesh.corners), outer=2))
-print(hs.round_report(mesh, out, r, stages=logs))
-writer.to_vtu(out, "smoothed.vtu")
+# walls slide on themselves, rims along the rims, corners stay
+s = hs.SmoothSession(mesh, [], boundary="slide", out_dir="smooth_rounds")
+p = s.propose()               # runs s.suggest() on a copy; nothing is accepted yet
+print(p.report)               # every metric before -> after, PASS / FAIL
+s.accept(p)                   # s.undo() restores the input bit for bit
+writer.to_vtu(s.current, "smoothed.vtu")
 ```
 
-On this 144-hex cylinder the minimum scaled Jacobian goes from 0.14 to 0.86 in a couple of seconds, every boundary vertex
-staying on its cap plane, its wall or its rim.
+On this 144-hex cylinder the round passes: the minimum scaled Jacobian goes from 0.14 to 0.86, no hex inverts, and every
+boundary vertex stays on its cap plane, its wall or its rim (about 6 s on a laptop, running serial).
+
+The session is the quad smoother's own (`nekmeshpy.core.smoother.session`, shared by both rungs): `propose`, `accept`,
+`undo`, `run` and `history` behave as in the {doc}`quad guide <quad_smoother>`.
 
 ## What exists
 
@@ -40,6 +45,8 @@ staying on its cap plane, its wall or its rim.
 | Laplace | `laplace(mesh, resolved, passes=3, w=0.97)`; `laplace_local` in a schedule |
 | optimizer | `optimize(mesh, resolved, iters=20, delta=0.01, kappa=1000, eps=0.05)`; `optimize_local` in a schedule |
 | schedules | `run_schedule`, `user_schedule`, `untangle_schedule`, `suggest_schedule`; `register_method(name, fn)` adds a stage |
+| TMOP (optional) | the `tmop` stage, MFEM's target-matrix optimizer: keeps a designed layer's size and aspect ({doc}`../smoother/mfem/backend`) |
+| session | `SmoothSession(mesh, constraints, boundary=..., sample_order=, out_dir=)`: `propose` / `accept` / `undo` / `run` / `history`, shared with the quad rung |
 | readings | `quality`, `shape_stats`, `round_report` |
 
 The constraint objects, `Resolved`, `snap` and `constrain_direction` are the quad smoother's own. At this rung a
@@ -79,8 +86,8 @@ rolled back.
 
 ## Session
 
-`hs.SmoothSession` is the quad smoother's session on the hex rung: it holds the mesh, its constraints and a stack of
-accepted states. `propose(schedule)` runs on a copy and returns a `Proposal` (candidate mesh, report, schedule);
+`hs.SmoothSession` is the shared session (`nekmeshpy.core.smoother.session.SmoothSession`) bound to the hex rung: it
+holds the mesh, its constraints and a stack of accepted states. `propose(schedule)` runs on a copy and returns a `Proposal` (candidate mesh, report, schedule);
 `accept` pushes it (refused if the round failed or is stale), `undo(n)` pops, and `run(n, review="print" | "auto")` is the
 no-wait path. With `out_dir=` each round writes `round_NN/before.vtu` and `after.vtu` with per-hex `sj_min` and per-point
 displacement. It takes a linear mesh (a curved one is refused with a pointer to `linearize`).
@@ -99,7 +106,8 @@ Any stage registered with `register_method` (a third-party backend included) run
 
 ## The round report
 
-`round_report(before, after, resolved, stages=logs)` (or `prop.report` of a session round) gives:
+`round_report(before, after, resolved, stages=logs)` (or `prop.report` of a session round) has the quad report's
+sections except 5, "propagate", which does not arise at the top rung. It gives:
 
 - the constraints and the stages that ran;
 - every corner metric before → after;
@@ -119,5 +127,8 @@ A moved frozen vertex, a vertex off its target or more inverted hexes fail the r
 - **Slow and lightly tested.** Small blocks only so far; larger meshes will be tested step by step.
 - **A curved wall is approximated by its input faces**: a vertex sliding on it lands on the faceted surface, so pass
   your own `Surface` for an exact wall.
-- **The metric seeks cubes** and flattens designed grading: freeze layers with `KeepLayer` or `frozen_region`.
-- **An MFEM TMOP backend is planned**, as a stage registered through `register_method`.
+- **The metric seeks cubes** and flattens designed grading: freeze layers with `KeepLayer` or `frozen_region`, or
+  run the optional {doc}`TMOP stage <../smoother/mfem/backend>` with `target="input"`, which keeps them
+  ({doc}`demo <../smoother/mfem/thin_layer>`).
+- **The session takes a linear mesh** (a curved one is refused with a pointer to `linearize`) and has no input gate:
+  a hex mesh is conforming by construction.

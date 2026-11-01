@@ -15,6 +15,6 @@ the one :func:`~nekmeshpy.core.smoother.descent.minimize`.
 * ``session``     -- ``SmoothSession`` on a ``RungAdapter``: propose / accept / undo and the round report
 """
 
-from . import constraints, descent, metric, quality, schedule, session
+from . import constraints, descent, metric, mfem, quality, schedule, session
 
-__all__ = ["constraints", "descent", "metric", "quality", "schedule", "session"]
+__all__ = ["constraints", "descent", "metric", "mfem", "quality", "schedule", "session"]

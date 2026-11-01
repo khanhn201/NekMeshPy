@@ -31,6 +31,8 @@ quad_to_vtu(s.current, "smoothed.vtu")
 | `s.run(n, review="print")` | `n` rounds unattended, stopping at a failure; `review="auto"` also stops when nothing more is gained |
 | `s.history()` | the trend over rounds |
 
+The session is shared with the {doc}`hex smoother <hex_smoother>` (`nekmeshpy.core.smoother.session`).
+
 ## Constraints
 
 | constraint | what it does | typical use |
@@ -78,6 +80,7 @@ inverted, `optimize` stages with a wide-to-narrow `delta` come first. A schedule
 | `optimize` | descends the shape metric plus an inversion penalty; with a `delta` continuation (`untangle_schedule()`, a preset of `optimize`, not a separate stage) it pulls folded vertices through | `iters` 20, `kappa`, `eps`, `delta` 0.01 (the preset: 1.0 → 0.01, `iters` 60 each) |
 | `laplace_local` | the failing quads only, lifting the smallest edges | `passes` 5, `w` |
 | `winslow` / `winslow_local` | elliptic smoothing (all quads / the failing ones): an alternative to `laplace` for concave outlines and thin curved blocks; not in the suggested schedules, add it by hand: `("winslow", {"sweeps": 100})` | `sweeps` 200, `omega` 1, `tol` 1e-6 |
+| `tmop` | MFEM's target-matrix optimizer, planar meshes only; optional, needs PyMFEM: {doc}`../smoother/mfem/backend` | `target` `"input"`, `designed` |
 
 - Keep graded layers with `KeepLayer` under every stage, Winslow most of all
   ({doc}`../smoother/quad/methods/winslow`).
@@ -154,8 +157,8 @@ behind an earlier finding that smoothing worsens curvature.
 
 - **A smoothed surface is not carried into a hex mesh** (no propagation, no block-state certificates). Hexes have
   their own, experimental smoother: {doc}`hex_smoother`.
-- **The shape metric seeks squares and undoes designed grading**; protect layers with `KeepLayer` (no target-matrix
-  metric yet).
+- **The shape metric seeks squares and undoes designed grading**; protect layers with `KeepLayer`. A target-matrix
+  metric that keeps the grading exists for planar meshes only, through the optional {doc}`TMOP stage <../smoother/mfem/backend>`.
 - **Overlapping or folded input is reported, not repaired.** A fold, mostly from projecting onto a curved surface, can
   leave a persistent overlap that, on perturbed capsules, longer schedules, a second pass or the `delta` continuation first did not
   remove (mechanism partly understood; a volume-preserving Laplacian is future work).

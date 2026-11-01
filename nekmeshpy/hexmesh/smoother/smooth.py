@@ -36,7 +36,7 @@ curved nodes afterwards is not available yet.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -70,7 +70,7 @@ __all__ = ["KAPPA", "EPS", "DELTA", "CornerMetrics", "corner_vectors", "corner_m
            "gradient", "with_points", "Quality", "quality", "failing_elements", "StageLog", "laplace",
            "optimize", "Method", "register_method", "methods", "run_schedule", "user_schedule",
            "untangle_schedule", "suggest_schedule", "ShapeStats", "shape_stats", "hex_neighbours",
-           "size_ratios", "Schedule"]
+           "size_ratios", "Schedule", "tmop"]
 
 #: Corner ``k`` -> ``[k, a-end, b-end, c-end]``: the three edge neighbours of each Nek-order hex
 #: corner, ordered so ``(a x b) . c > 0`` on a valid hex (``hexmesh.quality``'s own table).
@@ -355,6 +355,23 @@ def optimize(mesh: HexMesh, resolved: Resolved, *, iters: int = 20, elements: Bo
                                           tuple(history))
 
 
+def tmop(mesh: HexMesh, resolved: Resolved, *, designed: Any = None, **knobs: Any) -> tuple[HexMesh, StageLog]:
+    """The MFEM / TMOP stage (``("tmop", {...})`` in a schedule), a thin wrapper over
+    :func:`nekmeshpy.core.smoother.mfem.tmop`: ``resolved`` is mapped to essential components (frozen: all;
+    axis-aligned planes and lines: slide in them; anything curved: held), the element tags are the attributes --
+    ``designed`` names the tags (or an ``(E,)`` mask) of elements that keep their own shape, e.g. a boundary
+    layer -- and ``knobs`` are its ``target`` / ``metric`` / ``solver`` / ``iters`` / ... .  Needs PyMFEM,
+    imported only when this runs.  Returns a **new** linear mesh and the :class:`StageLog`; ``mesh`` is untouched."""
+    from ...core.smoother import mfem as _mfem
+
+    hexes = mesh.corners
+    P0 = np.asarray(mesh.points, float)
+    attr, dmask = _mfem.regions(mesh.element_tags.to_dense(), designed)
+    P, log = _mfem.tmop(P0, hexes, resolved, attributes=attr, designed=dmask,
+                        quality=lambda X: quality(X, hexes, kappa=KAPPA, eps=EPS), **knobs)
+    return with_points(mesh, P), log
+
+
 # -- schedules and the method registry -------------------------------------------------------
 #: The stage names :func:`run_schedule` knows; :func:`register_method` adds one.
 REGISTRY = Registry()
@@ -362,6 +379,7 @@ _METHODS = REGISTRY.entries
 for _name, _fn, _local, _w in (("laplace", laplace, False, False), ("laplace_local", laplace, True, False),
                                ("optimize", optimize, False, True), ("optimize_local", optimize, True, True)):
     REGISTRY.register(_name, _fn, local=_local, weights=_w)
+REGISTRY.register("tmop", tmop)               # needs PyMFEM, imported when the stage runs
 
 
 def register_method(name: str, fn: Callable[..., tuple[HexMesh, StageLog]], *, local: bool = False,

@@ -131,3 +131,14 @@ The rung-agnostic smoother engine behind `quadmesh.smoother` and `hexmesh.smooth
 .. automodule:: nekmeshpy.core.smoother.descent
    :members:
 ```
+
+### `core.smoother.mfem`
+
+The optional MFEM / TMOP bridge, shared by both rungs' `("tmop", {...})` stage.  It needs
+[PyMFEM](https://github.com/mfem/PyMFEM) (`pip install mfem`); the module itself imports without it, and
+calling it without says so.  The guide: {doc}`../smoother/mfem/backend`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.mfem
+   :members:
+```

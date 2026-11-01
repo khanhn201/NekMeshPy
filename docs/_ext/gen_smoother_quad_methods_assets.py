@@ -1452,11 +1452,14 @@ def workflow_chart() -> str:
         ("Pick the method", "<code>suggest_schedule</code> by default", "methods/index.html"),
         ("Run a round, read the report", "<code>propose</code> / <code>accept</code> / <code>undo</code>; numbers per region",
          user + "#the-round-report"),
-        ("High-order mesh?", "<code>rebuild_high_order</code> (quads), then export", user + "#high-order"),
+        ("High-order mesh?", "<code>rebuild_high_order</code> (quads), then export; TMOP runs on the straight-sided mesh "
+         "for now", user + "#high-order"),
     ]
     chips = ('<div class="chips"><span><a href="methods/laplace.html">Laplace</a>: a cheap pass</span>'
              '<span><a href="methods/optimizer.html">optimizer</a>: the shape</span>'
              '<span><a href="methods/winslow.html">Winslow</a>: concave or thin curved blocks</span>'
+             '<span><a href="../mfem/index.html">TMOP</a> (optional, MFEM): keeps the input\'s sizes and layers, '
+             '<code>("tmop", {...})</code></span>'
              '<span>inverted quads: <code>untangle_schedule()</code>, an <code>optimize</code> preset with a '
              'wide-to-narrow <code>delta</code></span></div>')
     out = []

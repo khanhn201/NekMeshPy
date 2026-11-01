@@ -23,7 +23,7 @@ Linear only: these read corners, never high-order nodes.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -62,7 +62,7 @@ __all__ = ["KAPPA", "EPS", "CornerMetrics", "corner_vectors", "reference_normals
            "DELTA", "corner_metrics", "objective", "gradient", "with_points", "Quality", "quality",
            "failing_elements", "StageLog", "laplace", "winslow", "optimize", "run_schedule", "user_schedule", "untangle_schedule",
            "suggest_schedule", "ShapeStats", "shape_stats", "quad_neighbours", "size_ratios", "Schedule",
-           "register_method", "methods", "REGISTRY"]
+           "register_method", "methods", "REGISTRY", "tmop"]
 
 
 def corner_vectors(points: PointArray, corners: IntArray) -> tuple[PointArray, PointArray]:
@@ -606,6 +606,25 @@ def optimize(mesh: QuadMesh, resolved: Resolved, *, iters: int = 20,
                                           tuple(history))
 
 
+def tmop(mesh: QuadMesh, resolved: Resolved, *, normals: PointArray | None = None,
+         designed: Any = None, **knobs: Any) -> tuple[QuadMesh, StageLog]:
+    """The MFEM / TMOP stage (``("tmop", {...})`` in a schedule), a thin wrapper over
+    :func:`nekmeshpy.core.smoother.mfem.tmop`: the quads of a **planar** mesh, ``resolved`` mapped to essential
+    components (frozen: all; axis-aligned lines: slide; anything curved: held), the element tags as
+    attributes -- ``designed`` names the tags (or a ``(Q,)`` mask) of elements that keep their own shape --
+    and ``knobs`` its ``target`` / ``metric`` / ``solver`` / ``iters`` / ... .  Needs PyMFEM, imported only when
+    this runs.  Returns a **new** linear mesh and the :class:`StageLog`; ``mesh`` is untouched."""
+    from ...core.smoother import mfem as _mfem
+
+    corners = mesh.corners
+    P0 = np.asarray(mesh.points, float)
+    nrm = reference_normals(P0, corners) if normals is None else np.asarray(normals, float)
+    attr, dmask = _mfem.regions(mesh.element_tags.to_dense(), designed)
+    P, log = _mfem.tmop(P0, corners, resolved, attributes=attr, designed=dmask,
+                        quality=lambda X: quality(X, corners, nrm, kappa=KAPPA, eps=EPS), **knobs)
+    return with_points(mesh, P), log
+
+
 # -- schedules and the method registry ------------------------------------------------------------
 #: The stage names :func:`run_schedule` knows; :func:`register_method` adds one.
 REGISTRY = Registry()
@@ -613,6 +632,7 @@ for _name, _fn, _local, _w in (("laplace", laplace, False, False), ("laplace_loc
                                ("winslow", winslow, False, False), ("winslow_local", winslow, True, False),
                                ("optimize", optimize, False, True), ("optimize_local", optimize, True, True)):
     REGISTRY.register(_name, _fn, local=_local, weights=_w)
+REGISTRY.register("tmop", tmop)               # needs PyMFEM, imported when the stage runs
 
 
 def register_method(name: str, fn: Callable[..., tuple[QuadMesh, StageLog]], *, local: bool = False,

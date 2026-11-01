@@ -74,7 +74,8 @@ Optional extras of the library (declared in `pyproject.toml`):
 | `pip install -e ".[plot]"` | matplotlib | plotting in the examples / docs |
 | `pip install -e ".[io]"` | meshio | reading the written `.vtu` back in Python (tests, scripts) |
 | `pip install -e ".[mesh]"` | gmsh | `examples/femoral.py` (on Linux the gmsh wheel may also want `libGLU`) |
-| `pip install -e ".[all]"` | matplotlib, meshio, pytest, gmsh | running every example and the whole test suite |
+| `pip install -e ".[smooth]"` | mfem (PyMFEM 4.8) | the optional MFEM/TMOP smoother stage (`("tmop", {...})`) |
+| `pip install -e ".[all]"` | matplotlib, meshio, pytest, gmsh, mfem | running every example and the whole test suite |
 | `pip install -e ".[all,dev]"` | + ruff, mypy | development (what the CI lint job installs) |
 | `pip install -e ".[docs]"` | sphinx, myst-parser, furo, sphinx-copybutton, matplotlib, meshio | building the docs |
 
@@ -99,6 +100,7 @@ python -m http.server -d docs/_build/html 8000                 # open http://loc
 ## Roadmap
 
 - [ ] Rework smoothing
+- [ ] Parallel (MPI) and GPU mesh smoothing through PyMFEM's parallel and CUDA/HIP builds (TMOP)
 - [ ] GUI?
 - [ ] Paving algorithm / advancing front?
 - [ ] Polyhedron meshing/midpoint subdivision?

@@ -45,6 +45,7 @@ user/gallery
 
 smoother/quad/index
 smoother/hex/index
+smoother/mfem/index
 ```
 
 ```{toctree}

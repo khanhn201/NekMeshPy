@@ -459,16 +459,20 @@ KEYS = {
     "untangle": ("05_untangle.py", spec_untangle),
 }
 
-
-def viewer_inc(key):
+def viewer_inc(key, sub="hex"):
     return ('```{raw} html\n<script src="../../_static/smoother_hex_viewer.js"></script>\n<div id="hx-%s"></div>\n'
-            '<script>window.initSmootherHex("hx-%s", "../../_static/smoother/hex/%s_manifest.json");</script>\n```\n'
-            % (key, key, key))
+            '<script>window.initSmootherHex("hx-%s", "../../_static/smoother/%s/%s_manifest.json");</script>\n```\n'
+            % (key, key, sub, key))
 
 
-def build(key):
-    script, spec_fn = KEYS[key]
-    ns = run_script(os.path.join(_EX, script))
+def build(key, keys=None, ex=None, static=None, generated=None, sub="hex"):
+    """Build one key; the defaults are this module's own ``KEYS`` / ``_EX`` / ``STATIC`` / ``GENERATED``."""
+    keys = KEYS if keys is None else keys
+    ex = _EX if ex is None else ex
+    static = STATIC if static is None else static
+    generated = GENERATED if generated is None else generated
+    script, spec_fn = keys[key]
+    ns = run_script(os.path.join(ex, script))
     sp = spec_fn(ns)
     rows = ns["rows"]
     sizes = {}
@@ -476,8 +480,8 @@ def build(key):
     for vk, label in sp["variants"]:
         m, sj = ns["meshes"][vk], ns["sj"][vk]
         shell, section = "%s_%s_shell.vtp" % (key, vk), "%s_%s_section.vtp" % (key, vk)
-        sizes[shell] = shell_vtp(m, os.path.join(STATIC, shell))
-        sizes[section] = section_vtp(m, sj, sp["extra"], sp["planes"], os.path.join(STATIC, section))
+        sizes[shell] = shell_vtp(m, os.path.join(static, shell))
+        sizes[section] = section_vtp(m, sj, sp["extra"], sp["planes"], os.path.join(static, section))
         variants.append({
             "label": label, "note": note_of(rows[vk]["q"]),
             "layers": [{"name": "wall", "role": "surface", "label": "Boundary shell", "vtp": shell},
@@ -488,19 +492,19 @@ def build(key):
     big = {k: v for k, v in sizes.items() if v > MAX_VTP_BYTES}
     assert not big, big
     manifest = {"title": sp["title"], "camera": CAMERA, "variants": variants}
-    with open(os.path.join(STATIC, key + "_manifest.json"), "w") as f:
+    with open(os.path.join(static, key + "_manifest.json"), "w") as f:
         json.dump(manifest, f, indent=1)
     items, fmt, metric, aria = sp["bars"]
     inc = {
-        "viewer": viewer_inc(key),
+        "viewer": viewer_inc(key, sub),
         "svg": bars_svg(items, fmt, metric, aria),
         "table": sp["table"],
         "keypoints": "".join("- %s\n" % k for k in sp["keypoints"]),
     }
     for name, text in inc.items():
-        with open(os.path.join(GENERATED, "%s.%s.inc" % (key, name)), "w") as f:
+        with open(os.path.join(generated, "%s.%s.inc" % (key, name)), "w") as f:
             f.write(text)
-    total = sum(sizes.values()) + os.path.getsize(os.path.join(STATIC, key + "_manifest.json")) + sum(map(len, inc.values()))
+    total = sum(sizes.values()) + os.path.getsize(os.path.join(static, key + "_manifest.json")) + sum(map(len, inc.values()))
     return sizes, total
 
 

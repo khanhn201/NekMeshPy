@@ -17,7 +17,7 @@ def registry():
 
 
 def test_the_builtin_methods_and_a_schedule_run_in_order():
-    assert smooth.methods() == ["laplace", "laplace_local", "optimize", "optimize_local"]
+    assert smooth.methods() == ["laplace", "laplace_local", "optimize", "optimize_local", "tmop"]
     m = block(4, jitter=0.3, seed=1)
     r = cn.resolve(m, [])
     out, logs = smooth.run_schedule(m, r, smooth.user_schedule(outer=1, n_opt=5), record=True)
@@ -46,7 +46,7 @@ def test_a_registered_method_runs_by_name_and_receives_elements_and_weights(regi
         smooth.register_method("nudge", nudge)
     smooth.register_method("nudge", nudge, replace=True)
     with pytest.raises(ValueError, match="unknown smoothing method"):
-        smooth.run_schedule(m, cn.resolve(m, []), [("tmop", {})])
+        smooth.run_schedule(m, cn.resolve(m, []), [("winslow", {})])
 
 
 def test_suggest_schedule_untangles_first_only_when_needed():
