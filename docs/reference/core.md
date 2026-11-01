@@ -118,6 +118,13 @@ The rung-agnostic smoother engine behind `quadmesh.smoother` and `hexmesh.smooth
    :members:
 ```
 
+### `core.smoother.session`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.session
+   :members:
+```
+
 ### `core.smoother.descent`
 
 ```{eval-rst}

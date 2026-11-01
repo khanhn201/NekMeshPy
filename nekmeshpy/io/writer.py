@@ -850,15 +850,32 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
 
 # -- .vtu (XML; VTK Lagrange cells render reliably in ParaView / VisIt) --
 def to_vtu(mesh: HexMesh, fname: str, *, bc: BCArg = None,
-           binary: bool = True) -> HexMesh:
+           binary: bool = True, point_data: Mapping[str, Any] | None = None,
+           cell_data: Mapping[str, Any] | None = None) -> HexMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
     ``bc_id`` tags, and per-cell ``element_tag`` region ids where the mesh carries
     ``element_tags`` (see :func:`element_tag_ids` for the mapping).  ``binary=False``
     writes the arrays as text instead, which is readable and diffable but costs a
-    Python format per row."""
+    Python format per row.
+
+    ``cell_data`` maps a name to a ``(E,)`` or ``(E, k)`` array and ``point_data`` to a
+    ``(P,)`` or ``(P, k)`` array over the mesh's *points* (diagnostics: quality, displacement),
+    each point value repeated on its corner copies; ``point_data`` is order 1 only."""
     X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_bc(mesh, bc))
+    pts: dict[str, Any] = {}
+    if point_data:
+        if mesh.order != 1:
+            raise ValueError("point_data is per vertex and the mesh is order %d; "
+                             "write the linearised mesh or use cell_data" % mesh.order)
+        for k, v in point_data.items():
+            v = np.asarray(v)
+            if v.ndim not in (1, 2) or v.shape[0] != mesh.n_points:
+                raise ValueError("point_data array %r has shape %s, expected %d rows (the points)"
+                                 % (k, v.shape, mesh.n_points))
+            pts[k] = v[mesh.corners].reshape((-1,) + v.shape[1:])
     _write_vtu(fname, X, conn, cell_type, bc_out=bc_out,
-               cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes), binary=binary)
+               cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes),
+               point_data=pts, cell_data=cell_data, binary=binary)
     return mesh
 
 

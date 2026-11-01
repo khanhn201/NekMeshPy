@@ -7,9 +7,10 @@ import surfaces as S
 from grids import grid
 
 from nekmeshpy import quadmesh
+from nekmeshpy.core.smoother.session import verdict
 from nekmeshpy.quadmesh.smoother import constrain as cn
 from nekmeshpy.quadmesh.smoother import smooth
-from nekmeshpy.quadmesh.smoother.session import SmoothSession
+from nekmeshpy.quadmesh.smoother.session import RoundReport, SmoothSession
 
 
 # ------------------------------------------------------------------ T1b: nothing may depend on the numbering
@@ -171,8 +172,8 @@ def test_a_round_that_adds_inverted_quads_is_a_failure():
     nrm = s.normals
     good = smooth.quality(m.points, m.corners, nrm)
     worse = good._replace(n_inverted=good.n_inverted + 2)
-    warns, fails = s._verdict([], good, worse, smooth.shape_stats(m.points, m.corners),
-                              smooth.shape_stats(m.points, m.corners), cn.on_target_report(m.points, m.corners, s.resolved))
+    warns, fails = verdict(RoundReport, [], good, worse, smooth.shape_stats(m.points, m.corners),
+                           smooth.shape_stats(m.points, m.corners), cn.on_target_report(m.points, m.corners, s.resolved))
     assert any("inverted quads rose" in f for f in fails)
 
 

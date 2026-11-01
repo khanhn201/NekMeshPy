@@ -10,18 +10,19 @@ The modules keep their names and can also be used as namespaces:
 * ``constrain``  -- what each vertex may do: targets, constraints, boundary patches, the snap
 * ``smooth``     -- the hex shape metric, objective and gradient, Laplace, the optimizer,
   the method registry and schedules, quality readings
-* ``report``     -- ``round_report``: the before/after reading of one round
+* ``report``     -- ``round_report``: the before/after reading of one round, and the hex adapter
+* ``session``    -- ``SmoothSession``: reviewed rounds, undo (the shared session on the hex adapter)
 * ``highorder``  -- ``linearize``: the native smoother is linear
 
 The constraint vocabulary (kinds, targets, ``Frozen`` / ``OnSurface`` / ``OnCurve`` /
 ``KeepLayer`` / ``SlideColumns``, ``Resolved``, ``snap``, ``constrain_direction``) is the quad
-smoother's own object, not a copy.  There is no interactive session at this rung yet.
+smoother's own object, not a copy.
 
 ``nekmeshpy.hexmesh`` keeps this package reachable by attribute (``hexmesh.smoother``), loaded on
 first use.
 """
 
-from . import constrain, highorder, report, smooth
+from . import constrain, highorder, report, session, smooth
 from .constrain import (
     CORNER_DEG,
     FREE,
@@ -60,6 +61,7 @@ from .constrain import (
 from .highorder import linearize
 from .report import (
     THRESHOLDS,
+    HexAdapter,
     HexRoundReport,
     RegionQuality,
     TargetHeld,
@@ -67,6 +69,7 @@ from .report import (
     round_report,
     targets_held,
 )
+from .session import Proposal, RoundReport, SmoothSession, adjust_schedule
 from .smooth import (
     DELTA,
     EPS,
@@ -101,6 +104,7 @@ __all__ = [
     "constrain",
     "highorder",
     "report",
+    "session",
     "smooth",
     "BoundaryPatches",
     "CORNER_DEG",
@@ -113,7 +117,12 @@ __all__ = [
     "Tangent",
     "FROZEN",
     "Frozen",
+    "HexAdapter",
     "HexRoundReport",
+    "Proposal",
+    "RoundReport",
+    "SmoothSession",
+    "adjust_schedule",
     "KAPPA",
     "KeepLayer",
     "Method",

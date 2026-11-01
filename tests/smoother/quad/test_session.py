@@ -5,11 +5,13 @@ import pytest
 from grids import grid
 
 from nekmeshpy import linemesh, quadmesh
+from nekmeshpy.core.smoother.session import verdict
 from nekmeshpy.quadmesh.smoother import constrain as cn
 from nekmeshpy.quadmesh.smoother import smooth
 from nekmeshpy.quadmesh.smoother.session import (
     ConnectivityError,
     Proposal,
+    RoundReport,
     SmoothSession,
     adjust_schedule,
 )
@@ -141,8 +143,8 @@ def test_zigzag_between_laplace_and_optimizer_is_flagged():
     lo = smooth.quality(P, q, nrm)
     hi = lo._replace(objective_mean=lo.objective_mean * 2)
     logs = [smooth.StageLog("laplace", 3, 3, "completed", "", lo, hi, ()) for _ in range(4)]
-    warns, fails = s._verdict(logs, lo, lo, smooth.shape_stats(P, q), smooth.shape_stats(P, q),
-                              cn.on_target_report(P, q, s.resolved))
+    warns, fails = verdict(RoundReport, logs, lo, lo, smooth.shape_stats(P, q), smooth.shape_stats(P, q),
+                           cn.on_target_report(P, q, s.resolved))
     assert any("fighting" in w for w in warns) and not fails
 
 

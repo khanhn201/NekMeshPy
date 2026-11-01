@@ -6,7 +6,7 @@ vertices only; connectivity, element tags and face tags never change.
 
 ```{warning}
 Experimental. It has been tested on small blocks only (a few hundred hexes) and is pure NumPy: expect it to be slow
-on a large mesh. There is no interactive session (`propose` / `accept` / `undo`) at this rung yet.
+on a large mesh.
 ```
 
 ## Quick start
@@ -77,9 +77,29 @@ In the Laplace pass a boundary face is never shrunk across its own normal, the 3
 is guarded: a pass that adds an inverted hex, or lowers the minimum scaled Jacobian by more than `max_sj_drop`, is
 rolled back.
 
+## Session
+
+`hs.SmoothSession` is the quad smoother's session on the hex rung: it holds the mesh, its constraints and a stack of
+accepted states. `propose(schedule)` runs on a copy and returns a `Proposal` (candidate mesh, report, schedule);
+`accept` pushes it (refused if the round failed or is stale), `undo(n)` pops, and `run(n, review="print" | "auto")` is the
+no-wait path. With `out_dir=` each round writes `round_NN/before.vtu` and `after.vtu` with per-hex `sj_min` and per-point
+displacement. It takes a linear mesh (a curved one is refused with a pointer to `linearize`).
+
+```python
+sess = hs.SmoothSession(mesh, [], boundary="frozen", sample_order=2, out_dir="rounds")
+prop = sess.propose(hs.user_schedule(outer=1, n_opt=10))   # runs on a copy
+print(prop.report)                                         # failures would block accept
+if prop.report.passed:
+    sess.accept(prop)
+print(sess.history())
+sess.undo()                                                # back to the input, bit for bit
+```
+
+Any stage registered with `register_method` (a third-party backend included) runs through the session by name.
+
 ## The round report
 
-`round_report(before, after, resolved, stages=logs)` gives:
+`round_report(before, after, resolved, stages=logs)` (or `prop.report` of a session round) gives:
 
 - the constraints and the stages that ran;
 - every corner metric before → after;

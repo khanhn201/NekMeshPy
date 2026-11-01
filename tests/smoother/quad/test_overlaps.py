@@ -5,9 +5,14 @@ import numpy as np
 from grids import grid
 
 from nekmeshpy import quadmesh
+from nekmeshpy.core.smoother.session import Count, verdict
 from nekmeshpy.quadmesh.smoother import constrain as cn
 from nekmeshpy.quadmesh.smoother import smooth
-from nekmeshpy.quadmesh.smoother.session import SmoothSession
+from nekmeshpy.quadmesh.smoother.session import RoundReport, SmoothSession
+
+
+def _overlap(before, after):
+    return (Count("overlapping quads", before, after, "%d overlapping quad(s) remain (positive Jacobians do not rule this out)"),)
 
 
 def _nested():
@@ -64,9 +69,9 @@ def test_overlapping_input_warns_and_a_rise_fails_the_round(caplog):
     qa = smooth.quality(m.points, m.corners, nrm)
     sh = smooth.shape_stats(m.points, m.corners)
     geom = cn.on_target_report(m.points, m.corners, ok.resolved, tol=1e-6)
-    _, fails = ok._verdict([], qa, qa, sh, sh, geom, 0, 3)
+    _, fails = verdict(RoundReport, [], qa, qa, sh, sh, geom, _overlap(0, 3))
     assert any("overlapping quads rose 0 -> 3" in f for f in fails)
-    warns, fails = ok._verdict([], qa, qa, sh, sh, geom, 3, 3)
+    warns, fails = verdict(RoundReport, [], qa, qa, sh, sh, geom, _overlap(3, 3))
     assert not fails and any("3 overlapping quad(s) remain" in w for w in warns)
 
 

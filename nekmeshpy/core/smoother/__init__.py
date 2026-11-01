@@ -12,8 +12,9 @@ the one :func:`~nekmeshpy.core.smoother.descent.minimize`.
 * ``quality``     -- reductions from corner readings to the numbers a report prints
 * ``schedule``    -- ``StageLog``, the method ``Registry``, the preset schedules
 * ``descent``     -- the conjugate-gradient driver with a line search
+* ``session``     -- ``SmoothSession`` on a ``RungAdapter``: propose / accept / undo and the round report
 """
 
-from . import constraints, descent, metric, quality, schedule
+from . import constraints, descent, metric, quality, schedule, session
 
-__all__ = ["constraints", "descent", "metric", "quality", "schedule"]
+__all__ = ["constraints", "descent", "metric", "quality", "schedule", "session"]
