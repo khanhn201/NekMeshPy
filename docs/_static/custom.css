@@ -23,3 +23,103 @@ body[data-theme="dark"] .github-icon {
     filter: invert(1);
   }
 }
+
+/* smoothing galleries (smoother_page.js, with smoother_viewer.js / smoother_surface_viewer.js as panels) */
+.smoother-viewer { --sv-edge: #3a3a3a; margin: 1rem 0; }
+body[data-theme="dark"] .smoother-viewer { --sv-edge: #cfcfcf; }
+@media (prefers-color-scheme: dark) { body:not([data-theme="light"]) .smoother-viewer { --sv-edge: #cfcfcf; } }
+.smoother-viewer .sm-tabs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.4rem; }
+.smoother-viewer .sm-tabs:empty, .smoother-viewer .sm-tabs.single { display: none; }
+.smoother-viewer .sm-tabs button { cursor: pointer; padding: 0.2rem 0.7rem; border: 1px solid var(--color-background-border); border-radius: 1rem; background: var(--color-background-primary); color: var(--color-foreground-primary); font: inherit; font-size: 0.85em; }
+.smoother-viewer .sm-tabs button[aria-selected="true"] { background: var(--color-brand-primary); border-color: var(--color-brand-primary); color: var(--color-background-primary); }
+.smoother-viewer .sm-note { margin: 0 0 0.5rem; font-size: 0.85em; color: var(--color-foreground-secondary); min-height: 1.3em; }
+.smoother-viewer .sv-panels, .smoother-viewer .sm-charts { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.smoother-viewer .sm-charts { margin-top: 0.8rem; }
+.smoother-viewer figure { flex: 1 1 260px; margin: 0; min-width: 0; }
+.smoother-viewer canvas { width: 100%; height: auto; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-primary); }
+.smoother-viewer .sm-charts canvas { aspect-ratio: 8 / 5; }
+.smoother-viewer figcaption { font-size: 0.85em; text-align: center; color: var(--color-foreground-secondary); }
+.smoother-viewer .sv-controls { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
+.smoother-viewer .sv-controls input[type=range] { flex: 1; }
+.smoother-viewer .sv-controls button { width: 2.2rem; height: 2rem; cursor: pointer; }
+.smoother-viewer .sv-legend { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8em; margin-top: 0.4rem; color: var(--color-foreground-secondary); }
+.smoother-viewer .sv-legend i { width: 9rem; height: 0.7rem; border-radius: 3px; background: linear-gradient(90deg, rgb(214,64,52), rgb(240,150,60) 20%, rgb(244,213,94) 45%, rgb(92,170,98)); }
+/* a panel: a canvas (planar) or a vtk.js render window (surface) */
+.smoother-viewer .sv-host { position: relative; width: 100%; border: 1px solid var(--color-background-border); border-radius: 4px; overflow: hidden; }
+.smoother-viewer .sv-host canvas { border: 0; border-radius: 0; display: block; }
+.smoother-viewer .sv-host.surface { height: 340px; }
+
+/* before | after only: a run with too few frames for a history (see MIN_HISTORY_FRAMES in smoother_page.js) */
+.sm-page.sm-compare .sv-controls { display: none; }
+.sm-page.sm-compare .sm-charts figure:nth-child(2) { display: none; }
+
+/* collapsed "Notes and caveats" blocks on the deep-dive pages (raw <details> in MyST) */
+article details { margin: 1.25rem 0; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-secondary); }
+article details > summary { cursor: pointer; padding: 0.45rem 0.8rem; font-weight: 600; color: var(--color-foreground-primary); }
+article details[open] > summary { border-bottom: 1px solid var(--color-background-border); }
+article details > :not(summary) { margin-left: 0.8rem; margin-right: 0.8rem; }
+article details > ul { padding-left: 1.2rem; }
+
+/* phi / phi_delta plot (smoother_phi_plot.js) */
+.phi-plot .pp-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 0.4rem; font-size: 0.9em; }
+.phi-plot .pp-controls input[type=range] { vertical-align: middle; width: 9rem; }
+.phi-plot canvas { width: 100%; max-width: 640px; aspect-ratio: 560 / 340; height: auto; display: block; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-primary); }
+.phi-plot .pp-controls output { font-variant-numeric: tabular-nums; }
+
+/* Methods pages (gen_smoother_quad_methods_assets.py): inline SVG figures, styled here so they follow the theme */
+/* small multiples: one row per input, input | method results, quads filled by worst-corner scaled J */
+.mm-grid { margin: 1rem 0 1.4rem; }
+.mm-row { display: grid; grid-template-columns: repeat(var(--mm-cols, 4), minmax(0, 1fr)); gap: 0.3rem 0.6rem; margin-bottom: 0.9rem; }
+.mm-row .mm-name { grid-column: 1 / -1; margin: 0; font-weight: 600; font-size: 0.9em; }
+.mm-cell { margin: 0; min-width: 0; }
+.mm-cell svg { width: 100%; height: auto; display: block; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-primary); }
+.mm-cell figcaption { font-size: 0.75em; line-height: 1.3; text-align: center; color: var(--color-foreground-secondary); margin-top: 0.2rem; }
+.mm-cell figcaption b { color: var(--color-foreground-primary); font-weight: 600; }
+.mm-mesh .q path { stroke: var(--color-foreground-primary); stroke-opacity: 0.45; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.mm-mesh .inv { fill: none; stroke: #d64034; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.mm-mesh .ol { fill: none; stroke: var(--color-foreground-primary); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.mm-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; font-size: 0.8em; color: var(--color-foreground-secondary); margin-bottom: 0.6rem; }
+.mm-legend i { width: 8rem; height: 0.7rem; border-radius: 3px; background: linear-gradient(90deg, rgb(214,64,52), rgb(240,150,60) 20%, rgb(244,213,94) 45%, rgb(92,170,98)); }
+.mm-mesh .ly { fill: none; stroke: var(--color-brand-primary); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.mm-legend .mm-ly { width: 1.6rem; margin-left: 0.8rem; border-top: 3px solid var(--color-brand-primary); }
+.mm-legend .mm-dash { width: 1.6rem; margin-left: 0.8rem; border-top: 2px dashed var(--color-foreground-primary); }
+.mm-mesh .fzd { fill: var(--color-foreground-primary); stroke: var(--color-background-primary); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.mm-legend .mm-fz { width: 0.6rem; height: 0.6rem; margin-left: 0.8rem; border-radius: 50%; background: var(--color-foreground-primary); }
+@media (max-width: 40rem) { .mm-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* the Laplace pass, step by step */
+.lp-steps { display: flex; flex-wrap: wrap; gap: 0.8rem; margin: 1rem 0 0.4rem; }
+.lp-steps figure { flex: 1 1 200px; margin: 0; min-width: 0; max-width: 300px; }
+.lp-steps figcaption { font-size: 0.8em; line-height: 1.35; color: var(--color-foreground-secondary); margin-top: 0.3rem; }
+.lp-fig { width: 100%; height: auto; display: block; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-primary); }
+.lp-fig path { fill: none; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.lp-fig .old, .lp-fig .new { stroke: var(--color-foreground-primary); }
+.lp-fig .new { stroke-width: 1.6; }
+.lp-fig .ghost { stroke: var(--color-foreground-muted); stroke-dasharray: 3 3; }
+.lp-fig .shr { stroke: var(--color-brand-primary); fill: var(--color-brand-primary); fill-opacity: 0.12; }
+.lp-fig .tgt { stroke: #d64034; stroke-width: 1; stroke-dasharray: 6 3; }
+.lp-fig .mv { stroke: var(--color-brand-primary); stroke-width: 1.4; }
+.lp-fig .sn { stroke: #d64034; stroke-width: 1.4; }
+.lp-fig .h-mv { fill: var(--color-brand-primary); stroke: none; }
+.lp-fig .h-sn { fill: #d64034; stroke: none; }
+.lp-fig .cp { fill: var(--color-foreground-muted); }
+.lp-fig .cpv, .lp-fig .vx { fill: var(--color-brand-primary); }
+.lp-fig .oc { fill: #d64034; }
+.lp-fig .fz { fill: var(--color-foreground-primary); }
+.lp-fig .hol { fill: var(--color-background-primary); stroke: var(--color-foreground-primary); stroke-width: 1.2; }
+.lp-fig .ins { fill: var(--color-background-primary); stroke: var(--color-foreground-muted); stroke-width: 1; }
+.lp-fig .ring { fill: none; stroke: var(--color-foreground-secondary); stroke-width: 1; }
+.lp-fig .lbl { font: 9.5px sans-serif; fill: var(--color-foreground-secondary); }
+/* objective history charts */
+.hc-pair { display: flex; flex-wrap: wrap; gap: 0.8rem; margin: 1rem 0 0.4rem; }
+.hc-fig { flex: 1 1 280px; min-width: 0; max-width: 420px; height: auto; border: 1px solid var(--color-background-border); border-radius: 4px; background: var(--color-background-primary); }
+.hc-fig text { font: 9.5px sans-serif; fill: var(--color-foreground-secondary); }
+.hc-fig .ti { font-weight: 600; fill: var(--color-foreground-primary); }
+.hc-fig path, .hc-fig line { fill: none; vector-effect: non-scaling-stroke; }
+.hc-fig .ax { stroke: var(--color-foreground-muted); }
+.hc-fig .gr { stroke: var(--color-background-border); }
+.hc-fig .band { fill: var(--color-foreground-muted); fill-opacity: 0.1; stroke: none; }
+.hc-fig .mk { stroke: var(--color-foreground-muted); stroke-dasharray: 3 3; }
+.hc-fig .s1, .hc-fig .s2 { stroke: var(--color-brand-primary); stroke-width: 2; }
+.hc-fig .s3 { stroke: #d64034; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.hc-fig .d2 { fill: var(--color-brand-primary); }
+.hc-fig .d3 { fill: #d64034; }

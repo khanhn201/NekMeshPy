@@ -1,0 +1,104 @@
+{
+ "title": "A box with a sliding boundary: cuts at mid-height and mid-depth",
+ "camera": {
+  "direction": [
+   1.0,
+   -1.4,
+   1.1
+  ],
+  "viewUp": [
+   0,
+   0,
+   1
+  ]
+ },
+ "variants": [
+  {
+   "label": "input",
+   "note": "min scaled J 0.09, 0 inverted, F/hex 0.994",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "slide_box_input_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "slide_box_input_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "label": "frozen",
+   "note": "min scaled J 0.30, 0 inverted, F/hex 0.228",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "slide_box_frozen_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "slide_box_frozen_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "label": "slide",
+   "note": "min scaled J 1.00, 0 inverted, F/hex 0.003",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "slide_box_slide_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "slide_box_slide_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    }
+   ]
+  }
+ ]
+}

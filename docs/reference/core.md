@@ -85,3 +85,69 @@
 .. automodule:: nekmeshpy.core.selection
    :members:
 ```
+
+## `core.smoother`
+
+The rung-agnostic smoother engine behind `quadmesh.smoother` and `hexmesh.smoother`.
+
+### `core.smoother.constraints`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.constraints
+   :members:
+```
+
+### `core.smoother.metric`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.metric
+   :members:
+```
+
+### `core.smoother.quality`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.quality
+   :members:
+```
+
+### `core.smoother.schedule`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.schedule
+   :members:
+```
+
+### `core.smoother.session`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.session
+   :members:
+```
+
+### `core.smoother.descent`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.descent
+   :members:
+```
+
+### `core.smoother.blocks`
+
+Per-element node blocks of a curved mesh: how a native stage carries the curved nodes, and how they reach TMOP.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.blocks
+   :members:
+```
+
+### `core.smoother.mfem`
+
+The optional MFEM / TMOP bridge, shared by both rungs' `("tmop", {...})` stage.  It needs
+[PyMFEM](https://github.com/mfem/PyMFEM) (`pip install mfem`); the module itself imports without it, and
+calling it without says so.  The guide: {doc}`../smoother/mfem/backend`.
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.smoother.mfem
+   :members:
+```

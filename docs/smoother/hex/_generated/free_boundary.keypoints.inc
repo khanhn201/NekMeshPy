@@ -1,0 +1,4 @@
+- **`free` shrinks a convex wall**: the volume falls by 4.5 % and wall vertices leave the cylinder by up to 3.1e-02.
+- **`tangent` keeps the volume** (+0.07 %) but follows no target: wall vertices drift 3.2e-03 off the cylinder and rim vertices 0.0e+00 off the cap planes.
+- **`slide` holds the boundary as meshed**: caps exactly planar, wall vertices on the input's faceted wall (2e-16) and rim vertices on a spline through the input rim (6.8e-03 off its chords); 1.3e-02 off the true cylinder is the facet chord error (sagitta 1.9e-02).
+- **An exact `Surface` holds the true wall**: with a cylinder target the wall vertices sit 1e-16 off it.

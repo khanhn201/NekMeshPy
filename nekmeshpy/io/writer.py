@@ -738,12 +738,52 @@ def _b64(a: IntArray | PointArray) -> str:
     return base64.b64encode(head + raw).decode("ascii")
 
 
+def _data_array(name: str, a: Any, fmt: str) -> str:
+    """One named ``<DataArray>`` of a ``PointData`` / ``CellData`` section: ``(n,)`` scalars or
+    ``(n, k)`` vectors; integer and bool arrays are written ``Int32``, everything else
+    ``Float64``.  ``fmt`` is ``"binary"`` or ``"ascii"``."""
+    a = np.asarray(a)
+    if a.dtype.kind in "biu":
+        a, vtype, one = a.astype(np.int32), "Int32", "%d"
+    else:
+        a, vtype, one = a.astype(np.float64), "Float64", "%.17g"
+    comps = "" if a.ndim == 1 else ' NumberOfComponents="%d"' % a.shape[1]
+    if fmt == "binary":
+        body = "          %s\n" % _b64(a)
+    elif a.ndim == 1:
+        body = "".join("          %s\n" % (one % v) for v in a.tolist())
+    else:
+        body = "".join("          %s\n" % " ".join(one % v for v in row) for row in a.tolist())
+    return ('        <DataArray type="%s" Name="%s"%s format="%s">\n%s        </DataArray>\n'
+            % (vtype, name, comps, fmt, body))
+
+
+def _data_section(tag: str, arrays: Mapping[str, Any], n: int, fmt: str) -> str:
+    """A ``PointData`` / ``CellData`` section (empty string when there are no arrays); the
+    first scalar array is the one ParaView colours by default."""
+    if not arrays:
+        return ""
+    for k, v in arrays.items():
+        if np.ndim(v) not in (1, 2) or np.shape(v)[0] != n:
+            raise ValueError("%s array %r has shape %s, expected %d rows"
+                             % (tag, k, np.shape(v), n))
+    scalar = next((k for k, v in arrays.items() if np.ndim(v) == 1), None)
+    head = "" if scalar is None else ' Scalars="%s"' % scalar
+    return ("      <%s%s>\n%s      </%s>\n"
+            % (tag, head, "".join(_data_array(k, v, fmt) for k, v in arrays.items()), tag))
+
+
 def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
                *, bc_out: IntArray | None = None, cell_out: IntArray | None = None,
+               point_data: Mapping[str, Any] | None = None,
+               cell_data: Mapping[str, Any] | None = None,
                binary: bool = True) -> None:
     """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
     ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order
     (consecutive blocks when the nodes are un-welded, shared ids when conformal).
+
+    ``point_data`` / ``cell_data`` are extra named arrays, one row per *written node* resp.
+    per cell, written after ``bc_id`` / ``element_tag`` (names that are reserved).
 
     ``binary`` writes each array as inline base64 rather than formatted text.  Ascii
     costs a Python-level format per row -- there is no vectorized float formatter -- so
@@ -753,6 +793,13 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
     offsets: IntArray = np.arange(m, m * N + 1, m, dtype=np.int64)
     types: IntArray = np.full(N, cell_type, dtype=np.uint8)
     fmt = "binary" if binary else "ascii"
+    pts: dict[str, Any] = {} if bc_out is None else {"bc_id": bc_out}
+    cells: dict[str, Any] = {} if cell_out is None else {"element_tag": cell_out}
+    for dest, extra, reserved in ((pts, point_data, "bc_id"), (cells, cell_data, "element_tag")):
+        for k, v in (extra or {}).items():
+            if k == reserved:
+                raise ValueError("%r is written by the mesh itself; rename the extra array" % k)
+            dest[k] = v
 
     def block(a: IntArray | PointArray, rows: Callable[[], str]) -> str:
         """A ``DataArray``'s body: one base64 payload, or the ascii rows -- which are
@@ -791,27 +838,11 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
         fid.write(block(types, lambda: ("          %d\n" % cell_type) * N))
         fid.write("        </DataArray>\n")
         fid.write("      </Cells>\n")
-        if bc_out is not None:
-            fid.write('      <PointData Scalars="bc_id">\n')
-            fid.write('        <DataArray type="Int32" Name="bc_id" '
-                      'format="%s">\n' % fmt)
-            fid.write(block(np.asarray(bc_out, dtype=np.int32),
-                            lambda: "".join("          %d\n" % v
-                                            for v in bc_out.tolist())))
-            fid.write("        </DataArray>\n")
-            fid.write("      </PointData>\n")
-        if cell_out is not None:
-            # per-**cell**, unlike bc_id: a region belongs to the element, and painting
-            # it on nodes would make every interface node ambiguous between the two
-            # regions that share it -- which is the whole point of a conjugate mesh.
-            fid.write('      <CellData Scalars="element_tag">\n')
-            fid.write('        <DataArray type="Int32" Name="element_tag" '
-                      'format="%s">\n' % fmt)
-            fid.write(block(np.asarray(cell_out, dtype=np.int32),
-                            lambda: "".join("          %d\n" % v
-                                            for v in cell_out.tolist())))
-            fid.write("        </DataArray>\n")
-            fid.write("      </CellData>\n")
+        # ``element_tag`` is per-**cell**, unlike bc_id: a region belongs to the element, and
+        # painting it on nodes would make every interface node ambiguous between the two
+        # regions that share it -- which is the whole point of a conjugate mesh.
+        fid.write(_data_section("PointData", pts, P, fmt))
+        fid.write(_data_section("CellData", cells, N, fmt))
         fid.write("    </Piece>\n")
         fid.write("  </UnstructuredGrid>\n")
         fid.write("</VTKFile>\n")
@@ -819,15 +850,32 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
 
 # -- .vtu (XML; VTK Lagrange cells render reliably in ParaView / VisIt) --
 def to_vtu(mesh: HexMesh, fname: str, *, bc: BCArg = None,
-           binary: bool = True) -> HexMesh:
+           binary: bool = True, point_data: Mapping[str, Any] | None = None,
+           cell_data: Mapping[str, Any] | None = None) -> HexMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``HexMesh`` with per-point
     ``bc_id`` tags, and per-cell ``element_tag`` region ids where the mesh carries
     ``element_tags`` (see :func:`element_tag_ids` for the mapping).  ``binary=False``
     writes the arrays as text instead, which is readable and diffable but costs a
-    Python format per row."""
+    Python format per row.
+
+    ``cell_data`` maps a name to a ``(E,)`` or ``(E, k)`` array and ``point_data`` to a
+    ``(P,)`` or ``(P, k)`` array over the mesh's *points* (diagnostics: quality, displacement),
+    each point value repeated on its corner copies; ``point_data`` is order 1 only."""
     X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_bc(mesh, bc))
+    pts: dict[str, Any] = {}
+    if point_data:
+        if mesh.order != 1:
+            raise ValueError("point_data is per vertex and the mesh is order %d; "
+                             "write the linearised mesh or use cell_data" % mesh.order)
+        for k, v in point_data.items():
+            v = np.asarray(v)
+            if v.ndim not in (1, 2) or v.shape[0] != mesh.n_points:
+                raise ValueError("point_data array %r has shape %s, expected %d rows (the points)"
+                                 % (k, v.shape, mesh.n_points))
+            pts[k] = v[mesh.corners].reshape((-1,) + v.shape[1:])
     _write_vtu(fname, X, conn, cell_type, bc_out=bc_out,
-               cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes), binary=binary)
+               cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes),
+               point_data=pts, cell_data=cell_data, binary=binary)
     return mesh
 
 
@@ -841,13 +889,32 @@ def line_to_vtu(mesh: LineMesh, fname: str, *, binary: bool = True) -> LineMesh:
     return mesh
 
 
-def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True) -> QuadMesh:
+def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True,
+                point_data: Mapping[str, Any] | None = None,
+                cell_data: Mapping[str, Any] | None = None) -> QuadMesh:
     """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, un-welded (one
     node block per quad), with per-cell ``element_tag`` region ids where the mesh
-    carries ``element_tags``."""
+    carries ``element_tags``.
+
+    ``cell_data`` maps a name to a ``(Q,)`` or ``(Q, k)`` array and ``point_data`` to a
+    ``(P,)`` or ``(P, k)`` array over the mesh's *points* (diagnostics: quality, constraint
+    kind, displacement); a point value is repeated on each corner copy of its vertex.
+    ``point_data`` is order 1 only -- a high-order mesh has more nodes than points."""
     X, conn, cell_type = _quad_arrays(mesh)
+    pts: dict[str, Any] = {}
+    if point_data:
+        if mesh.order != 1:
+            raise ValueError("point_data is per vertex and the mesh is order %d; "
+                             "write the linearised mesh or use cell_data" % mesh.order)
+        for k, v in point_data.items():
+            v = np.asarray(v)
+            if v.ndim not in (1, 2) or v.shape[0] != mesh.n_points:
+                raise ValueError("point_data array %r has shape %s, expected %d rows (the points)"
+                                 % (k, v.shape, mesh.n_points))
+            pts[k] = v[mesh.corners].reshape((-1,) + v.shape[1:])
     _write_vtu(fname, X, conn, cell_type,
-               cell_out=_cell_tags(mesh.element_tags, mesh.n_quads), binary=binary)
+               cell_out=_cell_tags(mesh.element_tags, mesh.n_quads),
+               point_data=pts, cell_data=cell_data, binary=binary)
     return mesh
 
 
@@ -948,4 +1015,5 @@ def boundary_to_vtp(mesh: HexMesh, fname: str, *, tag: str | None = None,
             json.dump({str(i): name for name, i in name_to_id.items()}, fid)
     _write_vtp(fname, nodes, conn, bc_out=bc_out, binary=binary)
     return surf
+
 

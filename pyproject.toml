@@ -35,7 +35,11 @@ dev = ["ruff>=0.5", "mypy>=1.0", "pytest>=7.0"]
 # ``tests/test_examples.py`` runs every example, and an example CI cannot run is an
 # example that rots.
 mesh = ["gmsh>=4.11"]
-all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0", "gmsh>=4.11"]
+# PyMFEM is imported lazily, only when a smoother schedule runs the "tmop" stage
+# (``nekmeshpy.core.smoother.mfem``).  Pinned below 4.9 until the bridge is tested on 4.10,
+# which also needs Python >= 3.11; 4.8 has wheels for 3.9 to 3.13.
+smooth = ["mfem>=4.8,<4.9"]
+all = ["matplotlib>=3.4", "meshio>=5.0", "pytest>=7.0", "gmsh>=4.11", "mfem>=4.8,<4.9"]
 # docs also pulls in matplotlib/meshio so autodoc can import io.export
 docs = [
     "sphinx>=7",

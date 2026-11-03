@@ -1,0 +1,1 @@
+Here `eps` = 0.05, `kappa` = 1000 and the default `delta` = 0.01. `untangle_schedule()` is a delta-continuation preset of `optimize`, not a separate method: one stage of 60 iterations per `delta` in 1, 0.3, 0.1, 0.03, 0.01, widest first; `suggest_schedule` puts it in front when a quad starts inverted. The logs always report the exact phi.

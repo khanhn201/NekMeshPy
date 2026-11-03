@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import NamedTuple
 
 import numpy as np
 
@@ -233,6 +234,17 @@ def is_overlap_free(mesh: QuadMesh) -> bool:
     return topology.is_overlap_free_quads(mesh.points, mesh.corners)
 
 
+def overlapping_quads(mesh: QuadMesh) -> IntArray:
+    """Ids of the quads that overlap another quad -- the *which* behind :func:`is_overlap_free`.
+
+    A branched star (one quad covering its neighbours) can have every signed Jacobian positive, so the
+    inverted-quad count cannot see it; this does.  Each pair is tested in the first quad's own mean plane,
+    so quads on a curved surface are read locally.  Cost: a KD-tree over centroids, then a half-plane test of
+    9 sample points per candidate pair."""
+    from ..core import topology
+    return topology.overlapping_quads(mesh.points, mesh.corners)
+
+
 def tag_report(mesh: QuadMesh) -> TagReport:
     """Cross-check ``edge_tags`` against the topological boundary (see
     :class:`TagReport <nekmeshpy.core.topology.TagReport>`)."""
@@ -275,7 +287,230 @@ def report(mesh: QuadMesh) -> str:
     return "\n".join(lines)
 
 
+class ConnectivityReport(NamedTuple):
+    """The preflight gap check of one mesh (read-only; nothing is welded or moved).
+
+    A *gap* is a group of stored points that gencon's relative-tolerance rule would fuse
+    while the mesh keeps them apart -- an open seam or a duplicated vertex; ``gap_points``
+    are their ids and ``n_gap_clusters`` the number of groups.  A group only counts when its
+    members are directly within ``connectivity_tol`` of the local length of each other and no
+    two of them are corners of one quad.  Otherwise (gencon's rule also chains, so on a tangled
+    mesh vertices that merely sit close are linked, or a vertex lies on top of its quad's
+    other corner) it is counted in ``n_chained_clusters``: a possible tangle, not a seam, whose
+    fix is untangling and not welding.
+    """
+
+    n_points: int
+    n_quads: int
+    n_components: int
+    connectivity_tol: float
+    #: Number of gap clusters (see the class docstring for what counts as a gap).
+    n_gap_clusters: int
+    gap_points: IntArray
+    #: Of those, how many sit on the boundary (an open seam) vs inside (a duplicated vertex).
+    n_gap_on_boundary: int
+    #: Largest separation inside a gap cluster, in units of that cluster's local length.
+    worst_gap_in_lengths: float
+    n_chained_clusters: int
+    n_nonmanifold_edges: int          # edges borne by more than two quads
+    n_degenerate_quads: int           # a quad naming one point twice
+    n_collapsed_edges: int            # a quad edge between two stored points at the same place
+    n_pinch_vertices: int             # a vertex whose quads form more than one fan (see pinch_vertices)
+    passed: bool
+    notes: tuple[str, ...]
+
+    def __str__(self) -> str:
+        head = ("connectivity (gencon tol %.2f): %d points, %d quads, %d component(s); "
+                "%d gap cluster(s) (%d points, %d on the boundary, worst %.3f local lengths), "
+                "%d chained; %d non-manifold edge(s); %d degenerate quad(s); %d collapsed edge(s); %d pinch vertex(es) -> %s"
+                % (self.connectivity_tol, self.n_points, self.n_quads, self.n_components,
+                   self.n_gap_clusters, self.gap_points.size, self.n_gap_on_boundary,
+                   self.worst_gap_in_lengths, self.n_chained_clusters, self.n_nonmanifold_edges,
+                   self.n_degenerate_quads, self.n_collapsed_edges, self.n_pinch_vertices,
+                   "PASS" if self.passed else "FAIL"))
+        return head + "".join("\n  - " + n for n in self.notes)
+
+
+#: A quad edge no longer than this fraction of the model size is a *collapsed* edge: two stored points at
+#: the same place.  Tight on purpose -- thin boundary layers are legitimate, coincident points are not.
+COLLAPSE_FRACTION = 1e-9
+
+
+def pinch_vertices(mesh: QuadMesh) -> IntArray:
+    """Ids of the **pinch vertices**: points whose incident quads do not form one connected fan.
+
+    Around a vertex each quad is a wedge between its two edges at that vertex; two wedges are
+    neighbours when they share an edge.  A manifold vertex has one fan (a closed ring inside, an
+    open one on the boundary); a vertex where two patches, or two sides of a folded sheet, touch
+    has two or more.  Neither the gap check, the edge counts nor ``is_conforming`` sees it -- every
+    edge is still used once or twice -- but the boundary angle-defect formula assumes one fan, so
+    ``gauss_bonnet_residual`` does fire.  Cost: one union-find over ``4Q`` wedges."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    c = np.asarray(mesh.corners, dtype=np.int64)
+    n = mesh.n_points
+    if c.shape[0] == 0:
+        return np.zeros(0, dtype=np.int64)
+    v = c.ravel()
+    nxt = np.roll(c, -1, axis=1).ravel()
+    prv = np.roll(c, 1, axis=1).ravel()
+    # a node of the graph is a (vertex, neighbouring vertex) edge-end; a wedge joins its two ends
+    keys, inv = np.unique(np.concatenate([v * n + nxt, v * n + prv]), return_inverse=True)
+    w = v.size
+    graph = coo_matrix((np.ones(w), (inv[:w], inv[w:])), shape=(keys.size, keys.size))
+    _, label = connected_components(graph, directed=False)
+    pair = np.unique(np.stack([keys // n, label], axis=1), axis=0)
+    return np.flatnonzero(np.bincount(pair[:, 0], minlength=n) > 1).astype(np.int64)
+
+
+def check_connectivity(mesh: QuadMesh, *, connectivity_tol: float = 0.2) -> ConnectivityReport:
+    """Preflight **gap check**: run gencon's relative-tolerance vertex rule over the mesh's own
+    corner coordinates and report every pair of stored points it would fuse but the mesh keeps
+    apart (an open seam, a duplicated vertex), plus non-manifold edges, degenerate quads and the
+    component count.  Read-only -- fixing a gap is a separate, explicit act.
+
+    A mesh the toolkit built is conformal by construction, so on its own output this only
+    reports what a coordinate-based weld would still find (a seam closer than
+    ``connectivity_tol`` of the local size that ``merge`` left open).  It cannot see a leak
+    between two distinct objects that are welded: that needs the component and
+    non-manifold lines, and the user's eye on the picture."""
+    corners = mesh.corners
+    P = np.asarray(mesh.points, dtype=float)
+    soup = P[corners]                                            # (Q, 4, 3)
+    X = soup.reshape(-1, 3)
+    stored = corners.reshape(-1)
+    # the local length of a *vertex* is its shortest edge over every quad that shares it: a corner
+    # copy taken from a coarse neighbour must not make the rule lenient at a thin layer's vertex
+    ell_corner = conform.corner_length(soup).reshape(-1)
+    ell_vertex = np.full(mesh.n_points, np.inf)
+    np.minimum.at(ell_vertex, stored, ell_corner)
+    ell = ell_vertex[stored]
+    cl = conform.box_refine_clusters(X, ell, connectivity_tol,
+                                     conform.gencon_clusters(X, ell, connectivity_tol), stored)
+    # clusters that hold more than one *stored* point id are gaps
+    key = np.unique(np.stack([cl, stored], axis=1), axis=0)      # distinct (cluster, point), by cluster
+    per = np.bincount(key[:, 0], minlength=int(cl.max()) + 1 if cl.size else 0)
+    multi = np.flatnonzero(per > 1)
+    cl4 = cl.reshape(-1, 4)
+    # a cluster with two corners of one quad is a fold, whatever the distance
+    folded = np.zeros(per.size, dtype=bool)
+    for j in range(4):
+        for k in range(j + 1, 4):
+            folded[cl4[cl4[:, j] == cl4[:, k], j]] = True
+    start = np.concatenate([[0], np.cumsum(per)])
+    real: list[int] = []
+    chained = 0
+    worst = 0.0
+    for c in multi:
+        ids = key[start[c]:start[c + 1], 1]
+        sep = float(np.linalg.norm(P[ids][:, None, :] - P[ids][None, :, :], axis=2).max())
+        local = float(ell_vertex[ids].min())
+        ratio = sep / local if local > 0 else np.inf
+        if ratio <= connectivity_tol * (1.0 + 1e-9) and not folded[c]:   # a genuine near-duplicate
+            real.append(c)
+            worst = max(worst, ratio)
+        else:
+            chained += 1
+    bad = np.asarray(real, dtype=np.int64)
+    gap_ids = np.unique(key[np.isin(key[:, 0], bad), 1]) if bad.size else np.zeros(0, dtype=np.int64)
+    bnd: BoolArray = np.zeros(mesh.n_points, dtype=bool)
+    bnd[boundary_points(mesh)] = True
+    use = np.bincount(np.asarray(mesh.quads, dtype=np.int64).ravel(),
+                      minlength=mesh.line_mesh.n_lines)
+    nonman = int((use > 2).sum())
+    degen = int(((corners[:, :, None] == corners[:, None, :]).sum(axis=(1, 2)) > 4).sum())
+    ncomp = conform.element_components(corners, mesh.n_points)[0] if mesh.n_quads else 0
+    ea, eb = corners.ravel(), np.roll(corners, -1, axis=1).ravel()
+    elen = np.linalg.norm(P[ea] - P[eb], axis=1)
+    ncollapsed = int(np.unique(np.sort(np.stack([ea, eb], axis=1)[(ea != eb) & (elen <= COLLAPSE_FRACTION * conform.bbox_scale(P))],
+                                       axis=1), axis=0).shape[0]) if elen.size else 0
+    notes: list[str] = []
+    if bad.size:
+        notes.append("%d points would be fused by gencon (tol %.2f of local length) but are "
+                     "stored apart: patch the connectivity before smoothing" % (gap_ids.size,
+                                                                                 connectivity_tol))
+    if chained:
+        notes.append("%d group(s) of non-adjacent points sit close together (chained by gencon's "
+                     "box rule, farther apart than %.2f of the local length): a possible tangle, "
+                     "not a seam -- untangle, do not weld" % (chained, connectivity_tol))
+    if nonman:
+        notes.append("%d edges are used by more than two quads" % nonman)
+    if degen:
+        notes.append("%d quads name one point twice" % degen)
+    if ncollapsed:
+        notes.append("%d quad edge(s) join two stored points at the same place (a collapsed edge is not a "
+                     "valid quad): weld the two points or remove the quad" % ncollapsed)
+    npinch = int(pinch_vertices(mesh).size)
+    if npinch:
+        notes.append("%d vertices are shared by more than one fan of quads (two patches touching "
+                     "at a point): a pinch, not a weld -- split or fuse the patches" % npinch)
+    if ncomp > 1:
+        notes.append("%d disconnected components (intended? an open interface between "
+                     "blocks looks like this)" % ncomp)
+    return ConnectivityReport(mesh.n_points, mesh.n_quads, ncomp, connectivity_tol,
+                              int(bad.size), gap_ids, int(bnd[gap_ids].sum()), worst, chained, nonman,
+                              degen, ncollapsed, npinch,
+                              bool(bad.size == 0 and nonman == 0 and degen == 0 and ncollapsed == 0
+                                   and npinch == 0),
+                              tuple(notes))
+
+
+def _shorter_diagonal_triangles(P: PointArray, corners: IntArray) -> IntArray:
+    """``(2Q, 3)`` triangles: each quad split along its shorter diagonal (corner ids)."""
+    c0, c1, c2, c3 = (corners[:, k] for k in range(4))
+    use02 = (np.linalg.norm(P[c0] - P[c2], axis=1) <= np.linalg.norm(P[c1] - P[c3], axis=1))[:, None]
+    a = np.where(use02, np.stack([c0, c1, c2], 1), np.stack([c1, c2, c3], 1))
+    b = np.where(use02, np.stack([c0, c2, c3], 1), np.stack([c1, c3, c0], 1))
+    return np.concatenate([a, b]).astype(np.int64)
+
+
+def angle_defect(mesh: QuadMesh) -> FloatArray:
+    """``(P,)`` discrete Gaussian curvature of every vertex by the **angle defect**, read off the
+    mesh with each quad split along its shorter diagonal: ``2 pi - sum(angles)`` at an interior
+    vertex, ``pi - sum(angles)`` at a boundary one (the turning of the boundary).  The integral of
+    the Gaussian curvature over the vertex's dual cell, to the mesh's own resolution.
+
+    The quads are triangulated first on purpose: a non-planar quad's four corner angles sum to less
+    than ``2 pi``, so defects read off the raw corners do not add up to ``2 pi chi``; those of a
+    triangle mesh always do (see :func:`gauss_bonnet_residual`)."""
+    P = np.asarray(mesh.points, dtype=float)
+    tri = _shorter_diagonal_triangles(P, mesh.corners)
+    ang = np.zeros(P.shape[0])
+    for k in range(3):
+        u = P[tri[:, (k + 1) % 3]] - P[tri[:, k]]
+        v = P[tri[:, (k + 2) % 3]] - P[tri[:, k]]
+        cosang = np.einsum("ij,ij->i", u, v) / np.maximum(
+            np.linalg.norm(u, axis=1) * np.linalg.norm(v, axis=1), 1e-300)
+        ang += np.bincount(tri[:, k], weights=np.arccos(np.clip(cosang, -1.0, 1.0)),
+                           minlength=P.shape[0])
+    bnd = np.zeros(P.shape[0], dtype=bool)
+    bnd[boundary_points(mesh)] = True
+    return np.asarray(np.where(bnd, np.pi, 2.0 * np.pi) - ang)
+
+
+def gauss_bonnet_residual(mesh: QuadMesh) -> float:
+    """``sum(angle_defect) - 2 pi chi`` with ``chi = V - E + F``: zero (to rounding) for any
+    triangulated surface, with or without boundary.  It does not measure quality -- every mesh
+    satisfies it -- it catches a corrupted topology or an angle bug, and it must hold before
+    *and* after a smoothing round.
+
+    What it can and cannot see.  On a closed mesh the residual is exactly ``2 pi (E - 2Q)``, so
+    it is non-zero only when the edge count is inconsistent with a closed surface: it jumps by
+    ``2 pi`` for every non-manifold fin and by ``pi`` for a quad that names one vertex twice.  On a mesh
+    with a boundary it also fires on a pinch vertex (:func:`pinch_vertices`).  It
+    is blind to an unwelded seam (the cut mesh is still a valid surface with a boundary), to
+    reversed winding, to self-intersection, to a collapsed edge, to holes and to isolated
+    vertices -- :func:`check_connectivity` is the check for the first of these, not this one."""
+    chi = mesh.n_points - mesh.edges.shape[0] + mesh.n_quads
+    return float(angle_defect(mesh).sum() - 2.0 * np.pi * chi)
+
+
 __all__ = [
+    "angle_defect",
+    "gauss_bonnet_residual",
+    "pinch_vertices",
+    "ConnectivityReport",
+    "check_connectivity",
     "TagReport",
     "area",
     "bounds",
@@ -290,6 +525,7 @@ __all__ = [
     "element_blocks",
     "is_conforming",
     "is_overlap_free",
+    "overlapping_quads",
     "is_watertight",
     "plane_normal",
     "quality_summary",

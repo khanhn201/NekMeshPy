@@ -1,0 +1,3 @@
+- **The cube-seeking methods thicken the designed layer**: the native optimizer by +137 % on average (up to 271 %), TMOP `target="ideal"` by +174 % (up to 291 %).
+- **`target="input"` keeps the layer and repairs the interior**: the first layer changes by -2.3 % on average (at most 4.7 %), and the minimum scaled Jacobian rises from 0.21 to 0.96, against 0.76 for the native optimizer and 0.71 for `ideal`.
+- **Here `designed` is not what holds the layer**: the layer is already box-shaped, so `target="input"` alone asks for the same thing (without `designed` the result differs by at most 1e-16). `designed` matters when the bulk target would reshape the layer: with `target="ideal"` it holds the layer at -13.8 % instead of +174 %.

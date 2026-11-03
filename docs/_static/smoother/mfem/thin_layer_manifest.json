@@ -1,0 +1,173 @@
+{
+ "title": "A thin designed layer under the native optimizer and two TMOP targets: cuts through the middle of the box",
+ "camera": {
+  "direction": [
+   1.0,
+   -1.4,
+   1.1
+  ],
+  "viewUp": [
+   0,
+   0,
+   1
+  ]
+ },
+ "variants": [
+  {
+   "label": "input",
+   "note": "min scaled J 0.21, 0 inverted, F/hex 5.283",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "thin_layer_input_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "thin_layer_input_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "layer",
+     "label": "First layer",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "first layer | other"
+    }
+   ]
+  },
+  {
+   "label": "native optimizer",
+   "note": "min scaled J 0.76, 0 inverted, F/hex 2.157",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "thin_layer_native_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "thin_layer_native_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "layer",
+     "label": "First layer",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "first layer | other"
+    }
+   ]
+  },
+  {
+   "label": "TMOP ideal",
+   "note": "min scaled J 0.71, 0 inverted, F/hex 2.286",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "thin_layer_ideal_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "thin_layer_ideal_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "layer",
+     "label": "First layer",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "first layer | other"
+    }
+   ]
+  },
+  {
+   "label": "TMOP input + designed",
+   "note": "min scaled J 0.96, 0 inverted, F/hex 4.070",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "thin_layer_input_designed_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "thin_layer_input_designed_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "layer",
+     "label": "First layer",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "first layer | other"
+    }
+   ]
+  }
+ ]
+}

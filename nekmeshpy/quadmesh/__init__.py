@@ -1,5 +1,7 @@
 """2-D quad mesh container (``QuadMesh``), and its operations."""
 
+from typing import Any
+
 from .assemble import (
     Seam,
     attach,
@@ -30,6 +32,8 @@ from .ports import Port, port
 from .quadmesh import NO_TAG, QuadMesh
 from .quality import order_scan
 from .query import (
+    ConnectivityReport,
+    angle_defect,
     area,
     boundary_edge_ids,
     boundary_edges,
@@ -37,13 +41,17 @@ from .query import (
     boundary_points,
     bounds,
     centroid,
+    check_connectivity,
     edge_rows,
     edge_tag_rows,
     element_areas,
     element_blocks,
+    gauss_bonnet_residual,
     is_conforming,
     is_overlap_free,
     is_watertight,
+    overlapping_quads,
+    pinch_vertices,
     plane_normal,
     quality_summary,
     report,
@@ -72,6 +80,11 @@ from .shape import (
 from .tag import retag_edge, retag_element, tag_edges
 
 __all__ = [
+    "angle_defect",
+    "gauss_bonnet_residual",
+    "pinch_vertices",
+    "ConnectivityReport",
+    "check_connectivity",
     "area",
     "bounds",
     "centroid",
@@ -82,6 +95,7 @@ __all__ = [
     "element_blocks",
     "is_conforming",
     "is_overlap_free",
+    "overlapping_quads",
     "is_watertight",
     "mirror",
     "remove",
@@ -150,3 +164,16 @@ __all__ = [
     "tri_patch",
     "tri_patch_tip",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """``quadmesh.smooth`` / ``.constrain`` / ``.session`` / ``.highorder`` / ``.smoother`` -- the smoother lives in
+    ``quadmesh/smoother/`` for code organisation only; these names keep ``from nekmeshpy.quadmesh import smooth``
+    working.  Loaded on first use: the smoother imports ``io``, which imports the rungs, so importing it
+    eagerly here would be circular."""
+    if name in ("smoother", "smooth", "constrain", "session", "highorder"):
+        import importlib
+
+        pkg = importlib.import_module(".smoother", __name__)
+        return pkg if name == "smoother" else getattr(pkg, name)
+    raise AttributeError("module %r has no attribute %r" % (__name__, name))

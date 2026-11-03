@@ -1,0 +1,4 @@
+- **Laplace is the cheap one**: 9x faster than the optimizer here; it lifts the minimum scaled Jacobian from 0.29 to 0.94 but leaves F/hex at 0.469.
+- **The optimizer reaches the lowest objective**: F/hex 0.439, minimum scaled Jacobian 0.98.
+- **The suggested schedule matches the optimizer** (F/hex 0.4385 against 0.4385) in 22 stages: its value is robustness on harder starts, not a better optimum.
+- **The optimum is not all cubes**: on a curved sector the objective stays above zero (F/hex 0.439), which is why the methods can be told apart.

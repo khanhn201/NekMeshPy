@@ -1,0 +1,52 @@
+# Quad smoothing
+
+Deep dives are the in-depth companion to the {doc}`gallery <../../user/gallery>`: the gallery shows meshes, a deep dive
+explains one topic. More topics (topology, mesh metrics) will follow.
+
+`nekmeshpy.quadmesh.smoother` moves a quad mesh's vertices, never its connectivity, under constraints, and reports what
+it did ({doc}`user guide <../../user/quad_smoother>`). Two ways in:
+
+- **Methods** explains how the smoother works and when to use which part: Laplace smoothing, Winslow smoothing, the
+  optimizer, constraints and projection, boundary layers.
+- **Case studies** shows it on real meshes; each page has a viewer (input left, the stage you pick right, coloured by
+  scaled Jacobian) with a histogram and history of the per-quad scaled Jacobian.
+
+```{toctree}
+:maxdepth: 1
+
+Methods <methods/index>
+Case studies <cases>
+```
+
+## Workflow
+
+Each box links to the page that explains it.
+
+```{include} _generated/smoothing_workflow.inc
+```
+
+## Key points
+
+- **Smoothing repairs a damaged mesh; it does not improve a good one.** Inverted or perturbed inputs recover; a good
+  mesh changes little, and some of its numbers can get worse.
+- **A smoothed surface is not propagated into a hex mesh.** Each case page's hex section measures what carrying it in
+  does.
+- **Folded or overlapping input is a known limitation**: a fold can persist.
+- **High-order nodes are rebuilt** (carried and projected) after the linear smoothing, not smoothed.
+
+<details>
+<summary>Regenerating the pages</summary>
+
+- Every case page is a run of a script in `examples/smoother/quad/`; the Methods pages run the smoother on their own inputs. The pages are static Markdown that include fragments from
+  `docs/smoother/quad/_generated/` and load `docs/_static/smoother/quad/*_frames.json`; the docs build only reads them, and no
+  number is typed.
+- After the smoother or an example changes, regenerate and commit:
+
+```bash
+python docs/_ext/gen_smoother_quad_assets.py                    # every page, about a minute
+python docs/_ext/gen_smoother_quad_assets.py 01_basics          # the frames of one script
+python docs/_ext/gen_smoother_quad_hexviews_assets.py                # the hex views (carotid, U-tube, wire coil), about two minutes
+python docs/_ext/gen_smoother_quad_methods_assets.py            # the Methods pages: comparison runs, tables, parameter tables
+```
+
+</details>

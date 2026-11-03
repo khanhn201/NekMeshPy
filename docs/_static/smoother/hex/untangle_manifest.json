@@ -1,0 +1,212 @@
+{
+ "title": "Folded hexes and the methods that repair them: cuts through the pushed vertices and the axis plane",
+ "camera": {
+  "direction": [
+   1.0,
+   -1.4,
+   1.1
+  ],
+  "viewUp": [
+   0,
+   0,
+   1
+  ]
+ },
+ "variants": [
+  {
+   "label": "input",
+   "note": "min scaled J -0.96, 12 inverted, F/hex 9.502",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "untangle_input_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "untangle_input_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "inv",
+     "label": "Inverted in the input",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "inverted in the input | other"
+    }
+   ]
+  },
+  {
+   "label": "Laplace",
+   "note": "min scaled J 0.85, 0 inverted, F/hex 0.463",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "untangle_laplace_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "untangle_laplace_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "inv",
+     "label": "Inverted in the input",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "inverted in the input | other"
+    }
+   ]
+  },
+  {
+   "label": "optimize \u03b4=0",
+   "note": "min scaled J -0.65, 12 inverted, F/hex 5.220",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "untangle_optimize0_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "untangle_optimize0_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "inv",
+     "label": "Inverted in the input",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "inverted in the input | other"
+    }
+   ]
+  },
+  {
+   "label": "untangle preset",
+   "note": "min scaled J 0.98, 0 inverted, F/hex 0.439",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "untangle_untangle_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "untangle_untangle_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "inv",
+     "label": "Inverted in the input",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "inverted in the input | other"
+    }
+   ]
+  },
+  {
+   "label": "suggested",
+   "note": "min scaled J 0.98, 0 inverted, F/hex 0.439",
+   "layers": [
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Boundary shell",
+     "vtp": "untangle_suggested_shell.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "untangle_suggested_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian (worst corner)",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "inv",
+     "label": "Inverted in the input",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "inverted in the input | other"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,123 @@
+{
+ "title": "The carotid hexes: exterior by boundary group, and cuts through a leg and through the trifurcation",
+ "camera": {
+  "direction": [
+   -0.2321,
+   -0.9762,
+   0.6511
+  ],
+  "viewUp": [
+   0,
+   0,
+   1
+  ]
+ },
+ "variants": [
+  {
+   "label": "original",
+   "note": "The hexes of the carotid recipe, order-1 corners (what a .re2 file holds).",
+   "layers": [
+    {
+     "name": "exterior",
+     "role": "groups",
+     "vtp": "carotid_hex_original_exterior.vtp",
+     "groups": {
+      "1": "flux_1",
+      "2": "flux_2",
+      "3": "top_outlet_1",
+      "4": "top_outlet_2",
+      "5": "trunk_outlet",
+      "6": "wall"
+     },
+     "hidden": []
+    },
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Wall surface",
+     "vtp": "carotid_hex_original_wall.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "carotid_hex_original_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "bl",
+     "label": "Wall layer (hexes touching the wall)",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "wall layer | other"
+    }
+   ]
+  },
+  {
+   "label": "smoothed wall, rebuilt (same 4 layers)",
+   "note": "The carotid recipe re-run on the smoothed wall: the same four layers, the shared seam ring held fixed.",
+   "layers": [
+    {
+     "name": "exterior",
+     "role": "groups",
+     "vtp": "carotid_hex_rebuilt_exterior.vtp",
+     "groups": {
+      "1": "flux_1",
+      "2": "flux_2",
+      "3": "top_outlet_1",
+      "4": "top_outlet_2",
+      "5": "trunk_outlet",
+      "6": "wall"
+     },
+     "hidden": []
+    },
+    {
+     "name": "wall",
+     "role": "surface",
+     "label": "Wall surface",
+     "vtp": "carotid_hex_rebuilt_wall.vtp"
+    },
+    {
+     "name": "section",
+     "role": "section",
+     "label": "Hex cross-section",
+     "vtp": "carotid_hex_rebuilt_section.vtp"
+    }
+   ],
+   "fields": [
+    {
+     "name": "sj",
+     "label": "Scaled Jacobian",
+     "kind": "sj",
+     "range": [
+      0,
+      1
+     ]
+    },
+    {
+     "name": "bl",
+     "label": "Wall layer (hexes touching the wall)",
+     "kind": "cat",
+     "range": [
+      0,
+      1
+     ],
+     "legend": "wall layer | other"
+    }
+   ]
+  }
+ ]
+}

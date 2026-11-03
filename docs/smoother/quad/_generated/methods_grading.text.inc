@@ -1,0 +1,1 @@
+Every run is `user_schedule(outer=5)`. A first-layer cell of the strip has edge ratio 20.8 : 1, so its corners score phi = 109. With `KeepLayer` and a sliding wall, 24 of 24 wall vertices resolve frozen; the largest move of a frozen vertex is 0.0e+00.
