@@ -246,7 +246,7 @@ def laplace(mesh: HexMesh, resolved: Resolved, *, passes: int = 3, w: float = 0.
     hexes = mesh.corners
     P0 = np.asarray(mesh.points, float)
     bnd = boundary_face_ids(mesh)[mesh.hexes]
-    mult = np.bincount(hexes.ravel(), minlength=mesh.n_points).astype(float)
+    mult: FloatArray = np.bincount(hexes.ravel(), minlength=mesh.n_points).astype(float)
     sel = _elements_mask(mesh, elements, "laplace")
     method = "laplace" if sel is None else "laplace_local"
     before = quality(P0, hexes, kappa=kappa, eps=eps)

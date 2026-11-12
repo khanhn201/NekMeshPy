@@ -393,7 +393,7 @@ def check_connectivity(mesh: QuadMesh, *, connectivity_tol: float = 0.2) -> Conn
     multi = np.flatnonzero(per > 1)
     cl4 = cl.reshape(-1, 4)
     # a cluster with two corners of one quad is a fold, whatever the distance
-    folded = np.zeros(per.size, dtype=bool)
+    folded: BoolArray = np.zeros(per.size, dtype=bool)
     for j in range(4):
         for k in range(j + 1, 4):
             folded[cl4[cl4[:, j] == cl4[:, k], j]] = True
@@ -407,11 +407,11 @@ def check_connectivity(mesh: QuadMesh, *, connectivity_tol: float = 0.2) -> Conn
         local = float(ell_vertex[ids].min())
         ratio = sep / local if local > 0 else np.inf
         if ratio <= connectivity_tol * (1.0 + 1e-9) and not folded[c]:   # a genuine near-duplicate
-            real.append(c)
+            real.append(int(c))
             worst = max(worst, ratio)
         else:
             chained += 1
-    bad = np.asarray(real, dtype=np.int64)
+    bad: IntArray = np.asarray(real, dtype=np.int64)
     gap_ids = np.unique(key[np.isin(key[:, 0], bad), 1]) if bad.size else np.zeros(0, dtype=np.int64)
     bnd: BoolArray = np.zeros(mesh.n_points, dtype=bool)
     bnd[boundary_points(mesh)] = True

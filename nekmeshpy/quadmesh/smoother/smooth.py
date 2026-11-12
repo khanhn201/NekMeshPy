@@ -238,7 +238,7 @@ def laplace(mesh: QuadMesh, resolved: Resolved, *, passes: int = 3, w: float = 0
     P0 = np.asarray(mesh.points, float)
     nrm = reference_normals(P0, corners) if normals is None else np.asarray(normals, float)
     bnd = boundary_edge_ids(mesh)[mesh.quads]
-    mult = np.bincount(corners.ravel(), minlength=mesh.n_points).astype(float)
+    mult: FloatArray = np.bincount(corners.ravel(), minlength=mesh.n_points).astype(float)
     free: BoolArray | None = None
     if elements is not None:
         sel = np.asarray(elements, bool)

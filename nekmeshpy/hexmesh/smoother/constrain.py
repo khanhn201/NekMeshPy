@@ -182,7 +182,7 @@ def boundary_patches(mesh: HexMesh, corner_deg: float = CORNER_DEG) -> BoundaryP
     B = F.shape[0]
     nrm = _face_normals(P, F)
     e = np.sort(np.stack([F, np.roll(F, -1, axis=1)], axis=2).reshape(-1, 2), axis=1)   # (4B, 2)
-    owner = np.repeat(np.arange(B), 4)
+    owner: IntArray = np.repeat(np.arange(B), 4)
     keys, inv, cnt = np.unique(e, axis=0, return_inverse=True, return_counts=True)
     inv = inv.reshape(-1)
     order = np.argsort(inv, kind="stable")
@@ -200,7 +200,7 @@ def boundary_patches(mesh: HexMesh, corner_deg: float = CORNER_DEG) -> BoundaryP
     feature_edges = np.asarray(keys[np.sort(feat)], dtype=np.int64).reshape(-1, 2)
     # patches per vertex
     vp = np.unique(np.stack([F.ravel(), np.repeat(patch, 4)], axis=1), axis=0)
-    n_patches = np.bincount(vp[:, 0], minlength=mesh.n_points).astype(np.int64)
+    n_patches: IntArray = np.bincount(vp[:, 0], minlength=mesh.n_points).astype(np.int64)
     planar = np.zeros(n_p, bool)
     for p in range(n_p):
         X = P[np.unique(F[patch == p])]
@@ -363,7 +363,7 @@ def resolve(mesh: HexMesh, constraints: Sequence[Constraint], *,
     elif boundary == "tangent":
         tang |= loose
     elif boundary == "slide" and loose.any():
-        ids = np.flatnonzero(loose).astype(np.int64)
+        ids: IntArray = np.flatnonzero(loose).astype(np.int64)
         cons += _expand(mesh, [OnCurve(ids), OnSurface(ids)], corner_deg)
         mid = _qc.resolve(qm, cons, boundary="free")
         left = loose & (mid.kind == FREE)               # on no patch or chain: three or more patches meet

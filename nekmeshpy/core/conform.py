@@ -269,7 +269,7 @@ def gencon_clusters(X: PointArray, length: FloatArray, connectivity_tol: float =
     ifseg[0] = True
     for _ in range(ndim):
         for j in range(ndim):
-            seg = np.cumsum(ifseg) - 1
+            seg: IntArray = np.cumsum(ifseg) - 1
             order = order[np.lexsort((X[order, j], seg))]
             x = X[order, j]
             dd = d2[order]
