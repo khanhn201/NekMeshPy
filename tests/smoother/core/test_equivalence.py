@@ -15,10 +15,9 @@ Winslow entries of all cases) is still bit-identical to the pre-engine code.
 
 import os
 
+import cases
 import numpy as np
 import pytest
-
-import cases
 
 QUAD = np.load(os.path.join(cases.DATA, "reference_quad.npz"))
 HEX = np.load(os.path.join(cases.DATA, "reference_hex.npz"))
