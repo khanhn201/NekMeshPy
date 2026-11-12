@@ -1,0 +1,6 @@
+maps/
+out_full*
+res_*
+*.log
+__pycache__/
+out_graph.vtu
