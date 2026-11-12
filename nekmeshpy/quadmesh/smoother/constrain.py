@@ -24,7 +24,7 @@ from typing import NamedTuple
 
 import numpy as np
 
-from ..._typing import BoolArray, IntArray, PointArray
+from ..._typing import BoolArray, FloatArray, IntArray, PointArray
 from ...core.smoother.constraints import (
     CORNER_DEG,
     FREE,
@@ -125,7 +125,7 @@ def grid_columns(mesh: QuadMesh, seeds: Select, direction: Sequence[float], *,
     is allowed ``outside_depth`` further vertices once it has left it -- so the layers of a region
     ride along with its interface and only the first rows of its neighbour do."""
     P = np.asarray(mesh.points, float)
-    d = np.asarray(direction, float)
+    d: FloatArray = np.asarray(direction, float)
     d = d / np.linalg.norm(d)
     nv = mesh.n_points
     corners = mesh.corners
@@ -305,7 +305,7 @@ def resolve(mesh: QuadMesh, constraints: Sequence[Constraint], *,
         return first._replace(notes=(*first.notes, _count_note(first)))
     bnd: BoolArray = np.zeros(mesh.n_points, bool)
     bnd[boundary_points(mesh)] = True
-    loose = np.flatnonzero(bnd & (first.kind == FREE)).astype(np.int64)
+    loose: IntArray = np.flatnonzero(bnd & (first.kind == FREE)).astype(np.int64)
     shorthand: list[Constraint] = []
     note = "boundary=%r: %d unnamed boundary vertice(s)" % (boundary, loose.size)
     if loose.size:
@@ -343,7 +343,7 @@ def _resolve_core(mesh: QuadMesh, constraints: Sequence[Constraint], corner_deg:
         elif isinstance(c, KeepLayer):
             frozen[layer_rings(mesh, c.seeds, c.rings)] = True
         elif isinstance(c, SlideColumns):
-            d_ = np.asarray(c.direction, float)
+            d_: FloatArray = np.asarray(c.direction, float)
             d_ = d_ / np.linalg.norm(d_)
             for col in c.columns:
                 col = np.unique(np.asarray(col, dtype=np.int64))
