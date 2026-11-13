@@ -16,11 +16,13 @@ from .._typing import (
     StrArray,
     Vec3,
 )
+from ..core import autosphere as autosphere_model
 from ..core import conform, surfaces
 from ..core.fields import gll_nodes, validate_layers
 from ..core.interp import coons_grid, coons_grid_fn
 from ..core.surfaces import SurfaceCurve, SurfaceMap
 from ..linemesh import LineMesh
+from ..linemesh._plane import _in_plane_axes
 from ..linemesh.assemble import loft as line_loft
 from ..linemesh.assemble import loft_fn as line_loft_fn
 from ..linemesh.morph import reverse as line_reverse
@@ -389,6 +391,95 @@ def ogrid(boundary: LineMesh, n_side: int, radial: int | FloatArray, *,
     return _named(merge([quadrant_ogrid(arcs[q], seams[q], seams[q + 1], radial,
                                  center_scale=center_scale, wall_tag=wall_tag)
                  for q in range(4)]), element_tags)
+
+
+def _autosphere_quadrant(radius: float, n_core: int, fr_shell: FloatArray, *,
+                         a_frac: float, center: Point, e1: Vec3, e2: Vec3,
+                         theta0: float, order: int, wall_tag: str) -> QuadMesh:
+    """One Autosphere quadrant, rotated by ``theta0`` in the ``(e1, e2)`` plane."""
+    if n_core < 1:
+        raise ValueError("autosphere needs n_core >= 1, got %d" % n_core)
+    core, shell_x, shell_y = autosphere_model.quadrant_maps(radius, a_frac)
+    c, s = np.cos(theta0), np.sin(theta0)
+    c0: Point = np.asarray(center, dtype=float)
+
+    def place(m: Callable[[FloatArray, FloatArray], PointArray]
+              ) -> Callable[[FloatArray, FloatArray], PointArray]:
+        def f(u: FloatArray, v: FloatArray) -> PointArray:
+            p = m(u, v)
+            x, y = c * p[..., 0] - s * p[..., 1], s * p[..., 0] + c * p[..., 1]
+            out: PointArray = c0 + x[..., None] * e1 + y[..., None] * e2
+            return out
+        return f
+
+    fr_core = np.linspace(0.0, 1.0, n_core + 1)
+
+    def block(m: Callable[[FloatArray, FloatArray], PointArray], fu: FloatArray,
+              fv: FloatArray, last: str | None) -> QuadMesh:
+        # profile along u, swept along v: profile x sweep is the +normal orientation of
+        # ogrid; the profile's last point (u = 1, the wall for a shell) carries the tag
+        # onto the swept edges.
+        pm = place(m)
+        return loft_fn(lambda v: line_loft_fn(lambda u: pm(u, v), fu, order=order,
+                                              last_tag=last),
+                       fv, order=order)
+
+    wall = wall_tag or None
+    return merge([block(core, fr_core, fr_core, None),
+                  block(shell_x, fr_shell, fr_core, wall),
+                  block(shell_y, fr_shell, fr_core, wall)])
+
+
+def quadrant_autosphere(radius: float, n_core: int, shell: int | FloatArray, *,
+                        ratio: float = autosphere_model.DEFAULT_RATIO,
+                        a_frac: float = autosphere_model.A_FRAC,
+                        center: Point = (0.0, 0.0, 0.0),
+                        normal: Vec3 = (0.0, 0.0, 1.0),
+                        start_theta: float = 0.0,
+                        order: int = 1,
+                        wall_tag: str = "",
+                        element_tags: str | Tags | None = None) -> QuadMesh:
+    """Filled quarter disk of ``radius``, prenek's **Autosphere** in 2-D
+    (``filled_cyl_quadrant``; see :mod:`nekmeshpy.core.autosphere` for the construction).
+
+    One curved core element split ``n_core x n_core``, and two shell elements from the
+    core out to the circle, each split ``n_core`` along the circle and ``shell``
+    radially: an ``int`` count whose element sizes shrink by ``ratio`` from the core to
+    the wall (prenek's "ratio in outer shell"), or explicit fractions ``0 .. 1`` from the
+    core to the wall.  ``2 n_core`` elements on the quarter circle.
+
+    The quadrant spans ``start_theta .. start_theta + pi/2`` from ``e1`` toward ``e2`` of
+    the plane with ``normal`` (the same frame as :func:`linemesh.circle
+    <nekmeshpy.linemesh.shape.circle>`), counter-clockwise about ``normal``.  Every node
+    is the parent element's map evaluated at the mesh ``order`` (exact on the circle).
+    The wall edges carry ``wall_tag``; the two straight sides are untagged."""
+    e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
+    qm = _autosphere_quadrant(radius, n_core, autosphere_model.shell_fractions(shell, ratio), a_frac=a_frac,
+                              center=center, e1=e1, e2=e2, theta0=start_theta,
+                              order=order, wall_tag=wall_tag)
+    return _named(qm, element_tags)
+
+
+def autosphere(radius: float, n_core: int, shell: int | FloatArray, *,
+               ratio: float = autosphere_model.DEFAULT_RATIO,
+               a_frac: float = autosphere_model.A_FRAC,
+               center: Point = (0.0, 0.0, 0.0),
+               normal: Vec3 = (0.0, 0.0, 1.0),
+               start_theta: float = 0.0,
+               order: int = 1,
+               wall_tag: str = "",
+               element_tags: str | Tags | None = None) -> QuadMesh:
+    """Filled disk of ``radius``: four :func:`quadrant_autosphere
+    <nekmeshpy.quadmesh.shape.quadrant_autosphere>` quarters rotated by 90 degrees and
+    welded -- prenek's Autosphere followed by "REPLICATE/ROTATE 90 x 3".  ``8 n_core``
+    elements on the circle, ``4 (n_core^2 + 2 n_core n_shell)`` in all."""
+    e1, e2 = _in_plane_axes(np.asarray(normal, dtype=float))
+    fr = autosphere_model.shell_fractions(shell, ratio)
+    quads = [_autosphere_quadrant(radius, n_core, fr, a_frac=a_frac, center=center,
+                                  e1=e1, e2=e2, theta0=start_theta + q * np.pi / 2,
+                                  order=order, wall_tag=wall_tag)
+             for q in range(4)]
+    return _named(merge(quads), element_tags)
 
 
 def half_ogrid(arc: LineMesh, spine: LineMesh,
