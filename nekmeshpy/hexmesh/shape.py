@@ -7,18 +7,24 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from .._typing import IntArray, Point, PointArray
+from .._typing import FloatArray, IntArray, Point, PointArray
+from ..core import autosphere as autosphere_model
 from ..core import conform
 from ..core.interp import coons_grid
 from ..linemesh import LineMesh
 from ..linemesh.assemble import loft as line_loft
+from ..linemesh.assemble import loft_fn as line_loft_fn
 from ..pointmesh import PointMesh
 from ..quadmesh import QuadMesh
 from ..quadmesh.assemble import loft as quad_loft
+from ..quadmesh.assemble import loft_fn as quad_loft_fn
 from ..tags import Tags
 from .assemble import loft as hex_loft
+from .assemble import loft_fn as hex_loft_fn
 from .assemble import merge
 from .hexmesh import HexMesh
+from .morph import mirror
+from .tag import retag_element
 
 
 def _lin(n: int) -> PointArray:
@@ -327,6 +333,70 @@ def tetra(faces: Sequence[QuadMesh], *,
         blocks.append(_block(_coons3(f), order, (tb, tc, ta), element_tag))
     return merge(blocks)
 
+
+def _autosphere_octant(radius: float, n_core: int, fr_shell: FloatArray, *,
+                       a_frac: float, center: Point, order: int, wall_tag: str) -> HexMesh:
+    """One Autosphere octant (``x, y, z >= 0`` about ``center``)."""
+    if n_core < 1:
+        raise ValueError("autosphere needs n_core >= 1, got %d" % n_core)
+    c0: Point = np.asarray(center, dtype=float)
+    fr_core = np.linspace(0.0, 1.0, n_core + 1)
+
+    def block(m: autosphere_model.Map3, fw: FloatArray, last: str | None) -> HexMesh:
+        # profile u, swept v (a +w-facing quad), swept w: a right-handed (u, v, w) map
+        # gives positive hexes; the last w slice (the sphere, for a shell) is ``last``.
+        def slab(w: float) -> QuadMesh:
+            return quad_loft_fn(
+                lambda v: line_loft_fn(lambda u: c0 + m(u, v, w), fr_core, order=order),
+                fr_core, order=order)
+        return hex_loft_fn(slab, fw, order=order, last_tag=last)
+
+    core, *shells = autosphere_model.octant_maps(radius, a_frac)
+    wall = wall_tag or None
+    return merge([block(core, fr_core, None)] + [block(s, fr_shell, wall) for s in shells])
+
+
+def octant_autosphere(radius: float, n_core: int, shell: int | FloatArray, *,
+                      ratio: float = autosphere_model.DEFAULT_RATIO,
+                      a_frac: float = autosphere_model.A_FRAC,
+                      center: Point = (0.0, 0.0, 0.0),
+                      order: int = 1,
+                      wall_tag: str = "",
+                      element_tags: str | Tags | None = None) -> HexMesh:
+    """Filled octant (``x, y, z >= 0`` about ``center``) of a ball of ``radius``,
+    prenek's **Autosphere** in 3-D (``filled_sphere_oct``; see
+    :mod:`nekmeshpy.core.autosphere`).
+
+    One curved core hex split ``n_core^3``, and three shell hexes from the core's outer
+    faces to the sphere, each split ``n_core x n_core`` along the sphere and ``shell``
+    radially: an ``int`` count whose sizes shrink by ``ratio`` toward the sphere, or
+    explicit fractions ``0 .. 1`` from the core to the sphere.  Every node is the parent
+    element's map evaluated at the mesh ``order``.  The sphere faces carry ``wall_tag``;
+    the three symmetry planes are untagged."""
+    hm = _autosphere_octant(radius, n_core, autosphere_model.shell_fractions(shell, ratio), a_frac=a_frac,
+                            center=center, order=order, wall_tag=wall_tag)
+    return hm if element_tags is None else retag_element(hm, element_tags)
+
+
+def autosphere(radius: float, n_core: int, shell: int | FloatArray, *,
+               ratio: float = autosphere_model.DEFAULT_RATIO,
+               a_frac: float = autosphere_model.A_FRAC,
+               center: Point = (0.0, 0.0, 0.0),
+               order: int = 1,
+               wall_tag: str = "",
+               element_tags: str | Tags | None = None) -> HexMesh:
+    """Filled ball of ``radius`` about ``center``: the :func:`octant_autosphere
+    <nekmeshpy.hexmesh.shape.octant_autosphere>` mirrored through the three coordinate
+    planes and welded -- ``8 (n_core^3 + 3 n_core^2 n_shell)`` hexes."""
+    hm = _autosphere_octant(radius, n_core, autosphere_model.shell_fractions(shell, ratio), a_frac=a_frac,
+                            center=center, order=order, wall_tag=wall_tag)
+    for axis in np.eye(3):
+        hm = merge([hm, mirror(hm, axis, center)])
+    return hm if element_tags is None else retag_element(hm, element_tags)
+
+
 __all__ = [
+    "autosphere",
+    "octant_autosphere",
     "tetra",
 ]

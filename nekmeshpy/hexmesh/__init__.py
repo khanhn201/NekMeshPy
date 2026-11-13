@@ -56,7 +56,7 @@ from .query import (
     topology_report,
     volume,
 )
-from .shape import tetra
+from .shape import autosphere, octant_autosphere, tetra
 from .tag import retag_element, retag_face, tag_faces
 
 __all__ = [
@@ -123,6 +123,8 @@ __all__ = [
     "tag_faces",
     "tag_report",
     "tagged_faces",
+    "autosphere",
+    "octant_autosphere",
     "tetra",
     "topology_report",
     "transform",
