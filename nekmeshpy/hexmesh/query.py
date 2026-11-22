@@ -462,5 +462,7 @@ __all__ = [
     "tag_report",
     "tagged_faces",
     "topology_report",
+    "twisted_elements",
+    "validity",
     "volume",
 ]

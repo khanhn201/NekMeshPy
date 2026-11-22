@@ -42,6 +42,13 @@
    :members:
 ```
 
+## `core.autosphere`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.autosphere
+   :members:
+```
+
 ## `core.affine`
 
 ```{eval-rst}
