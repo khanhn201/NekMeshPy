@@ -20,6 +20,7 @@ from ..core import quality as _core
 from ..core.interp import corner_indices
 from ..core.quality import OrderScan, QualitySummary, SolverMetrics
 from ..core.topology import TagReport, TopologyReport
+from .quality import Validity
 from .hexmesh import HexMesh
 
 _log = logging.getLogger(__name__)
@@ -145,6 +146,21 @@ def corner_scaled_jacobian(mesh: HexMesh) -> FloatArray:
     its own curvature) is the case worth watching for before export."""
     from . import quality
     return quality.corner_scaled_jacobian(mesh.points, mesh.corners)
+
+
+def twisted_elements(mesh: HexMesh) -> IntArray:
+    """Ids of the hexes with a twisted (bow-tie or non-convex) face -- see
+    :func:`twisted_faces <nekmeshpy.hexmesh.quality.twisted_faces>`.  Independent of
+    :func:`corner_scaled_jacobian`, which can read positive on such an element."""
+    from . import quality
+    return quality.twisted_faces(mesh.points, mesh.corners)
+
+
+def validity(mesh: HexMesh) -> Validity:
+    """Inverted corners and twisted faces of the mesh -- see :class:`Validity
+    <nekmeshpy.hexmesh.quality.Validity>`.  The check ``to_re2`` runs before it writes."""
+    from . import quality
+    return quality.validity(mesh.points, mesh.corners)
 
 
 def corner_summary(mesh: HexMesh) -> QualitySummary:
@@ -281,6 +297,11 @@ def report(mesh: HexMesh) -> str:
     # The mesh's own order is exact at its nodes and silent between them, so the
     # summary above cannot certify the element -- read it on finer lattices too, and
     # say so loudly when one of them disagrees.
+    twisted = twisted_elements(mesh)
+    lines.append(quality.format_validity(validity(mesh)))
+    if twisted.size:
+        _log.warning("%d element(s) have a twisted (bow-tie) face that the corner "
+                     "scaled Jacobian does not see", twisted.size)
     scan = quality.order_scan(mesh)
     lines.append(quality.format_scan(scan, mesh.order))
     if scan.orders and not scan.clean:

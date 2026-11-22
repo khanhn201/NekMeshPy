@@ -54,6 +54,8 @@ from .query import (
     tag_report,
     tagged_faces,
     topology_report,
+    twisted_elements,
+    validity,
     volume,
 )
 from .shape import autosphere, octant_autosphere, tetra
@@ -127,6 +129,8 @@ __all__ = [
     "octant_autosphere",
     "tetra",
     "topology_report",
+    "twisted_elements",
+    "validity",
     "transform",
     "transform_fn",
     "translate",
