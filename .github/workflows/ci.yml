@@ -25,7 +25,8 @@ jobs:
 
   test:
     name: Tests (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # ubuntu-latest (26.04) has no Python 3.9 build for setup-python; 24.04 still does
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
