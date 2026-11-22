@@ -20,8 +20,8 @@ from ..core import quality as _core
 from ..core.interp import corner_indices
 from ..core.quality import OrderScan, QualitySummary, SolverMetrics
 from ..core.topology import TagReport, TopologyReport
-from .quality import Validity
 from .hexmesh import HexMesh
+from .quality import Validity
 
 _log = logging.getLogger(__name__)
 
