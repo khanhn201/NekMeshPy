@@ -1,0 +1,14 @@
+# everything the pipeline writes; the shipped inputs are re-included below
+*.pkl
+*.npz
+*.npy
+*.vtu
+*.re2
+*.log
+img/
+__pycache__/
+!p1/lattice.pkl
+!p4/bore_axes.npy
+!p4/pipe_axis.npy
+!p4/topo.pkl
+logs/

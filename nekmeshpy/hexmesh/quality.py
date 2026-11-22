@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import NamedTuple
 
 import numpy as np
 
@@ -15,6 +16,48 @@ from .hexmesh import HexMesh
 _CN = np.array([[0, 1, 3, 4], [1, 2, 0, 5], [2, 3, 1, 6], [3, 0, 2, 7],
                 [4, 7, 5, 0], [5, 4, 6, 1], [6, 5, 7, 2], [7, 6, 4, 3]],
                dtype=np.int64)
+
+
+def twisted_faces(points: PointArray, hexes: IntArray) -> IntArray:
+    """Ids of the hexes with a **twisted face**: a face whose four corner turns do not all
+    agree with the face's mean normal, i.e. a bow-tie or non-convex quad.  The corner
+    scaled Jacobian reads the three edges at each corner only, so a face can cross itself
+    between its corners while all eight corner values stay positive."""
+    X = np.asarray(points, dtype=float)
+    HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
+    q = X[HC[:, HexMesh.FACE_POINTS]]
+    turn = np.cross(np.roll(q, -1, axis=2) - q, np.roll(q, 1, axis=2) - q)
+    mean = turn.sum(axis=2, keepdims=True)
+    agree = np.einsum("efkc,efkc->efk", turn, np.broadcast_to(mean, turn.shape))
+    return np.flatnonzero((agree <= 0).any(axis=(1, 2))).astype(np.int64)
+
+
+class Validity(NamedTuple):
+    """Elements a solver cannot use: ids of hexes with a non-positive corner scaled
+    Jacobian (inverted or degenerate) and of hexes with a twisted face."""
+
+    n_elements: int
+    inverted: IntArray
+    twisted: IntArray
+
+    @property
+    def ok(self) -> bool:
+        return self.inverted.size == 0 and self.twisted.size == 0
+
+
+def validity(points: PointArray, hexes: IntArray) -> Validity:
+    """The corner-level reading of whether a mesh is usable at all: inverted corners
+    (:func:`corner_scaled_jacobian` ``<= 0``) and twisted faces
+    (:func:`twisted_faces`).  Both are what ``.re2`` carries -- the corners alone."""
+    HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
+    return Validity(HC.shape[0],
+                    np.flatnonzero(corner_scaled_jacobian(points, HC) <= 0).astype(np.int64),
+                    twisted_faces(points, HC))
+
+
+def format_validity(v: Validity) -> str:
+    return ("validity     : %d inverted corner(s), %d twisted face element(s) of %d"
+            % (v.inverted.size, v.twisted.size, v.n_elements))
 
 
 def _linear_block(mesh: HexMesh) -> PointArray:

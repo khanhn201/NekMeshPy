@@ -494,9 +494,6 @@ middle of the pipe. The geometry was identical and only the boundary block gave 
 
 ## User instructions, always confirm with user before modifying
 - Git: When make a PR, always PR to main
-- Spin up subagents where ever make sense. Main
-objective is to maintain long sessions that retains high level understanding, minimize the
-number of conversation compacting and a clear transcript.
 - When attempting to web search, do it from local machine since Claude API server do not have access
 to internet
 - Use `./scratch/sessionname` as a scratch workspace to do debugging, runs, tests
