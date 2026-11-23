@@ -55,9 +55,10 @@ def validity(points: PointArray, hexes: IntArray) -> Validity:
                     twisted_faces(points, HC))
 
 
-def format_validity(v: Validity) -> str:
-    return ("validity     : %d inverted corner(s), %d twisted face element(s) of %d"
-            % (v.inverted.size, v.twisted.size, v.n_elements))
+def format_twisted(twisted: IntArray, n_elements: int) -> str:
+    """The report's twisted-face line -- the half of :func:`validity` the report does not
+    already print: its inverted corners are the corner reading's own inverted count."""
+    return ("twisted faces: %d element(s) of %d" % (twisted.size, n_elements))
 
 
 def _linear_block(mesh: HexMesh) -> PointArray:

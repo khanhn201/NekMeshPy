@@ -114,6 +114,8 @@ def wall(X, L):
         ext = np.concatenate([[th[-1] - 2 * np.pi], th, [th[0] + 2 * np.pi]])
         th = 0.5 * th + 0.25 * (ext[:-2] + ext[2:])
     for j in range(n):
+        if L[2] == "top" and isinstance(OUTER[j][0], (float, np.floating)):
+            continue
         X[oid[j]] = R_W * np.array([np.cos(th[j]), np.sin(th[j])])
     pillows(X)
     r = np.hypot(*X.T)

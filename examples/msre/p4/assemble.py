@@ -56,17 +56,11 @@ for nm in ("inlet", "outlet"):
     ar = sum(0.5 * np.linalg.norm(np.cross(q[2] - q[0], q[3] - q[1])) for q in np.asarray(mesh.quad_mesh.points)[np.asarray(mesh.quad_mesh.corners)[ids_]])
     print("%s: %d faces, area %.0f mm2 (pipe section %.0f)" % (nm, len(ids_), ar, np.pi * (64.135 if nm == "inlet" else 64.1) ** 2), flush=True)
 print("merged: %d hexes (%.0fs)" % (len(mesh.hexes), time.time() - t0), flush=True)
-print(hexmesh.topology_report(mesh), flush=True)
-print(hexmesh.tag_report(mesh), flush=True)
-print("curved:", hexmesh.quality_summary(mesh), flush=True)
-print("corner:", hexmesh.corner_summary(mesh), flush=True)
-v = hexmesh.validity(mesh)
-print("validity: inverted %d, twisted %d" % (len(v.inverted), len(v.twisted)), flush=True)
+print(hexmesh.report(mesh), flush=True)
 pickle.dump(mesh, open(os.path.join(HERE, OUT + ".pkl"), "wb"))
 from nekmeshpy.io.writer import to_re2
-if not len(v.inverted) and not len(v.twisted):
-    to_re2(mesh, os.path.join(HERE, OUT + ".re2"), bc={"inlet": ("v  ", 1), "outlet": ("O  ", 2), "wall": ("W  ", 3), "channel": ("W  ", 4)})
-    print("re2 written", flush=True)
+to_re2(mesh, os.path.join(HERE, OUT + ".re2"), bc={"inlet": ("v  ", 1), "outlet": ("O  ", 2), "wall": ("W  ", 3), "channel": ("W  ", 4)})
+print("re2 written", flush=True)
 if "--vtu" in sys.argv:
     to_vtu(mesh, os.path.join(HERE, OUT + ".vtu"))
 print("done (%.0fs)" % (time.time() - t0))

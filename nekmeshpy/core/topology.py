@@ -38,11 +38,78 @@ class TopologyReport(NamedTuple):
     #: ``True`` when the boundary is a closed, non-empty 2-manifold.  Says nothing
     #: about conformity: a T-junction interface still reads watertight.
     watertight: bool
-    #: ``True`` when there are no hanging points.
+    #: ``True`` when there are no hanging points and no improper pairs.
     conformal: bool
+    #: Element pairs that meet improperly, plus elements inconsistent on their own (a
+    #: repeated corner, line or face).  Two cells of a valid mesh meet in nothing or in
+    #: exactly **one** shared entity: one point, one stored line (its two endpoints and
+    #: nothing else), or at the hex rung one stored face (its 4 corners and 4 lines).
+    #: Anything else is a defect no tolerance can fix -- two corners with no line
+    #: between them (opposite corners, or one quad's diagonal on the other's edge), three
+    #: corners (a doublet: an interface that failed to become one face, which still reads
+    #: watertight), four corners without one shared face, two shared faces.  Nek's
+    #: parRSB connectivity (``face_check``) refuses the mesh.  Purely combinatorial; see
+    #: :func:`improper_pairs` for which.
+    n_improper: int = 0
 
 
 # -- shared helpers -----------------------------------------------------
+def _incidence(rows: IntArray, n: int) -> sp.csr_matrix:
+    """``(E, n)`` 0/1 incidence of an ``(E, k)`` id table (repeats within a row count once)."""
+    r = np.asarray(rows, dtype=np.int64)
+    m = sp.csr_matrix((np.ones(r.size, np.int32), r.ravel(),
+                       np.arange(0, r.size + 1, max(r.shape[1], 1))), shape=(r.shape[0], n))
+    m.sum_duplicates()
+    m.data[:] = 1
+    return m
+
+
+#: ``(points, lines, faces)`` two cells may share: one point, one line, one face.
+_PROPER = {1: {(1, 0, 0)}, 2: {(1, 0, 0), (2, 1, 0)},
+           3: {(1, 0, 0), (2, 1, 0), (4, 4, 1)}}
+#: distinct ``(points, lines, faces)`` one cell holds.
+_OWN = {1: (2, 0, 0), 2: (4, 4, 0), 3: (8, 12, 6)}
+
+
+def improper_pairs(cell_points: IntArray, cell_lines: IntArray | None = None,
+                   cell_faces: IntArray | None = None, *,
+                   chunk: int = 200_000) -> tuple[IntArray, IntArray]:
+    """``(pairs (K,2), cells (J,))``: element pairs that do not meet in exactly one
+    shared point, line or face, and elements that are inconsistent on their own.
+
+    ``cell_points`` is each element's corner ids (2 / 4 / 8 wide, which sets the
+    rung), ``cell_lines`` its line ids and ``cell_faces`` (hexes) its face ids -- the
+    *stored* ones, which is what makes "the same line" mean one entity rather than two
+    that happen to join the same corners.  A row may list an id more than once (a hex's
+    lines read off its six faces do); it counts once."""
+    P = np.asarray(cell_points, dtype=np.int64)
+    E, k = P.shape
+    dim = {2: 1, 4: 2, 8: 3}[k]
+    blocks = [_incidence(P, int(P.max()) + 1 if P.size else 1)]
+    for rows in (cell_lines, cell_faces):
+        if rows is not None and np.asarray(rows).size:
+            r = np.asarray(rows, dtype=np.int64)
+            blocks.append(_incidence(r, int(r.max()) + 1))
+        else:
+            blocks.append(None)
+    weight = (1, 16, 256)
+    own = sum(w * (np.diff(b.indptr) if b is not None else 0) for w, b in zip(weight, blocks))
+    expect = sum(w * c for w, c, b in zip(weight, _OWN[dim], blocks) if b is not None)
+    bad_cells = np.flatnonzero(own != expect)
+    ok = np.array(sorted(sum(w * c for w, c, b in zip(weight, t, blocks) if b is not None)
+                         for t in _PROPER[dim]))
+    out = []
+    for s0 in range(0, E, chunk):
+        s1 = min(E, s0 + chunk)
+        terms = [(b[s0:s1] @ b.T) * w for w, b in zip(weight, blocks) if b is not None]
+        M = sp.triu(sum(terms[1:], terms[0]).tocoo(), k=s0 + 1)   # j > i in global ids
+        sel = ~np.isin(M.data, ok)
+        if sel.any():
+            out.append(np.stack([M.row[sel] + s0, M.col[sel]], 1))
+    pairs = np.concatenate(out) if out else np.zeros((0, 2), np.int64)
+    return pairs.astype(np.int64), bad_cells.astype(np.int64)
+
+
 def _count_components(n: int, edges: IntArray) -> int:
     """Number of connected components of an ``n``-point graph with ``(E,2)`` edges."""
     if n == 0:
@@ -266,14 +333,24 @@ def _count_overlapping_pairs(X: PointArray, HC: IntArray) -> int:
 
 
 # -- hex (volume) meshes ------------------------------------------------
-def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
-    """Topology / watertightness report for an all-hex mesh."""
+def hex_report(points: PointArray, hexes: IntArray, hex_lines: IntArray | None = None,
+               hex_faces: IntArray | None = None) -> TopologyReport:
+    """Topology / watertightness report for an all-hex mesh.  ``hex_lines`` /
+    ``hex_faces`` are each hex's stored line and face ids, which
+    :attr:`TopologyReport.n_improper` reads; without them they are derived from the
+    corners, which cannot tell two stored lines on the same corners apart."""
     X = np.asarray(points, dtype=float)
     HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
     N = HC.shape[0]
     faces = HC[:, _FACE_POINTS].reshape(N * 6, 4)          # cyclic-order faces
     keys = np.sort(faces, axis=1)                         # orientation-free key
     _, inverse, counts = conform.unique_rows(keys, return_counts=True)
+    if hex_faces is None:
+        hex_faces = inverse.reshape(N, 6)
+    if hex_lines is None:
+        hex_lines = conform.unique_edges(HC, 3)[1]
+    pairs, cells = improper_pairs(HC, hex_lines, hex_faces)
+    n_improper = int(len(pairs) + len(cells))
 
     n_boundary = int(np.sum(counts == 1))
     n_internal = int(np.sum(counts == 2))
@@ -309,7 +386,8 @@ def hex_report(points: PointArray, hexes: IntArray) -> TopologyReport:
         n_hanging_points=n_hanging,
         n_components=n_components,
         watertight=watertight,
-        conformal=bool(n_hanging == 0),
+        conformal=bool(n_hanging == 0 and n_improper == 0),
+        n_improper=n_improper,
     )
 
 
@@ -343,7 +421,8 @@ def is_overlap_free(points: PointArray, hexes: IntArray) -> bool:
 _QUAD_EDGE_POINTS = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)
 
 
-def quad_report(points: PointArray, quads: IntArray) -> TopologyReport:
+def quad_report(points: PointArray, quads: IntArray,
+                quad_lines: IntArray | None = None) -> TopologyReport:
     """Topology / watertightness report for an all-quad mesh -- :func:`hex_report` one
     rung down: the facets are edges, the boundary is a curve, and the boundary's own
     "open edge" is an **open point** (a boundary point not shared by exactly two
@@ -368,6 +447,9 @@ def quad_report(points: PointArray, quads: IntArray) -> TopologyReport:
     else:
         n_open, bpoints = 0, np.zeros(0, np.int64)
     n_hanging = _count_hanging_points(X, bedges, bpoints)
+    pairs, cells = improper_pairs(QC, inverse.reshape(N, 4) if quad_lines is None
+                                  else quad_lines)
+    n_improper = int(len(pairs) + len(cells))
 
     owner: IntArray = np.repeat(np.arange(N, dtype=np.int64), 4)
     n_components = _count_components(N, _adjacency_edges(inverse, counts, owner))
@@ -383,7 +465,8 @@ def quad_report(points: PointArray, quads: IntArray) -> TopologyReport:
         n_hanging_points=n_hanging,
         n_components=n_components,
         watertight=watertight,
-        conformal=bool(n_hanging == 0),
+        conformal=bool(n_hanging == 0 and n_improper == 0),
+        n_improper=n_improper,
     )
 
 
@@ -576,6 +659,8 @@ def format_report(report: Union[TopologyReport, dict[str, Any]],
             ("open points    : %d" if quad else "open edges     : %d")
             % report.n_open_edges,
             "hanging points  : %d" % report.n_hanging_points,
+            "improper       : %d (cells not meeting in one point, line or face)"
+            % report.n_improper,
             "components     : %d" % report.n_components,
             "watertight     : %s" % report.watertight,
             "conformal      : %s" % report.conformal,

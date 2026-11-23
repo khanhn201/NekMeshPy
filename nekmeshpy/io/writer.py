@@ -349,15 +349,14 @@ def _write_re2(filename: str, elements: PointArray, nelv: int,
 
 
 def to_re2(mesh: HexMesh, filename: str, *, bc: BCArg,
-           periodic: PeriodicArg = None, fluid: FluidArg = None,
-           validate: bool = True) -> HexMesh:
+           periodic: PeriodicArg = None, fluid: FluidArg = None) -> HexMesh:
     """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
     included -- nothing is appended). The mesh is written **linear** at any order: Nek's
     re2 has no high-order format, so only the 8 corners of each hex are emitted.
 
-    ``validate`` (default on) refuses to write a mesh with an inverted corner or a
-    twisted face -- :func:`hexmesh.validity <nekmeshpy.hexmesh.query.validity>` -- since the
-    solver rejects both.
+    It checks nothing about the mesh itself: run :func:`hexmesh.report
+    <nekmeshpy.hexmesh.query.report>` and read it before exporting -- inverted corners,
+    twisted faces and improper element pairs are all there, and the solver rejects each.
 
     ``bc`` is **required**: this is the one writer that emits Nek BC codes, and a
     default would put a code the caller never chose in front of the solver. It is where
@@ -406,16 +405,6 @@ def to_re2(mesh: HexMesh, filename: str, *, bc: BCArg,
         writer.to_re2(mesh, "wire_coil.re2", periodic=PERIODIC, fluid="fluid",
                       bc=BoundaryConditions(velocity=VEL_BC, temperature=TEMP_BC))
     """
-    if validate:
-        from ..hexmesh import quality as _quality
-        v = _quality.validity(mesh.points, mesh.corners)
-        if not v.ok:
-            raise ValueError(
-                "to_re2: %d element(s) have a non-positive corner scaled Jacobian and %d "
-                "have a twisted face (first ids: %s) -- the solver rejects both. Fix the "
-                "mesh, or pass validate=False to write it anyway."
-                % (v.inverted.size, v.twisted.size,
-                   np.union1d(v.inverted, v.twisted)[:8].tolist()))
     if bc is None:
         raise ValueError(
             "to_re2 needs bc=: a name -> Nek BC code mapping for %s. The .re2 "

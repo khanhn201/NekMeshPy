@@ -158,7 +158,7 @@ def twisted_elements(mesh: HexMesh) -> IntArray:
 
 def validity(mesh: HexMesh) -> Validity:
     """Inverted corners and twisted faces of the mesh -- see :class:`Validity
-    <nekmeshpy.hexmesh.quality.Validity>`.  The check ``to_re2`` runs before it writes."""
+    <nekmeshpy.hexmesh.quality.Validity>`; part of :func:`report`."""
     from . import quality
     return quality.validity(mesh.points, mesh.corners)
 
@@ -243,10 +243,24 @@ def classify_points(mesh: HexMesh, wall: str) -> tuple[BoolArray, BoolArray]:
     is_wall[is_fixed] = False
     return is_wall, is_fixed
 
+def _hex_lines(mesh: HexMesh) -> IntArray:
+    """``(E,24)`` each hex's stored line ids, read off its six stored faces (each of its
+    12 lines appears twice)."""
+    return np.asarray(mesh.quad_mesh.quads)[np.asarray(mesh.hexes)].reshape(len(mesh.hexes), 24)
+
+
+def improper_pairs(mesh: HexMesh) -> tuple[IntArray, IntArray]:
+    """``(pairs (K,2), hexes (J,))``: hex pairs that do not meet in exactly one shared
+    point, stored line or stored face, and hexes inconsistent on their own -- see
+    :attr:`TopologyReport.n_improper <nekmeshpy.core.topology.TopologyReport.n_improper>`."""
+    from ..core import topology
+    return topology.improper_pairs(mesh.corners, _hex_lines(mesh), mesh.hexes)
+
+
 def topology_report(mesh: HexMesh) -> TopologyReport:
     """Watertightness / connectivity report of the mesh."""
     from ..core import topology
-    return topology.hex_report(mesh.points, mesh.corners)
+    return topology.hex_report(mesh.points, mesh.corners, _hex_lines(mesh), mesh.hexes)
 
 def is_watertight(mesh: HexMesh) -> bool:
     """``True`` if the mesh boundary is a closed, leak-tight 2-manifold and the
@@ -298,7 +312,7 @@ def report(mesh: HexMesh) -> str:
     # summary above cannot certify the element -- read it on finer lattices too, and
     # say so loudly when one of them disagrees.
     twisted = twisted_elements(mesh)
-    lines.append(quality.format_validity(validity(mesh)))
+    lines.append(quality.format_twisted(twisted, mesh.n_hexes))
     if twisted.size:
         _log.warning("%d element(s) have a twisted (bow-tie) face that the corner "
                      "scaled Jacobian does not see", twisted.size)
@@ -336,7 +350,12 @@ def report(mesh: HexMesh) -> str:
     tags = tag_report(mesh)
     lines.append("  %-14s : %d faces" % ("untagged bdry", tags.n_untagged_boundary))
     lines.append("  %-14s : %d rows" % ("interior tags", tags.n_tagged_interior))
-    lines.append(topology.format_report(topology.hex_report(mesh.points, mesh.corners)))
+    topo = topology_report(mesh)
+    lines.append(topology.format_report(topo))
+    if topo.n_improper:
+        _log.warning("%d improper element pair(s) or element(s): cells meeting in more "
+                     "than one shared point, line or face (see improper_pairs); Nek's "
+                     "parRSB connectivity (face_check) refuses the mesh", topo.n_improper)
     # topology.count_overlapping_pairs is a geometric broad-then-narrow-phase search,
     # not a fixed-size facet-incidence scan like the rest of this summary -- its
     # candidate count can run into the hundreds of thousands on a large mesh, and it
@@ -461,6 +480,7 @@ __all__ = [
     "solver_metrics",
     "tag_report",
     "tagged_faces",
+    "improper_pairs",
     "topology_report",
     "twisted_elements",
     "validity",

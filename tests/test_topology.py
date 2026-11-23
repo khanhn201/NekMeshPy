@@ -5,6 +5,7 @@ from conftest import face_rows
 
 from nekmeshpy import HexMesh, QuadMesh, TriMesh, hexmesh, linemesh, quadmesh, topology
 from nekmeshpy import tags as tags_mod
+from nekmeshpy.core import conform
 
 # unit hex in Nek corner order
 _UNIT_HEX = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
@@ -74,6 +75,88 @@ def test_t_junction_is_watertight_but_not_conformal():
     assert rep.n_hanging_points >= 4     # ...but the hanging points expose it
     assert rep.conformal is False
     assert hexmesh.is_conforming(mesh) is False
+
+
+def test_interface_agreeing_on_three_corners_is_improper():
+    """Two hexes meant to share a face, where one side's copy of a corner was moved:
+    the weld joins the other three corners, leaving two distinct faces that share two
+    lines (a doublet) -- each reads as boundary and no point hangs, so only the
+    improper-pair count sees it (parRSB's face_check refuses it)."""
+    upper = _hex(_box(0, 1, 0, 1, 0, 1))
+    low = _box(0, 1, 0, 1, -1, 0)
+    low[4] = (-0.2, -0.2, 0.0)
+    mesh = hexmesh.merge([upper, _hex(low)])
+    rep = hexmesh.topology_report(mesh)
+    assert rep.n_hanging_points == 0
+    assert rep.n_nonmanifold_faces == 0
+    assert rep.n_improper == 1
+    assert rep.conformal is False
+    assert hexmesh.improper_pairs(mesh)[0].tolist() == [[0, 1]]
+    assert "improper       : 1" in topology.format_report(rep)
+
+
+def test_proper_meetings_are_not_improper(built_mesh):
+    pts, hexes = _stacked_hexes()                                    # one shared face
+    assert topology.hex_report(pts, hexes).n_improper == 0
+    hx = np.array([np.arange(8), [2, 9, 10, 11, 6, 13, 14, 15]])     # one shared line, 2-6
+    assert topology.improper_pairs(hx, conform.unique_edges(hx, 3)[1])[0].size == 0
+    corner = np.array([np.arange(8), [6, 8, 9, 10, 11, 12, 13, 14]])  # one shared point
+    assert topology.improper_pairs(corner)[0].size == 0
+    assert hexmesh.topology_report(built_mesh["mesh"]).n_improper == 0
+
+
+def _improper_hex(shared):
+    """Hex 0 is ids 0..7; hex 1 takes ``shared`` {slot: id} from it, fresh ids elsewhere."""
+    h1 = np.arange(8, 16)
+    for slot, pid in shared.items():
+        h1[slot] = pid
+    hx = np.array([np.arange(8), h1])
+    return topology.improper_pairs(hx, conform.unique_edges(hx, 3)[1])[0].tolist()
+
+
+def test_hexes_meeting_improperly():
+    assert _improper_hex({0: 0, 2: 2}) == [[0, 1]]            # a face diagonal of both
+    assert _improper_hex({0: 0, 1: 2}) == [[0, 1]]            # one's diagonal on the other's edge
+    assert _improper_hex({0: 0, 6: 6}) == [[0, 1]]            # body diagonal
+    assert _improper_hex({0: 0, 1: 1, 2: 2}) == [[0, 1]]      # three corners (doublet)
+    assert _improper_hex({0: 0, 1: 1, 4: 4, 6: 6}) == [[0, 1]]  # 4 corners, no common face
+    assert _improper_hex({0: 0, 1: 1}) == []                  # one shared line: fine
+
+
+def test_quads_meeting_improperly():
+    def bad(q1):
+        quads = np.array([[0, 1, 2, 3], q1])
+        return topology.improper_pairs(quads, conform.unique_edges(quads, 2)[1])[0].tolist()
+    assert bad([0, 4, 2, 5]) == [[0, 1]]        # opposite corners of both
+    assert bad([0, 2, 4, 5]) == [[0, 1]]        # 0-2: a diagonal of one, an edge of the other
+    assert bad([1, 2, 3, 4]) == [[0, 1]]        # three corners: a quad doublet
+    assert bad([1, 0, 4, 5]) == []              # one shared line
+    assert bad([2, 4, 5, 6]) == []              # one shared point
+
+
+def test_two_stored_lines_on_the_same_corners_are_improper():
+    """Two quads sharing corners 1 and 2 through two *different* stored lines: by
+    corners they look edge-adjacent, by stored entity they are not one line."""
+    quads = np.array([[0, 1, 2, 3], [1, 4, 5, 2]])
+    lines = np.array([[0, 1, 2, 3], [4, 5, 6, 7]])        # no line id in common
+    assert topology.improper_pairs(quads, lines)[0].tolist() == [[0, 1]]
+    assert topology.improper_pairs(quads, np.array([[0, 1, 2, 3], [4, 5, 6, 1]]))[0].size == 0
+
+
+def test_self_inconsistent_element():
+    assert topology.improper_pairs(np.array([[0, 1, 1, 2]]))[1].tolist() == [0]
+
+
+def test_quad_doublet():
+    """Two quads sharing two edges (a valence-2 interior point) -- extruded, this is
+    the hex rung's face doublet."""
+    pts = np.array([[0, 0, 0], [2, 0, 0], [2, 2, 0], [0, 2, 0], [1, 1, 0]], dtype=float)
+    quads = np.array([[0, 1, 4, 3], [1, 2, 3, 4]], dtype=np.int64)
+    assert topology.quad_report(pts, quads).n_improper == 1
+    mesh = QuadMesh.from_corners(pts, quads)
+    rep = quadmesh.topology_report(mesh)                   # read off the stored lines
+    assert rep.n_improper == 1 and rep.conformal is False
+    assert quadmesh.improper_pairs(mesh)[0].tolist() == [[0, 1]]
 
 
 def test_disjoint_hexes_are_two_components():
