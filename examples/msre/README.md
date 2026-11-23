@@ -11,7 +11,9 @@ Output: `p4/msre.re2`, `p4/msre.vtu` (order 2) and `p4/msre.pkl` (a `HexMesh`).
 - **Size and validity:** about 2.45M hexes at order 2 with core `NZ=32` (2,447,348 on the reference
   run; the count can change by a lower-head layer between machines, see *Reproducibility*). Zero
   inverted corners and zero twisted faces.
-- **Connectivity:** one component, conformal. All boundary faces are tagged.
+- **Connectivity:** one component, conformal (no hanging points, no improper element pairs). All boundary faces
+  are tagged. The written `.re2` passes nekRS/parRSB's `parCon` checks (`p4/re2check.py`); it stays
+  unambiguous for `connectivityTol` below about 0.31 (the default is 0.2).
 - **Boundary rows** in the `.re2`, as `cbc` / `boundaryID`:
 
   | name | cbc | boundaryID | faces |
@@ -195,6 +197,11 @@ about 1.5e-5.
 - Face tags: inlet and outlet are set geometrically on their end planes; `channel` is kept from the
   core; everything else is wall.
 - It writes `.pkl`, `.re2` (with `boundaryID`) and `.vtu` (`--vtu`).
+- It prints `hexmesh.report` before writing the `.re2`: quality (curved and corner), validity, tags
+  and topology, including improper element pairs (two hexes meeting in anything but one shared
+  point, line or face; e.g. two faces sharing two lines, which nekRS reports as `face_check failed`).
+- `re2check.py FILE.re2` reruns parRSB's own checks on a written `.re2` (from any source) and prints
+  the largest safe `connectivityTol`.
 - `plot_folds.py MESH` plots any curved-folded elements: their curved edges against the corner hex,
   and the Jacobian field on slices.
 
