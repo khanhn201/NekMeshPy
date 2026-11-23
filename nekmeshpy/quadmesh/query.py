@@ -208,10 +208,18 @@ def edge_tag_rows(mesh: QuadMesh) -> tuple[IntArray, StrArray]:
     return rows[p], tags[p]
 
 
+def improper_pairs(mesh: QuadMesh) -> tuple[IntArray, IntArray]:
+    """``(pairs (K,2), quads (J,))``: quad pairs that do not meet in exactly one shared
+    point or stored line, and quads inconsistent on their own -- see
+    :attr:`TopologyReport.n_improper <nekmeshpy.core.topology.TopologyReport.n_improper>`."""
+    from ..core import topology
+    return topology.improper_pairs(mesh.corners, mesh.quads)
+
+
 def topology_report(mesh: QuadMesh) -> TopologyReport:
     """Watertightness / connectivity report of the mesh."""
     from ..core import topology
-    return topology.quad_report(mesh.points, mesh.corners)
+    return topology.quad_report(mesh.points, mesh.corners, mesh.quads)
 
 
 def is_watertight(mesh: QuadMesh) -> bool:
@@ -282,8 +290,7 @@ def report(mesh: QuadMesh) -> str:
     tags = tag_report(mesh)
     lines.append("  %-14s : %d edges" % ("untagged bdry", tags.n_untagged_boundary))
     lines.append("  %-14s : %d rows" % ("interior tags", tags.n_tagged_interior))
-    lines.append(topology.format_report(topology.quad_report(mesh.points, mesh.corners),
-                                        "quad"))
+    lines.append(topology.format_report(topology_report(mesh), "quad"))
     return "\n".join(lines)
 
 
@@ -533,5 +540,6 @@ __all__ = [
     "scaled_jacobian",
     "tag_report",
     "tagged_edges",
+    "improper_pairs",
     "topology_report",
 ]
