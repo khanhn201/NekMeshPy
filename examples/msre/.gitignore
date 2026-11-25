@@ -10,5 +10,5 @@ __pycache__/
 !p1/lattice.pkl
 !p4/bore_axes.npy
 !p4/pipe_axis.npy
-!p4/topo.pkl
+!p4/rim_exclude.npy
 logs/

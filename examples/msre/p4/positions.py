@@ -14,7 +14,20 @@ from nekmeshpy.quadmesh.smoother import constrain as cn
 from nekmeshpy.quadmesh.smoother import smooth
 
 BAND = 35.0
-T = pickle.load(open(os.path.join(HERE, "topo.pkl"), "rb"))
+T = pickle.load(open(os.path.join(HERE, os.environ.get("TOPO", "topo2.pkl")), "rb"))
+LOFT = "lattice_outline" in T                       # rim by loft: OUTER is the wall loop of ("wl", k) nodes
+if LOFT:
+    BAND = float(os.environ.get("BAND", "15"))       # loft rim: only a thin band at the wall needs smoothing
+
+
+def real_ring(c):
+    """a ring that is a real pin / post surface (held on its circle); otherwise a template ring (free)."""
+    return (not LOFT) or lv.ring_held(c)
+
+
+def inside_wall(p, gap=1.5):
+    r = np.hypot(*p)
+    return p if r <= R_W - gap else p * (R_W - gap) / r
 QUADS, INNER, OUTER, CELLS = T["quads"], T["inner"], T["outer"], T["cells"]
 KEYS = {}
 for q, _, _ in QUADS:
@@ -47,7 +60,7 @@ def raw(L, pool):
     cache = {}
     X = np.zeros((len(INV), 2))
     for i, k in enumerate(INV):
-        if not (isinstance(k, tuple) and k[0] == "pw"):
+        if not (isinstance(k, tuple) and k[0] in ("pw", "wl")):
             X[i] = lv.coords(k, L, INNER, cache, CORE_XY)
     sig = {c: lv.tile_signature(c, L, CORE_XY) for c in CELLS}
     rep = {}
@@ -64,6 +77,10 @@ def raw(L, pool):
         dv = tiles[sig[c]].get(lv.rel_key(k, c))
         if dv is not None:
             X[i] += dv
+    if LOFT:                                         # wall node: its outline node's closest point on the wall
+        for k in OUTER:
+            p = X[KEYS[k[1]]]
+            X[KEYS[k]] = R_W * p / np.linalg.norm(p)
     return X
 
 
@@ -78,6 +95,48 @@ def pillows(X):
         P = np.array([X[KEYS[c0]] for _, c0 in sorted(lst)]); cen = P.mean(0)
         for j, c0 in sorted(lst):
             X[KEYS[("pw", qi, j)]] = X[KEYS[c0]] + 0.5 * (cen - X[KEYS[c0]])
+
+
+def loft_angles(X, oid):
+    """wall-node angles for the loft rim: the outline nodes' own angles made monotone round the loop
+    (min gap), then each optimised between its neighbours for its two strip quads (red-black)."""
+    from q2 import quad_csj
+    base = np.array([KEYS[k[1]] for k in OUTER])
+    O = X[base]
+    n = len(O)
+    th = np.unwrap(np.arctan2(O[:, 1], O[:, 0]))
+    if th[-1] < th[0]:
+        raise RuntimeError("wall loop is not counter-clockwise")
+    g = 0.3 * 2 * np.pi / n
+    fw = th.copy()
+    for k in range(1, n):
+        fw[k] = max(fw[k], fw[k - 1] + g)
+    bw = np.r_[th, th[0] + 2 * np.pi]
+    for k in range(n - 1, 0, -1):
+        bw[k] = min(bw[k], bw[k + 1] - g)
+    t = 0.5 * (fw + bw[:-1])
+    if (np.diff(t) < 0.5 * g).any() or t[-1] > th[0] + 2 * np.pi - 0.5 * g:
+        t = th[0] + np.linspace(0, 2 * np.pi, n, endpoint=False)
+    W = lambda a: R_W * np.c_[np.cos(a), np.sin(a)]
+
+    def qsj(j, aj, an):
+        P = np.stack([O[j % n], W(aj), W(an), O[(j + 1) % n]], 1)
+        return quad_csj(P)
+    eps = 0.1 * 2 * np.pi / n
+    for sweep in range(60):
+        for par in (0, 1):
+            idx = np.arange(par, n, 2)
+            prev = np.where(idx > 0, t[idx - 1], t[-1] - 2 * np.pi)
+            nxt = np.where(idx < n - 1, t[(idx + 1) % n], t[0] + 2 * np.pi)
+            lo, hi = prev + eps, nxt - eps
+            cand = np.c_[t[idx], lo[:, None] + (hi - lo)[:, None] * np.linspace(0, 1, 17)[None]]
+            vals = np.empty(cand.shape)
+            for c in range(cand.shape[1]):
+                v1 = qsj(idx - 1, prev, cand[:, c])
+                v2 = qsj(idx, cand[:, c], nxt)
+                vals[:, c] = np.minimum(v1, v2) + 1e-3 * (v1 + v2)
+            t[idx] = cand[np.arange(len(idx)), np.argmax(vals, 1)]
+    return t
 
 
 def wall(X, L):
@@ -110,9 +169,12 @@ def wall(X, L):
     # so edges that point along a radius do not collapse
     P0 = X[oid]
     th = np.unwrap(np.arctan2(P0[:, 1], P0[:, 0]))
-    for _ in range(40):
-        ext = np.concatenate([[th[-1] - 2 * np.pi], th, [th[0] + 2 * np.pi]])
-        th = 0.5 * th + 0.25 * (ext[:-2] + ext[2:])
+    if LOFT:
+        th = loft_angles(X, oid)
+    else:
+        for _ in range(40):
+            ext = np.concatenate([[th[-1] - 2 * np.pi], th, [th[0] + 2 * np.pi]])
+            th = 0.5 * th + 0.25 * (ext[:-2] + ext[2:])
     for j in range(n):
         if L[2] == "top" and isinstance(OUTER[j][0], (float, np.floating)):
             continue
@@ -150,7 +212,7 @@ def wall(X, L):
         if not free[i] or i in set(oid):
             continue
         k = INV[i]
-        if k[0] == "ring":
+        if k[0] == "ring" and real_ring(k[1]):
             rings[k[1]].append(loc[i])
         elif k[0] == "mq":
             jn = bsec.side_lines(k[1], k[2])[1]
@@ -164,8 +226,9 @@ def wall(X, L):
         cons.append(cn.OnCurve(np.array(li), cn.line(o, dd)))
     res = cn.resolve(qm, cons, boundary="frozen")
     nrm = np.tile([0.0, 0.0, 1.0], (len(SQ), 1))
-    out, _ = smooth.run_schedule(qm, res, smooth.untangle_schedule(), normals=nrm)
-    out, _ = smooth.run_schedule(out, res, smooth.user_schedule(outer=8), normals=nrm)
+    if not LOFT or corner_sj(P[:, :2] if P.shape[1] > 2 else P, SQ).min() <= 0:
+        qm, _ = smooth.run_schedule(qm, res, smooth.untangle_schedule(), normals=nrm)
+    out, _ = smooth.run_schedule(qm, res, smooth.user_schedule(outer=3 if LOFT else 8), normals=nrm)
     X[nodes] = np.asarray(out.points)[:, :2]
     return X
 
@@ -208,7 +271,7 @@ def repair(X, L, grow=3, thr=0.0, slide=False, keep=()):
             fz.append(loc[i])
         elif i in oset:
             wallv.append(loc[i])
-        elif k[0] == "ring":
+        elif k[0] == "ring" and real_ring(k[1]):
             rings[k[1]].append(loc[i])
     cons = [cn.Frozen(np.array(sorted(fz), int))]
     if wallv:
@@ -229,6 +292,8 @@ def repair(X, L, grow=3, thr=0.0, slide=False, keep=()):
 
 AB_PRISM = {(1, 2), (2, 1), (-1, 2), (-2, 1), (1, -2), (2, -1), (-1, -2), (-2, -1),
             (12, 6), (6, 12), (-12, 6), (-6, 12), (12, -6), (6, -12), (-12, -6), (-6, -12)}
+if LOFT:                                             # rim cells with a capped ring keep their own AB layout
+    AB_PRISM = {c for c in AB_PRISM if max(abs(c[0]), abs(c[1])) < 10}
 
 
 def level_positions(name, pool):
@@ -259,6 +324,36 @@ def level_positions(name, pool):
     if corner_sj(X, Q).min() <= 0.05:
         import ab_fix
         X = ab_fix.fix(X, L, AB_PRISM if name == "AB" else set())
+    if LOFT:                                         # ring nodes never past the wall (they slide on their circle)
+        for i, k in enumerate(INV):
+            if isinstance(k, tuple) and isinstance(k[0], str) and k[0] == "ring" and np.hypot(*X[i]) > R_W - 1.5:
+                X[i] = lv.clamp_ring(k[1], L, X[i]) if real_ring(k[1]) else inside_wall(X[i])
+    if LOFT:                                         # wall nodes re-placed against the final outline
+        oid = [KEYS[k] for k in OUTER]
+        t = loft_angles(X, oid)
+        Y = X.copy(); Y[oid] = R_W * np.c_[np.cos(t), np.sin(t)]
+        if (corner_sj(Y, Q) <= 0).sum() <= (corner_sj(X, Q) <= 0).sum():
+            X = Y
+        sq = corner_sj(X, Q)
+        if sq.min() <= 0.02:                         # last resort: local untangle, wall nodes on the wall
+            from q2 import untangle
+            fr = np.zeros(len(X), bool); fr[oid] = True
+            for i, k in enumerate(INV):
+                core_key = isinstance(k[0], (float, np.floating)) and L[2] == "top"    # the core interface stays put
+                if not core_key and not (isinstance(k[0], str) and k[0] == "X") and np.hypot(*X[i]) > R_W - 25:
+                    fr[i] = True
+            ws = set(oid)
+            ringc = {i: k[1] for i, k in enumerate(INV) if isinstance(k, tuple) and isinstance(k[0], str) and k[0] == "ring"}
+
+            def pj(i, p):
+                if i in ws:
+                    return R_W * p / np.linalg.norm(p)
+                if i in ringc:
+                    return lv.clamp_ring(ringc[i], L, p) if real_ring(ringc[i]) else inside_wall(p)
+                return inside_wall(p) if np.hypot(*p) > R_W - 1.5 else p
+            Y = untangle(X, Q, fr, pj, target=0.05, rounds=200, grow=2)
+            if (corner_sj(Y, Q) <= 0).sum() <= (sq <= 0).sum():
+                X = Y
     sj = corner_sj(X, Q)
     print("  %s done (%.0fs): min area %.3g, neg %d, min corner sj %.3f, n<=0.02 %d" % (name, time.time() - t0, a.min(), (a <= 0).sum(), sj.min(), (sj <= 0.02).sum()), flush=True)
     np.savez(os.path.join(HERE, "pos_%s.npz" % name), X=X)

@@ -12,7 +12,7 @@ from nekmeshpy import quadmesh, hexmesh
 from nekmeshpy.core.fields import gll_nodes
 
 ORDER = int(os.environ.get("ORDER", "2"))
-T = pickle.load(open(os.path.join(HERE, "topo.pkl"), "rb"))
+T = pickle.load(open(os.path.join(HERE, os.environ.get("TOPO", "topo2.pkl")), "rb"))
 QUADS, INNER, OUTER = T["quads"], T["inner"], T["outer"]
 KEYS = {}
 for q, _, _ in QUADS:

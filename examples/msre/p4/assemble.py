@@ -13,7 +13,7 @@ parts["core"] = pickle.load(open(os.path.join(HERE, "..", "p1", "upper_o%s_nz%s.
 OUT = os.environ.get("OUT", "msre")
 for b in ["A", "B", "C", "D", "E", "F3", "F2", "F1", "F0", "H", "I", "J", "KN"]:
     parts["band_" + b] = pickle.load(open(os.path.join(HERE, "band_%s.pkl" % b), "rb"))
-L2 = os.path.join(HERE, "head_L2.pkl")
+L2 = os.path.join(HERE, os.environ.get("L2PKL", "head_L2.pkl"))
 if os.path.exists(L2) and "--no-l2" not in sys.argv:
     parts["L2"] = pickle.load(open(L2, "rb"))
 DC = os.path.join(HERE, "dc3.pkl")
@@ -26,10 +26,14 @@ parts["head_top"] = pickle.load(open(os.path.join(HERE, "..", "p5", "head_top.pk
 PK = os.path.join(HERE, "..", "p5", "pocket.pkl")
 if os.path.exists(PK) and "--no-pocket" not in sys.argv:
     parts["pocket"] = pickle.load(open(PK, "rb"))
+LINEAR = bool(os.environ.get("LINEAR"))
+if LINEAR:
+    from nekmeshpy.hexmesh import smoother as _hs
+    parts = {k: (_hs.linearize(m) if m.order > 1 else m) for k, m in parts.items()}
 for k, m in parts.items():
-    print("%-10s %8d hexes" % (k, len(m.hexes)), flush=True)
+    print("%-10s %8d hexes (order %d)" % (k, len(m.hexes), m.order), flush=True)
 mesh = hexmesh.merge(list(parts.values()), clear_seam_tags=True)
-if not os.environ.get("NOFIX"):
+if not os.environ.get("NOFIX") and not LINEAR:
     import hexfix
     mesh = hexfix.straighten_bad(mesh)
 # every remaining name except the open interfaces is a wall

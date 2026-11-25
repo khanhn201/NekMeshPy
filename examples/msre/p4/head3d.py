@@ -23,13 +23,14 @@ PSIZE = float(os.environ.get("PSIZE", "0.3"))  # pillow dip / parent size
 def hc(r):
     """local cap thickness: HC, but at most 40% of the S1 -> S2 gap."""
     return np.minimum(HC, 0.4 * (HD.s2(r) - HD.s1(r)))
-VP = pickle.load(open(os.path.join(HERE, "vanepos.pkl"), "rb"))
+_VPF = os.path.join(HERE, "vanepos.pkl")       # the old pillowed-vane section; vloft only needs section()
+VP = pickle.load(open(_VPF, "rb")) if os.path.exists(_VPF) else None
 HS = pickle.load(open(os.path.join(HERE, "head_sec.pkl"), "rb"))
-QUADS, KEYS, Q = VP["quads"], VP["keys"], VP["Q"]
+QUADS, KEYS, Q = (VP["quads"], VP["keys"], VP["Q"]) if VP else (None, None, None)
 NG = len(B.KEYS)                           # global (bands) nodes come first, same order
 NQG = len(B.QUADS)
-PW = VP["pillow"]
-VANE = VP["vane"]
+PW = VP["pillow"] if VP else None
+VANE = VP["vane"] if VP else None
 ANN_R = {1: HD.R_CAN, 2: HD.R_MID, 3: HD.R_VES}
 
 
