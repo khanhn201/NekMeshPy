@@ -34,7 +34,7 @@ def test_ascii_values_round_trip(tmp_path):
     writer.quad_to_vtu(m, f, binary=False, point_data={"s": np.arange(6.0)})
     body = re.search(r'Name="s" format="ascii">\n(.*?)</DataArray>', open(f).read(), re.S).group(1)
     got = np.array(body.split(), float)
-    assert np.array_equal(got, np.arange(6.0)[m.corners].ravel())   # repeated on each corner copy
+    assert np.array_equal(got, np.arange(6.0))   # welded: one value per point
 
 
 def test_no_extras_leaves_the_file_unchanged(tmp_path):

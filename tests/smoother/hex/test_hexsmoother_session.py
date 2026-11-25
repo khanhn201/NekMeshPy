@@ -78,7 +78,7 @@ def test_report_per_region_and_files_per_round(tmp_path):
     assert rep.regions_after[0].n_hexes == 13 and rep.n_frozen > 0 and rep.n_frozen_moved == 0
     assert "1. constraints" in str(rep) and "6. undo" in str(rep) and "5." not in str(rep)
     after = meshio.read(rep.files["after"])
-    assert after.points.shape[0] == 8 * 27 and {"sj_min", "displacement"} <= set(
+    assert after.points.shape[0] == 4 ** 3 and {"sj_min", "displacement"} <= set(
         list(after.cell_data) + list(after.point_data))
     assert (tmp_path / "round_01" / "before.vtu").exists()
     assert hexmesh.smoother.report.round_report(s.current, prop.mesh, s.resolved, sample_order=2).passed

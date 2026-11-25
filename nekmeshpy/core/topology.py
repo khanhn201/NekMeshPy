@@ -9,7 +9,7 @@ import scipy.sparse as sp
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from .._typing import IntArray, PointArray
+from .._typing import BoolArray, IntArray, PointArray
 from . import conform
 
 # Nek face -> the 4 corner point positions (0-based), cyclic and outward-wound.
@@ -29,7 +29,11 @@ class TopologyReport(NamedTuple):
     n_internal_faces: int
     #: Facets shared by three or more hexes -- always a defect.
     n_nonmanifold_faces: int
-    #: Boundary-surface edges not bounded by exactly two boundary faces (leaks).
+    #: Boundary-surface edges bounded by an **odd** number of boundary faces.  The
+    #: boundary of any union of cells is closed, so with faces matched by their corners
+    #: this cannot happen in a consistent mesh: a non-zero count means combinatorially
+    #: broken input (a degenerate face, a repeated corner).  A crack against a
+    #: T-junction is *not* this -- it reads as hanging points.
     n_open_edges: int
     #: Boundary points lying strictly inside another boundary edge (T-junctions).
     n_hanging_points: int
@@ -51,6 +55,12 @@ class TopologyReport(NamedTuple):
     #: parRSB connectivity (``face_check``) refuses the mesh.  Purely combinatorial; see
     #: :func:`improper_pairs` for which.
     n_improper: int = 0
+    #: Boundary-surface edges bounded by an even number **>= 4** of boundary faces: two
+    #: (or more) cells meeting only along that edge, the domain pinched to a line.
+    #: Conformal and readable by a solver, but the boundary is not a manifold there.
+    #: One rung down (quad meshes) this counts boundary points where two quads meet
+    #: only at a corner.
+    n_pinch_edges: int = 0
 
 
 # -- shared helpers -----------------------------------------------------
@@ -250,6 +260,49 @@ def _hex_geometry(X: PointArray, HC: IntArray) -> tuple[
     return centroid, radius, vertex, normal
 
 
+#: the 4 triangles of a face [a,b,c,d] under BOTH diagonal splits (a-c and b-d)
+_BOTH_SPLITS = np.array([[0, 1, 2], [0, 2, 3], [1, 2, 3], [1, 3, 0]], dtype=np.int64)
+
+
+def _hex_planes_both(X: PointArray, HC: IntArray) -> tuple[PointArray, PointArray]:
+    """``(N,24,3)`` vertex and outward unit normal of every face triangle under *both*
+    diagonal splits.  A linear hex's warped face is a bilinear patch lying between its
+    two triangulations, so a point strictly inside all 24 planes is inside the true
+    element whichever way the face is split -- the overlap verdict no longer depends
+    on corner numbering (which the single anchored split of :func:`_hex_geometry`
+    does, by a few hundredths of a millimetre on a warped face)."""
+    fpts = X[HC][:, _FACE_POINTS, :]                           # (N,6,4,3)
+    fcenter = fpts.mean(axis=2)
+    out = fcenter - fcenter[:, _OPPOSITE, :]                   # (N,6,3) outward axis
+    tri = fpts[:, :, _BOTH_SPLITS, :]                          # (N,6,4,3,3)
+    normal = np.cross(tri[..., 1, :] - tri[..., 0, :], tri[..., 2, :] - tri[..., 0, :])
+    sign = np.sign(np.einsum("nftd,nfd->nft", normal, out))
+    sign[sign == 0.0] = 1.0
+    normal = normal * sign[..., None]
+    length = np.linalg.norm(normal, axis=-1, keepdims=True)
+    length[length == 0.0] = 1.0
+    return tri[..., 0, :].reshape(-1, 24, 3), (normal / length).reshape(-1, 24, 3)
+
+
+#: bilinear weights of the face samples: the centre and the 4 points at (+-1/2, +-1/2)
+_FACE_W = np.array([[1, 1, 1, 1], [9, 3, 1, 3], [3, 9, 3, 1], [1, 3, 9, 3], [3, 1, 3, 9]],
+                   dtype=float) / np.array([[4.0], [16.0], [16.0], [16.0], [16.0]])
+_HEX_EDGES = np.array([[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
+                       [0, 4], [1, 5], [2, 6], [3, 7]], dtype=np.int64)
+
+
+def _hex_surface_samples(X: PointArray, HC: IntArray) -> PointArray:
+    """``(N,50,3)`` points ON each linear hex's true (bilinear-faced) surface: the 8
+    corners, the 12 edge midpoints, and per face its centre and the 4 points at local
+    ``(+-1/2, +-1/2)``.  Two elements sharing a face sample exactly the same surface there,
+    so a clean adjacency never reads as overlap however warped the face is."""
+    C = X[HC]
+    mids = C[:, _HEX_EDGES, :].mean(axis=2)                    # (N,12,3)
+    fpts = C[:, _FACE_POINTS, :]                               # (N,6,4,3)
+    face = np.einsum("sk,nfkd->nfsd", _FACE_W, fpts).reshape(-1, 30, 3)
+    return np.concatenate([C, mids, face], axis=1)
+
+
 def _hex_sample_points(X: PointArray, HC: IntArray) -> PointArray:
     """``(N,20,3)``: each hex's 8 corners plus the centroid of each of its 12
     triangles (the same anchored split ``_hex_geometry`` constrains against, so a
@@ -292,44 +345,175 @@ def _points_inside(sample: PointArray, vertex: PointArray, normal: PointArray,
     return out
 
 
-def _count_overlapping_pairs(X: PointArray, HC: IntArray) -> int:
-    """Pairs of hexes whose volumes geometrically overlap: any of one's own corners
-    or triangle centroids sits strictly inside the other, past a half-space test on
-    all 12 of its (triangulated) face planes (assumes each hex is star-convex about
-    its own centroid, true of any non-degenerate element). Adjacent (face-sharing)
-    pairs are not excluded -- two
-    elements can share a face *and* still fold into each other beyond it, which is
-    exactly the kind of defect this is meant to catch; their shared face's own corners
-    sit exactly on that boundary (distance ~0) rather than strictly inside, so a
-    normal, non-overlapping adjacency does not falsely trip this on its own."""
-    N = HC.shape[0]
-    if N < 2:
-        return 0
-    centroid, radius, vertex, normal = _hex_geometry(X, HC)
-    samples = _hex_sample_points(X, HC)
+def _aabb_pairs(lo: PointArray, hi: PointArray) -> IntArray:
+    """``(K,2)`` pairs ``i < j`` whose axis-aligned boxes ``[lo, hi]`` intersect, each once.
+
+    A uniform hash grid: every box goes into each cell it touches and a pair is reported
+    only from the cell holding the low corner of the two boxes' overlap, so nothing is
+    generated twice.  The cell size is the cheapest of a few multiples of the median box
+    extent (cell entries plus in-cell candidate pairs), which keeps both the long cells of
+    a coarse region and the crowded cells of a refined one in check."""
+    n = len(lo)
+    if n < 2:
+        return np.zeros((0, 2), np.int64)
+    o = lo.min(0)
+    ext = (hi - lo).max(1)
+    med = max(float(np.median(ext)), 1e-300)
+    best: tuple[float, float] | None = None
+    for f in (0.25, 0.35, 0.5, 0.7, 1.0, 1.4, 2.0):
+        hh = f * med
+        cl = np.floor((lo - o) / hh).astype(np.int64)
+        ch = np.floor((hi - o) / hh).astype(np.int64)
+        ne = int((ch - cl + 1).prod(1).sum())
+        if ne > 60 * n:
+            continue
+        cen = np.floor(((lo + hi) / 2 - o) / hh).astype(np.int64)
+        _, occ = np.unique(_cell_key(cen), return_counts=True)
+        est = ne + float(((occ * ne / n) ** 2).sum()) / 2
+        if best is None or est < best[0]:
+            best = (est, hh)
+    h = best[1] if best is not None else 2.0 * med
+    clo = np.floor((lo - o) / h).astype(np.int64)
+    span = np.floor((hi - o) / h).astype(np.int64) - clo + 1
+    cnt = span.prod(1)
+    own: IntArray = np.repeat(np.arange(n, dtype=np.int64), cnt)
+    r = np.arange(int(cnt.sum()), dtype=np.int64) - np.repeat(np.cumsum(cnt) - cnt, cnt)
+    sx: IntArray = np.repeat(span[:, 0], cnt)
+    sy: IntArray = np.repeat(span[:, 1], cnt)
+    cell = np.column_stack([np.repeat(clo[:, 0], cnt) + r % sx,
+                            np.repeat(clo[:, 1], cnt) + (r // sx) % sy,
+                            np.repeat(clo[:, 2], cnt) + r // (sx * sy)])
+    srt = np.argsort(_cell_key(cell))
+    cell, own = cell[srt], own[srt]
+    key = _cell_key(cell)
+    starts = np.flatnonzero(np.r_[True, key[1:] != key[:-1]])
+    sizes = np.diff(np.r_[starts, len(key)])
+    out = []
+    for m in np.unique(sizes):
+        if m < 2:
+            continue
+        st_all = starts[sizes == m]
+        iu, ju = np.triu_indices(int(m), 1)
+        step = max(1, 4_000_000 // len(iu))
+        for s0 in range(0, len(st_all), step):
+            st = st_all[s0:s0 + step]
+            grp = own[st[:, None] + np.arange(m)]
+            I, J = grp[:, iu].ravel(), grp[:, ju].ravel()
+            ok = (lo[I] <= hi[J]).all(1) & (lo[J] <= hi[I]).all(1)
+            ref = np.floor((np.maximum(lo[I], lo[J]) - o) / h).astype(np.int64)
+            ok &= (ref == np.repeat(cell[st], len(iu), axis=0)).all(1)
+            out.append(np.column_stack([np.minimum(I[ok], J[ok]), np.maximum(I[ok], J[ok])]))
+    return np.concatenate(out) if out else np.zeros((0, 2), np.int64)
+
+
+def _cell_key(c: IntArray) -> IntArray:
+    c = c + 1
+    return np.asarray((c[:, 0] * 2_097_152 + c[:, 1]) * 2_097_152 + c[:, 2])
+
+
+def _overlap_workers(n: int) -> int:
+    from .parallel import default_workers
+    return default_workers(n)
+
+
+#: the 8 corners of the reference cube [-1,1]^3 in Nek corner order
+_REF = np.array([[-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+                 [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]], dtype=float)
+
+
+def _inside_trilinear(P: PointArray, C: PointArray, iters: int = 30) -> BoolArray:
+    """``(m,)``: is ``P[k]`` strictly inside the trilinear hex with corners ``C[k]`` (Nek
+    order) -- Newton on the map, inside when the local coordinates land strictly within
+    the reference cube.  The exact geometry of a linear element (what a ``.re2`` is)."""
+    xi = np.zeros_like(P)
+    ok: BoolArray = np.ones(len(P), dtype=bool)
+    for _ in range(iters):
+        f = 1.0 + _REF[None, :, :] * xi[:, None, :]                        # (m,8,3)
+        N = f.prod(2) / 8.0                                                  # shape functions
+        r = np.einsum("mi,mid->md", N, C) - P
+        dN = np.stack([_REF[None, :, a] * f[:, :, (a + 1) % 3] * f[:, :, (a + 2) % 3]
+                       for a in range(3)], axis=2) / 8.0                     # (m,8,3)
+        Jm = np.einsum("mid,mia->mda", C, dN)                                # dx/dxi
+        det = np.linalg.det(Jm)
+        good = np.abs(det) > 1e-300
+        ok &= good
+        step = np.zeros_like(P)
+        step[good] = np.linalg.solve(Jm[good], r[good][..., None])[..., 0]
+        xi = np.clip(xi - step, -2.0, 2.0)
+        if np.abs(step).max(initial=0.0) < 1e-12:
+            break
+    f = 1.0 + _REF[None, :, :] * xi[:, None, :]
+    res = np.linalg.norm(np.einsum("mi,mid->md", f.prod(2) / 8.0, C) - P, axis=1)
+    h = np.linalg.norm(C.max(1) - C.min(1), axis=1)
+    return np.asarray(ok & (res < 1e-9 * h) & (np.abs(xi) < 1.0 - 1e-6).all(1))
+
+
+def _overlap_chunk(st: dict[str, Any], lo_: int, hi_: int) -> IntArray:
+    p = st["P"][lo_:hi_]
+    S, N, C, LO, HI, tol, X, HC = (st[k] for k in ("S", "N", "C", "LO", "HI", "tol", "X", "HC"))
+    hit: BoolArray = np.zeros(len(p), dtype=bool)
+    for a, b in ((0, 1), (1, 0)):
+        A, B = p[:, a], p[:, b]
+        sa = S[A]                                              # (k,50,3)
+        inb = ((sa > LO[B][:, None]) & (sa < HI[B][:, None])).all(2)
+        kk, ss = np.nonzero(inb)                               # only samples inside B's box
+        if not len(kk):
+            continue
+        bb = B[kk]
+        pts = sa[kk, ss]
+        d = (pts[:, None, :] * N[bb]).sum(2) - C[bb]          # signed distance to B's 24 planes
+        inn = (d < -tol).reshape(-1, 6, 4)                     # per face: split 1 = [0,1], split 2 = [2,3]
+        sure = inn.all((1, 2))                                 # inside under both splits
+        maybe = ((inn[:, :, 0] & inn[:, :, 1]) | (inn[:, :, 2] & inn[:, :, 3])).all(1) & ~sure
+        hit[kk[sure]] = True
+        if maybe.any():                                        # between the splits: the exact trilinear test
+            inside = _inside_trilinear(pts[maybe], X[HC[bb[maybe]]])
+            hit[kk[maybe][inside]] = True
+    return p[hit]
+
+
+def overlapping_pairs(points: PointArray, hexes: IntArray, *,
+                      workers: int | None = None) -> IntArray:
+    """``(K,2)`` pairs (``i < j``) of hexes whose volumes geometrically overlap: a point of
+    one's surface (:func:`_hex_surface_samples`) sits strictly inside the other as a
+    **trilinear** element (the exact geometry of a linear hex).  A sample inside the other's face planes
+    under both diagonal splits (:func:`_hex_planes_both`, by ``1e-6`` of the model size) is
+    inside; one between the two splits of a warped face is decided by inverting the
+    trilinear map (:func:`_inside_trilinear`).  Adjacent pairs are tested
+    too -- two elements can share a face and still fold into each other beyond it -- and
+    a shared face's own points sit on that boundary, not inside it, so a clean adjacency
+    does not trip it.  Two coincident elements (identical centroids) count as overlapping.
+    Splitting every face both ways makes the verdict independent of corner numbering.
+
+    Broad phase: an axis-aligned-box hash grid (:func:`_aabb_pairs`); narrow phase: only
+    the samples inside the other element's box are tested against its planes.  ``workers``
+    splits the narrow phase across forked processes (default:
+    :func:`nekmeshpy.core.parallel.default_workers`); the answer does not depend on it."""
+    X = np.asarray(points, dtype=float)
+    HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
+    n = HC.shape[0]
+    if n < 2:
+        return np.zeros((0, 2), np.int64)
+    C8 = X[HC]
+    lo, hi = C8.min(1), C8.max(1)
+    P = _aabb_pairs(lo, hi)
+    if not len(P):
+        return P
     scale = conform.bbox_scale(X)
     tol = 1e-6 * (scale if scale > 0.0 else 1.0)
-
-    tree = cKDTree(centroid)
-    pairs = tree.query_pairs(r=2.0 * float(radius.max()), output_type="ndarray")
-    if pairs.size == 0:
-        return 0
-    d = np.linalg.norm(centroid[pairs[:, 0]] - centroid[pairs[:, 1]], axis=1)
-    keep = d < (radius[pairs[:, 0]] + radius[pairs[:, 1]])
-    pairs, d = pairs[keep], d[keep]
-    if pairs.size == 0:
-        return 0
-
-    i, j = pairs[:, 0], pairs[:, 1]
-    i_in_j = _points_inside(samples[i], vertex[j], normal[j], tol)
-    j_in_i = _points_inside(samples[j], vertex[i], normal[i], tol)
-    # a perfect duplicate (identical geometry stacked on itself) has every one of its
-    # sample points sitting exactly *on* the other's boundary rather than strictly
-    # inside it, which the half-space test above cannot see -- coincident centroids
-    # are the signature of that degenerate case, since two distinct non-overlapping
-    # elements never share one.
-    coincident = d < tol
-    return int(np.count_nonzero(i_in_j | j_in_i | coincident))
+    from .parallel import chunk_map
+    vertex, normal = _hex_planes_both(X, HC)
+    state = dict(P=P, S=_hex_surface_samples(X, HC), N=normal, LO=lo, HI=hi, tol=tol, X=X,
+                 HC=HC, C=np.einsum("efd,efd->ef", vertex, normal))
+    del vertex
+    res = chunk_map(_overlap_chunk, len(P), 100_000, state,
+                    workers if workers is not None else _overlap_workers(n))
+    cen = C8.mean(1)
+    dup = P[np.linalg.norm(cen[P[:, 0]] - cen[P[:, 1]], axis=1) < tol]
+    out = np.concatenate(res + [dup])
+    if not len(out):
+        return np.zeros((0, 2), np.int64)
+    return np.unique(out, axis=0)
 
 
 # -- hex (volume) meshes ------------------------------------------------
@@ -366,7 +550,8 @@ def hex_report(points: PointArray, hexes: IntArray, hex_lines: IntArray | None =
         ube, _, bec = conform.unique_rows(be, return_counts=True)
     else:
         ube, bec = be.reshape(0, 2), np.zeros(0, np.int64)
-    n_open_edges = int(np.sum(bec != 2))
+    n_open_edges = int(np.sum(bec % 2 == 1))
+    n_pinch_edges = int(np.sum((bec % 2 == 0) & (bec >= 4)))
 
     # hanging points: a boundary point interior to any boundary edge
     bpoints = np.unique(bfaces) if bfaces.size else np.zeros(0, np.int64)
@@ -375,7 +560,8 @@ def hex_report(points: PointArray, hexes: IntArray, hex_lines: IntArray | None =
     owner: IntArray = np.repeat(np.arange(N, dtype=np.int64), 6)
     n_components = _count_components(N, _adjacency_edges(inverse, counts, owner))
 
-    watertight = bool(n_nonmanifold == 0 and n_open_edges == 0 and n_boundary > 0)
+    watertight = bool(n_nonmanifold == 0 and n_open_edges == 0 and n_pinch_edges == 0
+                      and n_boundary > 0)
     return TopologyReport(
         n_elements=N,
         n_faces=int(counts.size),
@@ -388,6 +574,7 @@ def hex_report(points: PointArray, hexes: IntArray, hex_lines: IntArray | None =
         watertight=watertight,
         conformal=bool(n_hanging == 0 and n_improper == 0),
         n_improper=n_improper,
+        n_pinch_edges=n_pinch_edges,
     )
 
 
@@ -396,19 +583,11 @@ def is_watertight(points: PointArray, hexes: IntArray) -> bool:
     return hex_report(points, hexes).watertight
 
 
-def count_overlapping_pairs(points: PointArray, hexes: IntArray) -> int:
+def count_overlapping_pairs(points: PointArray, hexes: IntArray, *,
+                            workers: int | None = None) -> int:
     """Number of hex pairs whose volumes geometrically overlap (see
-    ``_count_overlapping_pairs``) -- independent of, and not part of,
-    :func:`hex_report`: unlike watertight/conformal (a fixed-size facet-incidence
-    scan), this is a geometric broad-then-narrow-phase search whose candidate count
-    can run into the hundreds of thousands on a large mesh, so it is not folded into
-    the fast report every :func:`is_watertight`/:func:`hexmesh.is_conforming
-    <nekmeshpy.hexmesh.query.is_conforming>` call already pays for -- call it
-    explicitly where the extra work is wanted (a summary, typically, alongside
-    those two)."""
-    X = np.asarray(points, dtype=float)
-    HC = np.asarray(hexes, dtype=np.int64).reshape(-1, 8)
-    return _count_overlapping_pairs(X, HC)
+    :func:`overlapping_pairs`)."""
+    return int(len(overlapping_pairs(points, hexes, workers=workers)))
 
 
 def is_overlap_free(points: PointArray, hexes: IntArray) -> bool:
@@ -424,9 +603,10 @@ _QUAD_EDGE_POINTS = np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)
 def quad_report(points: PointArray, quads: IntArray,
                 quad_lines: IntArray | None = None) -> TopologyReport:
     """Topology / watertightness report for an all-quad mesh -- :func:`hex_report` one
-    rung down: the facets are edges, the boundary is a curve, and the boundary's own
-    "open edge" is an **open point** (a boundary point not shared by exactly two
-    boundary edges), which is what :attr:`TopologyReport.n_open_edges` counts here."""
+    rung down: the facets are edges, the boundary is a curve, and its "edges" are
+    boundary **points**: :attr:`TopologyReport.n_open_edges` counts open points (an odd
+    number of boundary edges -- broken input) and :attr:`TopologyReport.n_pinch_edges`
+    pinch points (four or more: quads meeting only at a corner)."""
     X = np.asarray(points, dtype=float)
     QC = np.asarray(quads, dtype=np.int64).reshape(-1, 4)
     N = QC.shape[0]
@@ -442,10 +622,11 @@ def quad_report(points: PointArray, quads: IntArray,
     bedges = keys[bmask]
     if bedges.size:
         _, bpc = np.unique(bedges, return_counts=True)
-        n_open = int(np.sum(bpc != 2))
+        n_open = int(np.sum(bpc % 2 == 1))
+        n_pinch = int(np.sum((bpc % 2 == 0) & (bpc >= 4)))
         bpoints = np.unique(bedges)
     else:
-        n_open, bpoints = 0, np.zeros(0, np.int64)
+        n_open, n_pinch, bpoints = 0, 0, np.zeros(0, np.int64)
     n_hanging = _count_hanging_points(X, bedges, bpoints)
     pairs, cells = improper_pairs(QC, inverse.reshape(N, 4) if quad_lines is None
                                   else quad_lines)
@@ -454,7 +635,7 @@ def quad_report(points: PointArray, quads: IntArray,
     owner: IntArray = np.repeat(np.arange(N, dtype=np.int64), 4)
     n_components = _count_components(N, _adjacency_edges(inverse, counts, owner))
 
-    watertight = bool(n_nonmanifold == 0 and n_open == 0 and n_boundary > 0)
+    watertight = bool(n_nonmanifold == 0 and n_open == 0 and n_pinch == 0 and n_boundary > 0)
     return TopologyReport(
         n_elements=N,
         n_faces=int(counts.size),
@@ -467,6 +648,7 @@ def quad_report(points: PointArray, quads: IntArray,
         watertight=watertight,
         conformal=bool(n_hanging == 0 and n_improper == 0),
         n_improper=n_improper,
+        n_pinch_edges=n_pinch,
     )
 
 
@@ -646,7 +828,7 @@ def format_report(report: Union[TopologyReport, dict[str, Any]],
     """Human-readable multi-line summary of a hex, quad or surface report.
 
     ``kind`` (``"hex"`` or ``"quad"``) only changes the vocabulary: a quad mesh's
-    facets are edges, and its boundary's open edge is an open point."""
+    facets are edges, and its boundary's edges are points."""
     if isinstance(report, TopologyReport):
         quad = kind == "quad"
         return "\n".join([
@@ -656,7 +838,11 @@ def format_report(report: Union[TopologyReport, dict[str, Any]],
              else "faces          : %d (%d boundary, %d internal, %d non-manifold)")
             % (report.n_faces, report.n_boundary_faces,
                report.n_internal_faces, report.n_nonmanifold_faces),
-            ("open points    : %d" if quad else "open edges     : %d")
+            ("pinch points   : %d (quads meeting only at a corner)" if quad
+             else "pinch edges    : %d (cells meeting only along an edge)")
+            % report.n_pinch_edges,
+            ("open points    : %d (odd boundary count: broken input)" if quad
+             else "open edges     : %d (odd boundary count: broken input)")
             % report.n_open_edges,
             "hanging points  : %d" % report.n_hanging_points,
             "improper       : %d (cells not meeting in one point, line or face)"

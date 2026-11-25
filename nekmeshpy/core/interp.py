@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -175,7 +175,7 @@ CHUNK_POINTS = 350_000
 
 
 def sampled_scaled_jacobian(curved: PointArray, order: int, new_order: int,
-                            dim: int) -> FloatArray:
+                            dim: int, workers: int | None = None) -> FloatArray:
     """:func:`scaled_jacobian` of an order-``order`` block read on the ``new_order``
     lattice, in chunks.
 
@@ -185,16 +185,18 @@ def sampled_scaled_jacobian(curved: PointArray, order: int, new_order: int,
     points* rather than elements, so it shrinks automatically as the order climbs and
     the working set stays flat in both mesh size and order -- see
     :data:`CHUNK_POINTS`."""
+    from .parallel import chunk_map
     per = max(1, CHUNK_POINTS // (new_order + 1) ** dim)
-    n = curved.shape[0]
-    out: FloatArray = np.empty(n, dtype=float)
-    for lo in range(0, n, per):
-        hi = min(lo + per, n)
-        block = curved[lo:hi]
-        if new_order != order:
-            block = resample_block(block, order, new_order, dim)
-        out[lo:hi] = scaled_jacobian(block, new_order, dim)
-    return out
+    parts = chunk_map(_ssj_chunk, curved.shape[0], per,
+                      dict(curved=curved, order=order, new_order=new_order, dim=dim), workers)
+    return np.concatenate(parts) if parts else np.empty(0, dtype=float)
+
+
+def _ssj_chunk(st: dict[str, Any], lo: int, hi: int) -> FloatArray:
+    block = st["curved"][lo:hi]
+    if st["new_order"] != st["order"]:
+        block = resample_block(block, st["order"], st["new_order"], st["dim"])
+    return scaled_jacobian(block, st["new_order"], st["dim"])
 
 
 def resample_block(curved: PointArray, order: int, new_order: int,

@@ -272,6 +272,13 @@ def is_conforming(mesh: HexMesh) -> bool:
     """``True`` if the mesh has no hanging points (no T-junctions)."""
     return topology_report(mesh).conformal
 
+def overlapping_pairs(mesh: HexMesh, *, workers: int | None = None) -> IntArray:
+    """``(K,2)`` pairs of hexes whose volumes geometrically overlap -- the *which* behind
+    :func:`is_overlap_free` (see :func:`nekmeshpy.core.topology.overlapping_pairs`)."""
+    from ..core import topology
+    return topology.overlapping_pairs(mesh.points, mesh.corners, workers=workers)
+
+
 def is_overlap_free(mesh: HexMesh) -> bool:
     """``True`` if no two elements geometrically overlap. Independent of
     :func:`is_watertight <nekmeshpy.hexmesh.query.is_watertight>` and :func:`is_conforming
@@ -356,14 +363,16 @@ def report(mesh: HexMesh) -> str:
         _log.warning("%d improper element pair(s) or element(s): cells meeting in more "
                      "than one shared point, line or face (see improper_pairs); Nek's "
                      "parRSB connectivity (face_check) refuses the mesh", topo.n_improper)
-    # topology.count_overlapping_pairs is a geometric broad-then-narrow-phase search,
-    # not a fixed-size facet-incidence scan like the rest of this summary -- its
-    # candidate count can run into the hundreds of thousands on a large mesh, and it
-    # was slow enough there to be worth pulling back out of the default summary.
-    # Call it explicitly (or hexmesh.is_overlap_free) where the cost is worth paying.
-    # n_overlap = topology.count_overlapping_pairs(mesh.points, mesh.corners)
-    # lines.append("overlap-free   : %s (%d overlapping pair%s)"
-    #              % (n_overlap == 0, n_overlap, "" if n_overlap == 1 else "s"))
+    n_overlap = len(overlapping_pairs(mesh))
+    lines.append("overlapping    : %d pair%s (elements folding into one another)"
+                 % (n_overlap, "" if n_overlap == 1 else "s"))
+    if n_overlap:
+        _log.warning("%d pair(s) of elements overlap geometrically (see overlapping_pairs) "
+                     "-- invisible to the per-element Jacobian and to Nek's own checks",
+                     n_overlap)
+    if topo.n_pinch_edges:
+        _log.warning("%d pinch edge(s): cells meeting only along an edge (the domain "
+                     "narrows to a line there; not watertight)", topo.n_pinch_edges)
     return "\n".join(lines)
 
 def _unique_edges(HC: IntArray, he: IntArray) -> IntArray:
@@ -471,6 +480,7 @@ __all__ = [
     "element_volumes",
     "is_conforming",
     "is_overlap_free",
+    "overlapping_pairs",
     "is_watertight",
     "linear_order_scan",
     "linear_scaled_jacobian",

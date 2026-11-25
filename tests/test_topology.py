@@ -77,6 +77,28 @@ def test_t_junction_is_watertight_but_not_conformal():
     assert hexmesh.is_conforming(mesh) is False
 
 
+def test_cells_meeting_only_along_an_edge_are_a_pinch_not_watertight():
+    """Two hexes sharing one edge and nothing else: that edge carries 4 boundary faces
+    -- a pinch.  Conformal (they share the edge's points properly), but not watertight,
+    and it is not an *open* edge (the boundary is closed; the count is even)."""
+    mesh = hexmesh.merge([_hex(_box(0, 1, 0, 1, 0, 1)), _hex(_box(1, 2, 1, 2, 0, 1))])
+    rep = hexmesh.topology_report(mesh)
+    assert rep.n_pinch_edges == 1
+    assert rep.n_open_edges == 0
+    assert rep.watertight is False
+    assert rep.conformal is True
+    assert "pinch edges    : 1" in topology.format_report(rep)
+
+
+def test_quads_meeting_only_at_a_corner_are_a_pinch_point():
+    pts = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0],
+                    [2, 1, 0], [2, 2, 0], [1, 2, 0]], dtype=float)
+    quads = np.array([[0, 1, 2, 3], [2, 4, 5, 6]], dtype=np.int64)
+    rep = topology.quad_report(pts, quads)
+    assert rep.n_pinch_edges == 1 and rep.n_open_edges == 0
+    assert rep.watertight is False
+
+
 def test_interface_agreeing_on_three_corners_is_improper():
     """Two hexes meant to share a face, where one side's copy of a corner was moved:
     the weld joins the other three corners, leaving two distinct faces that share two
@@ -323,3 +345,52 @@ def test_hexmesh_from_arrays_is_watertight():
     """A HexMesh built from the array constructor reports watertight."""
     mesh = HexMesh.from_corners(_UNIT_HEX, np.arange(8).reshape(1, 8))
     assert hexmesh.is_watertight(mesh) is True
+
+
+# -- geometric overlap ----------------------------------------------------
+def _boxes(*boxes):
+    pts = np.concatenate([_box(*b) for b in boxes])
+    return pts, np.arange(len(pts)).reshape(-1, 8)
+
+
+def test_face_sharing_neighbours_do_not_overlap():
+    pts, hexes = _stacked_hexes()
+    assert len(topology.overlapping_pairs(pts, hexes)) == 0
+    assert topology.is_overlap_free(pts, hexes)
+
+
+def test_a_hex_pushed_into_its_neighbour_overlaps():
+    pts, hexes = _boxes((0, 1, 0, 1, 0, 1), (0.6, 1.6, 0, 1, 0, 1))
+    assert topology.overlapping_pairs(pts, hexes).tolist() == [[0, 1]]
+
+
+def test_an_exact_duplicate_overlaps():
+    pts, hexes = _boxes((0, 1, 0, 1, 0, 1), (0, 1, 0, 1, 0, 1))
+    assert topology.count_overlapping_pairs(pts, hexes) == 1
+
+
+def test_a_tiny_hex_inside_a_big_one_overlaps_across_size_classes():
+    pts, hexes = _boxes((0, 10, 0, 10, 0, 10), (4, 4.01, 4, 4.01, 4, 4.01),
+                        *[(20 + i, 21 + i, 0, 1, 0, 1) for i in range(30)])
+    assert topology.overlapping_pairs(pts, hexes).tolist() == [[0, 1]]
+
+
+def test_many_separate_hexes_never_overlap_and_parallel_agrees():
+    boxes = [(i, i + 0.9, j, j + 0.9, k, k + 0.9) for i in range(8) for j in range(8) for k in range(8)]
+    pts, hexes = _boxes(*boxes)
+    assert topology.count_overlapping_pairs(pts, hexes, workers=1) == 0
+    assert topology.count_overlapping_pairs(pts, hexes, workers=2) == 0
+
+
+def test_report_counts_overlaps():
+    mesh = hexmesh.merge([_hex(_box(0, 1, 0, 1, 0, 1)), _hex(_box(0.5, 1.5, 0, 1, 0, 1))])
+    assert "overlapping    : 1 pair " in hexmesh.report(mesh)
+
+
+def test_trilinear_inside_test_matches_the_element():
+    from nekmeshpy.core.topology import _inside_trilinear
+    C = _box(0, 2, 0, 1, 0, 1)
+    C[6, 2] += 0.6                                  # warp the top face: (2,1,1) lifted
+    P = np.array([[1.0, 0.5, 0.5], [1.9, 0.9, 1.4], [1.9, 0.9, 1.6], [3.0, 0.5, 0.5], [0.0, 0.0, 0.0]])
+    # the lifted corner bends the top face up to z = 1 + 0.6 * 0.95 * 0.9 = 1.513 there
+    assert _inside_trilinear(P, np.repeat(C[None], len(P), axis=0)).tolist() == [True, True, False, False, False]

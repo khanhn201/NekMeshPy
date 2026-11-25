@@ -176,11 +176,24 @@ yours, and it is read live so assigning it works), prints a `sampling` line, and
 a `** WARNING **` plus a `logging.warning` when it inverts. Deliberately one order, not
 a sweep: intermediate orders cost real time and certify nothing, since the reading is
 **not monotone** — a real element reads clean at 2, folded at 3 and 4, clean again at 5,
-and folded at 8 and 11 (`hexmesh/quality.py`'s own record of it). At order 7 the work is 512 points a hex (0.8 s for 8k), so
-`SCAN_BUDGET` admits ~29k elements and *declines* anything larger, naming it in
-`OrderScan.skipped` and reporting `not checked`. Declined is **unchecked, not clean**.
-The sampling is chunked, so peak memory is flat in mesh size and order (unchunked, 500k
-hexes at order 8 is 8.7 GB).
+and folded at 8 and 11 (`hexmesh/quality.py`'s own record of it). At order 7 the work is
+512 points a hex; the sampling, `solver_metrics` and the overlap search are chunked and
+spread over forked workers (`core/parallel.py`: serial below 200k elements, else up to 16),
+so `SCAN_BUDGET` (5e9 sampled points) covers a few million hexes and the report runs every
+check -- 2.3M hexes in about 4 min. Only a mesh past the cap is reported `not checked`;
+declined is **unchecked, not clean**. Peak memory per chunk is flat in mesh size and order.
+
+**The report's overlap check is exact for linear elements.** `topology.overlapping_pairs`
+samples each hex's *true* surface (corners, edge midpoints, 5 bilinear points a face) and
+calls a sample inside another hex when it is inside that hex's face planes under **both**
+diagonal splits, or -- between the two splits of a warped face -- when Newton on the
+trilinear map puts it strictly inside the reference cube. A single split (the old test)
+depends on corner numbering by up to ~0.5 mm on a warped face: it reported 646 "overlaps"
+on a mesh that has none and missed a real 0.1 mm one. Broad phase is a hash grid on
+bounding boxes. Pinches -- cells meeting only along an edge -- are `n_pinch_edges`, not
+open edges: with faces matched by corners a hex mesh's boundary edges always carry an even
+count, so an *odd* count (`n_open_edges`) means broken input; a crack against a T-junction
+reads watertight and is caught by hanging points.
 
 **The corner-vs-curved split is back, for a narrower and different reason: `.re2` has
 no curved format at all.** `hexmesh.corner_scaled_jacobian` / `corner_summary` read the

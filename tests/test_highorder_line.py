@@ -127,7 +127,7 @@ def test_vtu_order1_is_plain_line(tmp_path):
     p = str(tmp_path / "lin.vtu")
     writer.line_to_vtu(linemesh.circle(1.0, 5), p)
     assert vtu_cell_types(p) == {3}                   # VTK_LINE
-    assert _vtu_num_points(p) == 10                      # 5 elems x 2 nodes
+    assert _vtu_num_points(p) == 5                       # welded: 5 elems share 5 nodes
 
 
 def test_vtu_high_order_is_lagrange_curve(tmp_path):
