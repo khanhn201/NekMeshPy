@@ -15,11 +15,11 @@ POOR_THRESHOLD = 0.2
 SCAN_ORDER = 7
 
 #: Sampled points a default ``order_scan`` may spend, summed over its orders.
-#: The work is ``n_elements * (order+1)**dim``, and at :data:`SCAN_ORDER` that is 512
-#: points a hex -- so a mesh too big for the cap is reported as *not checked* rather
-#: than quietly costing minutes inside a routine report. Raise it (or call
-#: ``order_scan`` directly) when you want the answer anyway.
-SCAN_BUDGET = 15_000_000
+#: The work is ``n_elements * (order+1)**dim`` -- 512 points a hex at :data:`SCAN_ORDER`
+#: -- and it is chunked and spread over worker processes (:mod:`nekmeshpy.core.parallel`),
+#: so a few million hexes are checked in a report as a matter of course.  Only a mesh
+#: past this cap is reported as *not checked* (unchecked, not clean).
+SCAN_BUDGET = 5_000_000_000
 
 
 class OrderScan(NamedTuple):

@@ -70,6 +70,40 @@ def line_pos(lid, L):
     return lo if lo_side else hi
 
 
+import os as _os
+LOFT_RIM = bool(int(_os.environ.get("LOFT_RIM", "0")))
+RIM_GAP = 3.0
+RING_SITES_ONLY = bool(int(_os.environ.get("RING_SITES_ONLY", "1")))
+RING_FREE_R = float(_os.environ.get("RING_FREE_R", "80"))      # template rings are freed only this close to the wall
+
+
+def ring_held(c):
+    """a ring held on its circle: a real pin / post, or any cell away from the rim (the masks there read
+    centroids, so the interior must keep its old geometry exactly)."""
+    if not RING_SITES_ONLY or tuple(c) in SITES:
+        return True
+    return float(np.hypot(*c)) * PITCH < R_W - RING_FREE_R
+RIM_RMIN = float(_os.environ.get("RIM_RMIN", "8.0"))
+RIM_RMIN_PIN = 5.0
+RIM_GAP_PIN = float(_os.environ.get("RIM_GAP_PIN", "2.5"))
+
+
+def clamp_ring(c, L, p, rmax=None):
+    """p on the ring circle of cell c, slid along the circle (if needed) to stay at |p| <= rmax."""
+    cc = np.array(c, float) * PITCH
+    rr = ring_radius(c, L)
+    d = p - cc; p = cc + rr * d / np.linalg.norm(d)
+    rmax = R_W - 1.5 if rmax is None else rmax
+    if np.hypot(*p) <= rmax:
+        return p
+    D = np.linalg.norm(cc)                                 # circle-circle intersection with |x| = rmax
+    a_ = (rmax ** 2 - rr ** 2 + D ** 2) / (2 * D)
+    h = np.sqrt(max(rmax ** 2 - a_ ** 2, 0.0))
+    u = cc / D; n = np.array([-u[1], u[0]])
+    cand = [a_ * u + h * n, a_ * u - h * n]
+    return min(cand, key=lambda q: np.linalg.norm(q - p))
+
+
 def ring_radius(c, L):
     if c in CENTRAL:
         return PLUG
@@ -80,6 +114,10 @@ def ring_radius(c, L):
     d = np.hypot(c[0], c[1]) * PITCH
     if d - rr > R_W - RIM_LENS:                   # post fully in the wall: keep a virtual ring
         rr = d - R_W + RIM_LENS                   # crossing it (the lens inside stays fluid)
+    if LOFT_RIM and d < R_W:                      # loft rim: a pin / ring must fit inside the wall
+        cap = R_W - (RIM_GAP_PIN if c in bsec.SITES else RIM_GAP) - d
+        if cap >= (RIM_RMIN_PIN if c in bsec.SITES else RIM_RMIN):   # a real pin keeps a small ring; a pinless placeholder does not
+            rr = min(rr, cap)
     return rr
 
 
@@ -218,7 +256,10 @@ def tile_signature(c, L, core_xy):
 def smooth_tile(args):
     c, L, core_xy = args
     inv, Q, X = tile_geom(c, L, core_xy)
-    sg = np.sign(0.5 * np.sum(X[Q][..., 0] * np.roll(X[Q][..., 1], -1, 1) - np.roll(X[Q][..., 0], -1, 1) * X[Q][..., 1], 1))
+    # winding from the top level (a clean raw layout), not from this level's own raw areas: a quad the
+    # raw layout folds here must read as folded, or no smoother will ever untangle it
+    _, Qt, Xt = tile_geom(c, LV["top"], core_xy)
+    sg = np.sign(0.5 * np.sum(Xt[Qt][..., 0] * np.roll(Xt[Qt][..., 1], -1, 1) - np.roll(Xt[Qt][..., 0], -1, 1) * Xt[Qt][..., 1], 1))
     Q = np.array([q if s_ > 0 else q[::-1] for q, s_ in zip(Q, sg)])
     qm = QuadMesh.from_corners(np.c_[X, np.zeros(len(X))], Q)
     e = collections.Counter()
@@ -239,7 +280,8 @@ def smooth_tile(args):
             elif r in ("Jm", "Jp", "Km", "K0", "Kp"):
                 frozen.add(i)
         elif k[0] == "ring":
-            rings.append(i)
+            if ring_held(c):                                 # a template ring near the rim (no pin / post) is not held
+                rings.append(i)
         elif k[0] == "X":
             frozen.add(i)
         elif k[0] == "mq":
@@ -256,9 +298,24 @@ def smooth_tile(args):
             cons.append(cn.OnCurve(np.array(ids), cn.line(o, d)))
     nrm = np.tile([0.0, 0.0, 1.0], (len(Q), 1))
     res = cn.resolve(qm, cons)
-    out, _ = smooth.run_schedule(qm, res, smooth.user_schedule(outer=8), normals=nrm)
-    Y = np.asarray(out.points)[:, :2]
     from q2 import corner_sj
+    pre = smooth.untangle_schedule() if corner_sj(X, Q).min() <= 0 else []      # a folded start: untangle first
+    out, _ = smooth.run_schedule(qm, res, pre + smooth.user_schedule(outer=8), normals=nrm)
+    Y = np.asarray(out.points)[:, :2]
+    if corner_sj(Y, Q).min() <= 0:                   # still folded: greedy local untangle on the constraints
+        from q2 import untangle
+        fr = np.ones(len(Y), bool); fr[sorted(frozen)] = False
+        ringset = set(rings)
+        lineof = {i: (ax, v) for (ax, v), ids in lines.items() for i in ids}
+
+        def proj(i, p):
+            if i in ringset:
+                d = p - cc; return cc + ring_radius(c, L) * d / np.linalg.norm(d)
+            if i in lineof:
+                ax, v = lineof[i]; p = p.copy()
+                p[0 if ax == "x" else 1] = v
+            return p
+        Y = untangle(Y, Q, fr, proj, target=0.1, rounds=300, grow=2)
     if corner_sj(Y, Q).min() <= 0.05 and L[2] != "top" and c not in CENTRAL:
         # concave: free the interior coordinate-keyed footprint nodes too (tile boundary stays)
         bnd = {v for ed, n in e.items() if n == 1 for v in ed}

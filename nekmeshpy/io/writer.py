@@ -622,10 +622,10 @@ def _lagrange_quad_perm(order: int) -> IntArray:
 # -- node-array builders (for the .vtu writer) --------------------------
 # Each returns the ``.vtu`` point array, the per-cell connectivity into it already in
 # VTK node order, and the VTK cell-type id; the hex builder also returns the per-node
-# ``bc_id``.  At ``order == 1`` the nodes stay **un-welded** (one block per element,
-# connectivity = consecutive blocks) -- byte-for-byte the historical output.  At
-# ``order > 1`` the conformal walk (:mod:`nekmeshpy.core.conform`) emits **shared**
-# nodes: a node on an edge / face between two elements is written once.
+# ``bc_id``.  Nodes are **shared** at every order, so a viewer reads an interior face as
+# interior: at ``order == 1`` they are the mesh's own points and corners; at ``order > 1``
+# the conformal walk (:mod:`nekmeshpy.core.conform`) writes a node on an edge / face
+# between two elements once.
 def element_tag_ids(tags: Tags, n_elements: int) -> tuple[IntArray, list[str]]:
     """``(per-element id (n_elements,), name per id)`` for a region table: 1-based
     positions in the **sorted** tag vocabulary, ``0`` where an element carries no tag.
@@ -639,11 +639,6 @@ def element_tag_ids(tags: Tags, n_elements: int) -> tuple[IntArray, list[str]]:
     ids: IntArray = np.zeros(n_elements, dtype=np.int64)
     ids[tags.ids] = inverse + 1
     return ids, names
-
-
-def _unwelded(n_elem: int, m: int) -> IntArray:
-    """Consecutive-block connectivity ``(n_elem, m)`` for un-welded node arrays."""
-    return np.arange(n_elem * m, dtype=np.int64).reshape(n_elem, m)
 
 
 def _to_equispaced(nodes: PointArray, conn_ho: IntArray,
@@ -666,17 +661,16 @@ def _to_equispaced(nodes: PointArray, conn_ho: IntArray,
 
 def _hex_arrays(mesh: HexMesh,
                 g: BoundaryConditions) -> tuple[PointArray, IntArray, int, IntArray]:
-    """Hex nodes + ``bc_id``: linear un-welded ``VTK_HEXAHEDRON`` at ``order == 1``, a
-    conformal (shared-node) ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per
-    cell) above it, whose face nodes inherit the boundary face's tag."""
+    """Hex nodes + ``bc_id``, always **welded** (shared nodes, so a viewer sees interior
+    faces as interior): ``VTK_HEXAHEDRON`` on the mesh's own points at ``order == 1``, a
+    conformal ``VTK_LAGRANGE_HEXAHEDRON`` (``(order+1)**3`` GLL nodes per cell) above it.
+    A node takes the tag of the last boundary row touching it, at every order."""
     if mesh.order == 1:
-        elements = mesh.points[mesh.corners]               # (N,8,3) per-element coords
-        N = elements.shape[0]
-        X = elements.reshape(N * 8, 3)
-        bc1: IntArray = np.zeros((N, 8), dtype=np.int64)
+        bc1: IntArray = np.zeros(mesh.n_points, dtype=np.int64)
         for elem, face, _name, _cbc, bid, _pe, _pf in _export_rows(mesh, g, viewer=True):
-            bc1[elem, mesh.FACE_POINTS[face - 1]] = bid
-        return X, _unwelded(N, 8), _VTK_HEXAHEDRON, bc1.reshape(N * 8)
+            bc1[mesh.corners[elem, mesh.FACE_POINTS[face - 1]]] = bid
+        return (np.asarray(mesh.points, dtype=float), np.asarray(mesh.corners, dtype=np.int64),
+                _VTK_HEXAHEDRON, bc1)
     order = mesh.order
     perm = _lagrange_hex_perm(order)
     nodes, conn_ho = conform.conformal_hex(
@@ -692,12 +686,10 @@ def _hex_arrays(mesh: HexMesh,
 
 
 def _line_arrays(mesh: LineMesh) -> tuple[PointArray, IntArray, int]:
-    """Line nodes: un-welded ``VTK_LINE`` (2 nodes) at ``order == 1``, a conformal
-    (shared-node) ``VTK_LAGRANGE_CURVE`` (``order+1`` GLL nodes per cell) above it."""
+    """Line nodes, welded: ``VTK_LINE`` on the mesh's own points at ``order == 1``, a
+    conformal ``VTK_LAGRANGE_CURVE`` (``order+1`` GLL nodes per cell) above it."""
     if mesh.order == 1:
-        blocks = mesh.points[mesh.lines]                 # (L,2,3)
-        L, m, _ = blocks.shape
-        return blocks.reshape(L * m, 3), _unwelded(L, m), _VTK_LINE
+        return np.asarray(mesh.points, dtype=float), np.asarray(mesh.lines, dtype=np.int64), _VTK_LINE
     nodes, conn_ho = conform.conformal_line(
         mesh.points, mesh.lines, mesh.interior, mesh.order)
     perm = _lagrange_curve_perm(mesh.order)
@@ -706,13 +698,11 @@ def _line_arrays(mesh: LineMesh) -> tuple[PointArray, IntArray, int]:
 
 
 def _quad_arrays(mesh: QuadMesh) -> tuple[PointArray, IntArray, int]:
-    """Quad nodes: un-welded ``VTK_QUAD`` (4 CCW nodes) at ``order == 1``, a conformal
-    (shared-node) ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes per cell)
-    above it."""
+    """Quad nodes, welded: ``VTK_QUAD`` (4 CCW nodes) on the mesh's own points at
+    ``order == 1``, a conformal ``VTK_LAGRANGE_QUADRILATERAL`` (``(order+1)**2`` GLL nodes
+    per cell) above it."""
     if mesh.order == 1:
-        blocks = mesh.points[mesh.corners]                 # (Q,4,3)
-        Q, m, _ = blocks.shape
-        return blocks.reshape(Q * m, 3), _unwelded(Q, m), _VTK_QUAD
+        return np.asarray(mesh.points, dtype=float), np.asarray(mesh.corners, dtype=np.int64), _VTK_QUAD
     nodes, conn_ho = conform.conformal_quad(
         mesh.points, mesh.corners, mesh.quads, mesh.orient, mesh.line_mesh.interior,
         mesh.interior, mesh.order)
@@ -784,7 +774,7 @@ def _write_vtu(fname: str, X: PointArray, conn: IntArray, cell_type: int,
                binary: bool = True) -> None:
     """XML VTK unstructured grid (``.vtu``): ``X`` is the ``(P,3)`` point array and
     ``conn`` the ``(N,m)`` per-cell connectivity into it, already in VTK node order
-    (consecutive blocks when the nodes are un-welded, shared ids when conformal).
+    (shared node ids).
 
     ``point_data`` / ``cell_data`` are extra named arrays, one row per *written node* resp.
     per cell, written after ``bc_id`` / ``element_tag`` (names that are reserved).
@@ -863,8 +853,8 @@ def to_vtu(mesh: HexMesh, fname: str, *, bc: BCArg = None,
     Python format per row.
 
     ``cell_data`` maps a name to a ``(E,)`` or ``(E, k)`` array and ``point_data`` to a
-    ``(P,)`` or ``(P, k)`` array over the mesh's *points* (diagnostics: quality, displacement),
-    each point value repeated on its corner copies; ``point_data`` is order 1 only."""
+    ``(P,)`` or ``(P, k)`` array over the mesh's *points* (diagnostics: quality, displacement);
+    ``point_data`` is order 1 only."""
     X, conn, cell_type, bc_out = _hex_arrays(mesh, _as_bc(mesh, bc))
     pts: dict[str, Any] = {}
     if point_data:
@@ -876,7 +866,7 @@ def to_vtu(mesh: HexMesh, fname: str, *, bc: BCArg = None,
             if v.ndim not in (1, 2) or v.shape[0] != mesh.n_points:
                 raise ValueError("point_data array %r has shape %s, expected %d rows (the points)"
                                  % (k, v.shape, mesh.n_points))
-            pts[k] = v[mesh.corners].reshape((-1,) + v.shape[1:])
+            pts[k] = v
     _write_vtu(fname, X, conn, cell_type, bc_out=bc_out,
                cell_out=_cell_tags(mesh.element_tags, mesh.n_hexes),
                point_data=pts, cell_data=cell_data, binary=binary)
@@ -884,9 +874,9 @@ def to_vtu(mesh: HexMesh, fname: str, *, bc: BCArg = None,
 
 
 def line_to_vtu(mesh: LineMesh, fname: str, *, binary: bool = True) -> LineMesh:
-    """Write an XML VTK unstructured grid (``.vtu``) of a ``LineMesh``, un-welded (one
-    node block per line element), with per-cell ``element_tag`` region ids where the
-    mesh carries ``element_tags``."""
+    """Write an XML VTK unstructured grid (``.vtu``) of a ``LineMesh``, welded (shared
+    nodes), with per-cell ``element_tag`` region ids where the mesh carries
+    ``element_tags``."""
     X, conn, cell_type = _line_arrays(mesh)
     _write_vtu(fname, X, conn, cell_type,
                cell_out=_cell_tags(mesh.element_tags, mesh.n_lines), binary=binary)
@@ -896,14 +886,14 @@ def line_to_vtu(mesh: LineMesh, fname: str, *, binary: bool = True) -> LineMesh:
 def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True,
                 point_data: Mapping[str, Any] | None = None,
                 cell_data: Mapping[str, Any] | None = None) -> QuadMesh:
-    """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, un-welded (one
-    node block per quad), with per-cell ``element_tag`` region ids where the mesh
-    carries ``element_tags``.
+    """Write an XML VTK unstructured grid (``.vtu``) of a ``QuadMesh``, welded (shared
+    nodes), with per-cell ``element_tag`` region ids where the mesh carries
+    ``element_tags``.
 
     ``cell_data`` maps a name to a ``(Q,)`` or ``(Q, k)`` array and ``point_data`` to a
     ``(P,)`` or ``(P, k)`` array over the mesh's *points* (diagnostics: quality, constraint
-    kind, displacement); a point value is repeated on each corner copy of its vertex.
-    ``point_data`` is order 1 only -- a high-order mesh has more nodes than points."""
+    kind, displacement).  ``point_data`` is order 1 only -- a high-order mesh has more
+    nodes than points."""
     X, conn, cell_type = _quad_arrays(mesh)
     pts: dict[str, Any] = {}
     if point_data:
@@ -915,7 +905,7 @@ def quad_to_vtu(mesh: QuadMesh, fname: str, *, binary: bool = True,
             if v.ndim not in (1, 2) or v.shape[0] != mesh.n_points:
                 raise ValueError("point_data array %r has shape %s, expected %d rows (the points)"
                                  % (k, v.shape, mesh.n_points))
-            pts[k] = v[mesh.corners].reshape((-1,) + v.shape[1:])
+            pts[k] = v
     _write_vtu(fname, X, conn, cell_type,
                cell_out=_cell_tags(mesh.element_tags, mesh.n_quads),
                point_data=pts, cell_data=cell_data, binary=binary)

@@ -359,7 +359,7 @@ def test_vtu_order1_is_plain_quad(tmp_path):
     p = str(tmp_path / "lin.vtu")
     writer.quad_to_vtu(quadmesh.box(1.0, 1), p)
     assert vtu_cell_types(p) == {9}                   # VTK_QUAD
-    assert _vtu_num_points(p) == 24                      # 6 faces x 4 nodes
+    assert _vtu_num_points(p) == 8                       # welded: the cube's 8 corners
 
 
 def test_vtu_high_order_is_lagrange_quad(tmp_path):

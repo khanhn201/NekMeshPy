@@ -13,7 +13,7 @@ def quad_csj(P):
     return (cr / (np.linalg.norm(e1, axis=-1) * np.linalg.norm(e0, axis=-1) + 1e-300)).min(-1)
 
 
-def untangle(X, Q, free, project=None, target=0.15, rounds=60, grow=2):
+def untangle(X, Q, free, project=None, target=0.15, rounds=60, grow=2, seed=0):
     """greedy local untangler: each free node near a bad quad moves to the candidate (around its
     neighbour centroid / current spot) that maximizes the worst corner sj of its quads.
     project(i, p) -> p maps a candidate onto node i's constraint (circle / line); free: bool mask."""
@@ -25,7 +25,7 @@ def untangle(X, Q, free, project=None, target=0.15, rounds=60, grow=2):
         for a in range(4):
             inc[q[a]].append(qi)
             nbr[q[a]].update((q[(a + 1) % 4], q[(a - 1) % 4]))
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(seed)
     for it in range(rounds):
         s = corner_sj(X, Q)
         bad = np.where(s < target)[0]

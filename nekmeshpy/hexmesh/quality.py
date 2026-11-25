@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -138,7 +138,22 @@ _EDGES = np.array([[0, 1], [0, 3], [1, 2], [3, 2], [0, 4], [1, 5],
 _CHUNK = 2048
 
 
-def solver_metrics(mesh: HexMesh, order: int | None = None) -> SolverMetrics:
+def _metrics_chunk(st: dict[str, Any], lo: int, hi: int) -> tuple[FloatArray, float, float]:
+    from ..core.interp import _element_tangents, resample_block
+    n = st["n"]
+    b = resample_block(st["block"][lo:hi], 1, n, 3)
+    ti, tj, tk = _element_tangents(b, n, 3)
+    J = np.sum(np.cross(ti, tj) * tk, axis=2)
+    g = b.reshape(len(b), n + 1, n + 1, n + 1, 3)
+    d_lo, d_hi = np.inf, 0.0
+    for a in (1, 2, 3):
+        d = np.linalg.norm(np.diff(g, axis=a), axis=-1)
+        d_lo, d_hi = min(d_lo, float(d.min())), max(d_hi, float(d.max()))
+    return np.min(J, axis=1) / np.max(J, axis=1), d_lo, d_hi
+
+
+def solver_metrics(mesh: HexMesh, order: int | None = None, *,
+                   workers: int | None = None) -> SolverMetrics:
     """Nek5000/nekRS's own ``mesh metrics:`` block for this mesh -- GLL grid spacing,
     the ``min(J)/max(J)`` ratio it prints as "scaled Jacobian", and corner-edge aspect
     ratio -- of the trilinear map ``.re2`` exports, resampled at ``order``
@@ -146,23 +161,15 @@ def solver_metrics(mesh: HexMesh, order: int | None = None) -> SolverMetrics:
 
     Matches nekRS's printed line to its digits. Read :class:`SolverMetrics <nekmeshpy.core.quality.SolverMetrics>` before
     comparing its ``jac_ratio`` with :func:`scaled_jacobian`: different quantities."""
-    from ..core.interp import _element_tangents, resample_block
+    from ..core.parallel import chunk_map
     n = _core.SCAN_ORDER if order is None else int(order)
     if n < 1:
         raise ValueError("solver_metrics: order must be >= 1, got %d" % n)
-    block = _linear_block(mesh)
-    ratio: list[FloatArray] = []
-    d_lo, d_hi = np.inf, 0.0
-    for s in range(0, mesh.n_hexes, _CHUNK):
-        b = resample_block(block[s:s + _CHUNK], 1, n, 3)
-        ti, tj, tk = _element_tangents(b, n, 3)
-        J = np.sum(np.cross(ti, tj) * tk, axis=2)
-        ratio.append(np.min(J, axis=1) / np.max(J, axis=1))
-        g = b.reshape(len(b), n + 1, n + 1, n + 1, 3)
-        for a in (1, 2, 3):
-            d = np.linalg.norm(np.diff(g, axis=a), axis=-1)
-            d_lo, d_hi = min(d_lo, float(d.min())), max(d_hi, float(d.max()))
-    r = np.concatenate(ratio)
+    parts = chunk_map(_metrics_chunk, mesh.n_hexes, _CHUNK,
+                      dict(block=_linear_block(mesh), n=n), workers)
+    r = np.concatenate([p_[0] for p_ in parts])
+    d_lo = min(p_[1] for p_ in parts)
+    d_hi = max(p_[2] for p_ in parts)
     X = mesh.points[mesh.corners]
     el = np.linalg.norm(X[:, _EDGES[:, 0]] - X[:, _EDGES[:, 1]], axis=2)
     ar = el.max(axis=1) / el.min(axis=1)

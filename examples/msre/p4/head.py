@@ -50,11 +50,12 @@ NPLAIN = 2                       # 1088 = 3*362 + 2: 362 3:1 templates + 2 plain
 
 def transition_plan(n):
     """per template: number of inner edges (3 or 1); spread the plain ones evenly."""
-    k = (n - NPLAIN) // 3
-    assert 3 * k + NPLAIN == n
+    npl = n % 3 if n % 3 else 3                     # plain cells so the rest divides by 3 (1088 -> 2)
+    k = (n - npl) // 3
+    assert 3 * k + npl == n
     plan = [3] * k
-    for i in range(NPLAIN):
-        plan.insert(int((i + 0.5) * len(plan) / NPLAIN) + i, 1)
+    for i in range(npl):
+        plan.insert(int((i + 0.5) * len(plan) / npl) + i, 1)
     return plan
 
 
@@ -112,6 +113,57 @@ def positions_kn(quads, XKN):
     for k, i in keys.items():
         if isinstance(k, tuple) and k[0] == "ann":
             X[i] = ROWS[k[1]] * np.array([np.cos(tb[k[2]]), np.sin(tb[k[2]])])
+    # the template nodes are free (the head's top face between the bands (R_W) and the downcomer (R_CAN) is a
+    # wall): relax them to the middle of their neighbours, so no template quad is a sliver when two wall nodes
+    # sit close together
+    tm = [i for k, i in keys.items() if isinstance(k, tuple) and k[0] == "tm"]
+    nb = {i: set() for i in tm}
+    for q, _, _ in quads:
+        ids = [keys[k] for k in q]
+        for a_ in range(4):
+            u_, v_ = ids[a_], ids[(a_ + 1) % 4]
+            if u_ in nb:
+                nb[u_].add(v_)
+            if v_ in nb:
+                nb[v_].add(u_)
+    EF = float(os.environ.get("TM_EMIN", "1.0"))          # no template edge shorter than this
+
+    def edge_ok(i, p):
+        return np.linalg.norm(X[list(nb[i])] - p, axis=1).min() >= EF
+    for _ in range(int(os.environ.get("TM_RELAX", "50"))):
+        for i in tm:
+            p = 0.5 * X[i] + 0.5 * X[list(nb[i])].mean(0)
+            if edge_ok(i, p):
+                X[i] = p
+    # then per node: the spot (of a few candidates) that maximises the worst corner sj of its quads
+    from q2 import corner_sj
+    Q = np.array([[keys[k] for k in q] for q, _, _ in quads])
+    inc = {i: [] for i in tm}
+    for qi, row in enumerate(Q):
+        for i in row:
+            if i in inc:
+                inc[i].append(qi)
+    rng = np.random.default_rng(0)
+    for _ in range(30):
+        moved = 0
+        for i in tm:
+            qs = Q[inc[i]]
+            cur = corner_sj(X, qs).min()
+            if cur > 0.3:
+                continue
+            old = X[i].copy(); best, bp = cur, None
+            h = 0.3 * np.mean([np.linalg.norm(X[j] - old) for j in nb[i]])
+            for p in [old + h * f * rng.normal(size=2) for f in (0.1, 0.3, 0.6, 1.0) for _ in range(10)]:
+                if not edge_ok(i, p):
+                    continue
+                X[i] = p
+                v = corner_sj(X, qs).min()
+                if v > best + 1e-6:
+                    best, bp = v, p.copy()
+            X[i] = bp if bp is not None else old
+            moved += bp is not None
+        if not moved:
+            break
     return keys, X
 
 

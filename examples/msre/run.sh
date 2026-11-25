@@ -1,15 +1,17 @@
 #!/bin/bash
-# Rebuild the MSRE fuel-salt hex mesh (order 2, core NZ=32) from the shipped CAD-derived inputs
-# (p1/lattice.pkl, p4/topo.pkl, p4/bore_axes.npy, p4/pipe_axis.npy).  Every output lands next to its script.
+# Rebuild the MSRE fuel-salt hex mesh (linear, core NZ=32) from the shipped CAD-derived inputs
+# (p1/lattice.pkl, p4/rim_exclude.npy, p4/bore_axes.npy, p4/pipe_axis.npy).  Every output lands next to its
+# script; the finished mesh is finish/msre.{re2,vtu,pkl}.
 #   ./run.sh             full chain
-#   FROM=bands ./run.sh  start at a stage: section core top bottom bands head vanes L2 downcomer volute inlet pocket assemble
+#   FROM=bands ./run.sh  start at a stage: section core top topology bottom bands head downcomer L2 untangle
+#                        l2overlap pocket assemble pinch smooth polish overlap revert export
 #   PAR=0 ./run.sh       everything in sequence (default PAR=1: independent work runs concurrently)
-# Steps run in a memory-capped systemd scope when available (MEM, default 22G per step); NOCAP=1 skips it.
+# Steps run in a memory-capped systemd scope when available (MEM, default 64G per step); NOCAP=1 skips it.
 set -eo pipefail
 export ORDER=${ORDER:-2} CORE_NZ=${CORE_NZ:-32} CORE_O=${ORDER:-2}
 ROOT=$(cd "$(dirname "$0")" && pwd)
 export PYTHONPATH=$(cd "$ROOT/../.." && pwd)${PYTHONPATH:+:$PYTHONPATH}
-MEM=${MEM:-22G}
+MEM=${MEM:-64G}
 PAR=${PAR:-1}
 LEVELS="AB BC CD DE EF F3F2 F2F1 F1F0 F0H HI IJ JK KN"
 BANDS="A B C D E F3 F2 F1 F0 H I J KN"
@@ -59,6 +61,7 @@ fan() {     # fan <name> <dir> <script> <args...> : one process per argument, al
 stage section p1 bash -c "python build_section.py && cp section.pkl section_presmooth.pkl && python smooth_bores.py"
 bg    core    p1 python upper.py $ORDER $CORE_NZ                         # core -> upper_o2_nz32.pkl
 bg    top     p5 bash -c "python head_top.py && python skin.py"          # top head -> head_top.pkl
+stage topology  p4 python topo2.py                                       # lattice + lofted rim strip -> topo2.pkl
 [ "$FROM" = bottom ] && go=1
 if [ $go = 1 ]; then
     stage bottom p4 python positions.py top                              # top level (AB copies it)
@@ -66,12 +69,18 @@ if [ $go = 1 ]; then
 fi
 fan   bands     p4 bands.py $BANDS                                       # bands A..KN (rim) -> band_*.pkl
 stage head      p4 python head.py                                        # lower-head section -> head_sec.pkl
-stage vanes     p4 bash -c "python vanes2.py && python vanepos2.py"      # vanes -> vanepos.pkl
-stage L2        p4 python head3d.py                                      # lower head -> head_L2.pkl
-stage downcomer p4 python dc3.py                                         # downcomer + tilted bores -> dc3.pkl
-stage volute    p4 python volute.py                                      # volute -> volute_inner.pkl
-stage inlet     p4 python inlet2.py                                      # O-grid window + inlet pipe -> volute.pkl
-for p in "${BG[@]}"; do wait $p || { echo "!! a background stage failed (logs/core.log, logs/top.log)"; exit 1; }; done
+bg    downcomer p4 bash -c "python dc3.py && python volute.py && python inlet2.py"   # downcomer, volute, inlet
+stage L2        p4 python vloft.py                                       # lower head, vanes lofted -> head_L2_vloft.pkl
+stage untangle  p4 bash -c "IN=head_L2_vloft.pkl OUT=head_L2_tw TGT=0.02 GROW=2 ROUNDS=40 python vskin_twist.py"
+stage l2overlap p4 bash -c "IN=head_L2_tw.pkl OUT=head_L2_lin HMIN=0 python vskin_ovl_fix.py"   # -> head_L2_lin.pkl
+for p in "${BG[@]}"; do wait $p || { echo "!! a background stage failed (logs/core.log, top.log, downcomer.log)"; exit 1; }; done
 stage pocket    p5 python pocket.py                                      # side region under the dome rim -> pocket.pkl
-stage assemble  p4 bash -c "OUT=msre python assemble.py --vtu"           # -> p4/msre.{pkl,re2,vtu}
+stage assemble  p4 bash -c "L2PKL=head_L2_lin.pkl LINEAR=1 OUT=msre_raw python assemble.py"   # -> p4/msre_raw.pkl
+# finishing, on the assembled linear model (finish/)
+stage pinch     finish python pinch_fix.py ../p4/msre_raw.pkl msre_wt.pkl      # cells meeting only along an edge
+stage smooth    finish bash -c "SJ=0.15 RINGS=2 python region_fix.py msre_wt.pkl msre_sm.pkl"
+stage polish    finish bash -c "SJ=0.15 RINGS=2 ROUNDS=10 python greedy_fix.py msre_sm.pkl msre_p1.pkl && SJ=0.15 RINGS=2 ROUNDS=10 ROT=45 python greedy_fix.py msre_p1.pkl msre_p2.pkl"
+stage overlap   p4 bash -c "IN=../finish/msre_p2.pkl OUT=../finish/msre_ov HMIN=0 python vskin_ovl_fix.py"
+stage revert    finish python revert_sampled.py msre_sm.pkl msre_ov.pkl msre_fin.pkl  # clean at the solver's order
+stage export    finish bash -c "python export_final.py msre_fin.pkl msre --vtu && python ../p4/re2check.py msre.re2 && python bc_check.py msre.re2 && python qreg.py msre.re2"
 echo "== done ($(date +%H:%M:%S))"
