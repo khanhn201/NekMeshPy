@@ -269,7 +269,7 @@ def _hex_planes_both(X: PointArray, HC: IntArray) -> tuple[PointArray, PointArra
     diagonal splits.  A linear hex's warped face is a bilinear patch lying between its
     two triangulations, so a point strictly inside all 24 planes is inside the true
     element whichever way the face is split -- the overlap verdict no longer depends
-    on corner numbering (which the single anchored split of :func:`_hex_geometry`
+    on corner numbering (which the single anchored split of ``_hex_geometry``
     does, by a few hundredths of a millimetre on a warped face)."""
     fpts = X[HC][:, _FACE_POINTS, :]                           # (N,6,4,3)
     fcenter = fpts.mean(axis=2)
@@ -321,7 +321,7 @@ def _hex_sample_points(X: PointArray, HC: IntArray) -> PointArray:
     return np.concatenate([corners, tri1, tri2], axis=1)       # (N,20,3)
 
 
-#: Pairs processed per :func:`_points_inside` batch. The natural vectorization is one
+#: Pairs processed per ``_points_inside`` batch. The natural vectorization is one
 #: ``(K,20,12,3)`` array per direction -- at the full candidate count of a large mesh
 #: (bounding-*sphere* broad phase over-collects badly for cube-like elements, whose
 #: corner-to-corner diagonal touches far more neighbours than the faces that matter)
@@ -475,17 +475,17 @@ def _overlap_chunk(st: dict[str, Any], lo_: int, hi_: int) -> IntArray:
 def overlapping_pairs(points: PointArray, hexes: IntArray, *,
                       workers: int | None = None) -> IntArray:
     """``(K,2)`` pairs (``i < j``) of hexes whose volumes geometrically overlap: a point of
-    one's surface (:func:`_hex_surface_samples`) sits strictly inside the other as a
+    one's surface (``_hex_surface_samples``) sits strictly inside the other as a
     **trilinear** element (the exact geometry of a linear hex).  A sample inside the other's face planes
-    under both diagonal splits (:func:`_hex_planes_both`, by ``1e-6`` of the model size) is
+    under both diagonal splits (``_hex_planes_both``, by ``1e-6`` of the model size) is
     inside; one between the two splits of a warped face is decided by inverting the
-    trilinear map (:func:`_inside_trilinear`).  Adjacent pairs are tested
+    trilinear map (``_inside_trilinear``).  Adjacent pairs are tested
     too -- two elements can share a face and still fold into each other beyond it -- and
     a shared face's own points sit on that boundary, not inside it, so a clean adjacency
     does not trip it.  Two coincident elements (identical centroids) count as overlapping.
     Splitting every face both ways makes the verdict independent of corner numbering.
 
-    Broad phase: an axis-aligned-box hash grid (:func:`_aabb_pairs`); narrow phase: only
+    Broad phase: an axis-aligned-box hash grid (``_aabb_pairs``); narrow phase: only
     the samples inside the other element's box are tested against its planes.  ``workers``
     splits the narrow phase across forked processes (default:
     :func:`nekmeshpy.core.parallel.default_workers`); the answer does not depend on it."""
@@ -685,7 +685,7 @@ _OVERLAP_PLANE = 0.5
 
 
 def _overlapping_quad_pairs(X: PointArray, QC: IntArray) -> IntArray:
-    """``(K, 2)`` pairs of quads whose areas geometrically overlap -- :func:`_count_overlapping_pairs`
+    """``(K, 2)`` pairs of quads whose areas geometrically overlap -- ``_count_overlapping_pairs``
     in 2-D: any of one's corners, edge midpoints or centroid sits strictly inside the
     other, past a half-plane test on all 4 of its edges (each quad is star-convex about
     its own centroid).  Adjacent pairs are not excluded; a shared edge's points sit

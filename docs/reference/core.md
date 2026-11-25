@@ -28,6 +28,13 @@
    :members:
 ```
 
+## `core.parallel`
+
+```{eval-rst}
+.. automodule:: nekmeshpy.core.parallel
+   :members:
+```
+
 ## `core.measure`
 
 ```{eval-rst}
