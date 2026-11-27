@@ -33,7 +33,7 @@ RADIAL_GRADING = 1.15        # >1 clusters radial layers toward the sphere
 ORDER = 2                    # polynomial order; 1 = linear. Both surfaces are
                              # built at ORDER (annulus rejects a mismatch), so the
                              # inner-wall nodes bow onto the true sphere (curved
-                             # .vtu; .re2 stays linear either way)
+                             # .vtu and .re2 edge midpoints)
 OUT_NAME = "flow_past_sphere"
 
 # boundary name -> Nek BC code, applied only at export

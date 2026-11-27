@@ -126,8 +126,8 @@ if __name__ == "__main__":
     ORDER = 2                    # polynomial order; 1 = linear. sweep evaluates the
                                  # path at the intermediate GLL levels too, so the bend
                                  # geometry is exact along the sweep at any order (the
-                                 # .vtu renders true arcs; the .re2 stays linear either
-                                 # way).
+                                 # .vtu renders true arcs; the .re2 carries edge
+                                 # midpoints).
     OUT_NAME = "serpentine_pipe"
 
     # boundary name -> Nek BC code, applied only at export

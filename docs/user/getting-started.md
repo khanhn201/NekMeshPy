@@ -54,10 +54,12 @@ It is recommended to export and open the `.vtu` file with your favorite visualiz
 (Paraview/Visit) and reload the file as you mesh to the `.vtu` file.
 
 ## Use high order nodes in Nek5000/NekRS
-`.re2` only store the linear mesh. Higher order nodes can be exported through fld file
+Above order 1, `.re2` carries each curved edge's midpoint as an `'m'` curve record, and
+Nek rebuilds the faces and interior from those by Gordon-Hall blending -- the mesh's
+quadratic edge interpolant. The full high-order nodes can be exported through a fld file
 
 ```python
-writer.to_re2(mesh, "case.re2", bc=VEL_BC)   # topology + BCs, linear
+writer.to_re2(mesh, "case.re2", bc=VEL_BC)   # corners + edge midpoints + BCs
 writer.to_fld(mesh, "case.f00000")               # contains high order nodes
 ```
 

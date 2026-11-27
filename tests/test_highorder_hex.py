@@ -10,7 +10,7 @@ golden)."""
 
 import numpy as np
 import pytest
-from conftest import curved, vtu_cell_types
+from conftest import curved, vtu_cell_types, read_re2_coords, read_re2_curves
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.interp import corner_indices, hex_face_indices
@@ -180,15 +180,20 @@ def test_high_order_quality_non_degenerate_on_curved_shell(order):
     assert hexmesh.quality_summary(hm).n_elements == hm.n_hexes
 
 
-# -- re2 export stays linear regardless of order ------------------------
-def test_re2_is_order_invariant(tmp_path):
+# -- re2: corners at any order, edge midpoints above order 1 ------------
+def test_re2_corners_are_order_invariant(tmp_path):
     lin = _shell(1)
     ho = _shell(4)
     writer.to_re2(lin, str(tmp_path / "lin.re2"), bc=GROUPS)
-    writer.to_re2(ho, str(tmp_path / "ho.re2"), bc=GROUPS)
+    writer.to_re2(ho, str(tmp_path / "ho.re2"), bc=GROUPS, curved=False)
     a = open(tmp_path / "lin.re2", "rb").read()
     b = open(tmp_path / "ho.re2", "rb").read()
-    assert a == b                                        # curved nodes never reach re2
+    assert a == b                                        # curved=False: corners only
+    writer.to_re2(ho, str(tmp_path / "c.re2"), bc=GROUPS)
+    _, ca, ba = read_re2_coords(tmp_path / "lin.re2")
+    _, cb, bb = read_re2_coords(tmp_path / "c.re2")
+    assert np.array_equal(ca, cb) and ba == bb           # the default only adds curves
+    assert len(read_re2_curves(tmp_path / "c.re2")) > 0
 
 
 # -- VTK Lagrange hex node ordering -------------------------------------

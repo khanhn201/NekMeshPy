@@ -16,7 +16,7 @@ N_RADIAL = 6
 N_WALL = 3                   # radial layers through the wall
 RADIAL_GRADING = 0.5         # <1 clusters cells toward the wall
 
-ORDER = 2                    # polynomial order; .re2 stays linear either way
+ORDER = 2                    # polynomial order
 OUT_NAME = "periodic_cht_pipe"
 
 R_OUT = R_IN + THICKNESS

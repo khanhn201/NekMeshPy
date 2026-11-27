@@ -48,7 +48,7 @@ CENTER_SCALE = 0.5            # inner square-core size (fraction of the diameter
 RADIAL = np.array([0.0, 0.4, 0.8, 1.0])   # O-ring layer positions (first 0, last 1.0)
 ORDER = 4                     # polynomial order; 1 = linear.  The seam arcs and
                               # openings are meshed at ORDER, so .vtu renders the
-                              # curved walls (.re2 stays linear either way)
+                              # curved walls (.re2 its edge midpoints)
 OUT_NAME = "circular_pipe_tjunction"
 
 # boundary name -> Nek BC code, applied only at export

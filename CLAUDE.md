@@ -493,8 +493,12 @@ middle of the pipe. The geometry was identical and only the boundary block gave 
   return a plain array, not a mesh).
 - **Reports are `NamedTuple`s**, and `_fn` names the functional variant (`loft` /
   `loft_fn`).
-- **Export.** `.re2` is binary-only, takes the full filename, and stays linear (corners
-  only) — a mesh exports byte-identically at any order. `.vtu` emits VTK Lagrange cells,
+- **Export.** `.re2` is binary-only and takes the full filename. Its element records are
+  the corners; above order 1 it also writes one `'m'` curve record per curved edge (the
+  edge polynomial read at its parametric midpoint, at any order — `curved=False` turns
+  it off). That is all `.re2` can carry: Nek rebuilds faces and interior from the edge
+  midpoints by Gordon-Hall, so validate the mesh Nek sees (faces Coons-from-edges), not
+  the stored face/interior nodes. `.vtu` emits VTK Lagrange cells,
   per-**point** `bc_id` and per-**cell** `element_tag` (region ids: 1-based positions in
   `sorted(element_tags.unique())`, 0 untagged, no `CellData` at all when untagged — a
   region belongs to the element, and on a conjugate mesh a per-point one would be

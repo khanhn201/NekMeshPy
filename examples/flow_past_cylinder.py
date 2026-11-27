@@ -37,7 +37,7 @@ RADIAL_GRADING = 1.2        # >1 clusters radial layers toward the cylinder
 N_SPAN = 4                   # hex layers across the span
 ORDER = 2                    # polynomial order; 1 = linear. High order bows the
                              # ring's inner wall onto the true circle (curved
-                             # .vtu; .re2 stays linear either way)
+                             # .vtu and .re2 edge midpoints)
 OUT_NAME = "flow_past_cylinder"
 
 # boundary name -> Nek BC code, applied only at export

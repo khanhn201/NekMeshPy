@@ -36,7 +36,7 @@ NY_STEP = 12                 # cells across the step depth (-STEP..0)
 N_SPAN = 8                   # hex layers across the span
 ORDER = 2                    # polynomial order; 1 = linear. The domain is
                              # polyhedral, so the curved nodes land on the same
-                             # flat faces (.re2 stays linear either way)
+                             # flat faces (no .re2 curve records)
 OUT_NAME = "backward_facing_step"
 
 # boundary name -> Nek BC code, applied only at export (span faces = symmetry)

@@ -114,8 +114,28 @@ def curved(mesh):
     return nodes[conn_ho]
 
 
+def _split_curves(rest):
+    """``rest`` (everything after the element records) -> (curve records ``(K,8)``,
+    the boundary block's bytes)."""
+    nc = int(np.frombuffer(rest[:8], dtype="<f8")[0])
+    return np.frombuffer(rest[8:8 + nc * 64], dtype="<f8").reshape(nc, 8), rest[8 + nc * 64:]
+
+
+def read_re2_curves(path):
+    """The ``.re2`` curve records, ``(K, 8)`` doubles: element (1-based), edge, 5 values,
+    the curve type in the last."""
+    with open(path, "rb") as f:
+        hdr = f.read(80)
+        f.read(4)
+        num_elem = int(hdr.split()[1])
+        ndim = int(hdr.split()[2])
+        np.fromfile(f, dtype="<f8", count=num_elem * (1 + ndim * 2 ** ndim))
+        return _split_curves(f.read())[0]
+
+
 def read_re2_coords(path):
-    """Return (n_elem, coords[n_elem*3*8] float64, bnd_block bytes)."""
+    """Return (n_elem, coords[n_elem*3*8] float64, bnd_block bytes) -- the boundary
+    block alone, past any curve records."""
     with open(path, "rb") as f:
         hdr = f.read(80)
         f.read(4)  # test float32
@@ -124,7 +144,7 @@ def read_re2_coords(path):
         elem_block = np.fromfile(f, dtype="<f8", count=num_elem * 25)
         rest = f.read()
     coords = elem_block.reshape(num_elem, 25)[:, 1:]  # drop the group double
-    return num_elem, coords, rest
+    return num_elem, coords, _split_curves(rest)[1]
 
 
 def read_re2_boundary(path):
@@ -141,9 +161,9 @@ def read_re2_boundary(path):
         f.read(4)
         num_elem = int(hdr.split()[1])
         np.fromfile(f, dtype="<f8", count=num_elem * 25)
-        rest = f.read()
-    n_bnd = int(np.frombuffer(rest[:16], dtype="<f8")[1])
-    rows = np.frombuffer(rest[16:16 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
+        rest = _split_curves(f.read())[1]
+    n_bnd = int(np.frombuffer(rest[:8], dtype="<f8")[0])
+    rows = np.frombuffer(rest[8:8 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
     # a code rides in the 8 bytes of one double; Nek's own field is 3 chars, so the
     # rest are the NUL padding ``_str_to_double`` left there
     return Counter(
@@ -164,9 +184,9 @@ def read_re2_periodic(path):
         f.read(4)
         num_elem = int(hdr.split()[1])
         np.fromfile(f, dtype="<f8", count=num_elem * 25)
-        rest = f.read()
-    n_bnd = int(np.frombuffer(rest[:16], dtype="<f8")[1])
-    rows = np.frombuffer(rest[16:16 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
+        rest = _split_curves(f.read())[1]
+    n_bnd = int(np.frombuffer(rest[:8], dtype="<f8")[0])
+    rows = np.frombuffer(rest[8:8 + n_bnd * 64], dtype="<f8").reshape(n_bnd, 8)
     return {(int(r[0]), int(r[1])): (int(r[2]), int(r[3])) for r in rows
             if struct.pack("<d", r[7]).decode("ascii", "replace").rstrip("\x00 ") == "P"}
 
