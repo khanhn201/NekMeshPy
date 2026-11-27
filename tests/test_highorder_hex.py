@@ -10,7 +10,7 @@ golden)."""
 
 import numpy as np
 import pytest
-from conftest import curved, vtu_cell_types, read_re2_coords, read_re2_curves
+from conftest import curved, read_re2_coords, read_re2_curves, vtu_cell_types
 
 from nekmeshpy import HexMesh, LineMesh, QuadMesh, hexmesh, quadmesh
 from nekmeshpy.core.interp import corner_indices, hex_face_indices
