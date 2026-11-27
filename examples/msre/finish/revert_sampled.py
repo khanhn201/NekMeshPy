@@ -1,6 +1,6 @@
 """Undo node moves that fold elements between their nodes: hexes inverted when the trilinear map is sampled at
-ORDER (the solver's) get their nodes put back to BASE (same connectivity), repeated until clean at ORDER and
-overlap-free.  usage: revert_sampled.py base.pkl new.pkl out.pkl   env ORDER (default SCAN_ORDER)"""
+SAMPLE_ORDER (the solver's) get their nodes put back to BASE (same connectivity), repeated until clean there and
+overlap-free.  usage: revert_sampled.py base.pkl new.pkl out.pkl   env SAMPLE_ORDER (default SCAN_ORDER)"""
 import os, sys, pickle, time
 import numpy as np
 from nekmeshpy import hexmesh
@@ -12,7 +12,7 @@ t0 = time.time()
 base = pickle.load(open(sys.argv[1], "rb")); new = pickle.load(open(sys.argv[2], "rb"))
 X0 = np.asarray(base.points, float); X = np.asarray(new.points, float).copy(); H = np.asarray(new.corners)
 assert np.array_equal(np.asarray(base.corners), H), "connectivity differs"
-N = int(os.environ.get("ORDER", Q.SCAN_ORDER))
+N = int(os.environ.get("SAMPLE_ORDER", Q.SCAN_ORDER))
 
 
 from nekmeshpy.core.interp import corner_indices
