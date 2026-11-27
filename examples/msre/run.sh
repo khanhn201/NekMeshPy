@@ -1,10 +1,11 @@
 #!/bin/bash
 # Rebuild the MSRE fuel-salt hex mesh (linear, core NZ=32) from the shipped CAD-derived inputs
 # (p1/lattice.pkl, p4/rim_exclude.npy, p4/bore_axes.npy, p4/pipe_axis.npy).  Every output lands next to its
-# script; the finished mesh is finish/msre.{re2,vtu,pkl}.
+# script; the finished mesh is finish/msre.{re2,vtu,pkl}, and with its channel boundary layer, order 2,
+# bl/msre_bl.{re2,vtu}.
 #   ./run.sh             full chain
 #   FROM=bands ./run.sh  start at a stage: section core top topology bottom bands head downcomer L2 untangle
-#                        l2overlap pocket assemble pinch smooth polish overlap revert export
+#                        l2overlap pocket assemble pinch smooth polish overlap revert export bl order2 export_bl
 #   PAR=0 ./run.sh       everything in sequence (default PAR=1: independent work runs concurrently)
 # Steps run in a memory-capped systemd scope when available (MEM, default 64G per step); NOCAP=1 skips it.
 set -eo pipefail
@@ -83,4 +84,8 @@ stage polish    finish bash -c "SJ=0.15 RINGS=2 ROUNDS=10 python greedy_fix.py m
 stage overlap   p4 bash -c "IN=../finish/msre_p2.pkl OUT=../finish/msre_ov HMIN=0 python vskin_ovl_fix.py"
 stage revert    finish python revert_sampled.py msre_sm.pkl msre_ov.pkl msre_fin.pkl  # clean at the solver's order
 stage export    finish bash -c "python export_final.py msre_fin.pkl msre --vtu && python ../p4/re2check.py msre.re2 && python bc_check.py msre.re2 && python qreg.py msre.re2"
+# channel boundary layer, order 2 with the nodes on the geometry, curved .re2 (bl/)
+stage bl        bl python dice.py ../finish/msre_fin.pkl msre_bl_lin.pkl          # -> msre_bl_lin.pkl, msre_bl_lin_split.npz
+stage order2    bl python order2.py msre_bl_lin.pkl msre_bl_lin_split.npz msre_bl_o2   # -> msre_bl_o2.pkl
+stage export_bl bl bash -c "python nekview.py msre_bl_o2.pkl && python export_bl.py msre_bl_o2.pkl msre_bl --vtu && python ../p4/re2check.py msre_bl.re2 && python ../finish/bc_check.py msre_bl.re2"
 echo "== done ($(date +%H:%M:%S))"

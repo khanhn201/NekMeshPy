@@ -229,6 +229,27 @@ is conformal.
   boundary rows (one per open face, none on an interior face, no coincident boundary faces);
   `qreg.py` prints corner quality and edge length per region.
 
+### bl: channel boundary layer, order 2
+
+- `dice.py`: one hex **sheet** off the `channel` walls is split: every hex reached through
+  topologically parallel edges, with which end is the wall. A sheet edge is split `BL` from its wall
+  end (0.762 mm, 0.05 after the case's `1/15.24` mm scaling), relaxing over `D` = 25 mm to a plain
+  halving where the sheet runs on through the plenums, so no thin cell crosses the domain. A conformal
+  hex mesh cannot stop a sheet, only relax it. 2.29M -> 2.90M hexes, watertight and conformal.
+- `order2.py`: order 2. Boundary edge midpoints are the exact nodes of the order-2 parts (core, bands,
+  downcomer, volute, top head, pocket), matched by their corners; the lower head's are projected onto
+  the vane, shell and vessel surfaces (a projection moving a node more than a quarter of its edge is
+  refused). The layer's inner surface copies its wall edge's curvature. Faces and interior are
+  Gordon-Hall from the edges -- what Nek builds from a `.re2`, which carries edge midpoints only -- and
+  every cell still folded at N=7 is straightened, with every face on its edges, until none is (about
+  2,500 edges, all lower-head cells by the vanes).
+- `export_bl.py`: the `.re2` with one `'m'` curve record per curved edge (`to_re2`'s default above
+  order 1), and the `.vtu`. `nekview.py` samples the mesh Nek builds at N=2 and N=7.
+
+The layer costs pressure iterations: about 440k wall cells are 0.76 mm by ~50 mm (aspect ratio ~65,
+against ~4k cells above 50 before), and nekRS's pressure solve takes about 4x the iterations of the
+mesh without it.
+
 ## Settings
 
 The values marked *as run* are what produced the mesh described above.
@@ -248,6 +269,8 @@ The values marked *as run* are what produced the mesh described above.
 | `DIPA`, `LAMA` (inlet2) | 0.05, 0.9 | stage-A dip and per-axis square scale; both needed for a valid stage A |
 | `T_CAP` (inlet2) | -490 | pipe-axis position of the slide plane |
 | `POCKET_DZ`, `PHI_W` (pocket) | 14, 22 | annulus row height; wall node below the cap corner (deg) |
+| `TAG`, `BL`, `D` (dice) | channel, 0.762, 25 | wall the layer is grown off, its thickness and relaxation distance (mm) |
+| `NEK_FACES`, `SAMPLE_ORDER` (order2) | 1, 7 | Gordon-Hall faces from the edges (Nek's own geometry); order the folds are checked at |
 
 ## Compromises (geometry not modelled exactly)
 
