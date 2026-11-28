@@ -308,14 +308,18 @@ def _resolve_field_rows(rows: IntArray, names: Any, regions: Any,
 
 def _write_re2(filename: str, elements: PointArray, nelv: int,
                blocks: Sequence[Sequence[tuple[int, int, str, str, int, int, int]]],
-               new_id_of: IntArray) -> None:
+               new_id_of: IntArray, curves: FloatArray | None = None) -> None:
     """The binary ``.re2`` bytes: ``elements`` ``(N, corners, ndim)`` already in the
     written (fluid-first) order, ``nelv`` the velocity-mesh count, and one boundary
     block per field -- ``(element, face, name, code, boundaryID, partner element,
     partner face)`` rows in the mesh's own numbering, read through ``new_id_of``.
 
     ``ndim`` is the last axis of ``elements``: a 3-D hex writes ``x[8] y[8] z[8]``, a 2-D
-    quad ``x[4] y[4]``, which is how Nek's ``read_re2_data`` sizes the record."""
+    quad ``x[4] y[4]``, which is how Nek's ``read_re2_data`` sizes the record.
+
+    ``curves`` (``(K, 5)``: element in the mesh's own numbering, Nek edge, midpoint
+    x y z) are written as ``'m'`` curve records -- an edge's midside node, from which Nek
+    builds the element's geometry by Gordon-Hall blending."""
     ndim = elements.shape[2]
     with open(filename, "wb") as fid:
         # nBCre2 -- the number of boundary blocks that follow, one per field.  Nek's
@@ -329,7 +333,17 @@ def _write_re2(filename: str, elements: PointArray, nelv: int,
             fid.write(struct.pack("<d", 0.0))
             for axis in range(ndim):
                 fid.write(elements[i, :, axis].astype("<f8").tobytes())
-        fid.write(struct.pack("<d", 0.0))
+        if curves is None or not len(curves):
+            fid.write(struct.pack("<d", 0.0))
+        else:
+            rec: FloatArray = np.zeros((len(curves), 8), dtype="<f8")
+            rec[:, 0] = new_id_of[curves[:, 0].astype(np.int64)] + 1
+            rec[:, 1] = curves[:, 1]
+            rec[:, 2:5] = curves[:, 2:5]
+            rec[:, 7] = _str_to_double("m")
+            rec = rec[np.lexsort((rec[:, 1], rec[:, 0]))]
+            fid.write(struct.pack("<d", float(len(rec))))
+            fid.write(rec.tobytes())
         for bnd in blocks:
             fid.write(struct.pack("<d", float(len(bnd))))
             for elem0, face, _name, code, bid, p_elem0, p_face in bnd:
@@ -349,10 +363,18 @@ def _write_re2(filename: str, elements: PointArray, nelv: int,
 
 
 def to_re2(mesh: HexMesh, filename: str, *, bc: BCArg,
-           periodic: PeriodicArg = None, fluid: FluidArg = None) -> HexMesh:
+           periodic: PeriodicArg = None, fluid: FluidArg = None,
+           curved: bool | None = None) -> HexMesh:
     """Write the binary Nek ``.re2`` to ``filename`` (the **full** name, extension
-    included -- nothing is appended). The mesh is written **linear** at any order: Nek's
-    re2 has no high-order format, so only the 8 corners of each hex are emitted.
+    included -- nothing is appended). The element records are the 8 corners of each hex.
+
+    ``curved`` (default: ``mesh.order > 1``) adds one ``'m'`` curve record per hex edge
+    whose midpoint is off the straight one: the stored edge polynomial read at its
+    parametric midpoint, at any order.  That is all a ``.re2`` can carry -- Nek5000 /
+    nekRS rebuild each element from its corners and edge midpoints, faces and interior
+    by Gordon-Hall blending -- so an order-N mesh reaches the solver as its quadratic
+    edge interpolant, and its own face and interior nodes do not.  ``curved=False``
+    writes the corners alone, byte-identically at any order.
 
     It checks nothing about the mesh itself: run :func:`hexmesh.report
     <nekmeshpy.hexmesh.query.report>` and read it before exporting -- inverted corners,
@@ -441,20 +463,63 @@ def to_re2(mesh: HexMesh, filename: str, *, bc: BCArg,
     new_id_of: IntArray = np.empty(n_hexes, dtype=np.int64)
     new_id_of[order] = np.arange(n_hexes, dtype=np.int64)
     elements = mesh.points[mesh.corners][order]      # (N,8,3), fluid-first
-    _write_re2(filename, elements, nelv, blocks, new_id_of)
+    if curved is None:
+        curved = mesh.order > 1
+    curves: FloatArray | None = None
+    if curved:
+        from ..hexmesh.query import element_blocks as hex_blocks
+        curves = _edge_midpoints(hex_blocks(mesh), mesh.order,
+                                 conform.bbox_scale(mesh.points), 3)
+    _write_re2(filename, elements, nelv, blocks, new_id_of, curves)
     return mesh
 
 
+#: Nek's edges, 1-based in this order, as Nek-order corner pairs: a hex's 12, a quad's 4
+_NEK_EDGES = {3: np.array([[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
+                           [0, 4], [1, 5], [2, 6], [3, 7]], dtype=np.int64),
+              2: np.array([[0, 1], [1, 2], [2, 3], [3, 0]], dtype=np.int64)}
+
+
+def _edge_midpoints(blk: PointArray, order: int, scale: float, dim: int,
+                    chunk: int = 200_000) -> FloatArray:
+    """``(K, 5)`` rows ``element, Nek edge (1-based), x, y, z`` for every edge whose
+    stored polynomial, read at its parametric midpoint, is off the straight midpoint of
+    its corners (by more than ``1e-10`` of ``scale``).  ``blk`` is the ``(E,
+    (order+1)**dim, 3)`` element blocks."""
+    from ..core.interp import corner_indices, resample_block_at
+    if order == 1:
+        return np.zeros((0, 5))
+    edges = _NEK_EDGES[dim]
+    ci = corner_indices(2, dim)
+    ijk = np.stack([ci % 3, (ci // 3) % 3, ci // 9], axis=1)
+    mid = (ijk[edges[:, 0]] + ijk[edges[:, 1]]) // 2
+    mid_idx = mid[:, 0] + 3 * mid[:, 1] + 9 * mid[:, 2]
+    half = [np.array([0.0, 0.5, 1.0])] * dim
+    tol = 1e-10 * max(scale, 1e-300)
+    out = []
+    for lo in range(0, len(blk), chunk):
+        b = blk[lo:lo + chunk]
+        q = b if order == 2 else resample_block_at(b, order, half, dim)
+        M = q[:, mid_idx, :]
+        C = q[:, ci, :]
+        straight = 0.5 * (C[:, edges[:, 0]] + C[:, edges[:, 1]])
+        e, k = np.nonzero(np.linalg.norm(M - straight, axis=2) > tol)
+        out.append(np.column_stack([e + lo, k + 1, M[e, k]]))
+    return np.concatenate(out).astype(float)
+
+
 def quad_to_re2(mesh: QuadMesh, filename: str, *, bc: BCArg,
-                fluid: FluidArg = None) -> QuadMesh:
+                fluid: FluidArg = None, curved: bool | None = None) -> QuadMesh:
     """Write the binary 2-D Nek ``.re2`` of a ``QuadMesh`` -- :func:`to_re2` one rung
     down, with the same ``bc=`` / ``fluid=`` contract: ``bc`` is required, a
     ``BoundaryConditions`` carries a velocity and a ``temperature`` table, ``fluid``
     names the velocity-mesh region and is written **first**, and a mesh with a solid
     region (``nelgv < nelgt``) needs ``bc.temperature`` for its second boundary block.
 
-    The mesh is written **linear** (4 corners a quad, ``x[4] y[4]``) at any order, and
-    must lie in a ``z = const`` plane: a 2-D ``.re2`` carries no ``z``.  A side name
+    The element records are the 4 corners of each quad (``x[4] y[4]``), plus -- with
+    ``curved``, by default when ``mesh.order > 1`` -- one ``'m'`` record per curved edge
+    (:func:`to_re2`'s rule).  The mesh must lie in a ``z = const`` plane: a 2-D ``.re2``
+    carries no ``z``.  A side name
     is an edge name, and Nek's face ``1..4`` is the quad's own local edge order, so a
     row is ``(quad, edge)`` with no remapping.
 
@@ -500,7 +565,14 @@ def quad_to_re2(mesh: QuadMesh, filename: str, *, bc: BCArg,
     new_id_of: IntArray = np.empty(n, dtype=np.int64)
     new_id_of[order] = np.arange(n, dtype=np.int64)
     elements = mesh.points[mesh.corners][order][:, :, :2]      # (N,4,2), fluid-first
-    _write_re2(filename, elements, nelv, blocks, new_id_of)
+    if curved is None:
+        curved = mesh.order > 1
+    curves: FloatArray | None = None
+    if curved:
+        from ..quadmesh.query import element_blocks as quad_blocks
+        curves = _edge_midpoints(quad_blocks(mesh), mesh.order,
+                                 conform.bbox_scale(mesh.points), 2)
+    _write_re2(filename, elements, nelv, blocks, new_id_of, curves)
     return mesh
 
 
